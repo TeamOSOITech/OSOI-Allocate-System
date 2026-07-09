@@ -17,6 +17,10 @@ const menuItems: MenuItem[] = [
   { label: "Report", icon: "ti ti-chart-line", path: "/report", roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
   { label: "History", icon: "ti ti-history", path: "/history", roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
   { label: "Admin", icon: "ti ti-user", path: "/admin", roles: ["ADMIN"] },
+  // NEW: Billing — Admin only
+  { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ["ADMIN"] },
+  // NEW: Quality Scores — Admin and Manager only
+  { label: "Quality Scores", icon: "ti ti-star", path: "/quality-scores", roles: ["ADMIN", "MANAGER"] },
   { label: "Profile", icon: "ti ti-settings", path: "/profile", roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
 ];
 
@@ -29,9 +33,11 @@ const pathToLabel: Record<string, string> = {
   "/reportdashboard": "Report",
   "/team": "Team Preview",
   "/employees": "View Employee",
- "/admin/add-user": "Add User",
+  "/admin/add-user": "Add User",
   "/history": "History",
   "/admin": "Admin",
+  "/billing": "Billing",
+  "/quality-scores": "Quality Scores",
   "/profile": "Profile",
 };
 
@@ -70,6 +76,10 @@ const handleClick = (item: MenuItem) => {
     navigate("/dashboard");
   } else if (item.label === "Report") {
     navigate("/report");
+  } else if (item.label === "Billing") {
+    navigate("/billing");
+  } else if (item.label === "Quality Scores") {
+    navigate("/quality-scores");
   } else {
     navigate("/workinprogress");
   }

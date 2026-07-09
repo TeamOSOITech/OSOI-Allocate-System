@@ -10,13 +10,17 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
   const token = localStorage.getItem("accessToken");
   const user = JSON.parse(localStorage.getItem("user") || "null");
   if (!token) return <Navigate to="/login" replace />;
-  // FIX: requiredRole is now actually enforced on the routes below.
-  // Unauthorized users get bounced to their own safe default page
-  // instead of falling through to the admin page they hit directly.
-  if (requiredRole && user?.role !== requiredRole) {
-    if (user?.role === "EMPLOYEE") return <Navigate to="/report" replace />;
-    if (user?.role === "MANAGER") return <Navigate to="/workinprogress" replace />;
-    return <Navigate to="/login" replace />;
+
+  // FIX: requiredRole can now be a single role (string) or a list of
+  // allowed roles (array) — needed since Quality Scores allows both
+  // ADMIN and MANAGER, not just one role.
+  if (requiredRole) {
+    const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+    if (!allowedRoles.includes(user?.role)) {
+      if (user?.role === "EMPLOYEE") return <Navigate to="/report" replace />;
+      if (user?.role === "MANAGER") return <Navigate to="/workinprogress" replace />;
+      return <Navigate to="/login" replace />;
+    }
   }
   return children;
 };
@@ -29,7 +33,7 @@ const AppLayout = ({ children, onLogout }) => {
       <div style={{ position: "relative", zIndex: 100 }}>
         <Header
           onRefresh={handleRefresh}
-          userName={user?.name || user?.email || ""}
+          userName={user?.firstName ? `${user.firstName} ${user.lastName || ""}`.trim() : user?.email || ""}
           onLogout={onLogout}
         />
       </div>
@@ -62,8 +66,6 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
 
-        {/* FIX: added requiredRole="ADMIN" — this route was previously
-            reachable by any logged-in user regardless of role. */}
         <Route
           path="/reportdashboard"
           element={
@@ -75,7 +77,6 @@ function App() {
           }
         />
 
-        {/* Employee-facing report page — open to any authenticated user */}
         <Route
           path="/report"
           element={
@@ -87,7 +88,6 @@ function App() {
           }
         />
 
-        {/* FIX: added requiredRole="ADMIN" — this is the main Admin dashboard */}
         <Route
           path="/dashboard"
           element={
@@ -99,7 +99,6 @@ function App() {
           }
         />
 
-        {/* FIX: added requiredRole="ADMIN" — only admins should create users */}
         <Route
           path="/admin/add-user"
           element={
@@ -111,7 +110,30 @@ function App() {
           }
         />
 
-        {/* Manager placeholder landing page — open to any authenticated user */}
+        {/* NEW: Billing — Admin only */}
+        <Route
+          path="/billing"
+          element={
+            <PrivateRoute requiredRole="ADMIN">
+              <AppLayout onLogout={handleLogout}>
+                <WorkInProgress />
+              </AppLayout>
+            </PrivateRoute>
+          }
+        />
+
+        {/* NEW: Quality Scores — Admin and Manager only */}
+        <Route
+          path="/quality-scores"
+          element={
+            <PrivateRoute requiredRole={["ADMIN", "MANAGER"]}>
+              <AppLayout onLogout={handleLogout}>
+                <WorkInProgress />
+              </AppLayout>
+            </PrivateRoute>
+          }
+        />
+
         <Route
           path="/workinprogress"
           element={
