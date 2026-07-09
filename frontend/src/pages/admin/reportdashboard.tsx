@@ -69,150 +69,116 @@ export default function ReportDashboard() {
         fetchVerticalCases();
     }, []);
 
-   return (
-    <div
-        style={{
-            ...(isMobile ? styles.rootMobile : styles.root),
-            height: "100vh",
-        }}
-    >
-        {/* Mobile hamburger topbar */}
-        {isMobile && (
-            <div style={styles.mobileTopbar}>
-                <button
-                    style={styles.hamburgerBtn}
-                    onClick={() => setSidebarOpen(!sidebarOpen)}
-                >
-                    ☰
-                </button>
-                <span style={styles.mobileTitle}>Report Dashboard</span>
-            </div>
-        )}
+    return (
+        <div
+            style={{
+                ...(isMobile ? styles.rootMobile : styles.root),
+                height: "100vh",
+            }}
+        >
+            {/* Mobile hamburger topbar */}
+            {isMobile && (
+                <div style={styles.mobileTopbar}>
+                    <button
+                        style={styles.hamburgerBtn}
+                        onClick={() => setSidebarOpen(!sidebarOpen)}
+                    >
+                        ☰
+                    </button>
+                    <span style={styles.mobileTitle}>Report Dashboard</span>
+                </div>
+            )}
 
-        {/* Sidebar */}
-        {isMobile ? (
-            <>
-                {sidebarOpen && (
+            {/* Sidebar */}
+            {isMobile ? (
+                <>
+                    {sidebarOpen && (
+                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
+                    )}
+
                     <div
-                        style={styles.overlay}
-                        onClick={() => setSidebarOpen(false)}
-                    />
-                )}
+                        style={{
+                            ...styles.sidebarDrawer,
+                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+                        }}
+                    >
+                        <Sidebar />
+                    </div>
+                </>
+            ) : (
+                <Sidebar />
+            )}
 
-                <div
-                    style={{
-                        ...styles.sidebarDrawer,
-                        transform: sidebarOpen
-                            ? "translateX(0)"
-                            : "translateX(-100%)",
-                    }}
-                >
-                    <Sidebar />
-                </div>
-            </>
-        ) : (
-            <Sidebar />
-        )}
-
-        {/* Content */}
-        <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
-            <div style={styles.contentBody}>
-                {/* Stats */}
-                <div
-                    style={
-                        isMobile
-                            ? styles.statsRowMobile
-                            : styles.statsRow
-                    }
-                >
-                    {statCards.map((card) => (
-                        <StatCard key={card.title} {...card} />
-                    ))}
-                </div>
-
-                {/* Main Content */}
-                <div
-                    style={{
-                        ...(isMobile
-                            ? styles.contentRowMobile
-                            : styles.contentRow),
-                        flex: 1,
-                        minHeight: 0,
-                    }}
-                >
-                    {/* Left Side */}
-                    <div style={styles.leftCol}>
-                        <div style={styles.panel}>
-                            <p style={styles.panelTitle}>
-                                Billable data
-                            </p>
-
-                            <div style={styles.chartPlaceholder}>
-                                <BillableChart />
-                            </div>
-                        </div>
-
-                        <div style={styles.panel}>
-                            <p style={styles.panelTitle}>
-                                Work Progress Report
-                            </p>
-
-                            <div style={styles.chartPlaceholder}>
-                                <WorkProgressChart />
-                            </div>
-                        </div>
+            {/* Content */}
+            <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
+                <div style={styles.contentBody}>
+                    {/* Stats */}
+                    <div style={isMobile ? styles.statsRowMobile : styles.statsRow}>
+                        {statCards.map((card) => (
+                            <StatCard key={card.title} {...card} />
+                        ))}
                     </div>
 
-                    {/* Right Side */}
-                    <div style={styles.rightCol}>
-                        <div style={styles.tableHead}>
-                            <span style={styles.tableHeadLabel}>
-                                Vertical Name
-                            </span>
+                    {/* Main Content */}
+                    <div
+                        style={{
+                            ...(isMobile ? styles.contentRowMobile : styles.contentRow),
+                            flex: 1,
+                            minHeight: 0,
+                        }}
+                    >
+                        {/* Left Side */}
+                        <div style={styles.leftCol}>
+                            <div style={styles.panel}>
+                                <p style={styles.panelTitle}>Billable data</p>
 
-                            <span style={styles.tableHeadLabel}>
-                                Total Number of Vertical Cases
-                            </span>
+                                <div style={styles.chartPlaceholder}>
+                                    <BillableChart />
+                                </div>
+                            </div>
+
+                            <div style={styles.panel}>
+                                <p style={styles.panelTitle}>Work Progress Report</p>
+
+                                <div style={styles.chartPlaceholder}>
+                                    <WorkProgressChart />
+                                </div>
+                            </div>
                         </div>
 
-                        <div style={styles.tableBody}>
-                            {verticalsLoading ? (
-                                <div style={styles.emptyState}>
-                                    Loading vertical data...
-                                </div>
-                            ) : verticalsError ? (
-                                <div style={styles.emptyState}>
-                                    {verticalsError}
-                                </div>
-                            ) : verticalCases.length === 0 ? (
-                                <div style={styles.emptyState}>
-                                    No vertical data found.
-                                </div>
-                            ) : (
-                                verticalCases.map((v: any, index: number) => (
-                                    <div
-                                        key={index}
-                                        style={styles.tableRow}
-                                    >
-                                        <span>
-                                            {v.name || v.Title || "-"}
-                                        </span>
+                        {/* Right Side */}
+                        <div style={styles.rightCol}>
+                            <div style={styles.tableHead}>
+                                <span style={styles.tableHeadLabel}>Vertical Name</span>
 
-                                        <span>
-                                            {v.count ??
-                                                v.vertical_TotalCases ??
-                                                0}
-                                        </span>
-                                    </div>
-                                ))
-                            )}
+                                <span style={styles.tableHeadLabel}>
+                                    Total Number of Vertical Cases
+                                </span>
+                            </div>
+
+                            <div style={styles.tableBody}>
+                                {verticalsLoading ? (
+                                    <div style={styles.emptyState}>Loading vertical data...</div>
+                                ) : verticalsError ? (
+                                    <div style={styles.emptyState}>{verticalsError}</div>
+                                ) : verticalCases.length === 0 ? (
+                                    <div style={styles.emptyState}>No vertical data found.</div>
+                                ) : (
+                                    verticalCases.map((v: any, index: number) => (
+                                        <div key={index} style={styles.tableRow}>
+                                            <span>{v.name || v.Title || "-"}</span>
+
+                                            <span>{v.count ?? v.vertical_TotalCases ?? 0}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-);
+    );
 }
 
 function StatCard({ title, today, total }: StatCardData) {
@@ -246,7 +212,15 @@ function BillableChart() {
     return (
         <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-                <Pie data={billableData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} paddingAngle={3} dataKey="value">
+                <Pie
+                    data={billableData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={35}
+                    outerRadius={60}
+                    paddingAngle={3}
+                    dataKey="value"
+                >
                     {billableData.map((_, index) => (
                         <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                     ))}
@@ -270,9 +244,20 @@ function WorkProgressChart() {
     return (
         <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-                <Pie data={workProgressData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} paddingAngle={3} dataKey="value">
+                <Pie
+                    data={workProgressData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={35}
+                    outerRadius={60}
+                    paddingAngle={3}
+                    dataKey="value"
+                >
                     {workProgressData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={WORK_COLORS[index % WORK_COLORS.length]} />
+                        <Cell
+                            key={`cell-${index}`}
+                            fill={WORK_COLORS[index % WORK_COLORS.length]}
+                        />
                     ))}
                 </Pie>
                 <Tooltip />
@@ -283,12 +268,12 @@ function WorkProgressChart() {
 }
 
 const styles: Record<string, CSSProperties> = {
-root: {
-    display: "flex",
-    width: "100%",
-    height: "100vh",
-    background: "#ececec",
-},
+    root: {
+        display: "flex",
+        width: "100%",
+        height: "100vh",
+        background: "#ececec",
+    },
     rootMobile: {
         display: "flex",
         flexDirection: "column",
@@ -309,91 +294,144 @@ root: {
         top: 0,
         zIndex: 30,
     },
-    hamburgerBtn: { border: "none", background: "transparent", fontSize: "20px", cursor: "pointer", padding: 4 },
+    hamburgerBtn: {
+        border: "none",
+        background: "transparent",
+        fontSize: "20px",
+        cursor: "pointer",
+        padding: 4,
+    },
     mobileTitle: { fontSize: "15px", fontWeight: 700, color: "#1a1a2e" },
     overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 40 },
     sidebarDrawer: {
-        position: "fixed", top: 0, left: 0, bottom: 0,
-        width: "230px", maxWidth: "80vw", zIndex: 50,
+        position: "fixed",
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: "230px",
+        maxWidth: "80vw",
+        zIndex: 50,
         transition: "transform 0.25s ease",
-        boxShadow: "2px 0 12px rgba(0,0,0,0.15)", overflowY: "auto",
+        boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
+        overflowY: "auto",
     },
-  contentCol: {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  overflow: "hidden",
-  minHeight: "100vh",
-},
+    contentCol: {
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: "100vh",
+    },
     contentColMobile: {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  overflowY: "auto",
-},
-  contentBody: {
-  display: "flex",
-  flexDirection: "column",
-  gap: "14px",
-  padding: "16px",
-  flex: 1,
-  minHeight: 0,
-},
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+    },
+    contentBody: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+        padding: "16px",
+        flex: 1,
+        minHeight: 0,
+    },
 
     statsRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" },
     statsRowMobile: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" },
     statCard: { background: "#fff", borderRadius: "8px", overflow: "hidden" },
-    statHead: { background: "#2b2b3d", color: "#fff", fontSize: "11px", fontWeight: 500, textAlign: "center", padding: "7px" },
+    statHead: {
+        background: "#2b2b3d",
+        color: "#fff",
+        fontSize: "11px",
+        fontWeight: 500,
+        textAlign: "center",
+        padding: "7px",
+    },
     statBody: { padding: "10px 14px" },
-    statLine: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" },
+    statLine: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: "6px",
+    },
     statLabel: { fontSize: "11px", color: "#185fa5", fontWeight: 500 },
     statNum: { fontSize: "20px", fontWeight: 700, color: "#1a1a2e" },
     statBar: { height: "3px", background: "#e24b4a", borderRadius: "2px", margin: "4px 0 8px" },
-   contentRow: {
-  display: "grid",
-  gridTemplateColumns: "1.6fr 1fr",
-  gap: "14px",
-  flex: 1,
-  minHeight: 0,
-  alignItems: "stretch",
-},
+    contentRow: {
+        display: "grid",
+        gridTemplateColumns: "1.6fr 1fr",
+        gap: "14px",
+        flex: 1,
+        minHeight: 0,
+        alignItems: "stretch",
+    },
     contentRowMobile: { display: "flex", flexDirection: "column", gap: "14px" },
-   leftCol: {
-  display: "flex",
-  flexDirection: "column",
-  gap: "14px",
-  flex: 1,
-  height: "100%",
-},
-  panel: {
-  background: "#fff",
-  borderRadius: "8px",
-  padding: "14px 16px",
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-},
-    panelTitle: { fontSize: "13px", fontWeight: 600, color: "#1a1a2e", textAlign: "center", margin: "0 0 8px" },
-   chartPlaceholder: {
-  flex: 1,
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-},
-    emptyState: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#999", fontSize: "12px", padding: "24px", minHeight: 140 },
- rightCol: {
-  background: "#fff",
-  borderRadius: "8px",
-  overflow: "hidden",
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-},
-    tableHead: { display: "flex", justifyContent: "space-between", padding: "10px 16px", borderBottom: "2px solid #e24b4a", background: "#f3f3f3", gap: "12px" },
+    leftCol: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+        flex: 1,
+        height: "100%",
+    },
+    panel: {
+        background: "#fff",
+        borderRadius: "8px",
+        padding: "14px 16px",
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+    },
+    panelTitle: {
+        fontSize: "13px",
+        fontWeight: 600,
+        color: "#1a1a2e",
+        textAlign: "center",
+        margin: "0 0 8px",
+    },
+    chartPlaceholder: {
+        flex: 1,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    emptyState: {
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#999",
+        fontSize: "12px",
+        padding: "24px",
+        minHeight: 140,
+    },
+    rightCol: {
+        background: "#fff",
+        borderRadius: "8px",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+    },
+    tableHead: {
+        display: "flex",
+        justifyContent: "space-between",
+        padding: "10px 16px",
+        borderBottom: "2px solid #e24b4a",
+        background: "#f3f3f3",
+        gap: "12px",
+    },
     tableHeadLabel: { fontSize: "12px", fontWeight: 600, color: "#a32d2d" },
-  tableBody: {
-  flex: 1,
-  overflowY: "auto",
-},
-    tableRow: { display: "flex", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f1f1f1", fontSize: "13px", color: "#374151" },
+    tableBody: {
+        flex: 1,
+        overflowY: "auto",
+    },
+    tableRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        padding: "10px 16px",
+        borderBottom: "1px solid #f1f1f1",
+        fontSize: "13px",
+        color: "#374151",
+    },
 };

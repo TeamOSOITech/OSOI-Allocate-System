@@ -4,7 +4,6 @@ import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/sidebar";
 
-
 const MOBILE_BREAKPOINT = 768;
 
 function useIsMobile() {
@@ -48,8 +47,7 @@ export default function AddUser() {
     const [bulkError, setBulkError] = useState("");
 
     const generatePassword = () => {
-        const chars =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
 
         let pass = "";
 
@@ -137,15 +135,8 @@ export default function AddUser() {
     };
 
     const handleRegister = async () => {
-        if (
-            !formData.fullName ||
-            !formData.email ||
-            !formData.role ||
-            !formData.password
-        ) {
-            setError(
-                "Full name, email, role and password are required."
-            );
+        if (!formData.fullName || !formData.email || !formData.role || !formData.password) {
+            setError("Full name, email, role and password are required.");
             return;
         }
 
@@ -154,24 +145,23 @@ export default function AddUser() {
 
         const trimmedName = formData.fullName.trim();
         const firstSpaceIndex = trimmedName.indexOf(" ");
-        const firstName = firstSpaceIndex === -1 ? trimmedName : trimmedName.slice(0, firstSpaceIndex);
-        const lastName = firstSpaceIndex === -1 ? "" : trimmedName.slice(firstSpaceIndex + 1).trim();
+        const firstName =
+            firstSpaceIndex === -1 ? trimmedName : trimmedName.slice(0, firstSpaceIndex);
+        const lastName =
+            firstSpaceIndex === -1 ? "" : trimmedName.slice(firstSpaceIndex + 1).trim();
 
         try {
-            const response = await fetch(
-                `${import.meta.env.VITE_API_URL}/api/users/add-user`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        ...formData,
-                        firstName,
-                        lastName,
-                    }),
-                }
-            );
+            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/add-user`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    ...formData,
+                    firstName,
+                    lastName,
+                }),
+            });
 
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
@@ -192,9 +182,7 @@ export default function AddUser() {
     };
 
     return (
-        <div
-            style={isMobile ? styles.rootMobile : styles.root}
-        >
+        <div style={isMobile ? styles.rootMobile : styles.root}>
             {isMobile && (
                 <div style={styles.mobileTopbar}>
                     <button
@@ -218,18 +206,13 @@ export default function AddUser() {
             {isMobile ? (
                 <>
                     {sidebarOpen && (
-                        <div
-                            style={styles.overlay}
-                            onClick={() => setSidebarOpen(false)}
-                        />
+                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
                     )}
 
                     <div
                         style={{
                             ...styles.sidebarDrawer,
-                            transform: sidebarOpen
-                                ? "translateX(0)"
-                                : "translateX(-100%)",
+                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
                         }}
                     >
                         <Sidebar />
@@ -257,14 +240,18 @@ export default function AddUser() {
                     <div style={isMobile ? styles.cardMobile : styles.card}>
                         <div style={isMobile ? styles.gridMobile : styles.grid}>
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Select User Name</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Select User Name
+                                </label>
                                 <select style={isMobile ? styles.inputMobile : styles.input}>
                                     <option>Search User Name</option>
                                 </select>
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Full Name</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Full Name
+                                </label>
                                 <input
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.fullName}
@@ -276,7 +263,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Email</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Email
+                                </label>
                                 <input
                                     type="email"
                                     style={isMobile ? styles.inputMobile : styles.input}
@@ -288,7 +277,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Employee ID</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Employee ID
+                                </label>
                                 <input
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.employeeId}
@@ -299,7 +290,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Designation</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Designation
+                                </label>
                                 <input
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.designation}
@@ -310,7 +303,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Department</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Department
+                                </label>
                                 <select
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.department}
@@ -323,27 +318,17 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label
-                                    style={
-                                        isMobile
-                                            ? styles.labelMobile
-                                            : styles.label
-                                    }
-                                >
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
                                     Role
                                 </label>
 
                                 <select
-                                    style={
-                                        isMobile
-                                            ? styles.inputMobile
-                                            : styles.input
-                                    }
+                                    style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.role}
                                     onChange={(e) =>
                                         setFormData({
                                             ...formData,
-                                            role: e.target.value
+                                            role: e.target.value,
                                         })
                                     }
                                 >
@@ -355,7 +340,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Date of Birth</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Date of Birth
+                                </label>
                                 <input
                                     type="date"
                                     style={isMobile ? styles.inputMobile : styles.input}
@@ -367,7 +354,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Date of Joining</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Date of Joining
+                                </label>
                                 <input
                                     type="date"
                                     style={isMobile ? styles.inputMobile : styles.input}
@@ -379,7 +368,9 @@ export default function AddUser() {
                             </div>
 
                             <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Reporting Manager</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Reporting Manager
+                                </label>
                                 <select
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.reportingManager}
@@ -446,7 +437,9 @@ export default function AddUser() {
                             </div>
 
                             <div style={isMobile ? { gridColumn: "1 / -1" } : undefined}>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>Worked In Teams</label>
+                                <label style={isMobile ? styles.labelMobile : styles.label}>
+                                    Worked In Teams
+                                </label>
                                 <select
                                     style={isMobile ? styles.inputMobile : styles.input}
                                     value={formData.workedInTeams}
@@ -471,7 +464,9 @@ export default function AddUser() {
                         <div style={isMobile ? styles.footerMobile : styles.footer}>
                             <button
                                 style={{
-                                    ...(isMobile ? styles.registerButtonMobile : styles.registerButton),
+                                    ...(isMobile
+                                        ? styles.registerButtonMobile
+                                        : styles.registerButton),
                                     opacity: isSubmitting ? 0.7 : 1,
                                     cursor: isSubmitting ? "not-allowed" : "pointer",
                                 }}
@@ -506,9 +501,16 @@ export default function AddUser() {
                         <div style={styles.bulkModalHeader}>
                             <div>
                                 <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
-                                <p style={styles.bulkModalSubtitle}>Upload an Excel file to create multiple accounts at once</p>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Upload an Excel file to create multiple accounts at once
+                                </p>
                             </div>
-                            <button style={styles.closeBtn} onClick={closeBulkModal} type="button" aria-label="Close">
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeBulkModal}
+                                type="button"
+                                aria-label="Close"
+                            >
                                 ✕
                             </button>
                         </div>
@@ -554,9 +556,19 @@ export default function AddUser() {
                             <div style={styles.resultsSection}>
                                 <div style={styles.resultsSummary}>
                                     <span style={styles.resultsSummaryText}>
-                                        <strong>{bulkResults.filter(r => r.success).length}</strong> created
-                                        {bulkResults.some(r => !r.success) && (
-                                            <> · <strong style={{ color: "#dc2626" }}>{bulkResults.filter(r => !r.success).length}</strong> failed</>
+                                        <strong>
+                                            {bulkResults.filter((r) => r.success).length}
+                                        </strong>{" "}
+                                        created
+                                        {bulkResults.some((r) => !r.success) && (
+                                            <>
+                                                {" "}
+                                                ·{" "}
+                                                <strong style={{ color: "#dc2626" }}>
+                                                    {bulkResults.filter((r) => !r.success).length}
+                                                </strong>{" "}
+                                                failed
+                                            </>
                                         )}
                                     </span>
                                 </div>
@@ -569,7 +581,9 @@ export default function AddUser() {
                                                 <span
                                                     style={{
                                                         ...styles.statusPill,
-                                                        ...(r.success ? styles.statusPillSuccess : styles.statusPillFail),
+                                                        ...(r.success
+                                                            ? styles.statusPillSuccess
+                                                            : styles.statusPillFail),
                                                     }}
                                                 >
                                                     {r.success ? "✓ Created" : "✗ Failed"}
@@ -591,132 +605,219 @@ export default function AddUser() {
 const styles: Record<string, CSSProperties> = {
     root: {
         display: "flex",
+
         width: "100%",
+
         flex: 1,
+
         minHeight: 0,
+
         background: "#ececec",
+
         fontFamily: "'Segoe UI', sans-serif",
     },
+
     rootMobile: {
         display: "flex",
+
         flexDirection: "column",
+
         flex: 1,
+
         minHeight: 0,
+
         width: "100%",
+
         background: "#ececec",
+
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+
         position: "relative",
     },
 
     mobileTopbar: {
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "space-between",
+
         gap: "12px",
+
         padding: "12px 16px",
+
         background: "#fff",
+
         borderBottom: "2px solid #d92f3b",
+
         position: "sticky",
+
         top: 0,
+
         zIndex: 30,
     },
+
     hamburgerBtn: {
         border: "none",
+
         background: "transparent",
+
         fontSize: "20px",
+
         cursor: "pointer",
+
         padding: 4,
     },
+
     mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#1a1a2e" },
+
     overlay: {
         position: "fixed",
+
         inset: 0,
+
         background: "rgba(0,0,0,0.4)",
+
         zIndex: 40,
+
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "center",
     },
+
     sidebarDrawer: {
         position: "fixed",
+
         top: 0,
+
         left: 0,
+
         bottom: 0,
+
         width: "230px",
+
         maxWidth: "80vw",
+
         zIndex: 50,
+
         transition: "transform 0.25s ease",
+
         boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
+
         overflowY: "auto",
     },
 
     contentCol: {
         flex: 1,
+
         display: "flex",
+
         flexDirection: "column",
+
         overflow: "hidden",
+
         minHeight: 0,
     },
+
     contentColMobile: {
         flex: 1,
+
         display: "flex",
+
         flexDirection: "column",
+
         overflowY: "auto",
     },
+
     contentBody: {
         display: "flex",
+
         flexDirection: "column",
+
         gap: "14px",
+
         padding: "20px",
+
         flex: 1,
+
         minHeight: 0,
+
         overflowY: "auto",
     },
 
     header: {
         background: "#fff",
+
         borderRadius: 10,
+
         borderBottom: "2px solid #d92f3b",
+
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "space-between",
+
         padding: "12px 24px",
+
         boxShadow: "0 2px 8px rgba(0,0,0,.08)",
     },
 
     heading: {
         margin: 0,
+
         fontSize: 34,
+
         fontWeight: 700,
     },
 
     bulkHeaderBtn: {
         background: "#df3740",
+
         color: "#fff",
+
         border: "none",
+
         borderRadius: 30,
+
         padding: "12px 28px",
+
         fontSize: 15,
+
         fontWeight: 700,
+
         cursor: "pointer",
-    },
-    bulkHeaderBtnMobile: {
-        background: "#df3740",
-        color: "#fff",
-        border: "none",
-        borderRadius: 20,
-        padding: "6px 14px",
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
     },
 
+    bulkHeaderBtnMobile: {
+        background: "#df3740",
+
+        color: "#fff",
+
+        border: "none",
+
+        borderRadius: 20,
+
+        padding: "6px 14px",
+
+        fontSize: 12,
+
+        fontWeight: 700,
+
+        cursor: "pointer",
+
+        whiteSpace: "nowrap",
+    },
     card: {
         background: "#fff",
         borderRadius: 10,
         padding: 30,
         boxShadow: "0 2px 8px rgba(0,0,0,.08)",
+        flex: 0.8,
+        display: "flex",
+        flexDirection: "column",
     },
     cardMobile: {
         background: "#fff",
@@ -724,349 +825,573 @@ const styles: Record<string, CSSProperties> = {
         padding: 16,
         boxShadow: "0 2px 8px rgba(0,0,0,.08)",
     },
-
     grid: {
         display: "grid",
+
         gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+
         gap: "28px 40px",
     },
+
     gridMobile: {
         display: "grid",
+
         gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+
         gap: "12px 10px",
     },
 
     label: {
         display: "block",
+
         marginBottom: 8,
+
         color: "#1c1975",
+
         fontSize: 16,
     },
+
     labelMobile: {
         display: "block",
+
         marginBottom: 4,
+
         color: "#1c1975",
+
         fontSize: 13,
     },
 
     input: {
         width: "100%",
+
         padding: "12px",
+
         background: "#f5f5f5",
+
         border: "1px solid #ddd",
+
         outline: "none",
+
         fontSize: 15,
+
         borderRadius: 4,
+
         boxSizing: "border-box",
     },
+
     inputMobile: {
         width: "100%",
+
         padding: "8px 10px",
+
         background: "#f5f5f5",
+
         border: "1px solid #ddd",
+
         outline: "none",
+
         fontSize: 13,
+
         borderRadius: 4,
+
         boxSizing: "border-box",
     },
 
     passwordRow: {
         display: "flex",
+
         alignItems: "center",
+
         gap: "6px",
+
         width: "100%",
     },
+
     passwordActionBtn: {
         padding: "8px 10px",
+
         border: "1px solid #ccc",
+
         background: "#fff",
+
         cursor: "pointer",
+
         borderRadius: 4,
+
         fontSize: 12,
+
         whiteSpace: "nowrap",
+
         flexShrink: 0,
     },
 
     note: {
         color: "#d40000",
+
         marginTop: 8,
+
         fontWeight: 600,
+
         fontSize: 13,
     },
 
     error: {
         color: "#d40000",
+
         marginTop: 20,
+
         fontWeight: 600,
     },
 
     smallButton: {
         padding: "10px 18px",
+
         border: "1px solid #ccc",
+
         background: "#fff",
+
         cursor: "pointer",
+
         borderRadius: 4,
     },
+
     smallButtonMobile: {
         padding: "12px 16px",
+
         border: "1px solid #ccc",
+
         background: "#fff",
+
         cursor: "pointer",
+
         borderRadius: 4,
+
         flex: "1 1 0",
+
         fontSize: 14,
+
         textAlign: "center",
     },
 
     footer: {
         display: "flex",
+
         justifyContent: "flex-end",
+
         marginTop: 40,
     },
+
     footerMobile: {
         display: "flex",
+
         marginTop: 24,
     },
 
     registerButton: {
         background: "#df3740",
+
         color: "#fff",
+
         border: "none",
+
         borderRadius: 30,
+
         padding: "14px 80px",
+
         fontSize: 18,
+
         fontWeight: 700,
+
         cursor: "pointer",
     },
+
     registerButtonMobile: {
         background: "#df3740",
+
         color: "#fff",
+
         border: "none",
+
         borderRadius: 30,
+
         padding: "14px 0",
+
         fontSize: 16,
+
         fontWeight: 700,
+
         cursor: "pointer",
+
         width: "100%",
     },
 
     successModal: {
         background: "#fff",
+
         borderRadius: 12,
+
         padding: "32px",
+
         width: 360,
+
         maxWidth: "90vw",
+
         textAlign: "center",
+
         boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
     },
+
     successIcon: {
         width: 56,
+
         height: 56,
+
         borderRadius: "50%",
+
         background: "#e6f9ec",
+
         color: "#15803d",
+
         fontSize: 28,
+
         fontWeight: 700,
+
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "center",
+
         margin: "0 auto 16px",
     },
+
     successTitle: {
         margin: "0 0 8px",
+
         fontSize: 18,
+
         fontWeight: 700,
+
         color: "#1a1a2e",
     },
+
     successText: {
         margin: "0 0 24px",
+
         fontSize: 14,
+
         color: "#6b7280",
     },
+
     successBtn: {
         background: "linear-gradient(135deg, #e53935, #c62828)",
+
         color: "#fff",
+
         border: "none",
+
         borderRadius: 8,
+
         padding: "10px 32px",
+
         fontSize: 14,
+
         fontWeight: 700,
+
         cursor: "pointer",
     },
 
     bulkModal: {
         background: "#fff",
+
         borderRadius: 16,
+
         padding: "0",
+
         width: 560,
+
         maxWidth: "92vw",
+
         maxHeight: "88vh",
+
         overflowY: "auto",
+
         boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
     },
-   bulkModalHeader: {
+
+    bulkModalHeader: {
         position: "relative",
+
         textAlign: "center",
+
         padding: "24px 28px 16px",
+
         borderBottom: "1px solid #f0f0f0",
     },
+
     bulkModalTitle: {
         margin: 0,
+
         fontSize: 20,
+
         fontWeight: 700,
+
         color: "#1c1975",
     },
+
     bulkModalSubtitle: {
         margin: "4px 0 0",
+
         fontSize: 13,
+
         color: "#9ca3af",
     },
-        closeBtn: {
+
+    closeBtn: {
         position: "absolute",
+
         top: 20,
+
         right: 24,
+
         border: "none",
+
         background: "#f3f4f6",
+
         borderRadius: "50%",
+
         width: 28,
+
         height: 28,
+
         fontSize: 14,
+
         cursor: "pointer",
+
         color: "#6b7280",
+
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "center",
     },
 
     bulkInfoBox: {
         margin: "20px 28px",
+
         padding: "14px 16px",
+
         background: "#fdf2f2",
+
         borderLeft: "3px solid #df3740",
+
         borderRadius: 6,
     },
+
     bulkInfoLabel: {
         display: "block",
+
         fontSize: 11,
+
         fontWeight: 700,
+
         color: "#df3740",
+
         textTransform: "uppercase",
+
         letterSpacing: "0.04em",
+
         marginBottom: 4,
     },
+
     bulkInfoText: {
         margin: 0,
+
         fontSize: 13,
+
         color: "#6b7280",
+
         lineHeight: 1.6,
     },
 
     bulkUploadRow: {
         display: "flex",
+
         flexWrap: "wrap",
+
         alignItems: "center",
+
         gap: "10px",
+
         margin: "0 28px 24px",
     },
+
     fileInputWrapper: {
         display: "flex",
+
         alignItems: "center",
+
         gap: "10px",
+
         border: "1px solid #e5e7eb",
+
         borderRadius: 8,
+
         padding: "8px 12px",
+
         cursor: "pointer",
+
         flex: 1,
+
         minWidth: 200,
+
         background: "#fafafa",
     },
+
     fileInputHidden: {
         display: "none",
     },
+
     fileInputButton: {
         background: "#1c1975",
+
         color: "#fff",
+
         fontSize: 12,
+
         fontWeight: 600,
+
         padding: "6px 12px",
+
         borderRadius: 6,
+
         whiteSpace: "nowrap",
     },
+
     fileInputName: {
         fontSize: 13,
+
         color: "#6b7280",
+
         overflow: "hidden",
+
         textOverflow: "ellipsis",
+
         whiteSpace: "nowrap",
     },
+
     bulkUploadBtn: {
         background: "#df3740",
+
         color: "#fff",
+
         border: "none",
+
         borderRadius: 8,
+
         padding: "10px 20px",
+
         fontSize: 14,
+
         fontWeight: 700,
+
         whiteSpace: "nowrap",
     },
 
     resultsSection: {
         borderTop: "1px solid #f0f0f0",
+
         padding: "20px 28px 28px",
     },
+
     resultsSummary: {
         marginBottom: 12,
     },
+
     resultsSummaryText: {
         fontSize: 14,
+
         color: "#1a1a2e",
     },
+
     resultsList: {
         display: "flex",
+
         flexDirection: "column",
+
         gap: "8px",
+
         maxHeight: 260,
+
         overflowY: "auto",
     },
+
     resultRow: {
         border: "1px solid #f0f0f0",
+
         borderRadius: 8,
+
         padding: "10px 14px",
+
         background: "#fafafa",
     },
+
     resultRowMain: {
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "space-between",
+
         gap: "10px",
     },
+
     resultEmail: {
         fontSize: 13,
+
         fontWeight: 600,
+
         color: "#1a1a2e",
+
         overflow: "hidden",
+
         textOverflow: "ellipsis",
+
         whiteSpace: "nowrap",
     },
+
     statusPill: {
         fontSize: 11,
+
         fontWeight: 700,
+
         padding: "3px 10px",
+
         borderRadius: 20,
+
         whiteSpace: "nowrap",
+
         flexShrink: 0,
     },
+
     statusPillSuccess: {
         background: "#dcfce7",
+
         color: "#15803d",
     },
+
     statusPillFail: {
         background: "#fee2e2",
+
         color: "#dc2626",
     },
+
     resultMessage: {
         margin: "4px 0 0",
+
         fontSize: 12,
+
         color: "#9ca3af",
     },
 };
