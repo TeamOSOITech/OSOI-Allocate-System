@@ -7,6 +7,7 @@ import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
 import AddUser from "./pages/admin/adduser";
 import WorkInProgress from "./pages/workinprogress";
+import VoiceAssistant from "./components/voiceAssistant";
 
 const PrivateRoute = ({ children, requiredRole = null }) => {
     const token = localStorage.getItem("accessToken");
@@ -14,8 +15,7 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
     if (!token) return <Navigate to="/login" replace />;
 
     // FIX: requiredRole can now be a single role (string) or a list of
-    // allowed roles (array) — needed since Quality Scores allows both
-    // ADMIN and MANAGER, not just one role.
+    // allowed roles (array) — needed since Quality Scores allows both    // ADMIN and MANAGER, not just one role.
     if (requiredRole) {
         const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
         if (!allowedRoles.includes(user?.role)) {
@@ -54,6 +54,7 @@ const AppLayout = ({ children, onLogout }) => {
             >
                 {children}
             </div>
+            {/* 👇 Add this */}
         </div>
     );
 };
