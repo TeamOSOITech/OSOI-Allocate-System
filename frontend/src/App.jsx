@@ -55,6 +55,7 @@ const AppLayout = ({ children, onLogout }) => {
                 {children}
             </div>
             {/* 👇 Add this */}
+            <VoiceAssistant />
         </div>
     );
 };

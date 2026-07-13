@@ -3,6 +3,8 @@ import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/sidebar";
+import VoiceAssistant from "../../components/voiceAssistant";
+import { speak } from "../../utils/speak";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -176,6 +178,7 @@ export default function AddUser() {
             }
 
             setShowSuccess(true);
+            speak("User submitted successfully.");
         } catch (err: any) {
             setError(err?.message || "Something went wrong");
         } finally {
@@ -188,6 +191,24 @@ export default function AddUser() {
         navigate("/reportdashboard");
     };
 
+    const handleVoiceFillForm = (data: any) => {
+        const combinedFullName = `${data.firstName || ""} ${data.lastName || ""}`.trim();
+
+        setFormData((prev) => ({
+            ...prev,
+            fullName: combinedFullName || prev.fullName,
+            email: data.email || prev.email,
+            role: data.role || prev.role,
+            password: data.password || prev.password,
+            employeeId: data.employeeId || prev.employeeId,
+            designation: data.designation || prev.designation,
+            department: data.department || prev.department,
+            dob: data.dob || prev.dob,
+            doj: data.doj || prev.doj,
+            reportingManager: data.reportingManager || prev.reportingManager,
+            workedInTeams: data.workedInTeams || prev.workedInTeams,
+        }));
+    };
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
             {isMobile && (
@@ -618,6 +639,8 @@ export default function AddUser() {
                     </div>
                 </div>
             )}
+
+            <VoiceAssistant onFillForm={handleVoiceFillForm} onRequestSubmit={handleRegister} />
         </div>
     );
 }

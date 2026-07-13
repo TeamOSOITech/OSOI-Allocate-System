@@ -1,30 +1,38 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
 
-const MOBILE_BREAKPOINT = 768;
+const MOBILE_BREAKPOINT = 860;
+const COMPACT_BREAKPOINT = 640;
 
-function useIsMobile() {
-    const [isMobile, setIsMobile] = useState(
-        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
-    );
+function useViewport() {
+    const [width, setWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
 
     useEffect(() => {
-        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-
+        const onResize = () => setWidth(window.innerWidth);
         window.addEventListener("resize", onResize);
-
         return () => window.removeEventListener("resize", onResize);
     }, []);
 
-    return isMobile;
+    return {
+        isMobile: width < MOBILE_BREAKPOINT,
+        isCompact: width < COMPACT_BREAKPOINT,
+    };
 }
 
+const FEATURES = [
+    { icon: "ti-clipboard-list", label: "Tasks" },
+    { icon: "ti-chart-bar", label: "Reports" },
+    { icon: "ti-users", label: "Team" },
+];
+
 const Login = () => {
+    const { isMobile, isCompact } = useViewport();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [resetSending, setResetSending] = useState(false);
+    const [view, setView] = useState<"login" | "forgot" | "sent">("login");
 
     const API_URL = import.meta.env.VITE_API_URL;
 
@@ -79,105 +87,301 @@ const Login = () => {
         }
     };
 
+    const handleForgotPasswordClick = () => {
+        if (!username.trim()) {
+            setError("Enter your email address first, then tap Forgot password.");
+            return;
+        }
+        setError("");
+        setView("forgot");
+    };
+
+    const handleSendResetLink = async () => {
+        setResetSending(true);
+        setError("");
+
+        try {
+            const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ email: username.trim() }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || "Something went wrong. Try again.");
+            }
+
+            setView("sent");
+        } catch (err: any) {
+            setError(err.message || "Something went wrong. Try again.");
+        } finally {
+            setResetSending(false);
+        }
+    };
+
     return (
-        <>
+        <div
+            style={{
+                minHeight: "100vh",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "linear-gradient(135deg,#F5F3FF 0%,#EEE7FF 45%,#E6DBFF 100%)",
+                fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+                padding: isMobile ? "20px 12px" : "32px 16px",
+                overflowX: "hidden",
+                width: "100%",
+            }}
+        >
+            <style>{`
+                @keyframes dwaFloat {
+                    0%   { transform: translateY(0px) rotate(var(--r,0deg)); }
+                    50%  { transform: translateY(-10px) rotate(var(--r,0deg)); }
+                    100% { transform: translateY(0px) rotate(var(--r,0deg)); }
+                }
+                @keyframes dwaPulse {
+                    0%   { box-shadow: 0 0 0 0 rgba(255,255,255,.35); }
+                    100% { box-shadow: 0 0 0 18px rgba(255,255,255,0); }
+                }
+                @keyframes dwaDrift {
+                    0%   { transform: translate(0,0); }
+                    50%  { transform: translate(-14px,10px); }
+                    100% { transform: translate(0,0); }
+                }
+                .dwa-card {
+                    animation: dwaFloat 5s ease-in-out infinite;
+                }
+                .dwa-orb {
+                    animation: dwaDrift 9s ease-in-out infinite;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    .dwa-card, .dwa-orb, .dwa-pulse { animation: none !important; }
+                }
+                *, *::before, *::after { box-sizing: border-box; }
+            `}</style>
+
             <div
                 style={{
-                    minHeight: "100vh",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: "linear-gradient(135deg,#F5F3FF 0%,#EEE7FF 45%,#E6DBFF 100%)",
-                    fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
-                    position: "relative",
+                    width: "100%",
+                    maxWidth: isMobile ? 420 : 1100,
+                    background: "#fff",
+                    borderRadius: isMobile ? 18 : 30,
                     overflow: "hidden",
+                    display: "flex",
+                    flexDirection: isMobile ? "column" : "row",
+                    boxShadow: isMobile
+                        ? "0 12px 32px rgba(124,58,237,.18)"
+                        : "0 25px 60px rgba(124,58,237,.15)",
+                    minHeight: isMobile ? "auto" : 620,
                 }}
             >
-                {/* Background Blur Circle */}
+                {/* LEFT — brand panel */}
                 <div
                     style={{
-                        position: "absolute",
-                        width: 450,
-                        height: 450,
-                        borderRadius: "50%",
-                        background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
-                        opacity: 0.12,
-                        top: -120,
-                        left: -120,
-                        filter: "blur(30px)",
-                    }}
-                />
-
-                <div
-                    style={{
-                        position: "absolute",
-                        width: 350,
-                        height: 350,
-                        borderRadius: "50%",
-                        background: "linear-gradient(135deg,#A78BFA,#7C3AED)",
-                        opacity: 0.1,
-                        bottom: -80,
-                        right: -80,
-                        filter: "blur(25px)",
-                    }}
-                />
-
-                {/* Main Card */}
-                <div
-                    style={{
-                        width: "100%",
-                        maxWidth: 1080,
-                        minHeight: 620,
-                        background: "#fff",
-                        borderRadius: 30,
-                        overflow: "hidden",
-                        display: "flex",
-                        boxShadow: "0 25px 60px rgba(124,58,237,.15)",
+                        flex: isMobile ? "none" : 1,
                         position: "relative",
-                        zIndex: 2,
+                        padding: isCompact ? "28px 20px 24px" : isMobile ? "36px 28px" : 40,
+                        background:
+                            "radial-gradient(120% 140% at 15% 10%,#A78BFA 0%,#7C3AED 45%,#5B21B6 100%)",
+                        color: "#fff",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        minHeight: isMobile ? (isCompact ? 210 : 260) : "auto",
                     }}
                 >
-                    {/* LEFT SIDE */}
+                    {/* subtle grid texture */}
                     <div
                         style={{
-                            flex: 1,
-                            background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
-                            color: "#fff",
-                            padding: 60,
-                            display: "flex",
-                            flexDirection: "column",
-                            justifyContent: "center",
-                            position: "relative",
+                            position: "absolute",
+                            inset: 0,
+                            backgroundImage:
+                                "linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px)",
+                            backgroundSize: "28px 28px",
+                            maskImage: "radial-gradient(circle at 30% 30%,#000 0%,transparent 75%)",
+                            pointerEvents: "none",
                         }}
-                    >
+                    />
+
+                    {/* drifting glow orbs */}
+                    <div
+                        className="dwa-orb"
+                        style={{
+                            position: "absolute",
+                            width: isMobile ? 140 : 220,
+                            height: isMobile ? 140 : 220,
+                            borderRadius: "50%",
+                            background: "rgba(255,255,255,.16)",
+                            filter: "blur(6px)",
+                            top: isMobile ? -60 : -40,
+                            right: isMobile ? -40 : -30,
+                            pointerEvents: "none",
+                        }}
+                    />
+                    <div
+                        style={{
+                            position: "absolute",
+                            width: isMobile ? 120 : 180,
+                            height: isMobile ? 120 : 180,
+                            borderRadius: "50%",
+                            background: "rgba(91,33,182,.45)",
+                            filter: "blur(10px)",
+                            bottom: -50,
+                            left: -30,
+                            pointerEvents: "none",
+                        }}
+                    />
+
+                    {/* floating task-card mini illustration, desktop/tablet only */}
+                    {!isCompact && (
                         <div
                             style={{
-                                width: 85,
-                                height: 85,
+                                position: "absolute",
+                                right: isMobile ? 18 : -10,
+                                top: isMobile ? 10 : "50%",
+                                transform: isMobile ? "none" : "translateY(-50%)",
+                                width: isMobile ? 120 : 190,
+                                height: isMobile ? 100 : 190,
+                                pointerEvents: "none",
+                                opacity: isMobile ? 0.35 : 1,
+                            }}
+                        >
+                            <div
+                                className="dwa-card"
+                                style={
+                                    {
+                                        "--r": "-8deg",
+                                        position: "absolute",
+                                        top: 0,
+                                        left: 10,
+                                        width: isMobile ? 84 : 132,
+                                        borderRadius: 12,
+                                        background: "rgba(255,255,255,.14)",
+                                        border: "1px solid rgba(255,255,255,.35)",
+                                        backdropFilter: "blur(6px)",
+                                        padding: isMobile ? "8px 10px" : "12px 14px",
+                                        transform: "rotate(-8deg)",
+                                        boxShadow: "0 14px 30px rgba(76,29,149,.35)",
+                                    } as React.CSSProperties
+                                }
+                            >
+                                <i
+                                    className="ti ti-checkbox"
+                                    style={{ fontSize: isMobile ? 14 : 18, opacity: 0.9 }}
+                                />
+                                <div
+                                    style={{
+                                        marginTop: 6,
+                                        height: 5,
+                                        borderRadius: 3,
+                                        background: "rgba(255,255,255,.55)",
+                                        width: "80%",
+                                    }}
+                                />
+                                <div
+                                    style={{
+                                        marginTop: 5,
+                                        height: 5,
+                                        borderRadius: 3,
+                                        background: "rgba(255,255,255,.3)",
+                                        width: "55%",
+                                    }}
+                                />
+                            </div>
+
+                            <div
+                                className="dwa-card"
+                                style={
+                                    {
+                                        "--r": "6deg",
+                                        animationDelay: "1.2s",
+                                        position: "absolute",
+                                        top: isMobile ? 34 : 66,
+                                        left: isMobile ? 26 : 46,
+                                        width: isMobile ? 90 : 140,
+                                        borderRadius: 12,
+                                        background: "rgba(255,255,255,.95)",
+                                        padding: isMobile ? "8px 10px" : "12px 14px",
+                                        transform: "rotate(6deg)",
+                                        boxShadow: "0 18px 34px rgba(76,29,149,.45)",
+                                    } as React.CSSProperties
+                                }
+                            >
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div
+                                        style={{
+                                            width: isMobile ? 16 : 20,
+                                            height: isMobile ? 16 : 20,
+                                            borderRadius: "50%",
+                                            background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                        }}
+                                    />
+                                    <div
+                                        style={{
+                                            height: 5,
+                                            borderRadius: 3,
+                                            background: "#DDD6FE",
+                                            flex: 1,
+                                        }}
+                                    />
+                                </div>
+                                <div
+                                    style={{
+                                        marginTop: 8,
+                                        height: 4,
+                                        borderRadius: 3,
+                                        background: "#EEE7FF",
+                                        width: "100%",
+                                    }}
+                                />
+                                <div
+                                    style={{
+                                        marginTop: 5,
+                                        height: 4,
+                                        borderRadius: 3,
+                                        background: "#EEE7FF",
+                                        width: "70%",
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    <div style={{ position: "relative", zIndex: 1 }}>
+                        <div
+                            className="dwa-pulse"
+                            style={{
+                                width: isCompact ? 40 : 46,
+                                height: isCompact ? 40 : 46,
                                 borderRadius: "50%",
-                                background: "rgba(255,255,255,.15)",
+                                background: "rgba(255,255,255,.18)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                marginBottom: 30,
+                                marginBottom: 14,
                                 backdropFilter: "blur(10px)",
+                                border: "1px solid rgba(255,255,255,.3)",
+                                animation: "dwaPulse 2.6s ease-out infinite",
                             }}
                         >
                             <i
                                 className="ti ti-layout-dashboard"
-                                style={{
-                                    fontSize: 42,
-                                    color: "#fff",
-                                }}
+                                style={{ fontSize: isCompact ? 20 : 26, color: "#fff" }}
                             />
                         </div>
 
                         <h1
                             style={{
                                 margin: 0,
-                                fontSize: 42,
+                                fontSize: isCompact ? 19 : isMobile ? 22 : 26,
                                 fontWeight: 800,
                                 lineHeight: 1.2,
+                                letterSpacing: "-0.01em",
                             }}
                         >
                             Daily Work
@@ -185,134 +389,209 @@ const Login = () => {
                             Allocation
                         </h1>
 
-                        <p
-                            style={{
-                                marginTop: 20,
-                                color: "rgba(255,255,255,.85)",
-                                lineHeight: 1.8,
-                                fontSize: 16,
-                                maxWidth: 420,
-                            }}
-                        >
-                            Welcome back to the allocation portal. Manage reports, users, tasks and
-                            daily work efficiently using one centralized dashboard.
-                        </p>
-
-                        <div
-                            style={{
-                                marginTop: 40,
-                                display: "flex",
-                                gap: 15,
-                            }}
-                        >
-                            <div
+                        {!isCompact && (
+                            <p
                                 style={{
-                                    width: 12,
-                                    height: 12,
-                                    borderRadius: "50%",
-                                    background: "#fff",
-                                }}
-                            />
-                            <div
-                                style={{
-                                    width: 12,
-                                    height: 12,
-                                    borderRadius: "50%",
-                                    background: "rgba(255,255,255,.5)",
-                                }}
-                            />
-                            <div
-                                style={{
-                                    width: 12,
-                                    height: 12,
-                                    borderRadius: "50%",
-                                    background: "rgba(255,255,255,.3)",
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* RIGHT SIDE */}
-                    <div
-                        style={{
-                            width: 430,
-                            padding: "60px 50px",
-                            display: "flex",
-                            flexDirection: "column",
-                            justifyContent: "center",
-                        }}
-                    >
-                        <div
-                            style={{
-                                width: 72,
-                                height: 72,
-                                borderRadius: "50%",
-                                background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                margin: "0 auto 20px",
-                                boxShadow: "0 12px 30px rgba(124,58,237,.30)",
-                            }}
-                        >
-                            <i
-                                className="ti ti-shield-lock"
-                                style={{
-                                    color: "#fff",
-                                    fontSize: 34,
-                                }}
-                            />
-                        </div>
-
-                        <h2
-                            style={{
-                                margin: 0,
-                                textAlign: "center",
-                                color: "#1E1B3A",
-                                fontSize: 30,
-                                fontWeight: 800,
-                            }}
-                        >
-                            Welcome Back
-                        </h2>
-
-                        <p
-                            style={{
-                                marginTop: 10,
-                                marginBottom: 35,
-                                textAlign: "center",
-                                color: "#8B82A7",
-                                fontSize: 15,
-                            }}
-                        >
-                            Sign in to continue to your dashboard
-                        </p>
-
-                        {error && (
-                            <div
-                                style={{
-                                    background: "#F8F5FF",
-                                    border: "1px solid #DDD6FE",
-                                    color: "#6D28D9",
-                                    padding: "12px 16px",
-                                    borderRadius: 12,
-                                    marginBottom: 22,
-                                    fontSize: 14,
-                                    fontWeight: 600,
+                                    marginTop: 8,
+                                    color: "rgba(255,255,255,.85)",
+                                    lineHeight: 1.5,
+                                    fontSize: isMobile ? 14 : 15,
+                                    maxWidth: 340,
                                 }}
                             >
-                                {error}
+                                Welcome back to the allocation portal. Manage reports, users, tasks
+                                and daily work efficiently using one centralized dashboard.
+                            </p>
+                        )}
+
+                        {!isMobile && (
+                            <div
+                                style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}
+                            >
+                                {FEATURES.map((f) => (
+                                    <div
+                                        key={f.label}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                            padding: "6px 12px",
+                                            borderRadius: 999,
+                                            background: "rgba(255,255,255,.12)",
+                                            border: "1px solid rgba(255,255,255,.25)",
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                        }}
+                                    >
+                                        <i className={`ti ${f.icon}`} style={{ fontSize: 13 }} />
+                                        {f.label}
+                                    </div>
+                                ))}
                             </div>
                         )}
 
-                        <form onSubmit={handleLogin}>
+                        {!isCompact && (
+                            <div
+                                style={{ marginTop: isMobile ? 12 : 18, display: "flex", gap: 10 }}
+                            >
+                                <div
+                                    style={{
+                                        width: 10,
+                                        height: 10,
+                                        borderRadius: "50%",
+                                        background: "#fff",
+                                    }}
+                                />
+                                <div
+                                    style={{
+                                        width: 10,
+                                        height: 10,
+                                        borderRadius: "50%",
+                                        background: "rgba(255,255,255,.5)",
+                                    }}
+                                />
+                                <div
+                                    style={{
+                                        width: 10,
+                                        height: 10,
+                                        borderRadius: "50%",
+                                        background: "rgba(255,255,255,.3)",
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* RIGHT — form panel */}
+                <div
+                    style={{
+                        flex: 1,
+                        width: "100%",
+                        padding: isCompact ? "28px 20px 40px" : isMobile ? "28px 20px" : "48px",
+                        flexShrink: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        overflowY: "auto",
+                    }}
+                >
+                    {view === "sent" ? (
+                        <>
+                            <div
+                                style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: "50%",
+                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    margin: "0 auto 12px",
+                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
+                                }}
+                            >
+                                <i
+                                    className="ti ti-check"
+                                    style={{ color: "#fff", fontSize: 18 }}
+                                />
+                            </div>
+
+                            <h2
+                                style={{
+                                    margin: 0,
+                                    textAlign: "center",
+                                    color: "#1E1B3A",
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Check your email
+                            </h2>
+
+                            <p
+                                style={{
+                                    marginTop: 4,
+                                    marginBottom: 10,
+                                    textAlign: "center",
+                                    color: "#8B82A7",
+                                    fontSize: 12.5,
+                                    lineHeight: 1.5,
+                                }}
+                            >
+                                If an account exists for{" "}
+                                <strong style={{ color: "#1E1B3A" }}>{username}</strong>, a reset
+                                link is on its way. It may take a minute to arrive.
+                            </p>
+
+                            <button
+                                type="button"
+                                onClick={() => setView("login")}
+                                style={{
+                                    marginTop: 6,
+                                    textAlign: "center",
+                                    color: "#7C3AED",
+                                    fontWeight: 700,
+                                    fontSize: 12.5,
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    display: "block",
+                                    width: "100%",
+                                }}
+                            >
+                                ← Back to Login
+                            </button>
+                        </>
+                    ) : view === "forgot" ? (
+                        <>
+                            <div
+                                style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: "50%",
+                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    margin: "0 auto 12px",
+                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
+                                }}
+                            >
+                                <i className="ti ti-lock" style={{ color: "#fff", fontSize: 18 }} />
+                            </div>
+
+                            <h2
+                                style={{
+                                    margin: 0,
+                                    textAlign: "center",
+                                    color: "#1E1B3A",
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Reset Password
+                            </h2>
+
+                            <p
+                                style={{
+                                    marginTop: 4,
+                                    marginBottom: 10,
+                                    textAlign: "center",
+                                    color: "#8B82A7",
+                                    fontSize: 12.5,
+                                }}
+                            >
+                                We'll send a reset link to the email below.
+                            </p>
+
                             <label
                                 style={{
                                     display: "block",
-                                    marginBottom: 8,
+                                    marginBottom: 4,
                                     color: "#4B4560",
                                     fontWeight: 600,
-                                    fontSize: 13,
+                                    fontSize: 11.5,
                                 }}
                             >
                                 Email Address
@@ -320,126 +599,292 @@ const Login = () => {
 
                             <input
                                 type="email"
-                                placeholder="Enter your email"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                required
+                                disabled
+                                readOnly
                                 style={{
                                     width: "100%",
-                                    padding: "14px 16px",
+                                    padding: "8px 12px",
                                     border: "1px solid #DDD6FE",
                                     borderRadius: 12,
-                                    background: "#FAF8FF",
+                                    background: "#F3EFFE",
+                                    color: "#7C3AED",
                                     outline: "none",
-                                    fontSize: 14,
-                                    marginBottom: 20,
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    marginBottom: 12,
                                     boxSizing: "border-box",
+                                    cursor: "not-allowed",
                                 }}
                             />
 
-                            <label
+                            {error && (
+                                <div
+                                    style={{
+                                        background: "#F8F5FF",
+                                        border: "1px solid #DDD6FE",
+                                        color: "#7C3AED",
+                                        padding: "8px 12px",
+                                        borderRadius: 10,
+                                        marginBottom: 12,
+                                        fontSize: 12.5,
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    {error}
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleSendResetLink}
+                                disabled={resetSending}
                                 style={{
-                                    display: "block",
-                                    marginBottom: 8,
-                                    color: "#4B4560",
-                                    fontWeight: 600,
-                                    fontSize: 13,
+                                    width: "100%",
+                                    padding: "9px",
+                                    border: "none",
+                                    borderRadius: 10,
+                                    cursor: resetSending ? "default" : "pointer",
+                                    color: "#fff",
+                                    fontWeight: 700,
+                                    fontSize: 13.5,
+                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                    marginBottom: 22,
                                 }}
                             >
-                                Password
-                            </label>
+                                {resetSending ? "Sending..." : "Send Reset Link"}
+                            </button>
 
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setError("");
+                                    setView("login");
+                                }}
+                                style={{
+                                    textAlign: "center",
+                                    color: "#7C3AED",
+                                    fontWeight: 700,
+                                    fontSize: 12.5,
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    display: "block",
+                                    width: "100%",
+                                }}
+                            >
+                                ← Back to Login
+                            </button>
+                        </>
+                    ) : (
+                        <>
                             <div
                                 style={{
-                                    position: "relative",
-                                    marginBottom: 28,
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: "50%",
+                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    margin: "0 auto 12px",
+                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
                                 }}
                             >
+                                <i
+                                    className="ti ti-shield-lock"
+                                    style={{ color: "#fff", fontSize: 18 }}
+                                />
+                            </div>
+
+                            <h2
+                                style={{
+                                    margin: 0,
+                                    textAlign: "center",
+                                    color: "#1E1B3A",
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Welcome Back
+                            </h2>
+
+                            <p
+                                style={{
+                                    marginTop: 4,
+                                    marginBottom: 10,
+                                    textAlign: "center",
+                                    color: "#8B82A7",
+                                    fontSize: 12.5,
+                                }}
+                            >
+                                Sign in to continue to your dashboard
+                            </p>
+
+                            {error && (
+                                <div
+                                    style={{
+                                        background: "#F8F5FF",
+                                        border: "1px solid #DDD6FE",
+                                        color: "#7C3AED",
+                                        padding: "8px 12px",
+                                        borderRadius: 10,
+                                        marginBottom: 12,
+                                        fontSize: 12.5,
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    {error}
+                                </div>
+                            )}
+
+                            <form onSubmit={handleLogin}>
+                                <label
+                                    style={{
+                                        display: "block",
+                                        marginBottom: 4,
+                                        color: "#4B4560",
+                                        fontWeight: 600,
+                                        fontSize: 11.5,
+                                        width: "100%",
+                                        maxWidth: 380,
+                                        margin: "0 auto",
+                                    }}
+                                >
+                                    Email Address
+                                </label>
+
                                 <input
-                                    type={showPassword ? "text" : "password"}
-                                    placeholder="Enter your password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
+                                    type="email"
+                                    placeholder="Enter your email"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
                                     required
                                     style={{
                                         width: "100%",
-                                        padding: "14px 50px 14px 16px",
+                                        padding: isMobile ? "14px 16px" : "12px 14px",
                                         border: "1px solid #DDD6FE",
                                         borderRadius: 12,
                                         background: "#FAF8FF",
                                         outline: "none",
-                                        fontSize: 14,
+                                        fontSize: isMobile ? 16 : 13,
+                                        marginBottom: 10,
                                         boxSizing: "border-box",
                                     }}
                                 />
 
-                                <button
-                                    type="button"
-                                    onClick={() => setShowPassword(!showPassword)}
+                                <label
                                     style={{
-                                        position: "absolute",
-                                        right: 14,
-                                        top: "50%",
-                                        transform: "translateY(-50%)",
-                                        border: "none",
-                                        background: "transparent",
-                                        cursor: "pointer",
-                                        color: "#6D28D9",
-                                        fontSize: 18,
+                                        display: "block",
+                                        marginBottom: 4,
+                                        color: "#4B4560",
+                                        fontWeight: 600,
+                                        fontSize: 11.5,
                                     }}
                                 >
-                                    <i className={showPassword ? "ti ti-eye-off" : "ti ti-eye"} />
+                                    Password
+                                </label>
+
+                                <div style={{ position: "relative", marginBottom: 10 }}>
+                                    <input
+                                        type={showPassword ? "text" : "password"}
+                                        placeholder="Enter your password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        required
+                                        style={{
+                                            width: "100%",
+                                            padding: isMobile
+                                                ? "14px 44px 14px 16px"
+                                                : "8px 40px 8px 12px",
+                                            border: "1px solid #DDD6FE",
+                                            borderRadius: 12,
+                                            background: "#FAF8FF",
+                                            outline: "none",
+                                            fontSize: isMobile ? 16 : 13,
+                                            boxSizing: "border-box",
+                                        }}
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        aria-label={
+                                            showPassword ? "Hide password" : "Show password"
+                                        }
+                                        style={{
+                                            position: "absolute",
+                                            right: 12,
+                                            top: "50%",
+                                            transform: "translateY(-50%)",
+                                            border: "none",
+                                            background: "transparent",
+                                            cursor: "pointer",
+                                            color: "#7C3AED",
+                                            fontSize: 16,
+                                        }}
+                                    >
+                                        <i
+                                            className={showPassword ? "ti ti-eye-off" : "ti ti-eye"}
+                                        />
+                                    </button>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    style={{
+                                        width: "100%",
+                                        padding: isMobile ? "13px" : "9px",
+                                        border: "none",
+                                        borderRadius: 10,
+                                        cursor: loading ? "default" : "pointer",
+                                        color: "#fff",
+                                        fontWeight: 700,
+                                        fontSize: 13.5,
+                                        background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                        boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                    }}
+                                >
+                                    {loading ? "Signing In..." : "Sign In"}
                                 </button>
-                            </div>
+                            </form>
 
                             <button
-                                type="submit"
-                                disabled={loading}
+                                type="button"
+                                onClick={handleForgotPasswordClick}
                                 style={{
-                                    width: "100%",
-                                    padding: "15px",
-                                    border: "none",
-                                    borderRadius: 14,
-                                    cursor: "pointer",
-                                    color: "#fff",
+                                    marginTop: 8,
+                                    textAlign: "center",
+                                    color: "#7C3AED",
                                     fontWeight: 700,
-                                    fontSize: 15,
-                                    background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
-                                    boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                    fontSize: 12.5,
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    display: "block",
+                                    width: "100%",
                                 }}
                             >
-                                {loading ? "Signing In..." : "Sign In"}
+                                Forgot Password?
                             </button>
-                        </form>
 
-                        <Link
-                            to="/forgot-password"
-                            style={{
-                                marginTop: 22,
-                                textAlign: "center",
-                                textDecoration: "none",
-                                color: "#6D28D9",
-                                fontWeight: 700,
-                                fontSize: 14,
-                            }}
-                        >
-                            Forgot Password?
-                        </Link>
-
-                        <p
-                            style={{
-                                marginTop: 40,
-                                textAlign: "center",
-                                color: "#9CA3AF",
-                                fontSize: 12,
-                            }}
-                        >
-                            © 2026 Daily Work Allocation System
-                        </p>
-                    </div>
+                            <p
+                                style={{
+                                    marginTop: 8,
+                                    textAlign: "center",
+                                    color: "#9CA3AF",
+                                    fontSize: 10.5,
+                                }}
+                            >
+                                © 2026 Daily Work Allocation System
+                            </p>
+                        </>
+                    )}
                 </div>
             </div>
-        </>
+        </div>
     );
 };
 
