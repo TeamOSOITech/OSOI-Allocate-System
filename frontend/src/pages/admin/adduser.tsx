@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/sidebar";
 import VoiceAssistant from "../../components/voiceAssistant";
 import { speak } from "../../utils/speak";
-//import FormErrorBoundary from "../../components/FormErrorBoundary";
+import FormErrorBoundary from "../../components/TempBoundary";
 
 const MOBILE_BREAKPOINT = 768;
 
