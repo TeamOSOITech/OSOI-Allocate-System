@@ -11,86 +11,96 @@ interface HeaderProps {
 }
 
 const MOBILE_BREAKPOINT = 768;
+const SMALL_MOBILE_BREAKPOINT = 400;
 
-function useIsMobile() {
-    const [isMobile, setIsMobile] = useState(
-        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
-    );
+function useBreakpoint() {
+    const [width, setWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1024);
     useEffect(() => {
-        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        const onResize = () => setWidth(window.innerWidth);
         window.addEventListener("resize", onResize);
         return () => window.removeEventListener("resize", onResize);
     }, []);
-    return isMobile;
+    return {
+        isMobile: width < MOBILE_BREAKPOINT,
+        isSmallMobile: width < SMALL_MOBILE_BREAKPOINT,
+    };
 }
 
 export default function Header({
     userName,
-    logoSrc,
     onRefresh,
     onHelp,
     onNotificationsClick,
     onProfileClick,
 }: HeaderProps) {
-    const isMobile = useIsMobile();
+    const { isMobile, isSmallMobile } = useBreakpoint();
 
     return (
         <header style={isMobile ? styles.headerMobile : styles.header}>
-            <div style={styles.left}>
-                <div style={isMobile ? styles.logoMobile : styles.logo}>
-                    {logoSrc ? (
-                        <img src={logoSrc} alt="Company logo" style={styles.logoImg} />
-                    ) : (
-                        <span style={isMobile ? styles.logoFallbackMobile : styles.logoFallback}>
-                            LOGO
-                        </span>
-                    )}
+            {/* LEFT */}
+            <div style={isMobile ? styles.leftMobile : styles.left}>
+                {/* Logo */}
+                <div style={styles.logoBlock}>
+                    <img
+                        src="/logo.png"
+                        alt="Logo"
+                        style={{
+                            width: isMobile ? 26 : 38,
+                            height: isMobile ? 26 : 38,
+                            objectFit: "contain",
+                            flexShrink: 0,
+                        }}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                        <div style={isMobile ? styles.brandNameMobile : styles.brandName}>
+                            Alokate
+                        </div>
+                        {!isSmallMobile && (
+                            <div style={isMobile ? styles.brandSubMobile : styles.brandSub}>
+                                Workforce Platform
+                            </div>
+                        )}
+                    </div>
                 </div>
+
+                {/* Welcome */}
                 {!isMobile && (
-                    <>
-                        <span style={styles.welcome}>Welcome,{userName ? ` ${userName}` : ""}</span>
-                        <span style={styles.emoji} aria-hidden="true">
-                            🎉
+                    <div style={styles.welcomeBlock}>
+                        <span style={styles.welcome}>
+                            Welcome, <strong>{userName || "Administrator"}</strong>
                         </span>
-                    </>
-                )}
-                {isMobile && (
-                    <span style={styles.welcomeMobile}>
-                        Welcome{userName ? `, ${userName}` : ""}
-                    </span>
+                        <span style={styles.dot} />
+                    </div>
                 )}
             </div>
 
+            {/* RIGHT */}
             <div style={isMobile ? styles.rightMobile : styles.right}>
-                <button style={styles.iconBtn} aria-label="Help" onClick={onHelp}>
-                    <i
-                        className="ti ti-question-mark"
-                        style={{ fontSize: isMobile ? 13 : 15 }}
-                        aria-hidden="true"
-                    />
-                </button>
+                {!isSmallMobile && (
+                    <>
+                        <button style={styles.iconBtn} onClick={onHelp} aria-label="Help">
+                            <i className="ti ti-question-mark" />
+                        </button>
+                        <button
+                            style={styles.iconBtn}
+                            onClick={onNotificationsClick}
+                            aria-label="Notifications"
+                        >
+                            <i className="ti ti-bell" />
+                        </button>
+                    </>
+                )}
 
-                <button
-                    style={styles.bellBtn}
-                    aria-label="Notifications"
-                    onClick={onNotificationsClick}
-                >
-                    <i
-                        className="ti ti-bell"
-                        style={{ fontSize: isMobile ? 16 : 18 }}
-                        aria-hidden="true"
-                    />
-                </button>
-
-                <button
-                    style={isMobile ? styles.avatarBtnMobile : styles.avatarBtn}
-                    aria-label="User profile"
-                    onClick={onProfileClick}
-                />
+                {!isMobile && (
+                    <div style={styles.avatarNameOnly} onClick={onProfileClick}>
+                        {userName || "Administrator"}
+                    </div>
+                )}
 
                 <button
                     style={isMobile ? styles.refreshBtnMobile : styles.refreshBtn}
                     onClick={onRefresh}
+                    aria-label="Refresh"
                 >
                     {isMobile ? "↻" : "Refresh"}
                 </button>
@@ -101,119 +111,127 @@ export default function Header({
 
 const styles: Record<string, CSSProperties> = {
     header: {
-        background: "#d9d9d9",
+        background: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 18px",
+        padding: "0 28px",
         height: "64px",
         flexShrink: 0,
+        borderBottom: "1px solid #eee",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        gap: 16,
     },
     headerMobile: {
-        background: "#d9d9d9",
+        background: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 12px",
-        height: "52px",
-        flexShrink: 0,
+        padding: "8px 12px",
+        minHeight: "56px",
+        borderBottom: "1px solid #eee",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        gap: "8px",
     },
-    left: { display: "flex", alignItems: "center", gap: "10px" },
-    logo: {
-        width: "48px",
-        height: "48px",
-        borderRadius: "6px",
-        background: "#fff",
+
+    left: { display: "flex", alignItems: "center", gap: 28, minWidth: 0, flex: 1 },
+    leftMobile: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 },
+
+    logoBlock: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-        flexShrink: 0,
+        gap: 10,
+        minWidth: 0,
+        flexShrink: 1,
     },
-    logoMobile: {
-        width: "34px",
-        height: "34px",
-        borderRadius: "6px",
-        background: "#fff",
+    brandName: {
+        fontSize: 18,
+        fontWeight: 800,
+        color: "#1F1D4D",
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+    },
+    brandNameMobile: {
+        fontSize: 14,
+        fontWeight: 800,
+        color: "#1F1D4D",
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+    },
+    brandSub: { fontSize: 11, color: "#8A8FA8", marginTop: 2, whiteSpace: "nowrap" },
+    brandSubMobile: { fontSize: 9, color: "#8A8FA8", marginTop: 1, whiteSpace: "nowrap" },
+
+    welcomeBlock: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
+        gap: 8,
+        minWidth: 0,
         overflow: "hidden",
-        flexShrink: 0,
     },
-    logoImg: { width: "100%", height: "100%", objectFit: "contain" },
-    logoFallback: { fontWeight: 700, color: "#1a1a2e", fontSize: "11px" },
-    logoFallbackMobile: { fontWeight: 700, color: "#1a1a2e", fontSize: "9px" },
-    welcome: { fontSize: "15px", fontWeight: 700, color: "#1a1a2e" },
-    welcomeMobile: { fontSize: "13px", fontWeight: 700, color: "#1a1a2e" },
-    emoji: { fontSize: "16px" },
-    right: { display: "flex", alignItems: "center", gap: "16px" },
-    rightMobile: { display: "flex", alignItems: "center", gap: "10px" },
+    welcome: {
+        fontSize: "14px",
+        color: "#1e1b3a",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    dot: { width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 },
+
+    right: { display: "flex", alignItems: "center", gap: "14px", flexShrink: 0 },
+    rightMobile: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
+
     iconBtn: {
-        width: "28px",
-        height: "28px",
-        borderRadius: "50%",
-        border: "1.5px solid #a32d2d",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#a32d2d",
-        background: "transparent",
-        cursor: "pointer",
-        padding: 0,
-    },
-    bellBtn: {
-        border: "none",
-        background: "transparent",
-        color: "#a32d2d",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        padding: 0,
-    },
-    avatarBtn: {
         width: "30px",
         height: "30px",
         borderRadius: "50%",
-        background: "#e8e15a",
-        border: "none",
+        border: "1px solid #e5e0ff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#7c3aed",
+        background: "#faf9ff",
         cursor: "pointer",
         padding: 0,
+        flexShrink: 0,
     },
-    avatarBtnMobile: {
-        width: "26px",
-        height: "26px",
-        borderRadius: "50%",
-        background: "#e8e15a",
-        border: "none",
+
+    avatarNameOnly: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#1e1b3a",
         cursor: "pointer",
-        padding: 0,
+        whiteSpace: "nowrap",
+        maxWidth: 160,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
     },
+
     refreshBtn: {
-        background: "#a32d2d",
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
         border: "none",
-        borderRadius: "3px",
-        padding: "5px 12px",
-        fontSize: "11px",
-        fontWeight: 600,
+        borderRadius: "8px",
+        padding: "8px 16px",
+        fontSize: "12px",
+        fontWeight: 700,
         cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
     },
     refreshBtnMobile: {
-        background: "#a32d2d",
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
         border: "none",
         borderRadius: "50%",
-        width: "28px",
-        height: "28px",
-        fontSize: "16px",
+        width: "30px",
+        height: "30px",
+        fontSize: "15px",
         fontWeight: 600,
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: 0,
+        flexShrink: 0,
     },
 };

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 type MenuItem = {
@@ -37,9 +36,7 @@ const menuItems: MenuItem[] = [
         roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
     },
     { label: "Admin", icon: "ti ti-user", path: "/admin", roles: ["ADMIN"] },
-    // NEW: Billing — Admin only
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ["ADMIN"] },
-    // NEW: Quality Scores — Admin and Manager only
     {
         label: "Quality Scores",
         icon: "ti ti-star",
@@ -54,7 +51,6 @@ const menuItems: MenuItem[] = [
     },
 ];
 
-// Map route path → sidebar label
 const pathToLabel: Record<string, string> = {
     "/tasks": "Today's Task",
     "/task-progress": "Task Progress",
@@ -81,7 +77,6 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     const navigate = useNavigate();
     const location = useLocation();
 
-    // Derive active label from current URL — always in sync
     const activeLabel = pathToLabel[location.pathname] || "";
 
     const userStr = localStorage.getItem("user");
@@ -118,16 +113,20 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     return (
         <aside
             style={{
-                width: "210px",
-                background: "#e7e7e7",
-                padding: "18px 12px",
+                width: "220px",
+                background: "#fff",
+                padding: "20px 14px",
                 minHeight: "100vh",
                 display: "flex",
                 flexDirection: "column",
-                gap: "10px",
+                gap: "6px",
+                position: "relative",
+                borderRight: "1px solid #eee",
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             }}
         >
+            {/* Logo */}
+
             {visibleItems.map((item) => {
                 const isToday = item.label === "Today's Task";
                 const isActive = activeLabel === item.label;
@@ -141,19 +140,16 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                             alignItems: "center",
                             justifyContent: isToday ? "space-between" : "flex-start",
                             gap: "10px",
-
-                            background: isActive ? "#f4a93c" : "#fff",
-                            color: isActive ? "#3a2200" : "#3b3b8f",
-
-                            borderRadius: "24px",
-                            padding: "11px 18px",
+                            background: isActive
+                                ? "linear-gradient(135deg, #8b5cf6, #6d28d9)"
+                                : "transparent",
+                            color: isActive ? "#fff" : "#6b6280",
+                            borderRadius: "20px",
+                            padding: "10px 14px",
                             fontSize: "13px",
-                            fontWeight: isActive ? 600 : 500,
+                            fontWeight: isActive ? 700 : 500,
                             cursor: "pointer",
-                            border:
-                                isActive && !isToday
-                                    ? "1.5px solid #FAC775"
-                                    : "1.5px solid transparent",
+                            boxShadow: isActive ? "0 4px 12px rgba(124,58,237,0.35)" : "none",
                             transition: "all 0.15s",
                         }}
                     >
@@ -165,7 +161,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                             width: "8px",
                                             height: "8px",
                                             borderRadius: "50%",
-                                            background: "#d6362e",
+                                            background: isActive ? "#fff" : "#d6362e",
                                             flexShrink: 0,
                                         }}
                                     />
@@ -173,7 +169,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                 </div>
                                 <i
                                     className="ti ti-alert-triangle"
-                                    style={{ fontSize: "15px", color: "#3a2200" }}
+                                    style={{
+                                        fontSize: "15px",
+                                        color: isActive ? "#fff" : "#f59e0b",
+                                    }}
                                     aria-hidden="true"
                                 />
                             </>
@@ -182,8 +181,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                 <i
                                     className={item.icon}
                                     style={{
-                                        fontSize: "16px",
-                                        color: isActive ? "#854F0B" : "#3b3b8f",
+                                        fontSize: "15px",
+                                        color: isActive ? "#fff" : "#6b6280",
                                         flexShrink: 0,
                                     }}
                                     aria-hidden="true"
@@ -202,24 +201,42 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     display: "flex",
                     alignItems: "center",
                     gap: "10px",
-                    background: "#fff",
-                    color: "#3b3b8f",
-                    borderRadius: "24px",
-                    padding: "11px 18px",
+                    background: "transparent",
+                    color: "#6b6280",
+                    borderRadius: "20px",
+                    padding: "10px 14px",
                     fontSize: "13px",
                     fontWeight: 500,
                     cursor: "pointer",
-                    border: "1.5px solid transparent",
-                    transition: "all 0.15s",
+                    marginTop: 6,
                 }}
             >
                 <i
                     className="ti ti-logout-2"
-                    style={{ fontSize: "16px", color: "#3b3b8f" }}
+                    style={{ fontSize: "15px", color: "#6b6280" }}
                     aria-hidden="true"
                 />
                 Sign off
             </div>
+
+            {/* Decorative plant illustration */}
+            <svg
+                width="130"
+                height="120"
+                viewBox="0 0 100 90"
+                style={{
+                    position: "absolute",
+                    bottom: 110,
+                    right: 0,
+                    opacity: 0.95,
+                    pointerEvents: "none",
+                }}
+            >
+                <ellipse cx="50" cy="82" rx="38" ry="6" fill="#ede9fe" />
+                <rect x="30" y="55" width="40" height="30" rx="6" fill="#ddd6fe" />
+                <path d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z" fill="#c4b5fd" />
+                <path d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z" fill="#a78bfa" />
+            </svg>
         </aside>
     );
 };

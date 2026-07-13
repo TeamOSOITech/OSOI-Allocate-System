@@ -48,22 +48,39 @@ export default function AddUser() {
 
     const generatePassword = () => {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
-
         let pass = "";
-
         for (let i = 0; i < 10; i++) {
             pass += chars.charAt(Math.floor(Math.random() * chars.length));
         }
-
-        setFormData({
-            ...formData,
-            password: pass,
-        });
+        setFormData({ ...formData, password: pass });
     };
 
     const copyPassword = () => {
         navigator.clipboard.writeText(formData.password);
         alert("Password copied!");
+    };
+
+    const downloadTemplate = () => {
+        const templateData = [
+            {
+                "Full Name": "John Doe",
+                Email: "john.doe@example.com",
+                "Employee ID": "EMP12345",
+                Designation: "Senior Developer",
+                Department: "Tech",
+                "Date of Birth": "1995-05-10",
+                "Date of Joining": "2023-01-15",
+                "Reporting Manager": "manager@example.com",
+                "Worked In Teams": "Tech",
+                Password: "Sample@123",
+                Role: "EMPLOYEE",
+            },
+        ];
+
+        const worksheet = XLSX.utils.json_to_sheet(templateData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Users");
+        XLSX.writeFile(workbook, "bulk_add_users_template.xlsx");
     };
 
     const handleBulkUpload = async () => {
@@ -114,11 +131,7 @@ export default function AddUser() {
             );
 
             const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data?.message || "Bulk upload failed");
-            }
-
+            if (!response.ok) throw new Error(data?.message || "Bulk upload failed");
             setBulkResults(data.results);
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong reading the file.");
@@ -153,14 +166,8 @@ export default function AddUser() {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/add-user`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    ...formData,
-                    firstName,
-                    lastName,
-                }),
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...formData, firstName, lastName }),
             });
 
             if (!response.ok) {
@@ -193,13 +200,23 @@ export default function AddUser() {
                         ☰
                     </button>
                     <span style={styles.mobileTitle}>Add New User</span>
-                    <button
-                        style={styles.bulkHeaderBtnMobile}
-                        onClick={() => setShowBulkModal(true)}
-                        type="button"
-                    >
-                        Bulk Add
-                    </button>
+                    <div style={styles.mobileHeaderBtnGroup}>
+                        <button
+                            style={styles.templateBtnMobile}
+                            onClick={downloadTemplate}
+                            type="button"
+                            aria-label="Download Excel Format"
+                        >
+                            <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />
+                        </button>
+                        <button
+                            style={styles.bulkHeaderBtnMobile}
+                            onClick={() => setShowBulkModal(true)}
+                            type="button"
+                        >
+                            Bulk Add
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -208,7 +225,6 @@ export default function AddUser() {
                     {sidebarOpen && (
                         <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
                     )}
-
                     <div
                         style={{
                             ...styles.sidebarDrawer,
@@ -225,256 +241,262 @@ export default function AddUser() {
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
                     {!isMobile && (
-                        <div style={styles.header}>
-                            <h2 style={styles.heading}>Add New User</h2>
-                            <button
-                                style={styles.bulkHeaderBtn}
-                                onClick={() => setShowBulkModal(true)}
-                                type="button"
-                            >
-                                Bulk Add Users
-                            </button>
+                        <div style={styles.pageHeaderRow}>
+                            <div style={styles.pageTitleBlock}>
+                                <h2 style={styles.pageTitle}>Add New User</h2>
+                                <p style={styles.pageSubtitle}>
+                                    Create a new employee account and assign role & permissions
+                                </p>
+                            </div>
+                            <div style={styles.headerButtonGroup}>
+                                <button
+                                    style={styles.templateBtn}
+                                    onClick={downloadTemplate}
+                                    type="button"
+                                >
+                                    <i
+                                        className="ti ti-file-spreadsheet"
+                                        style={{ fontSize: 14 }}
+                                    />
+                                    Excel Format
+                                </button>
+                                <button
+                                    style={styles.bulkBtn}
+                                    onClick={() => setShowBulkModal(true)}
+                                    type="button"
+                                >
+                                    <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                    Bulk Add Users
+                                </button>
+                            </div>
                         </div>
                     )}
 
-                    <div style={isMobile ? styles.cardMobile : styles.card}>
-                        <div style={isMobile ? styles.gridMobile : styles.grid}>
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Select User Name
-                                </label>
-                                <select style={isMobile ? styles.inputMobile : styles.input}>
-                                    <option>Search User Name</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Full Name
-                                </label>
-                                <input
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.fullName}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, fullName: e.target.value })
-                                    }
-                                    placeholder="e.g. John Doe"
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Email
-                                </label>
-                                <input
-                                    type="email"
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.email}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, email: e.target.value })
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Employee ID
-                                </label>
-                                <input
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.employeeId}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, employeeId: e.target.value })
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Designation
-                                </label>
-                                <input
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.designation}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, designation: e.target.value })
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Department
-                                </label>
-                                <select
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.department}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, department: e.target.value })
-                                    }
-                                >
-                                    <option value="">Select Department</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Role
-                                </label>
-
-                                <select
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.role}
-                                    onChange={(e) =>
-                                        setFormData({
-                                            ...formData,
-                                            role: e.target.value,
-                                        })
-                                    }
-                                >
-                                    <option value="">Select Role</option>
-                                    <option value="ADMIN">Admin</option>
-                                    <option value="MANAGER">Manager</option>
-                                    <option value="EMPLOYEE">Employee</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Date of Birth
-                                </label>
-                                <input
-                                    type="date"
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.dob}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, dob: e.target.value })
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Date of Joining
-                                </label>
-                                <input
-                                    type="date"
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.doj}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, doj: e.target.value })
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Reporting Manager
-                                </label>
-                                <select
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.reportingManager}
-                                    onChange={(e) =>
-                                        setFormData({
-                                            ...formData,
-                                            reportingManager: e.target.value,
-                                        })
-                                    }
-                                >
-                                    <option value="">Select Manager</option>
-                                    <option value="Joyce">joyce@gmail.com</option>
-                                    <option value="SPRAINT">spraint@gmail.com</option>
-                                </select>
-
-                                {!isMobile && <p style={styles.note}>* Please enter Email only</p>}
-                            </div>
-
-                            {isMobile && (
-                                <div style={{ gridColumn: "1 / -1" }}>
-                                    <p style={styles.note}>* Please enter Email only</p>
+                    <div style={styles.formCard}>
+                        {/* Section: Personal Information */}
+                        <div style={styles.sectionHeader}>
+                            <i className="ti ti-user" style={{ fontSize: 15, color: "#7c3aed" }} />
+                            <span style={styles.sectionHeaderText}>Personal Information</span>
+                        </div>
+                        <div style={styles.sectionBody}>
+                            <div style={isMobile ? styles.gridMobile : styles.grid}>
+                                <div>
+                                    <label style={styles.label}>Select User Name</label>
+                                    <select style={styles.input}>
+                                        <option>Search User Name</option>
+                                    </select>
                                 </div>
-                            )}
-
-                            <div style={isMobile ? { gridColumn: "1 / -1" } : undefined}>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Password
-                                </label>
-
-                                <div style={styles.passwordRow}>
+                                <div>
+                                    <label style={styles.label}>Full Name</label>
                                     <input
-                                        type="text"
-                                        style={{
-                                            ...(isMobile ? styles.inputMobile : styles.input),
-                                            flex: 1,
-                                            minWidth: 0,
-                                        }}
-                                        value={formData.password}
+                                        style={styles.input}
+                                        value={formData.fullName}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, fullName: e.target.value })
+                                        }
+                                        placeholder="e.g. John Doe"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Email</label>
+                                    <input
+                                        type="email"
+                                        style={styles.input}
+                                        value={formData.email}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, email: e.target.value })
+                                        }
+                                        placeholder="e.g. john.doe@email.com"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Employee ID</label>
+                                    <input
+                                        style={styles.input}
+                                        value={formData.employeeId}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, employeeId: e.target.value })
+                                        }
+                                        placeholder="e.g. EMP12345"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Designation</label>
+                                    <input
+                                        style={styles.input}
+                                        value={formData.designation}
                                         onChange={(e) =>
                                             setFormData({
                                                 ...formData,
-                                                password: e.target.value,
+                                                designation: e.target.value,
                                             })
                                         }
-                                        placeholder="Enter password or generate"
+                                        placeholder="e.g. Senior Developer"
                                     />
-
-                                    <button
-                                        style={styles.passwordActionBtn}
-                                        onClick={generatePassword}
-                                        type="button"
-                                    >
-                                        Generate
-                                    </button>
-
-                                    <button
-                                        style={styles.passwordActionBtn}
-                                        onClick={copyPassword}
-                                        type="button"
-                                    >
-                                        Copy
-                                    </button>
                                 </div>
-                            </div>
-
-                            <div style={isMobile ? { gridColumn: "1 / -1" } : undefined}>
-                                <label style={isMobile ? styles.labelMobile : styles.label}>
-                                    Worked In Teams
-                                </label>
-                                <select
-                                    style={isMobile ? styles.inputMobile : styles.input}
-                                    value={formData.workedInTeams}
-                                    onChange={(e) =>
-                                        setFormData({
-                                            ...formData,
-                                            workedInTeams: e.target.value,
-                                        })
-                                    }
-                                >
-                                    <option value="">Search User Name</option>
-                                    <option value="Tech">Tech</option>
-                                    <option value="Legal">Legal</option>
-                                    <option value="SD">SD</option>
-                                    <option value="HR & Admin">HR & Admin</option>
-                                </select>
+                                <div>
+                                    <label style={styles.label}>Department</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formData.department}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, department: e.target.value })
+                                        }
+                                    >
+                                        <option value="">Select Department</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
-                        {error && <p style={styles.error}>{error}</p>}
+                        {/* Section: Organization Details */}
+                        <div style={styles.sectionHeader}>
+                            <i
+                                className="ti ti-building"
+                                style={{ fontSize: 15, color: "#7c3aed" }}
+                            />
+                            <span style={styles.sectionHeaderText}>Organization Details</span>
+                        </div>
+                        <div style={styles.sectionBody}>
+                            <div style={isMobile ? styles.gridMobile : styles.grid}>
+                                <div>
+                                    <label style={styles.label}>Role</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formData.role}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, role: e.target.value })
+                                        }
+                                    >
+                                        <option value="">Select Role</option>
+                                        <option value="ADMIN">Admin</option>
+                                        <option value="MANAGER">Manager</option>
+                                        <option value="EMPLOYEE">Employee</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Reporting Manager</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formData.reportingManager}
+                                        onChange={(e) =>
+                                            setFormData({
+                                                ...formData,
+                                                reportingManager: e.target.value,
+                                            })
+                                        }
+                                    >
+                                        <option value="">Select Manager</option>
+                                        <option value="Joyce">joyce@gmail.com</option>
+                                        <option value="SPRAINT">spraint@gmail.com</option>
+                                    </select>
+                                    <p style={styles.note}>* Please enter Email only</p>
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Worked In Teams</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formData.workedInTeams}
+                                        onChange={(e) =>
+                                            setFormData({
+                                                ...formData,
+                                                workedInTeams: e.target.value,
+                                            })
+                                        }
+                                    >
+                                        <option value="">Search User Name</option>
+                                        <option value="Tech">Tech</option>
+                                        <option value="Legal">Legal</option>
+                                        <option value="SD">SD</option>
+                                        <option value="HR & Admin">HR & Admin</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Date of Birth</label>
+                                    <input
+                                        type="date"
+                                        style={styles.input}
+                                        value={formData.dob}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, dob: e.target.value })
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.label}>Date of Joining</label>
+                                    <input
+                                        type="date"
+                                        style={styles.input}
+                                        value={formData.doj}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, doj: e.target.value })
+                                        }
+                                    />
+                                </div>
+                            </div>
+                        </div>
 
-                        <div style={isMobile ? styles.footerMobile : styles.footer}>
-                            <button
-                                style={{
-                                    ...(isMobile
-                                        ? styles.registerButtonMobile
-                                        : styles.registerButton),
-                                    opacity: isSubmitting ? 0.7 : 1,
-                                    cursor: isSubmitting ? "not-allowed" : "pointer",
-                                }}
-                                onClick={handleRegister}
-                                disabled={isSubmitting}
+                        {/* Section: Security */}
+                        <div style={styles.sectionHeader}>
+                            <i className="ti ti-lock" style={{ fontSize: 15, color: "#7c3aed" }} />
+                            <span style={styles.sectionHeaderText}>Security</span>
+                        </div>
+                        <div style={styles.sectionBody}>
+                            <label style={styles.label}>Password</label>
+                            <div
+                                style={
+                                    isMobile
+                                        ? styles.passwordRegisterRowMobile
+                                        : styles.passwordRegisterRow
+                                }
                             >
-                                {isSubmitting ? "Saving..." : "Register"}
-                            </button>
+                                <div
+                                    style={isMobile ? styles.passwordRowMobile : styles.passwordRow}
+                                >
+                                    <input
+                                        type="text"
+                                        style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                        value={formData.password}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, password: e.target.value })
+                                        }
+                                        placeholder="Enter password or generate"
+                                    />
+                                    <button
+                                        style={styles.generateBtn}
+                                        onClick={generatePassword}
+                                        type="button"
+                                    >
+                                        <i className="ti ti-refresh" style={{ fontSize: 13 }} />
+                                        Generate
+                                    </button>
+                                    <button
+                                        style={styles.copyBtn}
+                                        onClick={copyPassword}
+                                        type="button"
+                                    >
+                                        <i className="ti ti-copy" style={{ fontSize: 13 }} />
+                                        Copy
+                                    </button>
+                                </div>
+
+                                <button
+                                    style={{
+                                        ...(isMobile
+                                            ? styles.registerButtonMobile
+                                            : styles.registerButton),
+                                        opacity: isSubmitting ? 0.7 : 1,
+                                        cursor: isSubmitting ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={handleRegister}
+                                    disabled={isSubmitting}
+                                >
+                                    <i className="ti ti-user-plus" style={{ fontSize: 15 }} />
+                                    {isSubmitting ? "Saving..." : "Register User"}
+                                </button>
+                            </div>
+
+                            {error && <p style={styles.error}>{error}</p>}
                         </div>
                     </div>
                 </div>
@@ -499,12 +521,10 @@ export default function AddUser() {
                 <div style={styles.overlay} onClick={closeBulkModal}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
-                            <div>
-                                <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
-                                <p style={styles.bulkModalSubtitle}>
-                                    Upload an Excel file to create multiple accounts at once
-                                </p>
-                            </div>
+                            <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
+                            <p style={styles.bulkModalSubtitle}>
+                                Upload an Excel file to create multiple accounts at once
+                            </p>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeBulkModal}
@@ -518,7 +538,9 @@ export default function AddUser() {
                         <div style={styles.bulkInfoBox}>
                             <span style={styles.bulkInfoLabel}>Required columns</span>
                             <p style={styles.bulkInfoText}>
-                                Full Name, Email, Password, Role (ADMIN / MANAGER / EMPLOYEE)
+                                Full Name, Email, Employee ID, Designation, Department, Date of
+                                Birth, Date of Joining, Reporting Manager, Worked In Teams,
+                                Password, Role (ADMIN / MANAGER / EMPLOYEE)
                             </p>
                         </div>
 
@@ -535,7 +557,6 @@ export default function AddUser() {
                                     {bulkFile ? bulkFile.name : "No file chosen"}
                                 </span>
                             </label>
-
                             <button
                                 type="button"
                                 onClick={handleBulkUpload}
@@ -572,7 +593,6 @@ export default function AddUser() {
                                         )}
                                     </span>
                                 </div>
-
                                 <div style={styles.resultsList}>
                                     {bulkResults.map((r, i) => (
                                         <div key={i} style={styles.resultRow}>
@@ -605,793 +625,471 @@ export default function AddUser() {
 const styles: Record<string, CSSProperties> = {
     root: {
         display: "flex",
-
         width: "100%",
-
         flex: 1,
-
         minHeight: 0,
-
-        background: "#ececec",
-
-        fontFamily: "'Segoe UI', sans-serif",
+        background: "#f5f3ff",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        overflowX: "hidden",
     },
-
     rootMobile: {
         display: "flex",
-
         flexDirection: "column",
-
         flex: 1,
-
         minHeight: 0,
-
         width: "100%",
-
-        background: "#ececec",
-
+        background: "#f5f3ff",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-
         position: "relative",
+        overflowX: "hidden",
     },
 
     mobileTopbar: {
         display: "flex",
-
         alignItems: "center",
-
         justifyContent: "space-between",
-
         gap: "12px",
-
         padding: "12px 16px",
-
         background: "#fff",
-
-        borderBottom: "2px solid #d92f3b",
-
+        borderBottom: "1px solid #eee",
         position: "sticky",
-
         top: 0,
-
         zIndex: 30,
+        boxSizing: "border-box",
+        width: "100%",
     },
-
     hamburgerBtn: {
         border: "none",
-
         background: "transparent",
-
         fontSize: "20px",
-
         cursor: "pointer",
-
         padding: 4,
     },
-
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#1a1a2e" },
-
+    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#1e1b3a" },
     overlay: {
         position: "fixed",
-
         inset: 0,
-
         background: "rgba(0,0,0,0.4)",
-
         zIndex: 40,
-
         display: "flex",
-
         alignItems: "center",
-
         justifyContent: "center",
     },
-
     sidebarDrawer: {
         position: "fixed",
-
         top: 0,
-
         left: 0,
-
         bottom: 0,
-
         width: "230px",
-
         maxWidth: "80vw",
-
         zIndex: 50,
-
         transition: "transform 0.25s ease",
-
         boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
-
         overflowY: "auto",
     },
 
     contentCol: {
         flex: 1,
-
         display: "flex",
-
         flexDirection: "column",
-
         overflow: "hidden",
-
         minHeight: 0,
     },
-
-    contentColMobile: {
-        flex: 1,
-
-        display: "flex",
-
-        flexDirection: "column",
-
-        overflowY: "auto",
-    },
-
+    contentColMobile: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" },
     contentBody: {
         display: "flex",
-
         flexDirection: "column",
-
-        gap: "14px",
-
-        padding: "20px",
-
+        padding: "20px 24px",
         flex: 1,
-
+        overflow: "hidden",
         minHeight: 0,
-
-        overflowY: "auto",
+        maxWidth: "100%",
+        boxSizing: "border-box",
     },
 
-    header: {
-        background: "#fff",
-
-        borderRadius: 10,
-
-        borderBottom: "2px solid #d92f3b",
-
+    pageHeaderRow: {
+        position: "relative",
         display: "flex",
-
         alignItems: "center",
-
-        justifyContent: "space-between",
-
-        padding: "12px 24px",
-
-        boxShadow: "0 2px 8px rgba(0,0,0,.08)",
+        justifyContent: "center",
+        marginBottom: 6,
+        minHeight: 48,
     },
+    pageTitleBlock: { textAlign: "center" },
+    pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#1e1b3a" },
+    pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#9c96b8" },
 
-    heading: {
-        margin: 0,
-
-        fontSize: 34,
-
-        fontWeight: 700,
+    headerButtonGroup: {
+        position: "absolute",
+        right: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
     },
-
-    bulkHeaderBtn: {
-        background: "#df3740",
-
-        color: "#fff",
-
-        border: "none",
-
-        borderRadius: 30,
-
-        padding: "12px 28px",
-
-        fontSize: 15,
-
+    templateBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#fff",
+        color: "#6d28d9",
+        border: "1px solid #ddd6fe",
+        borderRadius: 24,
+        padding: "11px 20px",
+        fontSize: 13,
         fontWeight: 700,
-
         cursor: "pointer",
     },
-
+    bulkBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 24,
+        padding: "11px 22px",
+        fontSize: 13,
+        fontWeight: 700,
+        cursor: "pointer",
+        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+    },
     bulkHeaderBtnMobile: {
-        background: "#df3740",
-
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
-
         border: "none",
-
         borderRadius: 20,
-
         padding: "6px 14px",
-
         fontSize: 12,
-
         fontWeight: 700,
-
         cursor: "pointer",
-
         whiteSpace: "nowrap",
     },
-    card: {
-        background: "#fff",
-        borderRadius: 10,
-        padding: 30,
-        boxShadow: "0 2px 8px rgba(0,0,0,.08)",
-        flex: 0.8,
+
+    formCard: {
+        flex: 1,
         display: "flex",
         flexDirection: "column",
-    },
-    cardMobile: {
         background: "#fff",
-        borderRadius: 8,
-        padding: 16,
-        boxShadow: "0 2px 8px rgba(0,0,0,.08)",
+        borderRadius: 20,
+        padding: 0,
+        boxShadow: "0 10px 30px rgba(0,0,0,.06)",
+        overflow: "hidden",
+        minHeight: 0,
     },
-    grid: {
-        display: "grid",
-
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-
-        gap: "28px 40px",
+    sectionHeader: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "14px 24px",
+        background: "#faf8ff",
+        borderBottom: "1px solid #f0ecff",
     },
+    sectionHeaderText: { fontSize: 13, fontWeight: 700, color: "#6d28d9" },
+    sectionBody: { padding: "16px 24px" },
 
+    grid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px 24px" },
     gridMobile: {
         display: "grid",
-
-        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-
-        gap: "12px 10px",
+        gridTemplateColumns: "1fr",
+        gap: "12px",
     },
 
-    label: {
-        display: "block",
-
-        marginBottom: 8,
-
-        color: "#1c1975",
-
-        fontSize: 16,
-    },
-
-    labelMobile: {
-        display: "block",
-
-        marginBottom: 4,
-
-        color: "#1c1975",
-
-        fontSize: 13,
-    },
-
+    label: { display: "block", marginBottom: 6, color: "#4b4560", fontSize: 12, fontWeight: 600 },
     input: {
         width: "100%",
-
-        padding: "12px",
-
-        background: "#f5f5f5",
-
-        border: "1px solid #ddd",
-
+        padding: "10px 12px",
+        background: "#fafafa",
+        border: "1px solid #ececf5",
         outline: "none",
-
-        fontSize: 15,
-
-        borderRadius: 4,
-
-        boxSizing: "border-box",
-    },
-
-    inputMobile: {
-        width: "100%",
-
-        padding: "8px 10px",
-
-        background: "#f5f5f5",
-
-        border: "1px solid #ddd",
-
-        outline: "none",
-
         fontSize: 13,
-
-        borderRadius: 4,
-
+        borderRadius: 8,
         boxSizing: "border-box",
+        color: "#1e1b3a",
     },
+    note: { color: "#f59e0b", marginTop: 6, fontWeight: 600, fontSize: 11 },
 
+    passwordRegisterRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+        flexWrap: "wrap",
+    },
     passwordRow: {
         display: "flex",
-
         alignItems: "center",
-
-        gap: "6px",
-
-        width: "100%",
+        gap: 8,
+        width: "58%",
+        minWidth: 280,
     },
 
-    passwordActionBtn: {
-        padding: "8px 10px",
-
-        border: "1px solid #ccc",
-
-        background: "#fff",
-
-        cursor: "pointer",
-
-        borderRadius: 4,
-
+    generateBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "10px 16px",
         fontSize: 12,
-
+        fontWeight: 700,
+        cursor: "pointer",
         whiteSpace: "nowrap",
-
-        flexShrink: 0,
     },
-
-    note: {
-        color: "#d40000",
-
-        marginTop: 8,
-
-        fontWeight: 600,
-
-        fontSize: 13,
-    },
-
-    error: {
-        color: "#d40000",
-
-        marginTop: 20,
-
-        fontWeight: 600,
-    },
-
-    smallButton: {
-        padding: "10px 18px",
-
-        border: "1px solid #ccc",
-
-        background: "#fff",
-
-        cursor: "pointer",
-
-        borderRadius: 4,
-    },
-
-    smallButtonMobile: {
-        padding: "12px 16px",
-
-        border: "1px solid #ccc",
-
-        background: "#fff",
-
-        cursor: "pointer",
-
-        borderRadius: 4,
-
-        flex: "1 1 0",
-
-        fontSize: 14,
-
-        textAlign: "center",
-    },
-
-    footer: {
+    copyBtn: {
         display: "flex",
-
-        justifyContent: "flex-end",
-
-        marginTop: 40,
+        alignItems: "center",
+        gap: 6,
+        background: "#fff",
+        color: "#6d28d9",
+        border: "1px solid #ddd6fe",
+        borderRadius: 8,
+        padding: "10px 16px",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
     },
 
-    footerMobile: {
-        display: "flex",
-
-        marginTop: 24,
-    },
+    error: { color: "#dc2626", margin: "16px 0 0", fontWeight: 600, fontSize: 13 },
 
     registerButton: {
-        background: "#df3740",
-
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
-
         border: "none",
-
-        borderRadius: 30,
-
-        padding: "14px 80px",
-
-        fontSize: 18,
-
+        borderRadius: 24,
+        padding: "12px 26px",
+        fontSize: 13,
         fontWeight: 700,
-
         cursor: "pointer",
-    },
-
-    registerButtonMobile: {
-        background: "#df3740",
-
-        color: "#fff",
-
-        border: "none",
-
-        borderRadius: 30,
-
-        padding: "14px 0",
-
-        fontSize: 16,
-
-        fontWeight: 700,
-
-        cursor: "pointer",
-
-        width: "100%",
+        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
     },
 
     successModal: {
         background: "#fff",
-
-        borderRadius: 12,
-
-        padding: "32px",
-
+        borderRadius: 16,
+        padding: 32,
         width: 360,
-
         maxWidth: "90vw",
-
         textAlign: "center",
-
         boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
     },
-
     successIcon: {
         width: 56,
-
         height: 56,
-
         borderRadius: "50%",
-
-        background: "#e6f9ec",
-
-        color: "#15803d",
-
+        background: "#ede9fe",
+        color: "#6d28d9",
         fontSize: 28,
-
         fontWeight: 700,
-
         display: "flex",
-
         alignItems: "center",
-
         justifyContent: "center",
-
         margin: "0 auto 16px",
     },
-
-    successTitle: {
-        margin: "0 0 8px",
-
-        fontSize: 18,
-
-        fontWeight: 700,
-
-        color: "#1a1a2e",
-    },
-
-    successText: {
-        margin: "0 0 24px",
-
-        fontSize: 14,
-
-        color: "#6b7280",
-    },
-
+    successTitle: { margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#1e1b3a" },
+    successText: { margin: "0 0 24px", fontSize: 14, color: "#9c96b8" },
     successBtn: {
-        background: "linear-gradient(135deg, #e53935, #c62828)",
-
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
-
         border: "none",
-
         borderRadius: 8,
-
         padding: "10px 32px",
-
         fontSize: 14,
-
         fontWeight: 700,
-
         cursor: "pointer",
     },
 
     bulkModal: {
         background: "#fff",
-
         borderRadius: 16,
-
-        padding: "0",
-
         width: 560,
-
         maxWidth: "92vw",
-
         maxHeight: "88vh",
-
         overflowY: "auto",
-
         boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
     },
-
     bulkModalHeader: {
         position: "relative",
-
         textAlign: "center",
-
         padding: "24px 28px 16px",
-
         borderBottom: "1px solid #f0f0f0",
     },
-
-    bulkModalTitle: {
-        margin: 0,
-
-        fontSize: 20,
-
-        fontWeight: 700,
-
-        color: "#1c1975",
-    },
-
-    bulkModalSubtitle: {
-        margin: "4px 0 0",
-
-        fontSize: 13,
-
-        color: "#9ca3af",
-    },
-
+    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#6d28d9" },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#9c96b8" },
     closeBtn: {
         position: "absolute",
-
         top: 20,
-
         right: 24,
-
         border: "none",
-
         background: "#f3f4f6",
-
         borderRadius: "50%",
-
         width: 28,
-
         height: 28,
-
         fontSize: 14,
-
         cursor: "pointer",
-
         color: "#6b7280",
-
         display: "flex",
-
         alignItems: "center",
-
         justifyContent: "center",
     },
-
     bulkInfoBox: {
         margin: "20px 28px",
-
         padding: "14px 16px",
-
-        background: "#fdf2f2",
-
-        borderLeft: "3px solid #df3740",
-
+        background: "#faf5ff",
+        borderLeft: "3px solid #8b5cf6",
         borderRadius: 6,
     },
-
     bulkInfoLabel: {
         display: "block",
-
         fontSize: 11,
-
         fontWeight: 700,
-
-        color: "#df3740",
-
+        color: "#6d28d9",
         textTransform: "uppercase",
-
         letterSpacing: "0.04em",
-
         marginBottom: 4,
     },
-
-    bulkInfoText: {
-        margin: 0,
-
-        fontSize: 13,
-
-        color: "#6b7280",
-
-        lineHeight: 1.6,
-    },
-
+    bulkInfoText: { margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 },
     bulkUploadRow: {
         display: "flex",
-
         flexWrap: "wrap",
-
         alignItems: "center",
-
-        gap: "10px",
-
+        gap: 10,
         margin: "0 28px 24px",
     },
-
     fileInputWrapper: {
         display: "flex",
-
         alignItems: "center",
-
-        gap: "10px",
-
+        gap: 10,
         border: "1px solid #e5e7eb",
-
         borderRadius: 8,
-
         padding: "8px 12px",
-
         cursor: "pointer",
-
         flex: 1,
-
         minWidth: 200,
-
         background: "#fafafa",
     },
-
-    fileInputHidden: {
-        display: "none",
-    },
-
+    fileInputHidden: { display: "none" },
     fileInputButton: {
-        background: "#1c1975",
-
+        background: "#6d28d9",
         color: "#fff",
-
         fontSize: 12,
-
         fontWeight: 600,
-
         padding: "6px 12px",
-
         borderRadius: 6,
-
         whiteSpace: "nowrap",
     },
-
     fileInputName: {
         fontSize: 13,
-
         color: "#6b7280",
-
         overflow: "hidden",
-
         textOverflow: "ellipsis",
-
         whiteSpace: "nowrap",
     },
-
     bulkUploadBtn: {
-        background: "#df3740",
-
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
         color: "#fff",
-
         border: "none",
-
         borderRadius: 8,
-
         padding: "10px 20px",
-
         fontSize: 14,
-
         fontWeight: 700,
-
         whiteSpace: "nowrap",
     },
-
-    resultsSection: {
-        borderTop: "1px solid #f0f0f0",
-
-        padding: "20px 28px 28px",
-    },
-
-    resultsSummary: {
-        marginBottom: 12,
-    },
-
-    resultsSummaryText: {
-        fontSize: 14,
-
-        color: "#1a1a2e",
-    },
-
+    resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
+    resultsSummary: { marginBottom: 12 },
+    resultsSummaryText: { fontSize: 14, color: "#1e1b3a" },
     resultsList: {
         display: "flex",
-
         flexDirection: "column",
-
-        gap: "8px",
-
+        gap: 8,
         maxHeight: 260,
-
         overflowY: "auto",
     },
-
     resultRow: {
         border: "1px solid #f0f0f0",
-
         borderRadius: 8,
-
         padding: "10px 14px",
-
         background: "#fafafa",
     },
-
     resultRowMain: {
         display: "flex",
-
         alignItems: "center",
-
         justifyContent: "space-between",
-
-        gap: "10px",
+        gap: 10,
     },
-
     resultEmail: {
         fontSize: 13,
-
         fontWeight: 600,
-
-        color: "#1a1a2e",
-
+        color: "#1e1b3a",
         overflow: "hidden",
-
         textOverflow: "ellipsis",
-
         whiteSpace: "nowrap",
     },
-
     statusPill: {
         fontSize: 11,
-
         fontWeight: 700,
-
         padding: "3px 10px",
-
         borderRadius: 20,
-
         whiteSpace: "nowrap",
-
         flexShrink: 0,
     },
-
-    statusPillSuccess: {
-        background: "#dcfce7",
-
-        color: "#15803d",
+    statusPillSuccess: { background: "#dcfce7", color: "#15803d" },
+    statusPillFail: { background: "#fee2e2", color: "#dc2626" },
+    resultMessage: { margin: "4px 0 0", fontSize: 12, color: "#9ca3af" },
+    passwordRegisterRowMobile: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 12,
     },
-
-    statusPillFail: {
-        background: "#fee2e2",
-
-        color: "#dc2626",
+    passwordRowMobile: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        width: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
     },
-
-    resultMessage: {
-        margin: "4px 0 0",
-
-        fontSize: 12,
-
-        color: "#9ca3af",
+    registerButtonMobile: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 24,
+        padding: "12px 28px",
+        fontSize: 14,
+        fontWeight: 700,
+        cursor: "pointer",
+        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        whiteSpace: "nowrap",
+    },
+    mobileHeaderBtnGroup: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        flexShrink: 0,
+    },
+    templateBtnMobile: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#fff",
+        color: "#6d28d9",
+        border: "1px solid #ddd6fe",
+        borderRadius: "50%",
+        width: 30,
+        height: 30,
+        cursor: "pointer",
+        flexShrink: 0,
     },
 };

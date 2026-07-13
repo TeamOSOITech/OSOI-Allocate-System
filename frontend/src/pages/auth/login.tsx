@@ -1,4 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+
+        window.addEventListener("resize", onResize);
+
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+
+    return isMobile;
+}
 
 const Login = () => {
     const [username, setUsername] = useState("");
@@ -17,45 +36,42 @@ const Login = () => {
         try {
             const res = await fetch(`${API_URL}/api/auth/login`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: username, password }),
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    email: username,
+                    password,
+                }),
             });
 
             const data = await res.json();
-            console.log("LOGIN RESPONSE:", data);
 
             if (!res.ok || !data.success) {
                 throw new Error(data.message || "Login failed");
             }
 
-            // Save token and user to localStorage
             localStorage.setItem("accessToken", data.data.accessToken);
             localStorage.setItem("user", JSON.stringify(data.data.user));
 
-             // Get role from backend
-        const userRole = data.data.user.role;
+            const userRole = data.data.user.role;
 
-        console.log("User Role:", userRole);
+            switch (userRole) {
+                case "ADMIN":
+                    window.location.href = "/dashboard";
+                    break;
 
-            // Role-based navigation — role comes from the backend response,
-            // not from anything the user picked on screen.
-           switch (userRole) {
-    case "ADMIN":
-        window.location.href = "/dashboard";
-        break;
+                case "MANAGER":
+                    window.location.href = "/workinprogress";
+                    break;
 
-    case "MANAGER":
-        window.location.href = "/workinprogress";
-        break;
+                case "EMPLOYEE":
+                    window.location.href = "/report";
+                    break;
 
-    case "EMPLOYEE":
-        window.location.href = "/report";
-        break;
-
-    default:
-        setError("Invalid role");
-}
-
+                default:
+                    setError("Invalid role");
+            }
         } catch (err: any) {
             setError(err.message || "Login failed.");
         } finally {
@@ -64,186 +80,366 @@ const Login = () => {
     };
 
     return (
-        <div style={{
-            minHeight: "100vh",
-            fontFamily: "sans-serif",
-            position: "relative",
-            overflowX: "hidden",
-        }}>
-
-            {/* Background image with dark overlay */}
-            <div style={{
-                position: "fixed",
-                inset: 0,
-                backgroundImage: `url('https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600')`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                zIndex: 0,
-                pointerEvents: "none",
-            }} />
-
-            {/* Dark red overlay */}
-            <div style={{
-                position: "fixed",
-                inset: 0,
-                background: "linear-gradient(135deg, rgba(127,29,29,0.85) 0%, rgba(153,27,27,0.75) 40%, rgba(31,41,55,0.85) 100%)",
-                zIndex: 1,
-                pointerEvents: "none",
-            }} />
-
-            {/* Content Container */}
-            <div style={{
-                position: "relative",
-                zIndex: 2,
-                minHeight: "100vh",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "20px",
-                boxSizing: "border-box"
-            }}>
-
-                <div style={{
-                    background: "rgba(240,240,240,0.96)",
-                    borderRadius: "20px",
-                    padding: "40px 24px",
-                    width: "100%",
-                    maxWidth: "400px",
-                    textAlign: "center",
-                    boxSizing: "border-box",
-                    animation: "fadeIn 0.4s ease",
-                }}>
-
-                    {/* Icon */}
-                    <div style={{
-                        width: "70px",
-                        height: "70px",
-                        background: "#be123c",
+        <>
+            <div
+                style={{
+                    minHeight: "100vh",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "linear-gradient(135deg,#F5F3FF 0%,#EEE7FF 45%,#E6DBFF 100%)",
+                    fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+                    position: "relative",
+                    overflow: "hidden",
+                }}
+            >
+                {/* Background Blur Circle */}
+                <div
+                    style={{
+                        position: "absolute",
+                        width: 450,
+                        height: 450,
                         borderRadius: "50%",
+                        background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
+                        opacity: 0.12,
+                        top: -120,
+                        left: -120,
+                        filter: "blur(30px)",
+                    }}
+                />
+
+                <div
+                    style={{
+                        position: "absolute",
+                        width: 350,
+                        height: 350,
+                        borderRadius: "50%",
+                        background: "linear-gradient(135deg,#A78BFA,#7C3AED)",
+                        opacity: 0.1,
+                        bottom: -80,
+                        right: -80,
+                        filter: "blur(25px)",
+                    }}
+                />
+
+                {/* Main Card */}
+                <div
+                    style={{
+                        width: "100%",
+                        maxWidth: 1080,
+                        minHeight: 620,
+                        background: "#fff",
+                        borderRadius: 30,
+                        overflow: "hidden",
                         display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "32px",
-                        margin: "0 auto 16px",
-                    }}>
-                        🔐
-                    </div>
-
-                    <h1 style={{
-                        fontSize: "22px",
-                        fontWeight: "700",
-                        color: "#111",
-                        marginBottom: "6px",
-                    }}>
-                        Daily Work Allocation Task
-                    </h1>
-                    <p style={{ color: "#888", marginBottom: "26px", fontSize: "13px" }}>
-                        Sign in to continue
-                    </p>
-
-                    {error && (
-                        <div style={{
-                            background: "#fef2f2",
-                            border: "1px solid #fecaca",
-                            color: "#dc2626",
-                            padding: "10px",
-                            borderRadius: "8px",
-                            fontSize: "13px",
-                            marginBottom: "16px",
-                        }}>
-                            ⚠️ {error}
-                        </div>
-                    )}
-
-                    <form onSubmit={handleLogin}>
-                        {/* Username */}
-                        <input
-                            type="text"
-                            placeholder="User Name"
-                            value={username}
-                            onChange={e => setUsername(e.target.value)}
-                            required
+                        boxShadow: "0 25px 60px rgba(124,58,237,.15)",
+                        position: "relative",
+                        zIndex: 2,
+                    }}
+                >
+                    {/* LEFT SIDE */}
+                    <div
+                        style={{
+                            flex: 1,
+                            background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
+                            color: "#fff",
+                            padding: 60,
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "center",
+                            position: "relative",
+                        }}
+                    >
+                        <div
                             style={{
-                                width: "100%",
-                                padding: "14px 16px",
-                                border: "2px solid #e5e7eb",
-                                borderRadius: "10px",
-                                fontSize: "14px",
-                                marginBottom: "16px",
-                                outline: "none",
-                                boxSizing: "border-box",
-                                background: "#fff",
-                                color: "#111",
+                                width: 85,
+                                height: 85,
+                                borderRadius: "50%",
+                                background: "rgba(255,255,255,.15)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                marginBottom: 30,
+                                backdropFilter: "blur(10px)",
                             }}
-                        />
-
-                        {/* Password */}
-                        <div style={{ position: "relative", marginBottom: "24px" }}>
-                            <input
-                                type={showPassword ? "text" : "password"}
-                                placeholder="Password"
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                                required
+                        >
+                            <i
+                                className="ti ti-layout-dashboard"
                                 style={{
-                                    width: "100%",
-                                    padding: "14px 46px 14px 16px",
-                                    border: "2px solid #e5e7eb",
-                                    borderRadius: "10px",
-                                    fontSize: "14px",
-                                    outline: "none",
-                                    boxSizing: "border-box",
+                                    fontSize: 42,
+                                    color: "#fff",
+                                }}
+                            />
+                        </div>
+
+                        <h1
+                            style={{
+                                margin: 0,
+                                fontSize: 42,
+                                fontWeight: 800,
+                                lineHeight: 1.2,
+                            }}
+                        >
+                            Daily Work
+                            <br />
+                            Allocation
+                        </h1>
+
+                        <p
+                            style={{
+                                marginTop: 20,
+                                color: "rgba(255,255,255,.85)",
+                                lineHeight: 1.8,
+                                fontSize: 16,
+                                maxWidth: 420,
+                            }}
+                        >
+                            Welcome back to the allocation portal. Manage reports, users, tasks and
+                            daily work efficiently using one centralized dashboard.
+                        </p>
+
+                        <div
+                            style={{
+                                marginTop: 40,
+                                display: "flex",
+                                gap: 15,
+                            }}
+                        >
+                            <div
+                                style={{
+                                    width: 12,
+                                    height: 12,
+                                    borderRadius: "50%",
                                     background: "#fff",
                                 }}
                             />
-                            <span
-                                onClick={() => setShowPassword(!showPassword)}
+                            <div
                                 style={{
-                                    position: "absolute",
-                                    right: "14px",
-                                    top: "50%",
-                                    transform: "translateY(-50%)",
-                                    cursor: "pointer",
-                                    fontSize: "18px",
-                                    color: "#6b21a8",
-                                    userSelect: "none",
+                                    width: 12,
+                                    height: 12,
+                                    borderRadius: "50%",
+                                    background: "rgba(255,255,255,.5)",
                                 }}
-                            >
-                                {showPassword ? "🙈" : "👁️"}
-                            </span>
+                            />
+                            <div
+                                style={{
+                                    width: 12,
+                                    height: 12,
+                                    borderRadius: "50%",
+                                    background: "rgba(255,255,255,.3)",
+                                }}
+                            />
                         </div>
+                    </div>
 
-                        {/* Login button */}
-                        <button
-                            type="submit"
-                            disabled={loading}
+                    {/* RIGHT SIDE */}
+                    <div
+                        style={{
+                            width: 430,
+                            padding: "60px 50px",
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <div
                             style={{
-                                width: "100%",
-                                padding: "14px",
-                                background: loading ? "#f43f6e" : "#be123c",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: "10px",
-                                fontSize: "16px",
-                                fontWeight: "600",
-                                cursor: loading ? "not-allowed" : "pointer",
-                                transition: "background 0.2s ease",
+                                width: 72,
+                                height: 72,
+                                borderRadius: "50%",
+                                background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                margin: "0 auto 20px",
+                                boxShadow: "0 12px 30px rgba(124,58,237,.30)",
                             }}
                         >
-                            {loading ? "Logging in..." : "Log in"}
-                        </button>
-                    </form>
+                            <i
+                                className="ti ti-shield-lock"
+                                style={{
+                                    color: "#fff",
+                                    fontSize: 34,
+                                }}
+                            />
+                        </div>
+
+                        <h2
+                            style={{
+                                margin: 0,
+                                textAlign: "center",
+                                color: "#1E1B3A",
+                                fontSize: 30,
+                                fontWeight: 800,
+                            }}
+                        >
+                            Welcome Back
+                        </h2>
+
+                        <p
+                            style={{
+                                marginTop: 10,
+                                marginBottom: 35,
+                                textAlign: "center",
+                                color: "#8B82A7",
+                                fontSize: 15,
+                            }}
+                        >
+                            Sign in to continue to your dashboard
+                        </p>
+
+                        {error && (
+                            <div
+                                style={{
+                                    background: "#F8F5FF",
+                                    border: "1px solid #DDD6FE",
+                                    color: "#6D28D9",
+                                    padding: "12px 16px",
+                                    borderRadius: 12,
+                                    marginBottom: 22,
+                                    fontSize: 14,
+                                    fontWeight: 600,
+                                }}
+                            >
+                                {error}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleLogin}>
+                            <label
+                                style={{
+                                    display: "block",
+                                    marginBottom: 8,
+                                    color: "#4B4560",
+                                    fontWeight: 600,
+                                    fontSize: 13,
+                                }}
+                            >
+                                Email Address
+                            </label>
+
+                            <input
+                                type="email"
+                                placeholder="Enter your email"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                required
+                                style={{
+                                    width: "100%",
+                                    padding: "14px 16px",
+                                    border: "1px solid #DDD6FE",
+                                    borderRadius: 12,
+                                    background: "#FAF8FF",
+                                    outline: "none",
+                                    fontSize: 14,
+                                    marginBottom: 20,
+                                    boxSizing: "border-box",
+                                }}
+                            />
+
+                            <label
+                                style={{
+                                    display: "block",
+                                    marginBottom: 8,
+                                    color: "#4B4560",
+                                    fontWeight: 600,
+                                    fontSize: 13,
+                                }}
+                            >
+                                Password
+                            </label>
+
+                            <div
+                                style={{
+                                    position: "relative",
+                                    marginBottom: 28,
+                                }}
+                            >
+                                <input
+                                    type={showPassword ? "text" : "password"}
+                                    placeholder="Enter your password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                    style={{
+                                        width: "100%",
+                                        padding: "14px 50px 14px 16px",
+                                        border: "1px solid #DDD6FE",
+                                        borderRadius: 12,
+                                        background: "#FAF8FF",
+                                        outline: "none",
+                                        fontSize: 14,
+                                        boxSizing: "border-box",
+                                    }}
+                                />
+
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    style={{
+                                        position: "absolute",
+                                        right: 14,
+                                        top: "50%",
+                                        transform: "translateY(-50%)",
+                                        border: "none",
+                                        background: "transparent",
+                                        cursor: "pointer",
+                                        color: "#6D28D9",
+                                        fontSize: 18,
+                                    }}
+                                >
+                                    <i className={showPassword ? "ti ti-eye-off" : "ti ti-eye"} />
+                                </button>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                style={{
+                                    width: "100%",
+                                    padding: "15px",
+                                    border: "none",
+                                    borderRadius: 14,
+                                    cursor: "pointer",
+                                    color: "#fff",
+                                    fontWeight: 700,
+                                    fontSize: 15,
+                                    background: "linear-gradient(135deg,#8B5CF6,#6D28D9)",
+                                    boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                }}
+                            >
+                                {loading ? "Signing In..." : "Sign In"}
+                            </button>
+                        </form>
+
+                        <Link
+                            to="/forgot-password"
+                            style={{
+                                marginTop: 22,
+                                textAlign: "center",
+                                textDecoration: "none",
+                                color: "#6D28D9",
+                                fontWeight: 700,
+                                fontSize: 14,
+                            }}
+                        >
+                            Forgot Password?
+                        </Link>
+
+                        <p
+                            style={{
+                                marginTop: 40,
+                                textAlign: "center",
+                                color: "#9CA3AF",
+                                fontSize: 12,
+                            }}
+                        >
+                            © 2026 Daily Work Allocation System
+                        </p>
+                    </div>
                 </div>
             </div>
-
-            {/* CSS animations */}
-            <style>{`
-                @keyframes fadeIn {
-                    from { opacity: 0; transform: translateY(20px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
-        </div>
+        </>
     );
 };
 

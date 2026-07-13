@@ -272,7 +272,10 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         width: "100%",
         height: "100vh",
-        background: "#ececec",
+        maxHeight: "100vh",
+        overflow: "hidden",
+        background: "#f5f3ff",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     },
     rootMobile: {
         display: "flex",
