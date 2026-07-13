@@ -30,20 +30,32 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
         console.log("Transcript:", rawTranscript);
         console.log("Parsed Result:", result);
 
-        if (result.intent === "ADD_USER") {
+        if (result.intent === "SUBMIT_FORM") {
+            speak("Submitting the form.");
+
+            if (onRequestSubmit) {
+                setTimeout(() => onRequestSubmit(), 300);
+            }
+        } else if (result.intent === "ADD_USER") {
             onFillForm(result.data);
             // Clear the transcript once it's been applied to the form so the
             // next command starts fresh instead of re-parsing this text too.
             resetTranscript();
             lastProcessedRef.current = "";
-            speak(
-                language === "hi-IN"
-                    ? "मैंने विवरण भर दिया है। कृपया जाँच करें और सबमिट करें।"
-                    : "I've filled in the details. Please review and submit."
-            );
 
             if (result.wantsSubmit && onRequestSubmit) {
+                speak(
+                    language === "hi-IN"
+                        ? "विवरण भर दिए गए हैं। अभी सबमिट कर रहा हूँ।"
+                        : "Details filled in. Submitting now."
+                );
                 setTimeout(() => onRequestSubmit(), 300);
+            } else {
+                speak(
+                    language === "hi-IN"
+                        ? "मैंने विवरण भर दिया है। कृपया जाँच करें और सबमिट करें।"
+                        : "I've filled in the details. Please review and submit."
+                );
             }
         } else {
             speak(

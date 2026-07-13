@@ -210,6 +210,23 @@ export function parseVoiceCommand(command: string) {
 
     const wantsSubmit = EXPLICIT_SUBMIT_PHRASES.some((k) => text.includes(k));
 
+    // User only wants to submit the already-filled form
+    if (wantsSubmit) {
+        const hasAddUserWords =
+            text.includes("add user") ||
+            text.includes("create user") ||
+            Object.values(FIELD_KEYWORDS)
+                .flat()
+                .some((k) => findKeyword(text, k) !== -1) ||
+            ROLE_VALUE_KEYWORDS.some((k) => text.includes(k));
+
+        if (!hasAddUserWords) {
+            return {
+                intent: "SUBMIT_FORM",
+            };
+        }
+    }
+
     const anyFieldKeywordPresent = Object.values(FIELD_KEYWORDS)
         .flat()
         .some((k) => findKeyword(text, k) !== -1);
