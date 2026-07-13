@@ -23,17 +23,19 @@ const login = async (email, password) => {
 
   for (const candidate of candidates) {
     const loginEmail = candidate["Login Email"];
-    if (!loginEmail) continue;
+
+    console.log("Trying Login Email:", loginEmail);
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: loginEmail,
       password,
     });
 
+    console.log("Supabase Error:", error);
+
     if (!error && data?.session) {
       authData = data;
       matchedUser = candidate;
-      console.log("Matched role account:", candidate["Role"], loginEmail);
       break;
     }
   }
