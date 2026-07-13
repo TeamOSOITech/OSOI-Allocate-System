@@ -23,6 +23,7 @@ const ROLE_VALUE_KEYWORDS = ["admin", "एडमिन", "manager", "मैन�
 // register and navigate away before the user could review it.
 const EXPLICIT_SUBMIT_PHRASES = [
     "submit now",
+    "submit",
     "submit the form",
     "register the user",
     "register this user",
