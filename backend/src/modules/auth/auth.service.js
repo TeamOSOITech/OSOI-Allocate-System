@@ -6,8 +6,6 @@ const login = async (email, password) => {
   console.log("==================================");
   console.log("Login attempt for real email:", email);
 
-  // Look up every account registered under this real email
-  // (there may be multiple — one per role, per the new multi-role rule)
   const { data: candidates, error: candidatesError } = await supabase
     .from("user_master")
     .select("*")
@@ -20,16 +18,12 @@ const login = async (email, password) => {
 
   console.log(`Found ${candidates.length} account(s) for this email`);
 
-  // Try each candidate's tagged login email against Supabase Auth
-  // with the password the user typed. Only the matching role's
-  // password will succeed — Supabase Auth itself does the real
-  // password verification, we're just trying each tagged identity.
   let authData = null;
   let matchedUser = null;
 
   for (const candidate of candidates) {
     const loginEmail = candidate["Login Email"];
-    if (!loginEmail) continue; // skip rows created before this migration
+    if (!loginEmail) continue;
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: loginEmail,
@@ -53,7 +47,9 @@ const login = async (email, password) => {
 
   if (!rawRole) {
     console.error("ROLE MISSING for user:", matchedUser["Auth User Id"]);
-    throw new Error("No role assigned to this account. Contact an administrator.");
+    throw new Error(
+      "No role assigned to this account. Contact an administrator.",
+    );
   }
 
   const normalizedRole = String(rawRole).trim().toUpperCase();
@@ -79,6 +75,56 @@ const login = async (email, password) => {
   };
 };
 
+// NEW: Forgot password — sends a reset email for every role-account
+// registered under this real email (there may be more than one,
+// since this system allows multiple accounts per email under different roles).
+const forgotPassword = async (email) => {
+  const supabase = getSupabaseClient();
+
+  console.log("==================================");
+  console.log("Forgot password request for:", email);
+
+  const { data: rows, error } = await supabase
+    .from("user_master")
+    .select('"Login Email", "Role"')
+    .eq("Email", email);
+
+  if (error) {
+    console.error("FORGOT PASSWORD LOOKUP ERROR:", error);
+    throw new Error(error.message);
+  }
+
+  // Always respond the same way whether or not the email exists —
+  // this prevents leaking which emails have accounts to an attacker.
+  if (!rows || rows.length === 0) {
+    console.log(
+      "No accounts found for this email (not revealing this to caller).",
+    );
+    return { message: "If an account exists, a reset link has been sent." };
+  }
+
+  for (const row of rows) {
+    const loginEmail = row["Login Email"];
+    if (!loginEmail) continue;
+
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      loginEmail,
+      {
+        redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+      },
+    );
+
+    if (resetError) {
+      console.error(`RESET EMAIL FAILED for ${loginEmail}:`, resetError);
+    } else {
+      console.log(`Reset email sent for role ${row["Role"]} -> ${loginEmail}`);
+    }
+  }
+
+  return { message: "If an account exists, a reset link has been sent." };
+};
+
 module.exports = {
   login,
+  forgotPassword,
 };
