@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/sidebar";
 import VoiceAssistant from "../../components/voiceAssistant";
 import { speak } from "../../utils/speak";
+import FormErrorBoundary from "../../components/FormErrorBoundary";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -209,439 +210,503 @@ export default function AddUser() {
             workedInTeams: data.workedInTeams || prev.workedInTeams,
         }));
     };
+
+    // FIX: this is the actual cause of the blank-screen bug.
+    //
+    // Previously <VoiceAssistant onRequestSubmit={handleRegister} /> wired
+    // the REAL registration handler directly to voice. handleRegister()
+    // posts to the backend, and on success sets showSuccess(true) + calls
+    // speak("User submitted successfully."). The success modal's OK button
+    // calls navigate("/reportdashboard") — that's the only navigate() call
+    // in this whole file.
+    //
+    // With continuous:true speech recognition, a second short listening
+    // cycle can fire moments after your main sentence (a trailing word,
+    // a pause-triggered re-segment, etc). If that second fragment contains
+    // anything matching a submit phrase, VoiceAssistant silently calls
+    // onRequestSubmit() — which WAS handleRegister — registering the user
+    // for real and redirecting you away before you ever got to review.
+    // That's why you'd hear "please review" and then immediately land on
+    // a blank/different page: two separate voice commands were processed
+    // back to back, not one.
+    //
+    // This wrapper re-validates required fields and refuses to silently
+    // submit/navigate if the form isn't actually ready, so a stray voice
+    // match can no longer blow past your review step.
+    const handleVoiceRequestSubmit = () => {
+        if (!formData.fullName || !formData.email || !formData.role || !formData.password) {
+            speak("Some required fields are still missing. Please review before submitting.");
+            return;
+        }
+        handleRegister();
+    };
+
     return (
-        <div style={isMobile ? styles.rootMobile : styles.root}>
-            {isMobile && (
-                <div style={styles.mobileTopbar}>
-                    <button
-                        style={styles.hamburgerBtn}
-                        onClick={() => setSidebarOpen(!sidebarOpen)}
-                        type="button"
-                    >
-                        ☰
-                    </button>
-                    <span style={styles.mobileTitle}>Add New User</span>
-                    <div style={styles.mobileHeaderBtnGroup}>
+        <FormErrorBoundary>
+            <div style={isMobile ? styles.rootMobile : styles.root}>
+                {isMobile && (
+                    <div style={styles.mobileTopbar}>
                         <button
-                            style={styles.templateBtnMobile}
-                            onClick={downloadTemplate}
-                            type="button"
-                            aria-label="Download Excel Format"
-                        >
-                            <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />
-                        </button>
-                        <button
-                            style={styles.bulkHeaderBtnMobile}
-                            onClick={() => setShowBulkModal(true)}
+                            style={styles.hamburgerBtn}
+                            onClick={() => setSidebarOpen(!sidebarOpen)}
                             type="button"
                         >
-                            Bulk Add
+                            ☰
                         </button>
-                    </div>
-                </div>
-            )}
-
-            {isMobile ? (
-                <>
-                    {sidebarOpen && (
-                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
-                    )}
-                    <div
-                        style={{
-                            ...styles.sidebarDrawer,
-                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                        }}
-                    >
-                        <Sidebar />
-                    </div>
-                </>
-            ) : (
-                <Sidebar />
-            )}
-
-            <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
-                <div style={styles.contentBody}>
-                    {!isMobile && (
-                        <div style={styles.pageHeaderRow}>
-                            <div style={styles.pageTitleBlock}>
-                                <h2 style={styles.pageTitle}>Add New User</h2>
-                                <p style={styles.pageSubtitle}>
-                                    Create a new employee account and assign role & permissions
-                                </p>
-                            </div>
-                            <div style={styles.headerButtonGroup}>
-                                <button
-                                    style={styles.templateBtn}
-                                    onClick={downloadTemplate}
-                                    type="button"
-                                >
-                                    <i
-                                        className="ti ti-file-spreadsheet"
-                                        style={{ fontSize: 14 }}
-                                    />
-                                    Excel Format
-                                </button>
-                                <button
-                                    style={styles.bulkBtn}
-                                    onClick={() => setShowBulkModal(true)}
-                                    type="button"
-                                >
-                                    <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                    Bulk Add Users
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div style={styles.formCard}>
-                        {/* Section: Personal Information */}
-                        <div style={styles.sectionHeader}>
-                            <i className="ti ti-user" style={{ fontSize: 15, color: "#7c3aed" }} />
-                            <span style={styles.sectionHeaderText}>Personal Information</span>
-                        </div>
-                        <div style={styles.sectionBody}>
-                            <div style={isMobile ? styles.gridMobile : styles.grid}>
-                                <div>
-                                    <label style={styles.label}>Select User Name</label>
-                                    <select style={styles.input}>
-                                        <option>Search User Name</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Full Name</label>
-                                    <input
-                                        style={styles.input}
-                                        value={formData.fullName}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, fullName: e.target.value })
-                                        }
-                                        placeholder="e.g. John Doe"
-                                    />
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Email</label>
-                                    <input
-                                        type="email"
-                                        style={styles.input}
-                                        value={formData.email}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, email: e.target.value })
-                                        }
-                                        placeholder="e.g. john.doe@email.com"
-                                    />
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Employee ID</label>
-                                    <input
-                                        style={styles.input}
-                                        value={formData.employeeId}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, employeeId: e.target.value })
-                                        }
-                                        placeholder="e.g. EMP12345"
-                                    />
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Designation</label>
-                                    <input
-                                        style={styles.input}
-                                        value={formData.designation}
-                                        onChange={(e) =>
-                                            setFormData({
-                                                ...formData,
-                                                designation: e.target.value,
-                                            })
-                                        }
-                                        placeholder="e.g. Senior Developer"
-                                    />
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Department</label>
-                                    <select
-                                        style={styles.input}
-                                        value={formData.department}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, department: e.target.value })
-                                        }
-                                    >
-                                        <option value="">Select Department</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Section: Organization Details */}
-                        <div style={styles.sectionHeader}>
-                            <i
-                                className="ti ti-building"
-                                style={{ fontSize: 15, color: "#7c3aed" }}
-                            />
-                            <span style={styles.sectionHeaderText}>Organization Details</span>
-                        </div>
-                        <div style={styles.sectionBody}>
-                            <div style={isMobile ? styles.gridMobile : styles.grid}>
-                                <div>
-                                    <label style={styles.label}>Role</label>
-                                    <select
-                                        style={styles.input}
-                                        value={formData.role}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, role: e.target.value })
-                                        }
-                                    >
-                                        <option value="">Select Role</option>
-                                        <option value="ADMIN">Admin</option>
-                                        <option value="MANAGER">Manager</option>
-                                        <option value="EMPLOYEE">Employee</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Reporting Manager</label>
-                                    <select
-                                        style={styles.input}
-                                        value={formData.reportingManager}
-                                        onChange={(e) =>
-                                            setFormData({
-                                                ...formData,
-                                                reportingManager: e.target.value,
-                                            })
-                                        }
-                                    >
-                                        <option value="">Select Manager</option>
-                                        <option value="Joyce">joyce@gmail.com</option>
-                                        <option value="SPRAINT">spraint@gmail.com</option>
-                                    </select>
-                                    <p style={styles.note}>* Please enter Email only</p>
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Worked In Teams</label>
-                                    <select
-                                        style={styles.input}
-                                        value={formData.workedInTeams}
-                                        onChange={(e) =>
-                                            setFormData({
-                                                ...formData,
-                                                workedInTeams: e.target.value,
-                                            })
-                                        }
-                                    >
-                                        <option value="">Search User Name</option>
-                                        <option value="Tech">Tech</option>
-                                        <option value="Legal">Legal</option>
-                                        <option value="SD">SD</option>
-                                        <option value="HR & Admin">HR & Admin</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Date of Birth</label>
-                                    <input
-                                        type="date"
-                                        style={styles.input}
-                                        value={formData.dob}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, dob: e.target.value })
-                                        }
-                                    />
-                                </div>
-                                <div>
-                                    <label style={styles.label}>Date of Joining</label>
-                                    <input
-                                        type="date"
-                                        style={styles.input}
-                                        value={formData.doj}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, doj: e.target.value })
-                                        }
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Section: Security */}
-                        <div style={styles.sectionHeader}>
-                            <i className="ti ti-lock" style={{ fontSize: 15, color: "#7c3aed" }} />
-                            <span style={styles.sectionHeaderText}>Security</span>
-                        </div>
-                        <div style={styles.sectionBody}>
-                            <label style={styles.label}>Password</label>
-                            <div
-                                style={
-                                    isMobile
-                                        ? styles.passwordRegisterRowMobile
-                                        : styles.passwordRegisterRow
-                                }
-                            >
-                                <div
-                                    style={isMobile ? styles.passwordRowMobile : styles.passwordRow}
-                                >
-                                    <input
-                                        type="text"
-                                        style={{ ...styles.input, flex: 1, minWidth: 0 }}
-                                        value={formData.password}
-                                        onChange={(e) =>
-                                            setFormData({ ...formData, password: e.target.value })
-                                        }
-                                        placeholder="Enter password or generate"
-                                    />
-                                    <button
-                                        style={styles.generateBtn}
-                                        onClick={generatePassword}
-                                        type="button"
-                                    >
-                                        <i className="ti ti-refresh" style={{ fontSize: 13 }} />
-                                        Generate
-                                    </button>
-                                    <button
-                                        style={styles.copyBtn}
-                                        onClick={copyPassword}
-                                        type="button"
-                                    >
-                                        <i className="ti ti-copy" style={{ fontSize: 13 }} />
-                                        Copy
-                                    </button>
-                                </div>
-
-                                <button
-                                    style={{
-                                        ...(isMobile
-                                            ? styles.registerButtonMobile
-                                            : styles.registerButton),
-                                        opacity: isSubmitting ? 0.7 : 1,
-                                        cursor: isSubmitting ? "not-allowed" : "pointer",
-                                    }}
-                                    onClick={handleRegister}
-                                    disabled={isSubmitting}
-                                >
-                                    <i className="ti ti-user-plus" style={{ fontSize: 15 }} />
-                                    {isSubmitting ? "Saving..." : "Register User"}
-                                </button>
-                            </div>
-
-                            {error && <p style={styles.error}>{error}</p>}
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {showSuccess && (
-                <div style={styles.overlay}>
-                    <div style={styles.successModal}>
-                        <div style={styles.successIcon}>✓</div>
-                        <h3 style={styles.successTitle}>User Added Successfully</h3>
-                        <p style={styles.successText}>
-                            {formData.fullName} has been added as a new user.
-                        </p>
-                        <button style={styles.successBtn} onClick={handleSuccessClose}>
-                            OK
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {showBulkModal && (
-                <div style={styles.overlay} onClick={closeBulkModal}>
-                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
-                            <p style={styles.bulkModalSubtitle}>
-                                Upload an Excel file to create multiple accounts at once
-                            </p>
+                        <span style={styles.mobileTitle}>Add New User</span>
+                        <div style={styles.mobileHeaderBtnGroup}>
                             <button
-                                style={styles.closeBtn}
-                                onClick={closeBulkModal}
+                                style={styles.templateBtnMobile}
+                                onClick={downloadTemplate}
                                 type="button"
-                                aria-label="Close"
+                                aria-label="Download Excel Format"
                             >
-                                ✕
+                                <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />
+                            </button>
+                            <button
+                                style={styles.bulkHeaderBtnMobile}
+                                onClick={() => setShowBulkModal(true)}
+                                type="button"
+                            >
+                                Bulk Add
                             </button>
                         </div>
+                    </div>
+                )}
 
-                        <div style={styles.bulkInfoBox}>
-                            <span style={styles.bulkInfoLabel}>Required columns</span>
-                            <p style={styles.bulkInfoText}>
-                                Full Name, Email, Employee ID, Designation, Department, Date of
-                                Birth, Date of Joining, Reporting Manager, Worked In Teams,
-                                Password, Role (ADMIN / MANAGER / EMPLOYEE)
-                            </p>
+                {isMobile ? (
+                    <>
+                        {sidebarOpen && (
+                            <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
+                        )}
+                        <div
+                            style={{
+                                ...styles.sidebarDrawer,
+                                transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+                            }}
+                        >
+                            <Sidebar />
                         </div>
+                    </>
+                ) : (
+                    <Sidebar />
+                )}
 
-                        <div style={styles.bulkUploadRow}>
-                            <label style={styles.fileInputWrapper}>
-                                <input
-                                    type="file"
-                                    accept=".xlsx,.xls"
-                                    onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-                                    style={styles.fileInputHidden}
-                                />
-                                <span style={styles.fileInputButton}>Choose File</span>
-                                <span style={styles.fileInputName}>
-                                    {bulkFile ? bulkFile.name : "No file chosen"}
-                                </span>
-                            </label>
-                            <button
-                                type="button"
-                                onClick={handleBulkUpload}
-                                disabled={bulkSubmitting}
-                                style={{
-                                    ...styles.bulkUploadBtn,
-                                    opacity: bulkSubmitting ? 0.7 : 1,
-                                    cursor: bulkSubmitting ? "not-allowed" : "pointer",
-                                }}
-                            >
-                                {bulkSubmitting ? "Uploading…" : "Upload & Create Users"}
-                            </button>
-                        </div>
-
-                        {bulkError && <p style={styles.error}>{bulkError}</p>}
-
-                        {bulkResults && (
-                            <div style={styles.resultsSection}>
-                                <div style={styles.resultsSummary}>
-                                    <span style={styles.resultsSummaryText}>
-                                        <strong>
-                                            {bulkResults.filter((r) => r.success).length}
-                                        </strong>{" "}
-                                        created
-                                        {bulkResults.some((r) => !r.success) && (
-                                            <>
-                                                {" "}
-                                                ·{" "}
-                                                <strong style={{ color: "#dc2626" }}>
-                                                    {bulkResults.filter((r) => !r.success).length}
-                                                </strong>{" "}
-                                                failed
-                                            </>
-                                        )}
-                                    </span>
+                <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
+                    <div style={styles.contentBody}>
+                        {!isMobile && (
+                            <div style={styles.pageHeaderRow}>
+                                <div style={styles.pageTitleBlock}>
+                                    <h2 style={styles.pageTitle}>Add New User</h2>
+                                    <p style={styles.pageSubtitle}>
+                                        Create a new employee account and assign role & permissions
+                                    </p>
                                 </div>
-                                <div style={styles.resultsList}>
-                                    {bulkResults.map((r, i) => (
-                                        <div key={i} style={styles.resultRow}>
-                                            <div style={styles.resultRowMain}>
-                                                <span style={styles.resultEmail}>{r.email}</span>
-                                                <span
-                                                    style={{
-                                                        ...styles.statusPill,
-                                                        ...(r.success
-                                                            ? styles.statusPillSuccess
-                                                            : styles.statusPillFail),
-                                                    }}
-                                                >
-                                                    {r.success ? "✓ Created" : "✗ Failed"}
-                                                </span>
-                                            </div>
-                                            <p style={styles.resultMessage}>{r.message}</p>
-                                        </div>
-                                    ))}
+                                <div style={styles.headerButtonGroup}>
+                                    <button
+                                        style={styles.templateBtn}
+                                        onClick={downloadTemplate}
+                                        type="button"
+                                    >
+                                        <i
+                                            className="ti ti-file-spreadsheet"
+                                            style={{ fontSize: 14 }}
+                                        />
+                                        Excel Format
+                                    </button>
+                                    <button
+                                        style={styles.bulkBtn}
+                                        onClick={() => setShowBulkModal(true)}
+                                        type="button"
+                                    >
+                                        <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                        Bulk Add Users
+                                    </button>
                                 </div>
                             </div>
                         )}
+
+                        <div style={styles.formCard}>
+                            {/* Section: Personal Information */}
+                            <div style={styles.sectionHeader}>
+                                <i
+                                    className="ti ti-user"
+                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                />
+                                <span style={styles.sectionHeaderText}>Personal Information</span>
+                            </div>
+                            <div style={styles.sectionBody}>
+                                <div style={isMobile ? styles.gridMobile : styles.grid}>
+                                    <div>
+                                        <label style={styles.label}>Select User Name</label>
+                                        <select style={styles.input}>
+                                            <option>Search User Name</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Full Name</label>
+                                        <input
+                                            style={styles.input}
+                                            value={formData.fullName}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    fullName: e.target.value,
+                                                })
+                                            }
+                                            placeholder="e.g. John Doe"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Email</label>
+                                        <input
+                                            type="email"
+                                            style={styles.input}
+                                            value={formData.email}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, email: e.target.value })
+                                            }
+                                            placeholder="e.g. john.doe@email.com"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Employee ID</label>
+                                        <input
+                                            style={styles.input}
+                                            value={formData.employeeId}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    employeeId: e.target.value,
+                                                })
+                                            }
+                                            placeholder="e.g. EMP12345"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Designation</label>
+                                        <input
+                                            style={styles.input}
+                                            value={formData.designation}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    designation: e.target.value,
+                                                })
+                                            }
+                                            placeholder="e.g. Senior Developer"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Department</label>
+                                        <select
+                                            style={styles.input}
+                                            value={formData.department}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    department: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            <option value="">Select Department</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section: Organization Details */}
+                            <div style={styles.sectionHeader}>
+                                <i
+                                    className="ti ti-building"
+                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                />
+                                <span style={styles.sectionHeaderText}>Organization Details</span>
+                            </div>
+                            <div style={styles.sectionBody}>
+                                <div style={isMobile ? styles.gridMobile : styles.grid}>
+                                    <div>
+                                        <label style={styles.label}>Role</label>
+                                        <select
+                                            style={styles.input}
+                                            value={formData.role}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, role: e.target.value })
+                                            }
+                                        >
+                                            <option value="">Select Role</option>
+                                            <option value="ADMIN">Admin</option>
+                                            <option value="MANAGER">Manager</option>
+                                            <option value="EMPLOYEE">Employee</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Reporting Manager</label>
+                                        <select
+                                            style={styles.input}
+                                            value={formData.reportingManager}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    reportingManager: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            <option value="">Select Manager</option>
+                                            <option value="Joyce">joyce@gmail.com</option>
+                                            <option value="SPRAINT">spraint@gmail.com</option>
+                                        </select>
+                                        <p style={styles.note}>* Please enter Email only</p>
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Worked In Teams</label>
+                                        <select
+                                            style={styles.input}
+                                            value={formData.workedInTeams}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    workedInTeams: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            <option value="">Search User Name</option>
+                                            <option value="Tech">Tech</option>
+                                            <option value="Legal">Legal</option>
+                                            <option value="SD">SD</option>
+                                            <option value="HR & Admin">HR & Admin</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Date of Birth</label>
+                                        <input
+                                            type="date"
+                                            style={styles.input}
+                                            value={formData.dob}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, dob: e.target.value })
+                                            }
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={styles.label}>Date of Joining</label>
+                                        <input
+                                            type="date"
+                                            style={styles.input}
+                                            value={formData.doj}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, doj: e.target.value })
+                                            }
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section: Security */}
+                            <div style={styles.sectionHeader}>
+                                <i
+                                    className="ti ti-lock"
+                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                />
+                                <span style={styles.sectionHeaderText}>Security</span>
+                            </div>
+                            <div style={styles.sectionBody}>
+                                <label style={styles.label}>Password</label>
+                                <div
+                                    style={
+                                        isMobile
+                                            ? styles.passwordRegisterRowMobile
+                                            : styles.passwordRegisterRow
+                                    }
+                                >
+                                    <div
+                                        style={
+                                            isMobile ? styles.passwordRowMobile : styles.passwordRow
+                                        }
+                                    >
+                                        <input
+                                            type="text"
+                                            style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                            value={formData.password}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    password: e.target.value,
+                                                })
+                                            }
+                                            placeholder="Enter password or generate"
+                                        />
+                                        <button
+                                            style={styles.generateBtn}
+                                            onClick={generatePassword}
+                                            type="button"
+                                        >
+                                            <i className="ti ti-refresh" style={{ fontSize: 13 }} />
+                                            Generate
+                                        </button>
+                                        <button
+                                            style={styles.copyBtn}
+                                            onClick={copyPassword}
+                                            type="button"
+                                        >
+                                            <i className="ti ti-copy" style={{ fontSize: 13 }} />
+                                            Copy
+                                        </button>
+                                    </div>
+
+                                    <button
+                                        style={{
+                                            ...(isMobile
+                                                ? styles.registerButtonMobile
+                                                : styles.registerButton),
+                                            opacity: isSubmitting ? 0.7 : 1,
+                                            cursor: isSubmitting ? "not-allowed" : "pointer",
+                                        }}
+                                        onClick={handleRegister}
+                                        disabled={isSubmitting}
+                                    >
+                                        <i className="ti ti-user-plus" style={{ fontSize: 15 }} />
+                                        {isSubmitting ? "Saving..." : "Register User"}
+                                    </button>
+                                </div>
+
+                                {error && <p style={styles.error}>{error}</p>}
+                            </div>
+                        </div>
                     </div>
                 </div>
-            )}
 
-            <VoiceAssistant onFillForm={handleVoiceFillForm} onRequestSubmit={handleRegister} />
-        </div>
+                {showSuccess && (
+                    <div style={styles.overlay}>
+                        <div style={styles.successModal}>
+                            <div style={styles.successIcon}>✓</div>
+                            <h3 style={styles.successTitle}>User Added Successfully</h3>
+                            <p style={styles.successText}>
+                                {formData.fullName} has been added as a new user.
+                            </p>
+                            <button style={styles.successBtn} onClick={handleSuccessClose}>
+                                OK
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {showBulkModal && (
+                    <div style={styles.overlay} onClick={closeBulkModal}>
+                        <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                            <div style={styles.bulkModalHeader}>
+                                <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Upload an Excel file to create multiple accounts at once
+                                </p>
+                                <button
+                                    style={styles.closeBtn}
+                                    onClick={closeBulkModal}
+                                    type="button"
+                                    aria-label="Close"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div style={styles.bulkInfoBox}>
+                                <span style={styles.bulkInfoLabel}>Required columns</span>
+                                <p style={styles.bulkInfoText}>
+                                    Full Name, Email, Employee ID, Designation, Department, Date of
+                                    Birth, Date of Joining, Reporting Manager, Worked In Teams,
+                                    Password, Role (ADMIN / MANAGER / EMPLOYEE)
+                                </p>
+                            </div>
+
+                            <div style={styles.bulkUploadRow}>
+                                <label style={styles.fileInputWrapper}>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx,.xls"
+                                        onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                                        style={styles.fileInputHidden}
+                                    />
+                                    <span style={styles.fileInputButton}>Choose File</span>
+                                    <span style={styles.fileInputName}>
+                                        {bulkFile ? bulkFile.name : "No file chosen"}
+                                    </span>
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={handleBulkUpload}
+                                    disabled={bulkSubmitting}
+                                    style={{
+                                        ...styles.bulkUploadBtn,
+                                        opacity: bulkSubmitting ? 0.7 : 1,
+                                        cursor: bulkSubmitting ? "not-allowed" : "pointer",
+                                    }}
+                                >
+                                    {bulkSubmitting ? "Uploading…" : "Upload & Create Users"}
+                                </button>
+                            </div>
+
+                            {bulkError && <p style={styles.error}>{bulkError}</p>}
+
+                            {bulkResults && (
+                                <div style={styles.resultsSection}>
+                                    <div style={styles.resultsSummary}>
+                                        <span style={styles.resultsSummaryText}>
+                                            <strong>
+                                                {bulkResults.filter((r) => r.success).length}
+                                            </strong>{" "}
+                                            created
+                                            {bulkResults.some((r) => !r.success) && (
+                                                <>
+                                                    {" "}
+                                                    ·{" "}
+                                                    <strong style={{ color: "#dc2626" }}>
+                                                        {
+                                                            bulkResults.filter((r) => !r.success)
+                                                                .length
+                                                        }
+                                                    </strong>{" "}
+                                                    failed
+                                                </>
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div style={styles.resultsList}>
+                                        {bulkResults.map((r, i) => (
+                                            <div key={i} style={styles.resultRow}>
+                                                <div style={styles.resultRowMain}>
+                                                    <span style={styles.resultEmail}>
+                                                        {r.email}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusPill,
+                                                            ...(r.success
+                                                                ? styles.statusPillSuccess
+                                                                : styles.statusPillFail),
+                                                        }}
+                                                    >
+                                                        {r.success ? "✓ Created" : "✗ Failed"}
+                                                    </span>
+                                                </div>
+                                                <p style={styles.resultMessage}>{r.message}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* FIX: was onRequestSubmit={handleRegister} — now goes through
+                the guarded wrapper above instead of calling the real
+                registration handler directly. */}
+                <VoiceAssistant
+                    onFillForm={handleVoiceFillForm}
+                    onRequestSubmit={handleVoiceRequestSubmit}
+                />
+            </div>
+        </FormErrorBoundary>
     );
 }
 

@@ -7,7 +7,7 @@ import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
 import AddUser from "./pages/admin/adduser";
 import WorkInProgress from "./pages/workinprogress";
-import VoiceAssistant from "./components/voiceAssistant";
+//import VoiceAssistant from "./components/voiceAssistant";
 
 const PrivateRoute = ({ children, requiredRole = null }) => {
     const token = localStorage.getItem("accessToken");
@@ -55,7 +55,6 @@ const AppLayout = ({ children, onLogout }) => {
                 {children}
             </div>
             {/* 👇 Add this */}
-            <VoiceAssistant />
         </div>
     );
 };
@@ -76,7 +75,6 @@ function App() {
 
                 <Route path="/forgot-password" element={<ForgotPassword />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
-                <Route path="/test" element={<h1>TEST PAGE</h1>} />
 
                 <Route
                     path="/reportdashboard"

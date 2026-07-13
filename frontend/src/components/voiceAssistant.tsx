@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognition";
 import { parseVoiceCommand } from "../utils/voiceCommandParser";
 import { speak } from "../utils/speak";
@@ -15,19 +15,27 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
     const [language, setLanguage] = useState<"en-IN" | "hi-IN">("en-IN");
     const [isOpen, setIsOpen] = useState(false);
 
-    if (!browserSupportsSpeechRecognition) {
-        return null;
-    }
+    // Speech recognition can stop listening on its own (e.g. after a pause
+    // in speech) without the person ever pressing "Stop". These refs let us
+    // detect that transition and still process whatever was said, instead
+    // of silently leaving the transcript unfilled.
+    const wasListeningRef = useRef(false);
+    const lastProcessedRef = useRef("");
 
-    const handleStop = () => {
-        SpeechRecognition.stopListening();
+    const processTranscript = (rawTranscript: string) => {
+        if (!rawTranscript.trim() || rawTranscript === lastProcessedRef.current) return;
+        lastProcessedRef.current = rawTranscript;
 
-        const result = parseVoiceCommand(transcript);
-        console.log("Transcript:", transcript);
+        const result = parseVoiceCommand(rawTranscript);
+        console.log("Transcript:", rawTranscript);
         console.log("Parsed Result:", result);
 
         if (result.intent === "ADD_USER") {
             onFillForm(result.data);
+            // Clear the transcript once it's been applied to the form so the
+            // next command starts fresh instead of re-parsing this text too.
+            resetTranscript();
+            lastProcessedRef.current = "";
             speak(
                 language === "hi-IN"
                     ? "मैंने विवरण भर दिया है। कृपया जाँच करें और सबमिट करें।"
@@ -44,6 +52,27 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                     : "Sorry, I didn't understand that. Please try again."
             );
         }
+    };
+
+    // Fires whenever listening flips from true -> false, whether that was
+    // a manual "Stop" click or the browser ending recognition by itself.
+    useEffect(() => {
+        if (wasListeningRef.current && !listening) {
+            processTranscript(transcript);
+        }
+        wasListeningRef.current = listening;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [listening]);
+
+    if (!browserSupportsSpeechRecognition) {
+        return null;
+    }
+
+    const handleStop = () => {
+        SpeechRecognition.stopListening();
+        // Processing itself happens in the effect above once `listening`
+        // actually flips to false — this keeps manual-stop and auto-stop
+        // going through the exact same code path.
     };
 
     // Collapsed state — just a small floating mic icon.
