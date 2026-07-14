@@ -6,6 +6,7 @@ import ReportDashboard from "./pages/admin/reportdashboard";
 import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
 import AddUser from "./pages/admin/adduser";
+import Clients from "./pages/admin/clients";
 import WorkInProgress from "./pages/workinprogress";
 //import VoiceAssistant from "./components/voiceAssistant";
 
@@ -82,6 +83,17 @@ function App() {
                         <PrivateRoute requiredRole="ADMIN">
                             <AppLayout onLogout={handleLogout}>
                                 <ReportDashboard user={user} onLogout={handleLogout} />
+                            </AppLayout>
+                        </PrivateRoute>
+                    }
+                />
+
+                <Route
+                    path="/clients"
+                    element={
+                        <PrivateRoute requiredRole="ADMIN">
+                            <AppLayout onLogout={handleLogout}>
+                                <Clients user={user} onLogout={handleLogout} />
                             </AppLayout>
                         </PrivateRoute>
                     }

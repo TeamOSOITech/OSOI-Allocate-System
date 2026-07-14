@@ -189,7 +189,7 @@ export default function AddUser() {
 
     const handleSuccessClose = () => {
         setShowSuccess(false);
-        navigate("/reportdashboard");
+        navigate("/clients");
     };
 
     const handleVoiceFillForm = (data: any) => {

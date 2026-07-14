@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 type MenuItem = {
@@ -15,7 +16,12 @@ const menuItems: MenuItem[] = [
         path: "/tasks",
         roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
     },
-    { label: "Team Preview", icon: "ti ti-users", path: "/team", roles: ["MANAGER", "ADMIN"] },
+    {
+        label: "Clients Preview",
+        icon: "ti ti-users",
+        path: "/clients",
+        roles: ["MANAGER", "ADMIN"],
+    },
     { label: "View Employee", icon: "ti ti-eye", path: "/employees", roles: ["MANAGER", "ADMIN"] },
     {
         label: "Task Progress",
@@ -57,7 +63,7 @@ const pathToLabel: Record<string, string> = {
     "/dashboard": "Task Progress",
     "/report": "Report",
     "/reportdashboard": "Report",
-    "/team": "Team Preview",
+    "/clients": "Clients Preview",
     "/employees": "View Employee",
     "/admin/add-user": "Add User",
     "/history": "History",
@@ -76,8 +82,13 @@ interface SidebarProps {
 const Sidebar = ({ onLogout }: SidebarProps) => {
     const navigate = useNavigate();
     const location = useLocation();
+    const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
 
-    const activeLabel = pathToLabel[location.pathname] || "";
+    const normalizedPath =
+        location.pathname.length > 1 && location.pathname.endsWith("/")
+            ? location.pathname.slice(0, -1)
+            : location.pathname;
+    const activeLabel = pathToLabel[normalizedPath] || "";
 
     const userStr = localStorage.getItem("user");
     const user = userStr ? JSON.parse(userStr) : null;
@@ -97,6 +108,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     const handleClick = (item: MenuItem) => {
         if (item.label === "Add User") {
             navigate("/admin/add-user");
+        } else if (item.label === "Clients Preview") {
+            navigate("/clients");
         } else if (item.label === "Task Progress") {
             navigate("/dashboard");
         } else if (item.label === "Report") {
@@ -116,12 +129,13 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 width: "220px",
                 background: "#fff",
                 padding: "20px 14px",
-                minHeight: "100vh",
+                height: "100vh",
                 display: "flex",
                 flexDirection: "column",
                 gap: "6px",
                 position: "relative",
                 borderRight: "1px solid #eee",
+                overflowY: "auto",
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             }}
         >
@@ -130,11 +144,14 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
             {visibleItems.map((item) => {
                 const isToday = item.label === "Today's Task";
                 const isActive = activeLabel === item.label;
+                const isHovered = hoveredLabel === item.label;
 
                 return (
                     <div
                         key={item.label}
                         onClick={() => handleClick(item)}
+                        onMouseEnter={() => setHoveredLabel(item.label)}
+                        onMouseLeave={() => setHoveredLabel(null)}
                         style={{
                             display: "flex",
                             alignItems: "center",
@@ -142,8 +159,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                             gap: "10px",
                             background: isActive
                                 ? "linear-gradient(135deg, #8b5cf6, #6d28d9)"
-                                : "transparent",
-                            color: isActive ? "#fff" : "#6b6280",
+                                : isHovered
+                                  ? "#ede9fe"
+                                  : "transparent",
+                            color: isActive ? "#fff" : isHovered ? "#6d28d9" : "#6b6280",
                             borderRadius: "20px",
                             padding: "10px 14px",
                             fontSize: "13px",
@@ -182,7 +201,11 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                     className={item.icon}
                                     style={{
                                         fontSize: "15px",
-                                        color: isActive ? "#fff" : "#6b6280",
+                                        color: isActive
+                                            ? "#fff"
+                                            : isHovered
+                                              ? "#6d28d9"
+                                              : "#6b6280",
                                         flexShrink: 0,
                                     }}
                                     aria-hidden="true"
@@ -225,11 +248,11 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 height="120"
                 viewBox="0 0 100 90"
                 style={{
-                    position: "absolute",
-                    bottom: 110,
-                    right: 0,
+                    marginTop: "auto",
+                    alignSelf: "flex-end",
                     opacity: 0.95,
                     pointerEvents: "none",
+                    flexShrink: 0,
                 }}
             >
                 <ellipse cx="50" cy="82" rx="38" ry="6" fill="#ede9fe" />
