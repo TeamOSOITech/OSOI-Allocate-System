@@ -224,4 +224,79 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   }
 });
 
+// ---------- NEW: Update subclient ----------
+
+// PUT /api/subclients/:id
+// Body: { name, clientId, status }
+router.put("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, clientId, status } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Subclient name is required" });
+    }
+    if (!clientId) {
+      return res.status(400).json({ message: "Client is required" });
+    }
+
+    const { data: subclient, error } = await supabase
+      .from("subclients")
+      .update({
+        name: name.trim(),
+        client_id: Number(clientId),
+        status: status === "Inactive" ? "Inactive" : "Active",
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!subclient)
+      return res.status(404).json({ message: "Subclient not found" });
+
+    res.json(subclient);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update subclient" });
+  }
+});
+
+// ---------- NEW: Delete subclient ----------
+
+// DELETE /api/subclients/:id
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const { data: existing, error: findErr } = await supabase
+      .from("subclients")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!existing)
+      return res.status(404).json({ message: "Subclient not found" });
+
+    const { error } = await supabase.from("subclients").delete().eq("id", id);
+
+    if (error) {
+      // Likely a foreign key violation because branches still reference this subclient
+      if (error.code === "23503") {
+        return res.status(409).json({
+          message:
+            "Cannot delete this subclient because it still has branches. Delete those first.",
+        });
+      }
+      throw error;
+    }
+
+    res.json({ message: "Subclient deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete subclient" });
+  }
+});
+
 module.exports = router;

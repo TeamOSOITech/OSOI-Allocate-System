@@ -274,4 +274,72 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   }
 });
 
+// ---------- NEW: Update branch ----------
+
+// PUT /api/branches/:id
+// Body: { name, clientId, subclientId, status }
+router.put("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, clientId, subclientId, status } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Branch name is required" });
+    }
+    if (!clientId) {
+      return res.status(400).json({ message: "Client is required" });
+    }
+    if (!subclientId) {
+      return res.status(400).json({ message: "Subclient is required" });
+    }
+
+    const { data: branch, error } = await supabase
+      .from("branches")
+      .update({
+        name: name.trim(),
+        client_id: Number(clientId),
+        subclient_id: Number(subclientId),
+        status: status === "Inactive" ? "Inactive" : "Active",
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!branch) return res.status(404).json({ message: "Branch not found" });
+
+    res.json(branch);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update branch" });
+  }
+});
+
+// ---------- NEW: Delete branch ----------
+
+// DELETE /api/branches/:id
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const { data: existing, error: findErr } = await supabase
+      .from("branches")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!existing) return res.status(404).json({ message: "Branch not found" });
+
+    const { error } = await supabase.from("branches").delete().eq("id", id);
+
+    if (error) throw error;
+
+    res.json({ message: "Branch deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete branch" });
+  }
+});
+
 module.exports = router;

@@ -345,4 +345,73 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// ---------- NEW: Update client ----------
+
+// PUT /api/clients/:id
+router.put("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, country, status } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Client name is required" });
+    }
+
+    const { data: client, error } = await supabase
+      .from("clients")
+      .update({
+        name: name.trim(),
+        country: country || null,
+        status: status === "Inactive" ? "Inactive" : "Active",
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!client) return res.status(404).json({ message: "Client not found" });
+
+    res.json(client);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update client" });
+  }
+});
+
+// ---------- NEW: Delete client ----------
+
+// DELETE /api/clients/:id
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const { data: existing, error: findErr } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!existing) return res.status(404).json({ message: "Client not found" });
+
+    const { error } = await supabase.from("clients").delete().eq("id", id);
+
+    if (error) {
+      // Likely a foreign key violation because subclients/branches still reference this client
+      if (error.code === "23503") {
+        return res.status(409).json({
+          message:
+            "Cannot delete this client because it still has subclients or branches. Delete those first.",
+        });
+      }
+      throw error;
+    }
+
+    res.json({ message: "Client deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete client" });
+  }
+});
+
 module.exports = router;
