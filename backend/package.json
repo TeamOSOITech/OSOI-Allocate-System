@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/client": "^7.8.0",
     "@supabase/supabase-js": "^2.110.0",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
@@ -20,11 +21,14 @@
     "express-rate-limit": "^6.7.0",
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
     "node-fetch": "^3.3.2",
-    "pg": "^8.11.0"
+    "pg": "^8.11.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prisma": "^7.8.0"
   },
   "type": "commonjs"
 }

@@ -28,7 +28,7 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-  })
+  }),
 );
 
 app.options("*", cors());
@@ -41,6 +41,11 @@ app.use("/api/tasks", require("./src/modules/tasks/tasks.routes"));
 app.use("/api/reports", require("./src/modules/reports/reports.routes"));
 app.use("/api/verticals", require("./src/modules/verticals/verticals.routes"));
 app.use("/api/users", require("./src/modules/users/user.routes"));
+app.use("/api/clients", require("./src/modules/clients/clients.routes"));
+
+app.use("/api/subclients", require("./src/modules/clients/subclients.routes"));
+
+app.use("/api/branches", require("./src/modules/clients/branches.routes"));
 
 // ========================
 // ✅ TEST SUPABASE AUTH
