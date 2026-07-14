@@ -84,6 +84,12 @@ type BulkResult = {
     rowErrors: { row: number; message: string }[];
 };
 
+type DeleteTarget = {
+    type: TabKey;
+    id: number;
+    name: string;
+};
+
 // Maps the active tab to the corresponding API resource path used by the
 // bulk template/upload endpoints on the backend.
 const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
@@ -123,6 +129,23 @@ export default function Clients() {
     });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
+
+    // ---- Edit state ----
+    const [editTarget, setEditTarget] = useState<ViewDetailsTarget | null>(null);
+    const [editForm, setEditForm] = useState({
+        name: "",
+        country: "",
+        status: "Active" as EntityStatus,
+        clientId: "",
+        subclientId: "",
+    });
+    const [editSubmitting, setEditSubmitting] = useState(false);
+    const [editError, setEditError] = useState("");
+
+    // ---- Delete state ----
+    const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState("");
 
     // ---- Bulk upload state ----
     const [bulkUploading, setBulkUploading] = useState(false);
@@ -237,6 +260,12 @@ export default function Clients() {
         [subclients, addForm.clientId]
     );
 
+    // Same, but for the Edit form's client selection.
+    const subclientsForEditClient = useMemo(
+        () => subclients.filter((s) => String(s.clientId) === editForm.clientId),
+        [subclients, editForm.clientId]
+    );
+
     const openAddModal = () => {
         setAddForm({ name: "", country: "", status: "Active", clientId: "", subclientId: "" });
         setAddError("");
@@ -304,6 +333,144 @@ export default function Clients() {
         }
     };
 
+    // ---- Edit handlers ----
+
+    const openEditModal = (target: ViewDetailsTarget) => {
+        setEditError("");
+        if (target.type === "client") {
+            setEditForm({
+                name: target.data.name,
+                country: target.data.country || "",
+                status: target.data.status,
+                clientId: "",
+                subclientId: "",
+            });
+        } else if (target.type === "subclient") {
+            setEditForm({
+                name: target.data.name,
+                country: "",
+                status: target.data.status,
+                clientId: String(target.data.clientId),
+                subclientId: "",
+            });
+        } else {
+            setEditForm({
+                name: target.data.name,
+                country: "",
+                status: target.data.status,
+                clientId: String(target.data.clientId),
+                subclientId: String(target.data.subclientId),
+            });
+        }
+        setEditTarget(target);
+    };
+
+    const closeEditModal = () => {
+        setEditTarget(null);
+        setEditError("");
+    };
+
+    const handleEditSubmit = async () => {
+        if (!editTarget) return;
+        setEditError("");
+
+        const editTabLabel =
+            editTarget.type === "client"
+                ? "Client"
+                : editTarget.type === "subclient"
+                  ? "Subclient"
+                  : "Branch";
+
+        if (!editForm.name.trim()) {
+            setEditError(`${editTabLabel} name is required.`);
+            return;
+        }
+        if (editTarget.type !== "client" && !editForm.clientId) {
+            setEditError("Client is required.");
+            return;
+        }
+        if (editTarget.type === "branch" && !editForm.subclientId) {
+            setEditError("Subclient is required.");
+            return;
+        }
+
+        setEditSubmitting(true);
+        try {
+            let url = "";
+            let body: Record<string, unknown> = {
+                name: editForm.name.trim(),
+                status: editForm.status,
+            };
+
+            if (editTarget.type === "client") {
+                url = `${apiBase}/api/clients/${editTarget.data.id}`;
+                body.country = editForm.country || null;
+            } else if (editTarget.type === "subclient") {
+                url = `${apiBase}/api/subclients/${editTarget.data.id}`;
+                body.clientId = Number(editForm.clientId);
+            } else {
+                url = `${apiBase}/api/branches/${editTarget.data.id}`;
+                body.clientId = Number(editForm.clientId);
+                body.subclientId = Number(editForm.subclientId);
+            }
+
+            const response = await fetch(url, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                throw new Error(data?.message || `Failed to update ${editTabLabel.toLowerCase()}`);
+            }
+
+            await fetchAll();
+            setEditTarget(null);
+        } catch (err: any) {
+            setEditError(err?.message || "Something went wrong.");
+        } finally {
+            setEditSubmitting(false);
+        }
+    };
+
+    // ---- Delete handlers ----
+
+    const openDeleteConfirm = (type: TabKey, id: number, name: string) => {
+        setDeleteError("");
+        setDeleteTarget({ type, id, name });
+    };
+
+    const closeDeleteConfirm = () => {
+        setDeleteTarget(null);
+        setDeleteError("");
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!deleteTarget) return;
+        setDeleting(true);
+        setDeleteError("");
+
+        try {
+            const endpoint = BULK_ENDPOINT_MAP[deleteTarget.type];
+            const response = await fetch(`${apiBase}/api/${endpoint}/${deleteTarget.id}`, {
+                method: "DELETE",
+            });
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                throw new Error(data?.message || "Failed to delete");
+            }
+
+            await fetchAll();
+            setDeleteTarget(null);
+        } catch (err: any) {
+            setDeleteError(err?.message || "Something went wrong.");
+        } finally {
+            setDeleting(false);
+        }
+    };
+
     // ---- Bulk upload handlers (tied to whichever tab is active) ----
 
     const handleDownloadTemplate = () => {
@@ -344,6 +511,13 @@ export default function Clients() {
             e.target.value = "";
         }
     };
+
+    const editTabLabel =
+        editTarget?.type === "client"
+            ? "Client"
+            : editTarget?.type === "subclient"
+              ? "Subclient"
+              : "Branch";
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
@@ -690,6 +864,12 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtn}
                                                             aria-label="Edit"
+                                                            onClick={() =>
+                                                                openEditModal({
+                                                                    type: "client",
+                                                                    data: client,
+                                                                })
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-pencil"
@@ -700,6 +880,13 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtnDanger}
                                                             aria-label="Delete"
+                                                            onClick={() =>
+                                                                openDeleteConfirm(
+                                                                    "client",
+                                                                    client.id,
+                                                                    client.name
+                                                                )
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-trash"
@@ -792,6 +979,12 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtn}
                                                             aria-label="Edit"
+                                                            onClick={() =>
+                                                                openEditModal({
+                                                                    type: "subclient",
+                                                                    data: sub,
+                                                                })
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-pencil"
@@ -802,6 +995,13 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtnDanger}
                                                             aria-label="Delete"
+                                                            onClick={() =>
+                                                                openDeleteConfirm(
+                                                                    "subclient",
+                                                                    sub.id,
+                                                                    sub.name
+                                                                )
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-trash"
@@ -884,6 +1084,12 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtn}
                                                             aria-label="Edit"
+                                                            onClick={() =>
+                                                                openEditModal({
+                                                                    type: "branch",
+                                                                    data: branch,
+                                                                })
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-pencil"
@@ -894,6 +1100,13 @@ export default function Clients() {
                                                             type="button"
                                                             style={styles.iconBtnDanger}
                                                             aria-label="Delete"
+                                                            onClick={() =>
+                                                                openDeleteConfirm(
+                                                                    "branch",
+                                                                    branch.id,
+                                                                    branch.name
+                                                                )
+                                                            }
                                                         >
                                                             <i
                                                                 className="ti ti-trash"
@@ -1212,6 +1425,194 @@ export default function Clients() {
                             >
                                 {addSubmitting ? "Saving..." : `Add ${tabLabel}`}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit modal */}
+            {editTarget && (
+                <div style={styles.overlay} onClick={closeEditModal}>
+                    <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>Edit {editTabLabel}</h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeEditModal}
+                                type="button"
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.addBody}>
+                            <div>
+                                <label style={styles.formLabel}>Name</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={editForm.name}
+                                    onChange={(e) =>
+                                        setEditForm({ ...editForm, name: e.target.value })
+                                    }
+                                />
+                            </div>
+
+                            {editTarget.type === "client" && (
+                                <div>
+                                    <label style={styles.formLabel}>Country</label>
+                                    <input
+                                        style={styles.formInput}
+                                        value={editForm.country}
+                                        onChange={(e) =>
+                                            setEditForm({ ...editForm, country: e.target.value })
+                                        }
+                                        placeholder="e.g. India"
+                                    />
+                                </div>
+                            )}
+
+                            {(editTarget.type === "subclient" || editTarget.type === "branch") && (
+                                <div>
+                                    <label style={styles.formLabel}>Client</label>
+                                    <select
+                                        style={styles.formInput}
+                                        value={editForm.clientId}
+                                        onChange={(e) =>
+                                            setEditForm({
+                                                ...editForm,
+                                                clientId: e.target.value,
+                                                subclientId: "",
+                                            })
+                                        }
+                                    >
+                                        <option value="">Select Client</option>
+                                        {clients.map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            {editTarget.type === "branch" && (
+                                <div>
+                                    <label style={styles.formLabel}>Subclient</label>
+                                    <select
+                                        style={styles.formInput}
+                                        value={editForm.subclientId}
+                                        onChange={(e) =>
+                                            setEditForm({
+                                                ...editForm,
+                                                subclientId: e.target.value,
+                                            })
+                                        }
+                                        disabled={!editForm.clientId}
+                                    >
+                                        <option value="">
+                                            {editForm.clientId
+                                                ? "Select Subclient"
+                                                : "Select a client first"}
+                                        </option>
+                                        {subclientsForEditClient.map((s) => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label style={styles.formLabel}>Status</label>
+                                <select
+                                    style={styles.formInput}
+                                    value={editForm.status}
+                                    onChange={(e) =>
+                                        setEditForm({
+                                            ...editForm,
+                                            status: e.target.value as EntityStatus,
+                                        })
+                                    }
+                                >
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select>
+                            </div>
+
+                            {editError && <p style={styles.formError}>{editError}</p>}
+
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.addSubmitBtn,
+                                    opacity: editSubmitting ? 0.7 : 1,
+                                    cursor: editSubmitting ? "not-allowed" : "pointer",
+                                }}
+                                onClick={handleEditSubmit}
+                                disabled={editSubmitting}
+                            >
+                                {editSubmitting ? "Saving..." : "Save Changes"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete confirmation modal */}
+            {deleteTarget && (
+                <div style={styles.overlay} onClick={closeDeleteConfirm}>
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>Delete {deleteTarget.name}?</h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeDeleteConfirm}
+                                type="button"
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: 13, color: "#4b4560" }}>
+                                This action can't be undone. Are you sure you want to delete this{" "}
+                                {deleteTarget.type}?
+                            </p>
+
+                            {deleteError && <p style={styles.formError}>{deleteError}</p>}
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={closeDeleteConfirm}
+                                    disabled={deleting}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.addSubmitBtn,
+                                        flex: 1,
+                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        opacity: deleting ? 0.7 : 1,
+                                        cursor: deleting ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={handleDeleteConfirm}
+                                    disabled={deleting}
+                                >
+                                    {deleting ? "Deleting..." : "Delete"}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
