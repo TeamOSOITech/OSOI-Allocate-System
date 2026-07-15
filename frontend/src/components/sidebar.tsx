@@ -141,15 +141,11 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 display: "flex",
                 flexDirection: "column",
                 gap: "6px",
-                position: "fixed",
+                position: "sticky",
                 top: 0,
-                left: 0,
-                zIndex: 10,
                 borderRight: "1px solid #eee",
                 overflow: "hidden",
                 overflowY: "hidden",
-                overscrollBehavior: "none",
-                touchAction: "none",
                 flexShrink: 0,
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             }}
@@ -183,17 +179,17 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                 justifyContent: isToday ? "space-between" : "flex-start",
                                 gap: "10px",
                                 background: isActive
-                                    ? "linear-gradient(135deg, #2BAADD, #2A2F8F)"
+                                    ? "linear-gradient(135deg, #8b5cf6, #6d28d9)"
                                     : isHovered
-                                      ? "#EAF3FC"
+                                      ? "#ede9fe"
                                       : "transparent",
-                                color: isActive ? "#fff" : isHovered ? "#2A2F8F" : "#6b6280",
+                                color: isActive ? "#fff" : isHovered ? "#6d28d9" : "#6b6280",
                                 borderRadius: "20px",
                                 padding: "10px 14px",
                                 fontSize: "13px",
                                 fontWeight: isActive ? 700 : 500,
                                 cursor: "pointer",
-                                boxShadow: isActive ? "0 4px 12px rgba(42,47,143,0.35)" : "none",
+                                boxShadow: isActive ? "0 4px 12px rgba(124,58,237,0.35)" : "none",
                                 transition: "all 0.15s",
                                 flexShrink: 0,
                             }}
@@ -236,7 +232,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                             color: isActive
                                                 ? "#fff"
                                                 : isHovered
-                                                  ? "#2A2F8F"
+                                                  ? "#6d28d9"
                                                   : "#6b6280",
                                             flexShrink: 0,
                                         }}
@@ -289,10 +285,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     flexShrink: 0,
                 }}
             >
-                <ellipse cx="50" cy="82" rx="38" ry="6" fill="#EAF3FC" />
-                <rect x="30" y="55" width="40" height="30" rx="6" fill="#C7D9F0" />
-                <path d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z" fill="#6FC6E8" />
-                <path d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z" fill="#2BAADD" />
+                <ellipse cx="50" cy="82" rx="38" ry="6" fill="#ede9fe" />
+                <rect x="30" y="55" width="40" height="30" rx="6" fill="#ddd6fe" />
+                <path d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z" fill="#c4b5fd" />
+                <path d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z" fill="#a78bfa" />
             </svg>
         </aside>
     );
