@@ -7,6 +7,7 @@ import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
 import AddUser from "./pages/admin/adduser";
 import Clients from "./pages/admin/clients";
+import Employees from "./pages/admin/employees";
 import WorkInProgress from "./pages/workinprogress";
 //import VoiceAssistant from "./components/voiceAssistant";
 
@@ -166,6 +167,9 @@ function App() {
                         </PrivateRoute>
                     }
                 />
+
+                <Route path="/employees" element={<Employees />} />
+
                 <Route path="/" element={<Navigate to="/login" replace />} />
             </Routes>
         </BrowserRouter>

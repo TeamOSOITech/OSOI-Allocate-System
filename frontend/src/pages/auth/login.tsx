@@ -130,7 +130,7 @@ const Login = () => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: "linear-gradient(135deg,#F5F3FF 0%,#EEE7FF 45%,#E6DBFF 100%)",
+                background: "linear-gradient(135deg,#EAF3FC 0%,#E1EEF9 45%,#D8E8F7 100%)",
                 fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
                 padding: isMobile ? "20px 12px" : "32px 16px",
                 overflowX: "hidden",
@@ -174,8 +174,8 @@ const Login = () => {
                     display: "flex",
                     flexDirection: isMobile ? "column" : "row",
                     boxShadow: isMobile
-                        ? "0 12px 32px rgba(124,58,237,.18)"
-                        : "0 25px 60px rgba(124,58,237,.15)",
+                        ? "0 12px 32px rgba(42,47,143,.18)"
+                        : "0 25px 60px rgba(42,47,143,.15)",
                     minHeight: isMobile ? "auto" : 620,
                 }}
             >
@@ -186,7 +186,7 @@ const Login = () => {
                         position: "relative",
                         padding: isCompact ? "28px 20px 24px" : isMobile ? "36px 28px" : 40,
                         background:
-                            "radial-gradient(120% 140% at 15% 10%,#A78BFA 0%,#7C3AED 45%,#5B21B6 100%)",
+                            "radial-gradient(120% 140% at 15% 10%,#2BAADD 0%,#2A2F8F 45%,#181A38 100%)",
                         color: "#fff",
                         display: "flex",
                         flexDirection: "column",
@@ -229,7 +229,7 @@ const Login = () => {
                             width: isMobile ? 120 : 180,
                             height: isMobile ? 120 : 180,
                             borderRadius: "50%",
-                            background: "rgba(91,33,182,.45)",
+                            background: "rgba(0,181,160,.45)",
                             filter: "blur(10px)",
                             bottom: -50,
                             left: -30,
@@ -266,7 +266,7 @@ const Login = () => {
                                         backdropFilter: "blur(6px)",
                                         padding: isMobile ? "8px 10px" : "12px 14px",
                                         transform: "rotate(-8deg)",
-                                        boxShadow: "0 14px 30px rgba(76,29,149,.35)",
+                                        boxShadow: "0 14px 30px rgba(20,22,60,.35)",
                                     } as React.CSSProperties
                                 }
                             >
@@ -308,7 +308,7 @@ const Login = () => {
                                         background: "rgba(255,255,255,.95)",
                                         padding: isMobile ? "8px 10px" : "12px 14px",
                                         transform: "rotate(6deg)",
-                                        boxShadow: "0 18px 34px rgba(76,29,149,.45)",
+                                        boxShadow: "0 18px 34px rgba(20,22,60,.45)",
                                     } as React.CSSProperties
                                 }
                             >
@@ -318,14 +318,14 @@ const Login = () => {
                                             width: isMobile ? 16 : 20,
                                             height: isMobile ? 16 : 20,
                                             borderRadius: "50%",
-                                            background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                            background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                         }}
                                     />
                                     <div
                                         style={{
                                             height: 5,
                                             borderRadius: 3,
-                                            background: "#DDD6FE",
+                                            background: "#C7D9F0",
                                             flex: 1,
                                         }}
                                     />
@@ -335,7 +335,7 @@ const Login = () => {
                                         marginTop: 8,
                                         height: 4,
                                         borderRadius: 3,
-                                        background: "#EEE7FF",
+                                        background: "#EAF3FC",
                                         width: "100%",
                                     }}
                                 />
@@ -344,7 +344,7 @@ const Login = () => {
                                         marginTop: 5,
                                         height: 4,
                                         borderRadius: 3,
-                                        background: "#EEE7FF",
+                                        background: "#EAF3FC",
                                         width: "70%",
                                     }}
                                 />
@@ -483,12 +483,12 @@ const Login = () => {
                                     width: 40,
                                     height: 40,
                                     borderRadius: "50%",
-                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
                                     margin: "0 auto 12px",
-                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
+                                    boxShadow: "0 8px 20px rgba(42,47,143,.28)",
                                 }}
                             >
                                 <i
@@ -501,7 +501,7 @@ const Login = () => {
                                 style={{
                                     margin: 0,
                                     textAlign: "center",
-                                    color: "#1E1B3A",
+                                    color: "#17181C",
                                     fontSize: 16,
                                     fontWeight: 700,
                                 }}
@@ -514,13 +514,13 @@ const Login = () => {
                                     marginTop: 4,
                                     marginBottom: 10,
                                     textAlign: "center",
-                                    color: "#8B82A7",
+                                    color: "#767F92",
                                     fontSize: 12.5,
                                     lineHeight: 1.5,
                                 }}
                             >
                                 If an account exists for{" "}
-                                <strong style={{ color: "#1E1B3A" }}>{username}</strong>, a reset
+                                <strong style={{ color: "#17181C" }}>{username}</strong>, a reset
                                 link is on its way. It may take a minute to arrive.
                             </p>
 
@@ -530,7 +530,7 @@ const Login = () => {
                                 style={{
                                     marginTop: 6,
                                     textAlign: "center",
-                                    color: "#7C3AED",
+                                    color: "#2A2F8F",
                                     fontWeight: 700,
                                     fontSize: 12.5,
                                     background: "none",
@@ -550,12 +550,12 @@ const Login = () => {
                                     width: 40,
                                     height: 40,
                                     borderRadius: "50%",
-                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
                                     margin: "0 auto 12px",
-                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
+                                    boxShadow: "0 8px 20px rgba(42,47,143,.28)",
                                 }}
                             >
                                 <i className="ti ti-lock" style={{ color: "#fff", fontSize: 18 }} />
@@ -565,7 +565,7 @@ const Login = () => {
                                 style={{
                                     margin: 0,
                                     textAlign: "center",
-                                    color: "#1E1B3A",
+                                    color: "#17181C",
                                     fontSize: 16,
                                     fontWeight: 700,
                                 }}
@@ -578,7 +578,7 @@ const Login = () => {
                                     marginTop: 4,
                                     marginBottom: 10,
                                     textAlign: "center",
-                                    color: "#8B82A7",
+                                    color: "#767F92",
                                     fontSize: 12.5,
                                 }}
                             >
@@ -589,7 +589,7 @@ const Login = () => {
                                 style={{
                                     display: "block",
                                     marginBottom: 4,
-                                    color: "#4B4560",
+                                    color: "#3D4459",
                                     fontWeight: 600,
                                     fontSize: 11.5,
                                 }}
@@ -605,10 +605,10 @@ const Login = () => {
                                 style={{
                                     width: "100%",
                                     padding: "8px 12px",
-                                    border: "1px solid #DDD6FE",
+                                    border: "1px solid #C7D9F0",
                                     borderRadius: 12,
-                                    background: "#F3EFFE",
-                                    color: "#7C3AED",
+                                    background: "#EDF3FB",
+                                    color: "#2A2F8F",
                                     outline: "none",
                                     fontSize: 13,
                                     fontWeight: 600,
@@ -621,9 +621,9 @@ const Login = () => {
                             {error && (
                                 <div
                                     style={{
-                                        background: "#F8F5FF",
-                                        border: "1px solid #DDD6FE",
-                                        color: "#7C3AED",
+                                        background: "#EEF4FB",
+                                        border: "1px solid #C7D9F0",
+                                        color: "#2A2F8F",
                                         padding: "8px 12px",
                                         borderRadius: 10,
                                         marginBottom: 12,
@@ -648,8 +648,8 @@ const Login = () => {
                                     color: "#fff",
                                     fontWeight: 700,
                                     fontSize: 13.5,
-                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
-                                    boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                    background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
+                                    boxShadow: "0 10px 24px rgba(42,47,143,.28)",
                                     marginBottom: 22,
                                 }}
                             >
@@ -664,7 +664,7 @@ const Login = () => {
                                 }}
                                 style={{
                                     textAlign: "center",
-                                    color: "#7C3AED",
+                                    color: "#2A2F8F",
                                     fontWeight: 700,
                                     fontSize: 12.5,
                                     background: "none",
@@ -684,12 +684,12 @@ const Login = () => {
                                     width: 40,
                                     height: 40,
                                     borderRadius: "50%",
-                                    background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
+                                    background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
                                     margin: "0 auto 12px",
-                                    boxShadow: "0 8px 20px rgba(124,58,237,.28)",
+                                    boxShadow: "0 8px 20px rgba(42,47,143,.28)",
                                 }}
                             >
                                 <i
@@ -702,7 +702,7 @@ const Login = () => {
                                 style={{
                                     margin: 0,
                                     textAlign: "center",
-                                    color: "#1E1B3A",
+                                    color: "#17181C",
                                     fontSize: 16,
                                     fontWeight: 700,
                                 }}
@@ -715,7 +715,7 @@ const Login = () => {
                                     marginTop: 4,
                                     marginBottom: 10,
                                     textAlign: "center",
-                                    color: "#8B82A7",
+                                    color: "#767F92",
                                     fontSize: 12.5,
                                 }}
                             >
@@ -725,9 +725,9 @@ const Login = () => {
                             {error && (
                                 <div
                                     style={{
-                                        background: "#F8F5FF",
-                                        border: "1px solid #DDD6FE",
-                                        color: "#7C3AED",
+                                        background: "#EEF4FB",
+                                        border: "1px solid #C7D9F0",
+                                        color: "#2A2F8F",
                                         padding: "8px 12px",
                                         borderRadius: 10,
                                         marginBottom: 12,
@@ -744,7 +744,7 @@ const Login = () => {
                                     style={{
                                         display: "block",
                                         marginBottom: 4,
-                                        color: "#4B4560",
+                                        color: "#3D4459",
                                         fontWeight: 600,
                                         fontSize: 11.5,
                                         width: "100%",
@@ -764,9 +764,9 @@ const Login = () => {
                                     style={{
                                         width: "100%",
                                         padding: isMobile ? "14px 16px" : "12px 14px",
-                                        border: "1px solid #DDD6FE",
+                                        border: "1px solid #C7D9F0",
                                         borderRadius: 12,
-                                        background: "#FAF8FF",
+                                        background: "#F4F8FD",
                                         outline: "none",
                                         fontSize: isMobile ? 16 : 13,
                                         marginBottom: 10,
@@ -778,7 +778,7 @@ const Login = () => {
                                     style={{
                                         display: "block",
                                         marginBottom: 4,
-                                        color: "#4B4560",
+                                        color: "#3D4459",
                                         fontWeight: 600,
                                         fontSize: 11.5,
                                     }}
@@ -798,9 +798,9 @@ const Login = () => {
                                             padding: isMobile
                                                 ? "14px 44px 14px 16px"
                                                 : "8px 40px 8px 12px",
-                                            border: "1px solid #DDD6FE",
+                                            border: "1px solid #C7D9F0",
                                             borderRadius: 12,
-                                            background: "#FAF8FF",
+                                            background: "#F4F8FD",
                                             outline: "none",
                                             fontSize: isMobile ? 16 : 13,
                                             boxSizing: "border-box",
@@ -821,7 +821,7 @@ const Login = () => {
                                             border: "none",
                                             background: "transparent",
                                             cursor: "pointer",
-                                            color: "#7C3AED",
+                                            color: "#2A2F8F",
                                             fontSize: 16,
                                         }}
                                     >
@@ -843,8 +843,8 @@ const Login = () => {
                                         color: "#fff",
                                         fontWeight: 700,
                                         fontSize: 13.5,
-                                        background: "linear-gradient(135deg,#8B5CF6,#7C3AED)",
-                                        boxShadow: "0 10px 24px rgba(124,58,237,.28)",
+                                        background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
+                                        boxShadow: "0 10px 24px rgba(42,47,143,.28)",
                                     }}
                                 >
                                     {loading ? "Signing In..." : "Sign In"}
@@ -857,7 +857,7 @@ const Login = () => {
                                 style={{
                                     marginTop: 8,
                                     textAlign: "center",
-                                    color: "#7C3AED",
+                                    color: "#2A2F8F",
                                     fontWeight: 700,
                                     fontSize: 12.5,
                                     background: "none",

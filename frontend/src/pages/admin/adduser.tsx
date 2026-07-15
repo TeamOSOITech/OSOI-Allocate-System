@@ -331,7 +331,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-user"
-                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                    style={{ fontSize: 15, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Personal Information</span>
                             </div>
@@ -419,7 +419,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-building"
-                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                    style={{ fontSize: 15, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Organization Details</span>
                             </div>
@@ -506,7 +506,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-lock"
-                                    style={{ fontSize: 15, color: "#7c3aed" }}
+                                    style={{ fontSize: 15, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Security</span>
                             </div>
@@ -716,7 +716,7 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         flex: 1,
         minHeight: 0,
-        background: "#f5f3ff",
+        background: "#EAF3FC",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         overflowX: "hidden",
     },
@@ -726,7 +726,7 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         minHeight: 0,
         width: "100%",
-        background: "#f5f3ff",
+        background: "#EAF3FC",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         position: "relative",
         overflowX: "hidden",
@@ -753,7 +753,7 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#1e1b3a" },
+    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#17181C" },
     overlay: {
         position: "fixed",
         inset: 0,
@@ -804,8 +804,8 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 48,
     },
     pageTitleBlock: { textAlign: "center" },
-    pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#1e1b3a" },
-    pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#9c96b8" },
+    pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#17181C" },
+    pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
 
     headerButtonGroup: {
         position: "absolute",
@@ -819,8 +819,8 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 8,
         background: "#fff",
-        color: "#6d28d9",
-        border: "1px solid #ddd6fe",
+        color: "#2A2F8F",
+        border: "1px solid #C7D9F0",
         borderRadius: 24,
         padding: "11px 20px",
         fontSize: 13,
@@ -831,7 +831,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 24,
@@ -839,10 +839,10 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 13,
         fontWeight: 700,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
     },
     bulkHeaderBtnMobile: {
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 20,
@@ -869,10 +869,10 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 8,
         padding: "14px 24px",
-        background: "#faf8ff",
-        borderBottom: "1px solid #f0ecff",
+        background: "#F4F8FD",
+        borderBottom: "1px solid #E7F0FB",
     },
-    sectionHeaderText: { fontSize: 13, fontWeight: 700, color: "#6d28d9" },
+    sectionHeaderText: { fontSize: 13, fontWeight: 700, color: "#2A2F8F" },
     sectionBody: { padding: "16px 24px" },
 
     grid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px 24px" },
@@ -882,7 +882,7 @@ const styles: Record<string, CSSProperties> = {
         gap: "12px",
     },
 
-    label: { display: "block", marginBottom: 6, color: "#4b4560", fontSize: 12, fontWeight: 600 },
+    label: { display: "block", marginBottom: 6, color: "#3D4459", fontSize: 12, fontWeight: 600 },
     input: {
         width: "100%",
         padding: "10px 12px",
@@ -892,7 +892,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 13,
         borderRadius: 8,
         boxSizing: "border-box",
-        color: "#1e1b3a",
+        color: "#17181C",
     },
     note: { color: "#f59e0b", marginTop: 6, fontWeight: 600, fontSize: 11 },
 
@@ -915,7 +915,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 8,
@@ -930,8 +930,8 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#6d28d9",
-        border: "1px solid #ddd6fe",
+        color: "#2A2F8F",
+        border: "1px solid #C7D9F0",
         borderRadius: 8,
         padding: "10px 16px",
         fontSize: 12,
@@ -946,7 +946,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 24,
@@ -954,7 +954,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 13,
         fontWeight: 700,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
         whiteSpace: "nowrap",
         flexShrink: 0,
     },
@@ -972,8 +972,8 @@ const styles: Record<string, CSSProperties> = {
         width: 56,
         height: 56,
         borderRadius: "50%",
-        background: "#ede9fe",
-        color: "#6d28d9",
+        background: "#DCEAFB",
+        color: "#2A2F8F",
         fontSize: 28,
         fontWeight: 700,
         display: "flex",
@@ -981,10 +981,10 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         margin: "0 auto 16px",
     },
-    successTitle: { margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#1e1b3a" },
-    successText: { margin: "0 0 24px", fontSize: 14, color: "#9c96b8" },
+    successTitle: { margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#17181C" },
+    successText: { margin: "0 0 24px", fontSize: 14, color: "#767F92" },
     successBtn: {
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 8,
@@ -1009,8 +1009,8 @@ const styles: Record<string, CSSProperties> = {
         padding: "24px 28px 16px",
         borderBottom: "1px solid #f0f0f0",
     },
-    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#6d28d9" },
-    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#9c96b8" },
+    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#2A2F8F" },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
     closeBtn: {
         position: "absolute",
         top: 20,
@@ -1030,15 +1030,15 @@ const styles: Record<string, CSSProperties> = {
     bulkInfoBox: {
         margin: "20px 28px",
         padding: "14px 16px",
-        background: "#faf5ff",
-        borderLeft: "3px solid #8b5cf6",
+        background: "#EEF6FB",
+        borderLeft: "3px solid #2BAADD",
         borderRadius: 6,
     },
     bulkInfoLabel: {
         display: "block",
         fontSize: 11,
         fontWeight: 700,
-        color: "#6d28d9",
+        color: "#2A2F8F",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
@@ -1065,7 +1065,7 @@ const styles: Record<string, CSSProperties> = {
     },
     fileInputHidden: { display: "none" },
     fileInputButton: {
-        background: "#6d28d9",
+        background: "#2A2F8F",
         color: "#fff",
         fontSize: 12,
         fontWeight: 600,
@@ -1081,7 +1081,7 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     bulkUploadBtn: {
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 8,
@@ -1092,7 +1092,7 @@ const styles: Record<string, CSSProperties> = {
     },
     resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
     resultsSummary: { marginBottom: 12 },
-    resultsSummaryText: { fontSize: 14, color: "#1e1b3a" },
+    resultsSummaryText: { fontSize: 14, color: "#17181C" },
     resultsList: {
         display: "flex",
         flexDirection: "column",
@@ -1115,7 +1115,7 @@ const styles: Record<string, CSSProperties> = {
     resultEmail: {
         fontSize: 13,
         fontWeight: 600,
-        color: "#1e1b3a",
+        color: "#17181C",
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -1150,7 +1150,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
         borderRadius: 24,
@@ -1158,7 +1158,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 14,
         fontWeight: 700,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
         whiteSpace: "nowrap",
     },
     mobileHeaderBtnGroup: {
@@ -1172,8 +1172,8 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         background: "#fff",
-        color: "#6d28d9",
-        border: "1px solid #ddd6fe",
+        color: "#2A2F8F",
+        border: "1px solid #C7D9F0",
         borderRadius: "50%",
         width: 30,
         height: 30,

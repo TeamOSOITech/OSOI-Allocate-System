@@ -22,7 +22,12 @@ const menuItems: MenuItem[] = [
         path: "/clients",
         roles: ["MANAGER", "ADMIN"],
     },
-    { label: "View Employee", icon: "ti ti-eye", path: "/employees", roles: ["MANAGER", "ADMIN"] },
+    {
+        label: "Employee Preview",
+        icon: "ti ti-eye",
+        path: "/employees",
+        roles: ["MANAGER", "ADMIN"],
+    },
     {
         label: "Task Progress",
         icon: "ti ti-file-description",
@@ -64,7 +69,7 @@ const pathToLabel: Record<string, string> = {
     "/report": "Report",
     "/reportdashboard": "Report",
     "/clients": "Clients Preview",
-    "/employees": "View Employee",
+    "/employees": "Employee Preview",
     "/admin/add-user": "Add User",
     "/history": "History",
     "/admin": "Admin",
@@ -110,6 +115,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
             navigate("/admin/add-user");
         } else if (item.label === "Clients Preview") {
             navigate("/clients");
+        } else if (item.label === "Employee Preview") {
+            navigate("/employees");
         } else if (item.label === "Task Progress") {
             navigate("/dashboard");
         } else if (item.label === "Report") {
@@ -126,96 +133,122 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     return (
         <aside
             style={{
-                width: "220px",
+                width: "176px",
                 background: "#fff",
                 padding: "20px 14px",
                 height: "100vh",
+                maxHeight: "100vh",
                 display: "flex",
                 flexDirection: "column",
                 gap: "6px",
-                position: "relative",
+                position: "fixed",
+                top: 0,
+                left: 0,
+                zIndex: 10,
                 borderRight: "1px solid #eee",
-                overflowY: "auto",
+                overflow: "hidden",
+                overflowY: "hidden",
+                overscrollBehavior: "none",
+                touchAction: "none",
+                flexShrink: 0,
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             }}
         >
             {/* Logo */}
 
-            {visibleItems.map((item) => {
-                const isToday = item.label === "Today's Task";
-                const isActive = activeLabel === item.label;
-                const isHovered = hoveredLabel === item.label;
+            {/* Nav items wrapper: clips instead of scrolling if content overflows */}
+            <div
+                style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    overflow: "hidden",
+                    minHeight: 0,
+                }}
+            >
+                {visibleItems.map((item) => {
+                    const isToday = item.label === "Today's Task";
+                    const isActive = activeLabel === item.label;
+                    const isHovered = hoveredLabel === item.label;
 
-                return (
-                    <div
-                        key={item.label}
-                        onClick={() => handleClick(item)}
-                        onMouseEnter={() => setHoveredLabel(item.label)}
-                        onMouseLeave={() => setHoveredLabel(null)}
-                        style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: isToday ? "space-between" : "flex-start",
-                            gap: "10px",
-                            background: isActive
-                                ? "linear-gradient(135deg, #8b5cf6, #6d28d9)"
-                                : isHovered
-                                  ? "#ede9fe"
-                                  : "transparent",
-                            color: isActive ? "#fff" : isHovered ? "#6d28d9" : "#6b6280",
-                            borderRadius: "20px",
-                            padding: "10px 14px",
-                            fontSize: "13px",
-                            fontWeight: isActive ? 700 : 500,
-                            cursor: "pointer",
-                            boxShadow: isActive ? "0 4px 12px rgba(124,58,237,0.35)" : "none",
-                            transition: "all 0.15s",
-                        }}
-                    >
-                        {isToday ? (
-                            <>
-                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                    <span
+                    return (
+                        <div
+                            key={item.label}
+                            onClick={() => handleClick(item)}
+                            onMouseEnter={() => setHoveredLabel(item.label)}
+                            onMouseLeave={() => setHoveredLabel(null)}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: isToday ? "space-between" : "flex-start",
+                                gap: "10px",
+                                background: isActive
+                                    ? "linear-gradient(135deg, #2BAADD, #2A2F8F)"
+                                    : isHovered
+                                      ? "#EAF3FC"
+                                      : "transparent",
+                                color: isActive ? "#fff" : isHovered ? "#2A2F8F" : "#6b6280",
+                                borderRadius: "20px",
+                                padding: "10px 14px",
+                                fontSize: "13px",
+                                fontWeight: isActive ? 700 : 500,
+                                cursor: "pointer",
+                                boxShadow: isActive ? "0 4px 12px rgba(42,47,143,0.35)" : "none",
+                                transition: "all 0.15s",
+                                flexShrink: 0,
+                            }}
+                        >
+                            {isToday ? (
+                                <>
+                                    <div
                                         style={{
-                                            width: "8px",
-                                            height: "8px",
-                                            borderRadius: "50%",
-                                            background: isActive ? "#fff" : "#d6362e",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "8px",
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                width: "8px",
+                                                height: "8px",
+                                                borderRadius: "50%",
+                                                background: isActive ? "#fff" : "#d6362e",
+                                                flexShrink: 0,
+                                            }}
+                                        />
+                                        <span>{item.label}</span>
+                                    </div>
+                                    <i
+                                        className="ti ti-alert-triangle"
+                                        style={{
+                                            fontSize: "15px",
+                                            color: isActive ? "#fff" : "#f59e0b",
+                                        }}
+                                        aria-hidden="true"
+                                    />
+                                </>
+                            ) : (
+                                <>
+                                    <i
+                                        className={item.icon}
+                                        style={{
+                                            fontSize: "15px",
+                                            color: isActive
+                                                ? "#fff"
+                                                : isHovered
+                                                  ? "#2A2F8F"
+                                                  : "#6b6280",
                                             flexShrink: 0,
                                         }}
+                                        aria-hidden="true"
                                     />
                                     <span>{item.label}</span>
-                                </div>
-                                <i
-                                    className="ti ti-alert-triangle"
-                                    style={{
-                                        fontSize: "15px",
-                                        color: isActive ? "#fff" : "#f59e0b",
-                                    }}
-                                    aria-hidden="true"
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <i
-                                    className={item.icon}
-                                    style={{
-                                        fontSize: "15px",
-                                        color: isActive
-                                            ? "#fff"
-                                            : isHovered
-                                              ? "#6d28d9"
-                                              : "#6b6280",
-                                        flexShrink: 0,
-                                    }}
-                                    aria-hidden="true"
-                                />
-                                <span>{item.label}</span>
-                            </>
-                        )}
-                    </div>
-                );
-            })}
+                                </>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
 
             {/* Sign off */}
             <div
@@ -232,6 +265,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     fontWeight: 500,
                     cursor: "pointer",
                     marginTop: 6,
+                    flexShrink: 0,
                 }}
             >
                 <i
@@ -248,17 +282,17 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 height="120"
                 viewBox="0 0 100 90"
                 style={{
-                    marginTop: "auto",
+                    marginTop: "12px",
                     alignSelf: "flex-end",
                     opacity: 0.95,
                     pointerEvents: "none",
                     flexShrink: 0,
                 }}
             >
-                <ellipse cx="50" cy="82" rx="38" ry="6" fill="#ede9fe" />
-                <rect x="30" y="55" width="40" height="30" rx="6" fill="#ddd6fe" />
-                <path d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z" fill="#c4b5fd" />
-                <path d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z" fill="#a78bfa" />
+                <ellipse cx="50" cy="82" rx="38" ry="6" fill="#EAF3FC" />
+                <rect x="30" y="55" width="40" height="30" rx="6" fill="#C7D9F0" />
+                <path d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z" fill="#6FC6E8" />
+                <path d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z" fill="#2BAADD" />
             </svg>
         </aside>
     );

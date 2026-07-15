@@ -38,16 +38,6 @@ type SubclientRow = {
     users: number;
 };
 
-type BranchRow = {
-    id: number;
-    name: string;
-    subclientId: number;
-    subclientName: string;
-    clientId: number;
-    clientName: string;
-    status: EntityStatus;
-};
-
 const AVATAR_PALETTE = [
     { bg: "#e0e7ff", text: "#4338ca" },
     { bg: "#ede9fe", text: "#7c3aed" },
@@ -71,12 +61,10 @@ function getAvatarColors(name: string) {
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
-type TabKey = "client" | "subclient" | "branch";
+type TabKey = "client" | "subclient";
 
 type ViewDetailsTarget =
-    | { type: "client"; data: Client }
-    | { type: "subclient"; data: SubclientRow }
-    | { type: "branch"; data: BranchRow };
+    { type: "client"; data: Client } | { type: "subclient"; data: SubclientRow };
 
 type BulkResult = {
     totalRows: number;
@@ -95,7 +83,6 @@ type DeleteTarget = {
 const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
     client: "clients",
     subclient: "subclients",
-    branch: "branches",
 };
 
 export default function Clients() {
@@ -113,7 +100,6 @@ export default function Clients() {
 
     const [clients, setClients] = useState<Client[]>([]);
     const [subclients, setSubclients] = useState<SubclientRow[]>([]);
-    const [branches, setBranches] = useState<BranchRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
@@ -125,7 +111,6 @@ export default function Clients() {
         country: "",
         status: "Active" as EntityStatus,
         clientId: "",
-        subclientId: "",
     });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
@@ -137,7 +122,6 @@ export default function Clients() {
         country: "",
         status: "Active" as EntityStatus,
         clientId: "",
-        subclientId: "",
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState("");
@@ -158,19 +142,16 @@ export default function Clients() {
         setLoading(true);
         setError("");
         try {
-            const [clientsRes, subclientsRes, branchesRes] = await Promise.all([
+            const [clientsRes, subclientsRes] = await Promise.all([
                 fetch(`${apiBase}/api/clients`, { cache: "no-store" }),
                 fetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
-                fetch(`${apiBase}/api/branches`, { cache: "no-store" }),
             ]);
 
             if (!clientsRes.ok) throw new Error("Failed to load clients");
             if (!subclientsRes.ok) throw new Error("Failed to load subclients");
-            if (!branchesRes.ok) throw new Error("Failed to load branches");
 
             setClients(await clientsRes.json());
             setSubclients(await subclientsRes.json());
-            setBranches(await branchesRes.json());
         } catch (err: any) {
             setError(err?.message || "Something went wrong loading data.");
         } finally {
@@ -222,17 +203,8 @@ export default function Clients() {
         [subclients, search, statusFilter, activeFilter]
     );
 
-    const filteredBranches = useMemo(
-        () => branches.filter((b) => matchesCommonFilters(b.name, b.status)),
-        [branches, search, statusFilter, activeFilter]
-    );
-
     const currentFilteredLength =
-        activeTab === "client"
-            ? filteredClients.length
-            : activeTab === "subclient"
-              ? filteredSubclients.length
-              : filteredBranches.length;
+        activeTab === "client" ? filteredClients.length : filteredSubclients.length;
 
     const totalPages = Math.max(1, Math.ceil(currentFilteredLength / perPage));
     const currentPage = Math.min(page, totalPages);
@@ -240,34 +212,18 @@ export default function Clients() {
 
     const pageClients = filteredClients.slice(pageStart, pageStart + perPage);
     const pageSubclients = filteredSubclients.slice(pageStart, pageStart + perPage);
-    const pageBranches = filteredBranches.slice(pageStart, pageStart + perPage);
 
     const resetToPageOne = () => setPage(1);
 
     const tabCounts: Record<TabKey, number> = {
         client: clients.length,
         subclient: subclients.length,
-        branch: branches.length,
     };
 
-    const tabLabel =
-        activeTab === "client" ? "Client" : activeTab === "subclient" ? "Subclient" : "Branch";
-
-    // Subclients belonging to whichever client is picked in the Add
-    // Branch form, so the subclient dropdown narrows correctly.
-    const subclientsForSelectedClient = useMemo(
-        () => subclients.filter((s) => String(s.clientId) === addForm.clientId),
-        [subclients, addForm.clientId]
-    );
-
-    // Same, but for the Edit form's client selection.
-    const subclientsForEditClient = useMemo(
-        () => subclients.filter((s) => String(s.clientId) === editForm.clientId),
-        [subclients, editForm.clientId]
-    );
+    const tabLabel = activeTab === "client" ? "Client" : "Subclient";
 
     const openAddModal = () => {
-        setAddForm({ name: "", country: "", status: "Active", clientId: "", subclientId: "" });
+        setAddForm({ name: "", country: "", status: "Active", clientId: "" });
         setAddError("");
         setShowAddModal(true);
     };
@@ -288,10 +244,6 @@ export default function Clients() {
             setAddError("Client is required.");
             return;
         }
-        if (activeTab === "branch" && !addForm.subclientId) {
-            setAddError("Subclient is required.");
-            return;
-        }
 
         setAddSubmitting(true);
         try {
@@ -304,13 +256,9 @@ export default function Clients() {
             if (activeTab === "client") {
                 url = `${apiBase}/api/clients`;
                 body.country = addForm.country || null;
-            } else if (activeTab === "subclient") {
+            } else {
                 url = `${apiBase}/api/subclients`;
                 body.clientId = Number(addForm.clientId);
-            } else {
-                url = `${apiBase}/api/branches`;
-                body.clientId = Number(addForm.clientId);
-                body.subclientId = Number(addForm.subclientId);
             }
 
             const response = await fetch(url, {
@@ -343,15 +291,6 @@ export default function Clients() {
                 country: target.data.country || "",
                 status: target.data.status,
                 clientId: "",
-                subclientId: "",
-            });
-        } else if (target.type === "subclient") {
-            setEditForm({
-                name: target.data.name,
-                country: "",
-                status: target.data.status,
-                clientId: String(target.data.clientId),
-                subclientId: "",
             });
         } else {
             setEditForm({
@@ -359,7 +298,6 @@ export default function Clients() {
                 country: "",
                 status: target.data.status,
                 clientId: String(target.data.clientId),
-                subclientId: String(target.data.subclientId),
             });
         }
         setEditTarget(target);
@@ -374,12 +312,7 @@ export default function Clients() {
         if (!editTarget) return;
         setEditError("");
 
-        const editTabLabel =
-            editTarget.type === "client"
-                ? "Client"
-                : editTarget.type === "subclient"
-                  ? "Subclient"
-                  : "Branch";
+        const editTabLabel = editTarget.type === "client" ? "Client" : "Subclient";
 
         if (!editForm.name.trim()) {
             setEditError(`${editTabLabel} name is required.`);
@@ -387,10 +320,6 @@ export default function Clients() {
         }
         if (editTarget.type !== "client" && !editForm.clientId) {
             setEditError("Client is required.");
-            return;
-        }
-        if (editTarget.type === "branch" && !editForm.subclientId) {
-            setEditError("Subclient is required.");
             return;
         }
 
@@ -405,13 +334,9 @@ export default function Clients() {
             if (editTarget.type === "client") {
                 url = `${apiBase}/api/clients/${editTarget.data.id}`;
                 body.country = editForm.country || null;
-            } else if (editTarget.type === "subclient") {
+            } else {
                 url = `${apiBase}/api/subclients/${editTarget.data.id}`;
                 body.clientId = Number(editForm.clientId);
-            } else {
-                url = `${apiBase}/api/branches/${editTarget.data.id}`;
-                body.clientId = Number(editForm.clientId);
-                body.subclientId = Number(editForm.subclientId);
             }
 
             const response = await fetch(url, {
@@ -512,12 +437,7 @@ export default function Clients() {
         }
     };
 
-    const editTabLabel =
-        editTarget?.type === "client"
-            ? "Client"
-            : editTarget?.type === "subclient"
-              ? "Subclient"
-              : "Branch";
+    const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
@@ -607,16 +527,6 @@ export default function Clients() {
                         >
                             Subclient ({tabCounts.subclient})
                         </button>
-                        <button
-                            type="button"
-                            onClick={() => setActiveTab("branch")}
-                            style={{
-                                ...styles.tabBtn,
-                                ...(activeTab === "branch" ? styles.tabBtnActive : {}),
-                            }}
-                        >
-                            Branch ({tabCounts.branch})
-                        </button>
                     </div>
 
                     {/* Header row */}
@@ -624,12 +534,7 @@ export default function Clients() {
                         <div style={styles.headerRow}>
                             <p style={styles.headerSubtext}>
                                 View, add, edit or remove{" "}
-                                {activeTab === "client"
-                                    ? "Clients"
-                                    : activeTab === "subclient"
-                                      ? "Subclients"
-                                      : "Branches"}{" "}
-                                from the system.
+                                {activeTab === "client" ? "Clients" : "Subclients"} from the system.
                             </p>
 
                             <div style={styles.headerActions}>
@@ -779,13 +684,27 @@ export default function Clients() {
                                 <p style={styles.emptyText}>No {activeTab}s match your filters.</p>
                             </div>
                         ) : (
-                            <div style={isMobile ? styles.cardGridMobile : styles.cardGrid}>
+                            <div
+                                style={
+                                    viewMode === "grid"
+                                        ? isMobile
+                                            ? styles.cardGridMobile
+                                            : styles.cardGrid
+                                        : styles.cardList
+                                }
+                            >
                                 {activeTab === "client" &&
                                     pageClients.map((client) => {
                                         const avatar = getAvatarColors(client.name);
+                                        const isList = viewMode === "list";
                                         return (
-                                            <div key={client.id} style={styles.card}>
-                                                <div style={styles.cardTop}>
+                                            <div
+                                                key={client.id}
+                                                style={isList ? styles.rowCard : styles.card}
+                                            >
+                                                <div
+                                                    style={isList ? styles.rowLeft : styles.cardTop}
+                                                >
                                                     <div
                                                         style={{
                                                             ...styles.avatar,
@@ -817,8 +736,18 @@ export default function Clients() {
                                                     </div>
                                                 </div>
 
-                                                <div style={styles.statsRow}>
-                                                    <div style={styles.statBlock}>
+                                                <div
+                                                    style={
+                                                        isList ? styles.rowStats : styles.statsRow
+                                                    }
+                                                >
+                                                    <div
+                                                        style={
+                                                            isList
+                                                                ? styles.rowStatBlock
+                                                                : styles.statBlock
+                                                        }
+                                                    >
                                                         <span style={styles.statLabel}>
                                                             Subclients
                                                         </span>
@@ -826,15 +755,13 @@ export default function Clients() {
                                                             {client.subclients}
                                                         </span>
                                                     </div>
-                                                    <div style={styles.statBlock}>
-                                                        <span style={styles.statLabel}>
-                                                            Branches
-                                                        </span>
-                                                        <span style={styles.statValue}>
-                                                            {client.branches}
-                                                        </span>
-                                                    </div>
-                                                    <div style={styles.statBlock}>
+                                                    <div
+                                                        style={
+                                                            isList
+                                                                ? styles.rowStatBlock
+                                                                : styles.statBlock
+                                                        }
+                                                    >
                                                         <span style={styles.statLabel}>Users</span>
                                                         <span style={styles.statValue}>
                                                             {client.users}
@@ -842,7 +769,13 @@ export default function Clients() {
                                                     </div>
                                                 </div>
 
-                                                <div style={styles.cardFooter}>
+                                                <div
+                                                    style={
+                                                        isList
+                                                            ? styles.rowActions
+                                                            : styles.cardFooter
+                                                    }
+                                                >
                                                     <button
                                                         type="button"
                                                         style={styles.viewDetailsBtn}
@@ -902,9 +835,15 @@ export default function Clients() {
                                 {activeTab === "subclient" &&
                                     pageSubclients.map((sub) => {
                                         const avatar = getAvatarColors(sub.name);
+                                        const isList = viewMode === "list";
                                         return (
-                                            <div key={sub.id} style={styles.card}>
-                                                <div style={styles.cardTop}>
+                                            <div
+                                                key={sub.id}
+                                                style={isList ? styles.rowCard : styles.card}
+                                            >
+                                                <div
+                                                    style={isList ? styles.rowLeft : styles.cardTop}
+                                                >
                                                     <div
                                                         style={{
                                                             ...styles.avatar,
@@ -940,16 +879,18 @@ export default function Clients() {
                                                     </div>
                                                 </div>
 
-                                                <div style={styles.statsRow}>
-                                                    <div style={styles.statBlock}>
-                                                        <span style={styles.statLabel}>
-                                                            Branches
-                                                        </span>
-                                                        <span style={styles.statValue}>
-                                                            {sub.branches}
-                                                        </span>
-                                                    </div>
-                                                    <div style={styles.statBlock}>
+                                                <div
+                                                    style={
+                                                        isList ? styles.rowStats : styles.statsRow
+                                                    }
+                                                >
+                                                    <div
+                                                        style={
+                                                            isList
+                                                                ? styles.rowStatBlock
+                                                                : styles.statBlock
+                                                        }
+                                                    >
                                                         <span style={styles.statLabel}>Users</span>
                                                         <span style={styles.statValue}>
                                                             {sub.users}
@@ -957,7 +898,13 @@ export default function Clients() {
                                                     </div>
                                                 </div>
 
-                                                <div style={styles.cardFooter}>
+                                                <div
+                                                    style={
+                                                        isList
+                                                            ? styles.rowActions
+                                                            : styles.cardFooter
+                                                    }
+                                                >
                                                     <button
                                                         type="button"
                                                         style={styles.viewDetailsBtn}
@@ -1013,176 +960,9 @@ export default function Clients() {
                                             </div>
                                         );
                                     })}
-
-                                {activeTab === "branch" &&
-                                    pageBranches.map((branch) => {
-                                        const avatar = getAvatarColors(branch.name);
-                                        return (
-                                            <div key={branch.id} style={styles.card}>
-                                                <div style={styles.cardTop}>
-                                                    <div
-                                                        style={{
-                                                            ...styles.avatar,
-                                                            background: avatar.bg,
-                                                            color: avatar.text,
-                                                        }}
-                                                    >
-                                                        {getInitials(branch.name)}
-                                                    </div>
-                                                    <div style={styles.cardNameBlock}>
-                                                        <div style={styles.cardNameRow}>
-                                                            <span style={styles.cardName}>
-                                                                {branch.name}
-                                                            </span>
-                                                            <span
-                                                                style={{
-                                                                    ...styles.statusPill,
-                                                                    ...(branch.status === "Active"
-                                                                        ? styles.statusPillActive
-                                                                        : styles.statusPillInactive),
-                                                                }}
-                                                            >
-                                                                {branch.status}
-                                                            </span>
-                                                        </div>
-                                                        <span style={styles.cardLookup}>
-                                                            <i
-                                                                className="ti ti-sitemap"
-                                                                style={{ fontSize: 11 }}
-                                                            />
-                                                            {branch.subclientName}
-                                                        </span>
-                                                        <span style={styles.cardLookup}>
-                                                            <i
-                                                                className="ti ti-building"
-                                                                style={{ fontSize: 11 }}
-                                                            />
-                                                            {branch.clientName}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                <div style={styles.cardFooter}>
-                                                    <button
-                                                        type="button"
-                                                        style={styles.viewDetailsBtn}
-                                                        onClick={() =>
-                                                            setViewDetails({
-                                                                type: "branch",
-                                                                data: branch,
-                                                            })
-                                                        }
-                                                    >
-                                                        View Details
-                                                        <i
-                                                            className="ti ti-chevron-right"
-                                                            style={{ fontSize: 13 }}
-                                                        />
-                                                    </button>
-                                                    <div style={styles.cardActions}>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtn}
-                                                            aria-label="Edit"
-                                                            onClick={() =>
-                                                                openEditModal({
-                                                                    type: "branch",
-                                                                    data: branch,
-                                                                })
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-pencil"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtnDanger}
-                                                            aria-label="Delete"
-                                                            onClick={() =>
-                                                                openDeleteConfirm(
-                                                                    "branch",
-                                                                    branch.id,
-                                                                    branch.name
-                                                                )
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-trash"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
                             </div>
                         )}
                     </div>
-
-                    {/* Pagination */}
-                    {!loading && !error && (
-                        <div style={isMobile ? styles.paginationRowMobile : styles.paginationRow}>
-                            <span style={styles.paginationText}>
-                                Showing {currentFilteredLength === 0 ? 0 : pageStart + 1} to{" "}
-                                {Math.min(pageStart + perPage, currentFilteredLength)} of{" "}
-                                {currentFilteredLength} {activeTab}s
-                            </span>
-
-                            <div style={styles.paginationControls}>
-                                <button
-                                    type="button"
-                                    style={styles.pageArrowBtn}
-                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                    disabled={currentPage === 1}
-                                    aria-label="Previous page"
-                                >
-                                    <i className="ti ti-chevron-left" style={{ fontSize: 14 }} />
-                                </button>
-
-                                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                                    <button
-                                        key={p}
-                                        type="button"
-                                        onClick={() => setPage(p)}
-                                        style={{
-                                            ...styles.pageNumBtn,
-                                            ...(p === currentPage ? styles.pageNumBtnActive : {}),
-                                        }}
-                                    >
-                                        {p}
-                                    </button>
-                                ))}
-
-                                <button
-                                    type="button"
-                                    style={styles.pageArrowBtn}
-                                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                                    disabled={currentPage === totalPages}
-                                    aria-label="Next page"
-                                >
-                                    <i className="ti ti-chevron-right" style={{ fontSize: 14 }} />
-                                </button>
-
-                                <select
-                                    style={styles.perPageSelect}
-                                    value={perPage}
-                                    onChange={(e) => {
-                                        setPerPage(Number(e.target.value));
-                                        resetToPageOne();
-                                    }}
-                                    aria-label="Results per page"
-                                >
-                                    <option value={8}>8 / page</option>
-                                    <option value={10}>10 / page</option>
-                                    <option value={20}>20 / page</option>
-                                    <option value={50}>50 / page</option>
-                                </select>
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -1232,12 +1012,6 @@ export default function Clients() {
                                         </span>
                                     </div>
                                     <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Branches</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.branches}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
                                         <span style={styles.detailsLabel}>Users</span>
                                         <span style={styles.detailsValue}>
                                             {viewDetails.data.users}
@@ -1255,32 +1029,9 @@ export default function Clients() {
                                         </span>
                                     </div>
                                     <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Branches</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.branches}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
                                         <span style={styles.detailsLabel}>Users</span>
                                         <span style={styles.detailsValue}>
                                             {viewDetails.data.users}
-                                        </span>
-                                    </div>
-                                </>
-                            )}
-
-                            {viewDetails.type === "branch" && (
-                                <>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Subclient</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.subclientName}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Client</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.clientName}
                                         </span>
                                     </div>
                                 </>
@@ -1316,11 +1067,7 @@ export default function Clients() {
                                         setAddForm({ ...addForm, name: e.target.value })
                                     }
                                     placeholder={`e.g. ${
-                                        activeTab === "client"
-                                            ? "Acme Corp"
-                                            : activeTab === "subclient"
-                                              ? "Barret and Co"
-                                              : "Main Branch"
+                                        activeTab === "client" ? "Acme Corp" : "Barret and Co"
                                     }`}
                                 />
                             </div>
@@ -1339,8 +1086,8 @@ export default function Clients() {
                                 </div>
                             )}
 
-                            {/* Client lookup — required for both Subclient and Branch */}
-                            {(activeTab === "subclient" || activeTab === "branch") && (
+                            {/* Client lookup — required for Subclient */}
+                            {activeTab === "subclient" && (
                                 <div>
                                     <label style={styles.formLabel}>Client</label>
                                     <select
@@ -1350,7 +1097,6 @@ export default function Clients() {
                                             setAddForm({
                                                 ...addForm,
                                                 clientId: e.target.value,
-                                                subclientId: "",
                                             })
                                         }
                                     >
@@ -1358,36 +1104,6 @@ export default function Clients() {
                                         {clients.map((c) => (
                                             <option key={c.id} value={c.id}>
                                                 {c.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                            )}
-
-                            {/* Subclient lookup — required only for Branch, narrowed by
-                                the selected client above */}
-                            {activeTab === "branch" && (
-                                <div>
-                                    <label style={styles.formLabel}>Subclient</label>
-                                    <select
-                                        style={styles.formInput}
-                                        value={addForm.subclientId}
-                                        onChange={(e) =>
-                                            setAddForm({
-                                                ...addForm,
-                                                subclientId: e.target.value,
-                                            })
-                                        }
-                                        disabled={!addForm.clientId}
-                                    >
-                                        <option value="">
-                                            {addForm.clientId
-                                                ? "Select Subclient"
-                                                : "Select a client first"}
-                                        </option>
-                                        {subclientsForSelectedClient.map((s) => (
-                                            <option key={s.id} value={s.id}>
-                                                {s.name}
                                             </option>
                                         ))}
                                     </select>
@@ -1472,7 +1188,7 @@ export default function Clients() {
                                 </div>
                             )}
 
-                            {(editTarget.type === "subclient" || editTarget.type === "branch") && (
+                            {editTarget.type === "subclient" && (
                                 <div>
                                     <label style={styles.formLabel}>Client</label>
                                     <select
@@ -1482,7 +1198,6 @@ export default function Clients() {
                                             setEditForm({
                                                 ...editForm,
                                                 clientId: e.target.value,
-                                                subclientId: "",
                                             })
                                         }
                                     >
@@ -1490,34 +1205,6 @@ export default function Clients() {
                                         {clients.map((c) => (
                                             <option key={c.id} value={c.id}>
                                                 {c.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                            )}
-
-                            {editTarget.type === "branch" && (
-                                <div>
-                                    <label style={styles.formLabel}>Subclient</label>
-                                    <select
-                                        style={styles.formInput}
-                                        value={editForm.subclientId}
-                                        onChange={(e) =>
-                                            setEditForm({
-                                                ...editForm,
-                                                subclientId: e.target.value,
-                                            })
-                                        }
-                                        disabled={!editForm.clientId}
-                                    >
-                                        <option value="">
-                                            {editForm.clientId
-                                                ? "Select Subclient"
-                                                : "Select a client first"}
-                                        </option>
-                                        {subclientsForEditClient.map((s) => (
-                                            <option key={s.id} value={s.id}>
-                                                {s.name}
                                             </option>
                                         ))}
                                     </select>
@@ -1715,22 +1402,24 @@ const styles: Record<string, CSSProperties> = {
     root: {
         display: "flex",
         width: "100%",
+        height: "100vh",
         flex: 1,
         minHeight: 0,
         background: "#f5f3ff",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        overflowX: "hidden",
+        overflow: "hidden",
     },
     rootMobile: {
         display: "flex",
         flexDirection: "column",
         flex: 1,
+        height: "100vh",
         minHeight: 0,
         width: "100%",
         background: "#f5f3ff",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         position: "relative",
-        overflowX: "hidden",
+        overflow: "hidden",
     },
 
     mobileTopbar: {
@@ -1973,7 +1662,48 @@ const styles: Record<string, CSSProperties> = {
         gridTemplateColumns: "1fr",
         gap: 12,
     },
-
+    cardList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+    },
+    rowCard: {
+        display: "flex",
+        alignItems: "center",
+        background: "#fff",
+        border: "1px solid #f0ecff",
+        borderRadius: 14,
+        padding: "12px 18px",
+        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        gap: 20,
+    },
+    rowLeft: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flex: "0 0 260px",
+        minWidth: 0,
+    },
+    rowStats: {
+        display: "flex",
+        alignItems: "center",
+        gap: 40,
+        flex: 1,
+    },
+    rowStatBlock: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 2,
+        minWidth: 64,
+    },
+    rowActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        marginLeft: "auto",
+        flexShrink: 0,
+    },
     emptyState: {
         display: "flex",
         flexDirection: "column",
