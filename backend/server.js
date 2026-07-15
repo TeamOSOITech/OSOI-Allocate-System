@@ -42,10 +42,8 @@ app.use("/api/reports", require("./src/modules/reports/reports.routes"));
 app.use("/api/verticals", require("./src/modules/verticals/verticals.routes"));
 app.use("/api/users", require("./src/modules/users/user.routes"));
 app.use("/api/clients", require("./src/modules/clients/clients.routes"));
-
 app.use("/api/subclients", require("./src/modules/clients/subclients.routes"));
-
-app.use("/api/branches", require("./src/modules/clients/branches.routes"));
+app.use("/api/employees", require("./src/modules/employees/employees.routes"));
 
 // ========================
 // ✅ TEST SUPABASE AUTH
