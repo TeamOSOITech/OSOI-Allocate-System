@@ -2,12 +2,51 @@ import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
-import Sidebar from "../../components/sidebar";
 import VoiceAssistant from "../../components/voiceAssistant";
 import { speak } from "../../utils/speak";
 import FormErrorBoundary from "../../components/formErrorBoundary";
 
 const MOBILE_BREAKPOINT = 768;
+
+// Styled tooltip (matches the gradient tooltip used on the Clients page) —
+// inline style objects can't express :hover, so this small bit of CSS is
+// injected once via a <style> tag instead of scattered onMouseEnter handlers.
+const GLOBAL_CSS = `
+.au-tooltip-wrap { position: relative; display: inline-flex; }
+.au-tooltip-wrap .au-tooltip-bubble {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  background: linear-gradient(135deg, #2BAADD, #2A2F8F);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+  z-index: 20;
+  box-shadow: 0 8px 20px rgba(42,47,143,.35);
+}
+.au-tooltip-wrap .au-tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #2BAADD;
+}
+.au-tooltip-wrap:hover .au-tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+`;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -24,7 +63,6 @@ function useIsMobile() {
 export default function AddUser() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
-    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const [formData, setFormData] = useState({
         fullName: "",
@@ -244,52 +282,41 @@ export default function AddUser() {
     return (
         <FormErrorBoundary>
             <div style={isMobile ? styles.rootMobile : styles.root}>
+                <style>{GLOBAL_CSS}</style>
                 {isMobile && (
                     <div style={styles.mobileTopbar}>
-                        <button
-                            style={styles.hamburgerBtn}
-                            onClick={() => setSidebarOpen(!sidebarOpen)}
-                            type="button"
-                        >
-                            ☰
-                        </button>
                         <span style={styles.mobileTitle}>Add New User</span>
                         <div style={styles.mobileHeaderBtnGroup}>
-                            <button
-                                style={styles.templateBtnMobile}
-                                onClick={downloadTemplate}
-                                type="button"
-                                aria-label="Download Excel Format"
-                            >
-                                <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />
-                            </button>
-                            <button
-                                style={styles.bulkHeaderBtnMobile}
-                                onClick={() => setShowBulkModal(true)}
-                                type="button"
-                            >
-                                Bulk Add
-                            </button>
+                            <span className="au-tooltip-wrap">
+                                <button
+                                    style={styles.templateBtnMobile}
+                                    onClick={downloadTemplate}
+                                    type="button"
+                                    aria-label="Download Excel Format"
+                                >
+                                    <i
+                                        className="ti ti-file-spreadsheet"
+                                        style={{ fontSize: 14 }}
+                                    />
+                                </button>
+                                <span className="au-tooltip-bubble">
+                                    Sample sheet for bulk upload (.xlsx)
+                                </span>
+                            </span>
+                            <span className="au-tooltip-wrap">
+                                <button
+                                    style={styles.bulkHeaderBtnMobile}
+                                    onClick={() => setShowBulkModal(true)}
+                                    type="button"
+                                >
+                                    Bulk Add
+                                </button>
+                                <span className="au-tooltip-bubble">
+                                    Add multiple users from an Excel (.xlsx) file
+                                </span>
+                            </span>
                         </div>
                     </div>
-                )}
-
-                {isMobile ? (
-                    <>
-                        {sidebarOpen && (
-                            <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
-                        )}
-                        <div
-                            style={{
-                                ...styles.sidebarDrawer,
-                                transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                            }}
-                        >
-                            <Sidebar />
-                        </div>
-                    </>
-                ) : (
-                    <Sidebar />
                 )}
 
                 <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
@@ -303,25 +330,35 @@ export default function AddUser() {
                                     </p>
                                 </div>
                                 <div style={styles.headerButtonGroup}>
-                                    <button
-                                        style={styles.templateBtn}
-                                        onClick={downloadTemplate}
-                                        type="button"
-                                    >
-                                        <i
-                                            className="ti ti-file-spreadsheet"
-                                            style={{ fontSize: 14 }}
-                                        />
-                                        Excel Format
-                                    </button>
-                                    <button
-                                        style={styles.bulkBtn}
-                                        onClick={() => setShowBulkModal(true)}
-                                        type="button"
-                                    >
-                                        <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                        Bulk Add Users
-                                    </button>
+                                    <span className="au-tooltip-wrap">
+                                        <button
+                                            style={styles.templateBtn}
+                                            onClick={downloadTemplate}
+                                            type="button"
+                                        >
+                                            <i
+                                                className="ti ti-file-spreadsheet"
+                                                style={{ fontSize: 14 }}
+                                            />
+                                            Sample Sheet
+                                        </button>
+                                        <span className="au-tooltip-bubble">
+                                            Sample sheet for bulk upload (.xlsx)
+                                        </span>
+                                    </span>
+                                    <span className="au-tooltip-wrap">
+                                        <button
+                                            style={styles.bulkBtn}
+                                            onClick={() => setShowBulkModal(true)}
+                                            type="button"
+                                        >
+                                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                            Bulk Add Users
+                                        </button>
+                                        <span className="au-tooltip-bubble">
+                                            Add multiple users from an Excel (.xlsx) file
+                                        </span>
+                                    </span>
                                 </div>
                             </div>
                         )}

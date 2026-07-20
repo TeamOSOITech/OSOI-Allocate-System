@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
-import Sidebar from "../../components/sidebar";
 import VerticalsTab from "../../components/verticalstab";
 import AdminTab from "../../components/admintab";
 import TeamTab from "../../components/teamtab";
@@ -38,54 +37,10 @@ function useIsMobile() {
 export default function Dashboard({ user, onLogout }: DashboardProps) {
     const [activeNav, setActiveNav] = useState<string>("Admin");
     const [activeTab, setActiveTab] = useState<Tab>("Verticals");
-    const [sidebarOpen, setSidebarOpen] = useState(false);
     const isMobile = useIsMobile();
-
-    const handleSetActiveNav = (label: string) => {
-        setActiveNav(label);
-        if (isMobile) setSidebarOpen(false);
-    };
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            {isMobile && (
-                <div style={styles.mobileTopbar}>
-                    <button
-                        onClick={() => setSidebarOpen((v) => !v)}
-                        style={styles.hamburgerBtn}
-                        aria-label="Toggle menu"
-                    >
-                        <span style={styles.hamburgerIcon}>
-                            {sidebarOpen ? "\u2715" : "\u2630"}
-                        </span>
-                    </button>
-                    <span style={styles.mobileTitle}>CMS System</span>
-                    <div style={styles.avatarSmall}>A</div>
-                </div>
-            )}
-
-            {isMobile ? (
-                <>
-                    {sidebarOpen && (
-                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
-                    )}
-                    <div
-                        style={{
-                            ...styles.sidebarDrawer,
-                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                        }}
-                    >
-                        <Sidebar
-                            active={activeNav}
-                            setActive={handleSetActiveNav}
-                            onLogout={onLogout}
-                        />
-                    </div>
-                </>
-            ) : (
-                <Sidebar active={activeNav} setActive={setActiveNav} onLogout={onLogout} />
-            )}
-
             <div style={isMobile ? styles.mainMobile : styles.main}>
                 {!isMobile && (
                     <div style={styles.header}>

@@ -5,6 +5,7 @@ import ResetPassword from "./pages/auth/resetPassword";
 import ReportDashboard from "./pages/admin/reportdashboard";
 import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
+import Sidebar from "./components/Sidebar";
 import AddUser from "./pages/admin/adduser";
 import Clients from "./pages/admin/clients";
 import Employees from "./pages/admin/employees";
@@ -33,8 +34,17 @@ const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
     const user = JSON.parse(localStorage.getItem("user") || "null");
     return (
-        <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-            <div style={{ position: "relative", zIndex: 100 }}>
+        // Outer shell locked to exactly the viewport height, with overflow
+        // hidden — the shell itself can NEVER scroll, no matter what.
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                height: "100vh",
+                overflow: "hidden",
+            }}
+        >
+            <div style={{ position: "relative", zIndex: 100, flexShrink: 0 }}>
                 <Header
                     onRefresh={handleRefresh}
                     userName={
@@ -45,18 +55,39 @@ const AppLayout = ({ children, onLogout }) => {
                     onLogout={onLogout}
                 />
             </div>
+
+            {/*
+              NOTE: removed `transform: "translateZ(0)"` that was here before.
+              A transform on an ancestor creates a new containing block for any
+              `position: fixed` descendant, so fixed elements pin to THIS div
+              instead of the viewport — that was the root cause of the sidebar
+              appearing to scroll with the page.
+            */}
             <div
                 style={{
                     flex: 1,
                     display: "flex",
-                    position: "relative",
-                    transform: "translateZ(0)",
-                    minHeight: 0,
+                    minHeight: 0, // required so the child below can be 100% height and still scroll
+                    overflow: "hidden",
                 }}
             >
-                {children}
+                {/* Sidebar now lives here ONCE, not duplicated per-page.
+                    It's a plain flex child — no fixed/sticky positioning needed,
+                    since this whole shell is already height-locked. */}
+                <Sidebar onLogout={onLogout} />
+
+                <main
+                    style={{
+                        flex: 1,
+                        minWidth: 0,
+                        height: "100%",
+                        overflowY: "auto", // ONLY this scrolls
+                        overflowX: "hidden",
+                    }}
+                >
+                    {children}
+                </main>
             </div>
-            {/* 👇 Add this */}
         </div>
     );
 };
@@ -168,7 +199,16 @@ function App() {
                     }
                 />
 
-                <Route path="/employees" element={<Employees />} />
+                <Route
+                    path="/employees"
+                    element={
+                        <PrivateRoute>
+                            <AppLayout onLogout={handleLogout}>
+                                <Employees />
+                            </AppLayout>
+                        </PrivateRoute>
+                    }
+                />
 
                 <Route path="/" element={<Navigate to="/login" replace />} />
             </Routes>

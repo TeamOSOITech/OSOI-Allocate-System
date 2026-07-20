@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
-import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -26,27 +25,48 @@ type Client = {
     subclients: number;
     branches: number;
     users: number;
+    website: string | null;
+    mainEmail: string | null;
+    mainPhone: string | null;
+    primaryContactName: string | null;
+    primaryContactEmail: string | null;
+    primaryContactPhone: string | null;
+    secondaryContactName: string | null;
+    secondaryContactEmail: string | null;
+    secondaryContactPhone: string | null;
 };
 
+// Subclients now carry the same Primary/Secondary contact fields as Clients
+// so both entities are viewable, editable, and exportable with parity.
 type SubclientRow = {
     id: number;
     name: string;
     clientId: number;
     clientName: string;
+    country: string | null;
     status: EntityStatus;
     branches: number;
     users: number;
+    website: string | null;
+    mainEmail: string | null;
+    mainPhone: string | null;
+    primaryContactName: string | null;
+    primaryContactEmail: string | null;
+    primaryContactPhone: string | null;
+    secondaryContactName: string | null;
+    secondaryContactEmail: string | null;
+    secondaryContactPhone: string | null;
 };
 
 const AVATAR_PALETTE = [
-    { bg: "#e0e7ff", text: "#4338ca" },
-    { bg: "#ede9fe", text: "#7c3aed" },
-    { bg: "#ffe4d6", text: "#c2410c" },
-    { bg: "#d3f3ea", text: "#0f766e" },
-    { bg: "#fef3c7", text: "#b45309" },
-    { bg: "#dbeafe", text: "#1d4ed8" },
-    { bg: "#dcfce7", text: "#15803d" },
-    { bg: "#f0e6ff", text: "#7c3aed" },
+    { from: "#5b7fee", to: "#2b4fd8", solid: "#2b4fd8" },
+    { from: "#2dd4bf", to: "#0ca678", solid: "#0ca678" },
+    { from: "#fb923c", to: "#ea580c", solid: "#ea580c" },
+    { from: "#a855f7", to: "#7c3aed", solid: "#7c3aed" },
+    { from: "#f472b6", to: "#db2777", solid: "#db2777" },
+    { from: "#38bdf8", to: "#0284c7", solid: "#0284c7" },
+    { from: "#34d399", to: "#059669", solid: "#059669" },
+    { from: "#fbbf24", to: "#d97706", solid: "#d97706" },
 ];
 
 function getInitials(name: string) {
@@ -59,6 +79,37 @@ function getAvatarColors(name: string) {
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+
+// Normalizes a raw website value (e.g. "acme.com" or "www.acme.com") into a
+// safe, absolute href so it always opens correctly in a new tab, regardless
+// of whether the user typed a protocol when entering it in the form.
+function toSafeHref(raw: string) {
+    const trimmed = raw.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+}
+
+// Small reusable clickable-website renderer used in both the card view and
+// the details modal. Falls back to a plain "—" when no website is set, and
+// never throws on malformed input — worst case it just builds a best-effort
+// https:// link.
+function WebsiteLink({ website, style }: { website: string | null; style?: CSSProperties }) {
+    if (!website || !website.trim()) {
+        return <span style={style}>—</span>;
+    }
+    return (
+        <a
+            href={toSafeHref(website)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...style, color: "#08A1CE", textDecoration: "none" }}
+            onClick={(e) => e.stopPropagation()}
+            title={website}
+        >
+            {website}
+        </a>
+    );
 }
 
 type TabKey = "client" | "subclient";
@@ -85,18 +136,82 @@ const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
     subclient: "subclients",
 };
 
+// Injected once — inline style objects can't express :hover/:focus, so the
+// handful of interactive/motion rules live here instead of duplicating them
+// as onMouseEnter/onMouseLeave handlers everywhere.
+const GLOBAL_CSS = `
+.cl-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.cl-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(32,66,151,.12);
+  border-color: #cfe0f5;
+}
+.cl-row:nth-child(even) { background: #fbfcfe; }
+.cl-row { box-shadow: inset 3px 0 0 0 transparent; }
+.cl-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 #08A1CE; }
+.cl-view-btn:hover { text-decoration: underline; }
+.cl-view-btn-filled:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.cl-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: #204297; transform: translateY(-1px); }
+.cl-icon-btn-danger:hover { background: #fee2e2; border-color: #fecaca; transform: translateY(-1px); }
+.cl-tab-btn:hover { border-color: #cfe0f5; color: #204297; }
+.cl-table thead th:first-child { border-top-left-radius: 16px; }
+.cl-table thead th:last-child { border-top-right-radius: 16px; }
+
+/* Tooltip used on the Sample Sheet button so hover clearly communicates
+   that the download is an Excel (.xlsx) template for bulk upload. Colors
+   match this page's blue brand gradient (used on tabs, Add button, and
+   the filled View Details button). */
+.cl-tooltip-wrap { position: relative; display: inline-flex; }
+.cl-tooltip-wrap .cl-tooltip-bubble {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  background: linear-gradient(135deg, #08A1CE, #204297);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+  z-index: 20;
+  box-shadow: 0 8px 20px rgba(32,66,151,.35);
+}
+.cl-tooltip-wrap .cl-tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #08A1CE;
+}
+.cl-tooltip-wrap:hover .cl-tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Custom slim scrollbar for the list/grid area so it reads as a native
+   overflow container rather than the page itself growing. */
+.cl-scroll-area::-webkit-scrollbar { width: 8px; }
+.cl-scroll-area::-webkit-scrollbar-track { background: transparent; }
+.cl-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
+.cl-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+`;
+
 export default function Clients() {
     const isMobile = useIsMobile();
-    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const [activeTab, setActiveTab] = useState<TabKey>("client");
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
     const [countryFilter, setCountryFilter] = useState("All");
-    const [activeFilter, setActiveFilter] = useState("All");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-    const [page, setPage] = useState(1);
-    const [perPage, setPerPage] = useState(8);
 
     const [clients, setClients] = useState<Client[]>([]);
     const [subclients, setSubclients] = useState<SubclientRow[]>([]);
@@ -105,24 +220,33 @@ export default function Clients() {
 
     const [viewDetails, setViewDetails] = useState<ViewDetailsTarget | null>(null);
 
-    const [showAddModal, setShowAddModal] = useState(false);
-    const [addForm, setAddForm] = useState({
+    // Shared shape for both Client and Subclient Add/Edit forms so both
+    // entities can carry Country / Website / Main Email / Main Phone /
+    // Primary Contact / Secondary Contact fields identically.
+    const emptyForm = {
         name: "",
         country: "",
         status: "Active" as EntityStatus,
         clientId: "",
-    });
+        website: "",
+        mainEmail: "",
+        mainPhone: "",
+        primaryContactName: "",
+        primaryContactEmail: "",
+        primaryContactPhone: "",
+        secondaryContactName: "",
+        secondaryContactEmail: "",
+        secondaryContactPhone: "",
+    };
+
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [addForm, setAddForm] = useState({ ...emptyForm });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
 
     // ---- Edit state ----
     const [editTarget, setEditTarget] = useState<ViewDetailsTarget | null>(null);
-    const [editForm, setEditForm] = useState({
-        name: "",
-        country: "",
-        status: "Active" as EntityStatus,
-        clientId: "",
-    });
+    const [editForm, setEditForm] = useState({ ...emptyForm });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState("");
 
@@ -164,29 +288,25 @@ export default function Clients() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiBase]);
 
-    // Reset paging/filters when switching tabs so stale page numbers or
-    // country selections from one dataset don't carry into another.
+    // Reset filters when switching tabs so stale country selections from one
+    // dataset don't carry into another.
     useEffect(() => {
-        setPage(1);
         setSearch("");
         setStatusFilter("All");
         setCountryFilter("All");
-        setActiveFilter("All");
     }, [activeTab]);
 
-    const countries = useMemo(
-        () => Array.from(new Set(clients.map((c) => c.country).filter(Boolean) as string[])).sort(),
-        [clients]
-    );
+    // Country filter options now come from whichever dataset is active, since
+    // Subclients carry their own Country field too (same as Clients).
+    const countries = useMemo(() => {
+        const source = activeTab === "client" ? clients : subclients;
+        return Array.from(new Set(source.map((c) => c.country).filter(Boolean) as string[])).sort();
+    }, [clients, subclients, activeTab]);
 
     const matchesCommonFilters = (name: string, status: EntityStatus) => {
         const matchesSearch = name.toLowerCase().includes(search.trim().toLowerCase());
         const matchesStatus = statusFilter === "All" || status === statusFilter;
-        const matchesActive =
-            activeFilter === "All" ||
-            (activeFilter === "Active" && status === "Active") ||
-            (activeFilter === "Inactive" && status === "Inactive");
-        return matchesSearch && matchesStatus && matchesActive;
+        return matchesSearch && matchesStatus;
     };
 
     const filteredClients = useMemo(
@@ -195,25 +315,27 @@ export default function Clients() {
                 const matchesCountry = countryFilter === "All" || c.country === countryFilter;
                 return matchesCommonFilters(c.name, c.status) && matchesCountry;
             }),
-        [clients, search, statusFilter, countryFilter, activeFilter]
+        [clients, search, statusFilter, countryFilter]
     );
 
     const filteredSubclients = useMemo(
-        () => subclients.filter((s) => matchesCommonFilters(s.name, s.status)),
-        [subclients, search, statusFilter, activeFilter]
+        () =>
+            subclients.filter((s) => {
+                const matchesCountry = countryFilter === "All" || s.country === countryFilter;
+                return matchesCommonFilters(s.name, s.status) && matchesCountry;
+            }),
+        [subclients, search, statusFilter, countryFilter]
     );
 
     const currentFilteredLength =
         activeTab === "client" ? filteredClients.length : filteredSubclients.length;
 
-    const totalPages = Math.max(1, Math.ceil(currentFilteredLength / perPage));
-    const currentPage = Math.min(page, totalPages);
-    const pageStart = (currentPage - 1) * perPage;
-
-    const pageClients = filteredClients.slice(pageStart, pageStart + perPage);
-    const pageSubclients = filteredSubclients.slice(pageStart, pageStart + perPage);
-
-    const resetToPageOne = () => setPage(1);
+    // No pagination anymore — the full filtered set renders inside a
+    // scrollable container. The container only shows a scrollbar (and
+    // scrolls) when the content actually overflows its available height;
+    // short lists sit flush with no scroll affordance at all.
+    const pageClients = filteredClients;
+    const pageSubclients = filteredSubclients;
 
     const tabCounts: Record<TabKey, number> = {
         client: clients.length,
@@ -223,7 +345,7 @@ export default function Clients() {
     const tabLabel = activeTab === "client" ? "Client" : "Subclient";
 
     const openAddModal = () => {
-        setAddForm({ name: "", country: "", status: "Active", clientId: "" });
+        setAddForm({ ...emptyForm });
         setAddError("");
         setShowAddModal(true);
     };
@@ -251,11 +373,20 @@ export default function Clients() {
             let body: Record<string, unknown> = {
                 name: addForm.name.trim(),
                 status: addForm.status,
+                country: addForm.country || null,
+                website: addForm.website || null,
+                mainEmail: addForm.mainEmail || null,
+                mainPhone: addForm.mainPhone || null,
+                primaryContactName: addForm.primaryContactName || null,
+                primaryContactEmail: addForm.primaryContactEmail || null,
+                primaryContactPhone: addForm.primaryContactPhone || null,
+                secondaryContactName: addForm.secondaryContactName || null,
+                secondaryContactEmail: addForm.secondaryContactEmail || null,
+                secondaryContactPhone: addForm.secondaryContactPhone || null,
             };
 
             if (activeTab === "client") {
                 url = `${apiBase}/api/clients`;
-                body.country = addForm.country || null;
             } else {
                 url = `${apiBase}/api/subclients`;
                 body.clientId = Number(addForm.clientId);
@@ -291,13 +422,31 @@ export default function Clients() {
                 country: target.data.country || "",
                 status: target.data.status,
                 clientId: "",
+                website: target.data.website || "",
+                mainEmail: target.data.mainEmail || "",
+                mainPhone: target.data.mainPhone || "",
+                primaryContactName: target.data.primaryContactName || "",
+                primaryContactEmail: target.data.primaryContactEmail || "",
+                primaryContactPhone: target.data.primaryContactPhone || "",
+                secondaryContactName: target.data.secondaryContactName || "",
+                secondaryContactEmail: target.data.secondaryContactEmail || "",
+                secondaryContactPhone: target.data.secondaryContactPhone || "",
             });
         } else {
             setEditForm({
                 name: target.data.name,
-                country: "",
+                country: target.data.country || "",
                 status: target.data.status,
                 clientId: String(target.data.clientId),
+                website: target.data.website || "",
+                mainEmail: target.data.mainEmail || "",
+                mainPhone: target.data.mainPhone || "",
+                primaryContactName: target.data.primaryContactName || "",
+                primaryContactEmail: target.data.primaryContactEmail || "",
+                primaryContactPhone: target.data.primaryContactPhone || "",
+                secondaryContactName: target.data.secondaryContactName || "",
+                secondaryContactEmail: target.data.secondaryContactEmail || "",
+                secondaryContactPhone: target.data.secondaryContactPhone || "",
             });
         }
         setEditTarget(target);
@@ -329,11 +478,20 @@ export default function Clients() {
             let body: Record<string, unknown> = {
                 name: editForm.name.trim(),
                 status: editForm.status,
+                country: editForm.country || null,
+                website: editForm.website || null,
+                mainEmail: editForm.mainEmail || null,
+                mainPhone: editForm.mainPhone || null,
+                primaryContactName: editForm.primaryContactName || null,
+                primaryContactEmail: editForm.primaryContactEmail || null,
+                primaryContactPhone: editForm.primaryContactPhone || null,
+                secondaryContactName: editForm.secondaryContactName || null,
+                secondaryContactEmail: editForm.secondaryContactEmail || null,
+                secondaryContactPhone: editForm.secondaryContactPhone || null,
             };
 
             if (editTarget.type === "client") {
                 url = `${apiBase}/api/clients/${editTarget.data.id}`;
-                body.country = editForm.country || null;
             } else {
                 url = `${apiBase}/api/subclients/${editTarget.data.id}`;
                 body.clientId = Number(editForm.clientId);
@@ -397,10 +555,16 @@ export default function Clients() {
     };
 
     // ---- Bulk upload handlers (tied to whichever tab is active) ----
+    // Template is always served/generated as an .xlsx workbook by the backend.
+    // NOTE: the Subclient template's header row must mirror the Client
+    // template's header row (Name, Country, Status, Website, Main Email,
+    // Main Phone, Primary/Secondary Contact fields) plus the Subclient-only
+    // Client lookup column. That parity lives in the backend template
+    // generator for /api/subclients/bulk/template — not in this file.
 
     const handleDownloadTemplate = () => {
         const endpoint = BULK_ENDPOINT_MAP[activeTab];
-        window.open(`${apiBase}/api/${endpoint}/bulk/template`, "_blank");
+        window.open(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`, "_blank");
     };
 
     const handleBulkFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -439,69 +603,119 @@ export default function Clients() {
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 
+    // Shared Company Info + Primary/Secondary Contact fieldset renderer used by
+    // both the Add and Edit forms, and for both Client and Subclient tabs, so
+    // the two entity types never drift out of parity again.
+    const renderContactFieldset = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
+    ) => (
+        <>
+            <div style={styles.formSectionLabel}>Company Information</div>
+            <div>
+                <label style={styles.formLabel}>Website</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.website}
+                    onChange={(e) => setFormState((prev) => ({ ...prev, website: e.target.value }))}
+                    placeholder="e.g. https://acme.com"
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Main Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.mainEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, mainEmail: e.target.value }))
+                    }
+                    placeholder="e.g. hello@acme.com"
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Main Contact Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.mainPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, mainPhone: e.target.value }))
+                    }
+                    placeholder="e.g. +91 98765 43210"
+                />
+            </div>
+
+            <div style={styles.formSectionLabel}>Primary Contact Person</div>
+            <div>
+                <label style={styles.formLabel}>Name</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.primaryContactName}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactName: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.primaryContactEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactEmail: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Phone Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.primaryContactPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactPhone: e.target.value }))
+                    }
+                />
+            </div>
+
+            <div style={styles.formSectionLabel}>Secondary Contact Person</div>
+            <div>
+                <label style={styles.formLabel}>Name</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.secondaryContactName}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactName: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.secondaryContactEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactEmail: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Phone Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.secondaryContactPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactPhone: e.target.value }))
+                    }
+                />
+            </div>
+        </>
+    );
+
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            {isMobile && (
-                <div style={styles.mobileTopbar}>
-                    <button
-                        style={styles.hamburgerBtn}
-                        onClick={() => setSidebarOpen(!sidebarOpen)}
-                        type="button"
-                    >
-                        ☰
-                    </button>
-                    <span style={styles.mobileTitle}>Clients</span>
-
-                    <div style={styles.mobileActionGroup}>
-                        <button
-                            style={styles.iconOnlyBtnMobile}
-                            type="button"
-                            aria-label="Download Template"
-                            onClick={handleDownloadTemplate}
-                        >
-                            <i className="ti ti-download" style={{ fontSize: 14 }} />
-                        </button>
-
-                        <label style={styles.iconOnlyBtnMobile} aria-label="Bulk Upload">
-                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                            <input
-                                type="file"
-                                accept=".xlsx,.xls"
-                                hidden
-                                onChange={handleBulkFileChange}
-                                disabled={bulkUploading}
-                            />
-                        </label>
-
-                        <button
-                            style={styles.addBtnMobile}
-                            type="button"
-                            aria-label="Add"
-                            onClick={openAddModal}
-                        >
-                            <i className="ti ti-plus" style={{ fontSize: 14 }} />
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {isMobile ? (
-                <>
-                    {sidebarOpen && (
-                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
-                    )}
-                    <div
-                        style={{
-                            ...styles.sidebarDrawer,
-                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                        }}
-                    >
-                        <Sidebar />
-                    </div>
-                </>
-            ) : (
-                <Sidebar />
-            )}
+            <style>{GLOBAL_CSS}</style>
 
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
@@ -509,6 +723,7 @@ export default function Clients() {
                     <div style={styles.tabRow}>
                         <button
                             type="button"
+                            className="cl-tab-btn"
                             onClick={() => setActiveTab("client")}
                             style={{
                                 ...styles.tabBtn,
@@ -519,6 +734,7 @@ export default function Clients() {
                         </button>
                         <button
                             type="button"
+                            className="cl-tab-btn"
                             onClick={() => setActiveTab("subclient")}
                             style={{
                                 ...styles.tabBtn,
@@ -538,28 +754,48 @@ export default function Clients() {
                             </p>
 
                             <div style={styles.headerActions}>
+                                {/* Sample sheet download — tooltip on hover makes it explicit
+                                    this is an Excel (.xlsx) template for bulk upload. */}
+                                <span className="cl-tooltip-wrap">
+                                    <button
+                                        style={styles.secondaryBtn}
+                                        type="button"
+                                        onClick={handleDownloadTemplate}
+                                    >
+                                        <i
+                                            className="ti ti-file-spreadsheet"
+                                            style={{ fontSize: 14 }}
+                                        />
+                                        Sample Sheet
+                                    </button>
+                                    <span className="cl-tooltip-bubble">
+                                        Sample sheet for bulk upload (.xlsx)
+                                    </span>
+                                </span>
+
+                                <span className="cl-tooltip-wrap">
+                                    <label style={styles.secondaryBtn}>
+                                        <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                        {bulkUploading ? "Uploading..." : "Bulk Upload"}
+                                        <input
+                                            type="file"
+                                            accept=".xlsx,.xls"
+                                            hidden
+                                            onChange={handleBulkFileChange}
+                                            disabled={bulkUploading}
+                                        />
+                                    </label>
+                                    <span className="cl-tooltip-bubble">
+                                        Upload {tabLabel.toLowerCase()}s from an Excel (.xlsx) file
+                                    </span>
+                                </span>
+
                                 <button
-                                    style={styles.secondaryBtn}
+                                    style={styles.addBtn}
                                     type="button"
-                                    onClick={handleDownloadTemplate}
+                                    onClick={openAddModal}
+                                    title={`Add a new ${tabLabel.toLowerCase()}`}
                                 >
-                                    <i className="ti ti-download" style={{ fontSize: 14 }} />
-                                    Template
-                                </button>
-
-                                <label style={styles.secondaryBtn}>
-                                    <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                    {bulkUploading ? "Uploading..." : "Bulk Upload"}
-                                    <input
-                                        type="file"
-                                        accept=".xlsx,.xls"
-                                        hidden
-                                        onChange={handleBulkFileChange}
-                                        disabled={bulkUploading}
-                                    />
-                                </label>
-
-                                <button style={styles.addBtn} type="button" onClick={openAddModal}>
                                     <i className="ti ti-plus" style={{ fontSize: 14 }} />
                                     Add {tabLabel}
                                 </button>
@@ -572,27 +808,21 @@ export default function Clients() {
                         <div style={styles.searchWrap}>
                             <i
                                 className="ti ti-search"
-                                style={{ fontSize: 15, color: "#9c96b8" }}
+                                style={{ fontSize: 15, color: "#7c8aa3" }}
                                 aria-hidden="true"
                             />
                             <input
                                 style={styles.searchInput}
                                 placeholder={`Search ${activeTab}s...`}
                                 value={search}
-                                onChange={(e) => {
-                                    setSearch(e.target.value);
-                                    resetToPageOne();
-                                }}
+                                onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
 
                         <select
                             style={styles.filterSelect}
                             value={statusFilter}
-                            onChange={(e) => {
-                                setStatusFilter(e.target.value);
-                                resetToPageOne();
-                            }}
+                            onChange={(e) => setStatusFilter(e.target.value)}
                             aria-label="Status"
                         >
                             <option value="All">Status: All</option>
@@ -600,37 +830,20 @@ export default function Clients() {
                             <option value="Inactive">Inactive</option>
                         </select>
 
-                        {activeTab === "client" && (
-                            <select
-                                style={styles.filterSelect}
-                                value={countryFilter}
-                                onChange={(e) => {
-                                    setCountryFilter(e.target.value);
-                                    resetToPageOne();
-                                }}
-                                aria-label="Country"
-                            >
-                                <option value="All">Country: All</option>
-                                {countries.map((c) => (
-                                    <option key={c} value={c}>
-                                        {c}
-                                    </option>
-                                ))}
-                            </select>
-                        )}
-
+                        {/* Country filter now applies to both tabs since Subclients
+                            carry a Country field too, same as Clients. */}
                         <select
                             style={styles.filterSelect}
-                            value={activeFilter}
-                            onChange={(e) => {
-                                setActiveFilter(e.target.value);
-                                resetToPageOne();
-                            }}
-                            aria-label="Active"
+                            value={countryFilter}
+                            onChange={(e) => setCountryFilter(e.target.value)}
+                            aria-label="Country"
                         >
-                            <option value="All">Active: All</option>
-                            <option value="Active">Active</option>
-                            <option value="Inactive">Inactive</option>
+                            <option value="All">Country: All</option>
+                            {countries.map((c) => (
+                                <option key={c} value={c}>
+                                    {c}
+                                </option>
+                            ))}
                         </select>
 
                         {!isMobile && (
@@ -643,6 +856,7 @@ export default function Clients() {
                                         ...(viewMode === "grid" ? styles.viewToggleBtnActive : {}),
                                     }}
                                     aria-label="Grid view"
+                                    title="Grid view"
                                 >
                                     <i className="ti ti-layout-grid" style={{ fontSize: 15 }} />
                                 </button>
@@ -654,6 +868,7 @@ export default function Clients() {
                                         ...(viewMode === "list" ? styles.viewToggleBtnActive : {}),
                                     }}
                                     aria-label="List view"
+                                    title="List view"
                                 >
                                     <i className="ti ti-list" style={{ fontSize: 15 }} />
                                 </button>
@@ -661,8 +876,11 @@ export default function Clients() {
                         )}
                     </div>
 
-                    {/* Cards */}
-                    <div style={styles.scrollArea}>
+                    {/* Cards / Table — scrollable area that fills remaining height.
+                        The scrollbar (and scroll behavior) only kicks in once content
+                        actually exceeds the available space; short lists sit flush
+                        with no scrollbar at all. No pagination controls anymore. */}
+                    <div className="cl-scroll-area" style={styles.scrollArea}>
                         {loading ? (
                             <div style={styles.emptyState}>
                                 <p style={styles.emptyText}>Loading…</p>
@@ -679,46 +897,74 @@ export default function Clients() {
                             <div style={styles.emptyState}>
                                 <i
                                     className="ti ti-users"
-                                    style={{ fontSize: 32, color: "#c4b5fd" }}
+                                    style={{ fontSize: 32, color: "#9fd6e6" }}
                                 />
                                 <p style={styles.emptyText}>No {activeTab}s match your filters.</p>
                             </div>
-                        ) : (
-                            <div
-                                style={
-                                    viewMode === "grid"
-                                        ? isMobile
-                                            ? styles.cardGridMobile
-                                            : styles.cardGrid
-                                        : styles.cardList
-                                }
-                            >
-                                {activeTab === "client" &&
-                                    pageClients.map((client) => {
-                                        const avatar = getAvatarColors(client.name);
-                                        const isList = viewMode === "list";
-                                        return (
-                                            <div
-                                                key={client.id}
-                                                style={isList ? styles.rowCard : styles.card}
-                                            >
-                                                <div
-                                                    style={isList ? styles.rowLeft : styles.cardTop}
-                                                >
-                                                    <div
+                        ) : viewMode === "list" ? (
+                            <div style={styles.tableWrap}>
+                                {/* Column layout is identical for Client and Subclient: only
+                                    the 2nd column header/value differs (Country vs Client). This
+                                    keeps both tables visually and structurally aligned. */}
+                                <table className="cl-table" style={styles.table}>
+                                    <colgroup>
+                                        <col style={{ width: "15%" }} />
+                                        <col style={{ width: "11%" }} />
+                                        <col style={{ width: "9%" }} />
+                                        <col style={{ width: "9%" }} />
+                                        <col style={{ width: "16%" }} />
+                                        <col style={{ width: "13%" }} />
+                                        <col style={{ width: "15%" }} />
+                                        <col style={{ width: "12%" }} />
+                                    </colgroup>
+                                    <thead>
+                                        <tr>
+                                            <th style={styles.th}>
+                                                {activeTab === "client" ? "Client" : "Subclient"}
+                                            </th>
+                                            <th style={styles.th}>
+                                                {activeTab === "client" ? "Country" : "Client"}
+                                            </th>
+                                            <th style={styles.th}>Status</th>
+                                            <th style={{ ...styles.th, textAlign: "center" }}>
+                                                {activeTab === "client" ? "Subclients" : "Branches"}
+                                            </th>
+                                            <th style={styles.th}>
+                                                {activeTab === "client"
+                                                    ? "Client Email"
+                                                    : "Subclient Email"}
+                                            </th>
+                                            <th style={styles.th}>Contact Number</th>
+                                            <th style={styles.th}>Primary Contact Person</th>
+                                            <th style={{ ...styles.th, textAlign: "left" }}>
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {activeTab === "client" &&
+                                            pageClients.map((client) => {
+                                                const avatar = getAvatarColors(client.name);
+                                                return (
+                                                    <tr
+                                                        key={client.id}
+                                                        className="cl-row"
                                                         style={{
-                                                            ...styles.avatar,
-                                                            background: avatar.bg,
-                                                            color: avatar.text,
+                                                            ...styles.tr,
+                                                            boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
-                                                        {getInitials(client.name)}
-                                                    </div>
-                                                    <div style={styles.cardNameBlock}>
-                                                        <div style={styles.cardNameRow}>
-                                                            <span style={styles.cardName}>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdNameText}>
                                                                 {client.name}
                                                             </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdMuted}>
+                                                                {client.country || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
                                                             <span
                                                                 style={{
                                                                     ...styles.statusPill,
@@ -727,137 +973,137 @@ export default function Clients() {
                                                                         : styles.statusPillInactive),
                                                                 }}
                                                             >
+                                                                <span style={styles.statusDot} />
                                                                 {client.status}
                                                             </span>
-                                                        </div>
-                                                        <span style={styles.cardCountry}>
-                                                            {client.country || "—"}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                <div
-                                                    style={
-                                                        isList ? styles.rowStats : styles.statsRow
-                                                    }
-                                                >
-                                                    <div
-                                                        style={
-                                                            isList
-                                                                ? styles.rowStatBlock
-                                                                : styles.statBlock
-                                                        }
-                                                    >
-                                                        <span style={styles.statLabel}>
-                                                            Subclients
-                                                        </span>
-                                                        <span style={styles.statValue}>
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                textAlign: "center",
+                                                                fontWeight: 700,
+                                                                color: "#16233c",
+                                                            }}
+                                                        >
                                                             {client.subclients}
-                                                        </span>
-                                                    </div>
-                                                    <div
-                                                        style={
-                                                            isList
-                                                                ? styles.rowStatBlock
-                                                                : styles.statBlock
-                                                        }
-                                                    >
-                                                        <span style={styles.statLabel}>Users</span>
-                                                        <span style={styles.statValue}>
-                                                            {client.users}
-                                                        </span>
-                                                    </div>
-                                                </div>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-mail"
+                                                                    style={{ fontSize: 12 }}
+                                                                />
+                                                                {client.mainEmail || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-phone"
+                                                                    style={{ fontSize: 12 }}
+                                                                />
+                                                                {client.mainPhone || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                {client.primaryContactName ? (
+                                                                    <>
+                                                                        <i
+                                                                            className="ti ti-user"
+                                                                            style={{ fontSize: 12 }}
+                                                                        />
+                                                                        {client.primaryContactName}
+                                                                    </>
+                                                                ) : (
+                                                                    <span style={styles.tdMuted}>
+                                                                        —
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <div style={styles.tdActions}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-view-btn"
+                                                                    style={styles.viewDetailsBtn}
+                                                                    onClick={() =>
+                                                                        setViewDetails({
+                                                                            type: "client",
+                                                                            data: client,
+                                                                        })
+                                                                    }
+                                                                    title="View details"
+                                                                >
+                                                                    View
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn"
+                                                                    style={styles.iconBtn}
+                                                                    aria-label="Edit"
+                                                                    title="Edit client"
+                                                                    onClick={() =>
+                                                                        openEditModal({
+                                                                            type: "client",
+                                                                            data: client,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-pencil"
+                                                                        style={{ fontSize: 13 }}
+                                                                    />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn-danger"
+                                                                    style={styles.iconBtnDanger}
+                                                                    aria-label="Delete"
+                                                                    title="Delete client"
+                                                                    onClick={() =>
+                                                                        openDeleteConfirm(
+                                                                            "client",
+                                                                            client.id,
+                                                                            client.name
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-trash"
+                                                                        style={{ fontSize: 13 }}
+                                                                    />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
 
-                                                <div
-                                                    style={
-                                                        isList
-                                                            ? styles.rowActions
-                                                            : styles.cardFooter
-                                                    }
-                                                >
-                                                    <button
-                                                        type="button"
-                                                        style={styles.viewDetailsBtn}
-                                                        onClick={() =>
-                                                            setViewDetails({
-                                                                type: "client",
-                                                                data: client,
-                                                            })
-                                                        }
-                                                    >
-                                                        View Details
-                                                        <i
-                                                            className="ti ti-chevron-right"
-                                                            style={{ fontSize: 13 }}
-                                                        />
-                                                    </button>
-                                                    <div style={styles.cardActions}>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtn}
-                                                            aria-label="Edit"
-                                                            onClick={() =>
-                                                                openEditModal({
-                                                                    type: "client",
-                                                                    data: client,
-                                                                })
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-pencil"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtnDanger}
-                                                            aria-label="Delete"
-                                                            onClick={() =>
-                                                                openDeleteConfirm(
-                                                                    "client",
-                                                                    client.id,
-                                                                    client.name
-                                                                )
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-trash"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-
-                                {activeTab === "subclient" &&
-                                    pageSubclients.map((sub) => {
-                                        const avatar = getAvatarColors(sub.name);
-                                        const isList = viewMode === "list";
-                                        return (
-                                            <div
-                                                key={sub.id}
-                                                style={isList ? styles.rowCard : styles.card}
-                                            >
-                                                <div
-                                                    style={isList ? styles.rowLeft : styles.cardTop}
-                                                >
-                                                    <div
+                                        {activeTab === "subclient" &&
+                                            pageSubclients.map((sub) => {
+                                                const avatar = getAvatarColors(sub.name);
+                                                return (
+                                                    <tr
+                                                        key={sub.id}
+                                                        className="cl-row"
                                                         style={{
-                                                            ...styles.avatar,
-                                                            background: avatar.bg,
-                                                            color: avatar.text,
+                                                            ...styles.tr,
+                                                            boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
-                                                        {getInitials(sub.name)}
-                                                    </div>
-                                                    <div style={styles.cardNameBlock}>
-                                                        <div style={styles.cardNameRow}>
-                                                            <span style={styles.cardName}>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdNameText}>
                                                                 {sub.name}
                                                             </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdMuted}>
+                                                                {sub.clientName}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
                                                             <span
                                                                 style={{
                                                                     ...styles.statusPill,
@@ -866,97 +1112,306 @@ export default function Clients() {
                                                                         : styles.statusPillInactive),
                                                                 }}
                                                             >
+                                                                <span style={styles.statusDot} />
                                                                 {sub.status}
                                                             </span>
-                                                        </div>
-                                                        <span style={styles.cardLookup}>
-                                                            <i
-                                                                className="ti ti-building"
-                                                                style={{ fontSize: 11 }}
-                                                            />
-                                                            {sub.clientName}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                <div
-                                                    style={
-                                                        isList ? styles.rowStats : styles.statsRow
-                                                    }
-                                                >
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                textAlign: "center",
+                                                                fontWeight: 700,
+                                                                color: "#16233c",
+                                                            }}
+                                                        >
+                                                            {sub.branches}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-mail"
+                                                                    style={{ fontSize: 12 }}
+                                                                />
+                                                                {sub.mainEmail || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-phone"
+                                                                    style={{ fontSize: 12 }}
+                                                                />
+                                                                {sub.mainPhone || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                {sub.primaryContactName ? (
+                                                                    <>
+                                                                        <i
+                                                                            className="ti ti-user"
+                                                                            style={{ fontSize: 12 }}
+                                                                        />
+                                                                        {sub.primaryContactName}
+                                                                    </>
+                                                                ) : (
+                                                                    <span style={styles.tdMuted}>
+                                                                        —
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <div style={styles.tdActions}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-view-btn"
+                                                                    style={styles.viewDetailsBtn}
+                                                                    onClick={() =>
+                                                                        setViewDetails({
+                                                                            type: "subclient",
+                                                                            data: sub,
+                                                                        })
+                                                                    }
+                                                                    title="View details"
+                                                                >
+                                                                    View
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn"
+                                                                    style={styles.iconBtn}
+                                                                    aria-label="Edit"
+                                                                    title="Edit subclient"
+                                                                    onClick={() =>
+                                                                        openEditModal({
+                                                                            type: "subclient",
+                                                                            data: sub,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-pencil"
+                                                                        style={{ fontSize: 13 }}
+                                                                    />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn-danger"
+                                                                    style={styles.iconBtnDanger}
+                                                                    aria-label="Delete"
+                                                                    title="Delete subclient"
+                                                                    onClick={() =>
+                                                                        openDeleteConfirm(
+                                                                            "subclient",
+                                                                            sub.id,
+                                                                            sub.name
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-trash"
+                                                                        style={{ fontSize: 13 }}
+                                                                    />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <div style={isMobile ? styles.cardGridMobile : styles.cardGrid}>
+                                {activeTab === "client" &&
+                                    pageClients.map((client) => {
+                                        const avatar = getAvatarColors(client.name);
+                                        return (
+                                            <div
+                                                key={client.id}
+                                                className="cl-card"
+                                                style={{
+                                                    ...styles.card,
+                                                    border: `1px solid ${avatar.solid}40`,
+                                                    borderTop: `3px solid ${avatar.solid}`,
+                                                }}
+                                            >
+                                                <div style={styles.cardHeaderSimple}>
                                                     <div
-                                                        style={
-                                                            isList
-                                                                ? styles.rowStatBlock
-                                                                : styles.statBlock
-                                                        }
+                                                        style={{
+                                                            ...styles.avatar,
+                                                            background: `linear-gradient(135deg, ${avatar.from}, ${avatar.to})`,
+                                                            color: "#fff",
+                                                        }}
                                                     >
-                                                        <span style={styles.statLabel}>Users</span>
-                                                        <span style={styles.statValue}>
-                                                            {sub.users}
+                                                        {getInitials(client.name)}
+                                                    </div>
+                                                    <div style={styles.cardNameBlockSimple}>
+                                                        <span style={styles.cardName}>
+                                                            {client.name}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                ...styles.cardCountBadge,
+                                                                background: `${avatar.solid}1A`,
+                                                                color: avatar.solid,
+                                                            }}
+                                                        >
+                                                            {client.subclients} Subclients
                                                         </span>
                                                     </div>
                                                 </div>
 
-                                                <div
-                                                    style={
-                                                        isList
-                                                            ? styles.rowActions
-                                                            : styles.cardFooter
-                                                    }
-                                                >
-                                                    <button
-                                                        type="button"
-                                                        style={styles.viewDetailsBtn}
-                                                        onClick={() =>
-                                                            setViewDetails({
-                                                                type: "subclient",
-                                                                data: sub,
-                                                            })
-                                                        }
-                                                    >
-                                                        View Details
+                                                <div style={styles.cardSimpleInfoRows}>
+                                                    <div style={styles.cardSimpleInfoRow}>
                                                         <i
-                                                            className="ti ti-chevron-right"
-                                                            style={{ fontSize: 13 }}
+                                                            className="ti ti-world"
+                                                            style={styles.cardInfoIcon}
                                                         />
-                                                    </button>
-                                                    <div style={styles.cardActions}>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtn}
-                                                            aria-label="Edit"
-                                                            onClick={() =>
-                                                                openEditModal({
-                                                                    type: "subclient",
-                                                                    data: sub,
-                                                                })
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-pencil"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.iconBtnDanger}
-                                                            aria-label="Delete"
-                                                            onClick={() =>
-                                                                openDeleteConfirm(
-                                                                    "subclient",
-                                                                    sub.id,
-                                                                    sub.name
-                                                                )
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-trash"
-                                                                style={{ fontSize: 13 }}
-                                                            />
-                                                        </button>
+                                                        <WebsiteLink
+                                                            website={client.website}
+                                                            style={styles.cardSimpleInfoValue}
+                                                        />
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-mail"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {client.mainEmail || "—"}
+                                                        </span>
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-phone"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {client.mainPhone || "—"}
+                                                        </span>
                                                     </div>
                                                 </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="cl-view-btn-filled"
+                                                    style={{
+                                                        ...styles.viewDetailsBtnFilled,
+                                                        background: `${avatar.solid}14`,
+                                                        color: avatar.solid,
+                                                        boxShadow: "none",
+                                                    }}
+                                                    onClick={() =>
+                                                        setViewDetails({
+                                                            type: "client",
+                                                            data: client,
+                                                        })
+                                                    }
+                                                >
+                                                    <i
+                                                        className="ti ti-eye"
+                                                        style={{ fontSize: 14 }}
+                                                    />
+                                                    View Details
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+
+                                {activeTab === "subclient" &&
+                                    pageSubclients.map((sub) => {
+                                        const avatar = getAvatarColors(sub.name);
+                                        return (
+                                            <div
+                                                key={sub.id}
+                                                className="cl-card"
+                                                style={{
+                                                    ...styles.card,
+                                                    border: `1px solid ${avatar.solid}40`,
+                                                    borderTop: `3px solid ${avatar.solid}`,
+                                                }}
+                                            >
+                                                <div style={styles.cardHeaderSimple}>
+                                                    <div
+                                                        style={{
+                                                            ...styles.avatar,
+                                                            background: `linear-gradient(135deg, ${avatar.from}, ${avatar.to})`,
+                                                            color: "#fff",
+                                                        }}
+                                                    >
+                                                        {getInitials(sub.name)}
+                                                    </div>
+                                                    <div style={styles.cardNameBlockSimple}>
+                                                        <span style={styles.cardName}>
+                                                            {sub.name}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                ...styles.cardCountBadge,
+                                                                background: `${avatar.solid}1A`,
+                                                                color: avatar.solid,
+                                                            }}
+                                                        >
+                                                            {sub.branches} Branches
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <div style={styles.cardSimpleInfoRows}>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-world"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <WebsiteLink
+                                                            website={sub.website}
+                                                            style={styles.cardSimpleInfoValue}
+                                                        />
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-mail"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {sub.mainEmail || "—"}
+                                                        </span>
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-phone"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {sub.mainPhone || "—"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="cl-view-btn-filled"
+                                                    style={{
+                                                        ...styles.viewDetailsBtnFilled,
+                                                        background: `${avatar.solid}14`,
+                                                        color: avatar.solid,
+                                                        boxShadow: "none",
+                                                    }}
+                                                    onClick={() =>
+                                                        setViewDetails({
+                                                            type: "subclient",
+                                                            data: sub,
+                                                        })
+                                                    }
+                                                >
+                                                    <i
+                                                        className="ti ti-eye"
+                                                        style={{ fontSize: 14 }}
+                                                    />
+                                                    View Details
+                                                </button>
                                             </div>
                                         );
                                     })}
@@ -977,6 +1432,7 @@ export default function Clients() {
                                 onClick={() => setViewDetails(null)}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
@@ -997,29 +1453,22 @@ export default function Clients() {
                                 </span>
                             </div>
 
-                            {viewDetails.type === "client" && (
-                                <>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Country</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.country || "—"}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Subclients</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.subclients}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Users</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.users}
-                                        </span>
-                                    </div>
-                                </>
-                            )}
+                            {/* Country now shown for both Client and Subclient details. */}
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Country</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.country || "—"}
+                                </span>
+                            </div>
 
+                            {viewDetails.type === "client" && (
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Subclients</span>
+                                    <span style={styles.detailsValue}>
+                                        {viewDetails.data.subclients}
+                                    </span>
+                                </div>
+                            )}
                             {viewDetails.type === "subclient" && (
                                 <>
                                     <div style={styles.detailsRow}>
@@ -1029,13 +1478,118 @@ export default function Clients() {
                                         </span>
                                     </div>
                                     <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Users</span>
+                                        <span style={styles.detailsLabel}>Branches</span>
                                         <span style={styles.detailsValue}>
-                                            {viewDetails.data.users}
+                                            {viewDetails.data.branches}
                                         </span>
                                     </div>
                                 </>
                             )}
+
+                            {/* Company Info + Primary/Secondary Contact are identical for
+                                both Client and Subclient view modals. */}
+                            <div style={styles.detailsSectionLabel}>Company Information</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Website</span>
+                                <WebsiteLink
+                                    website={viewDetails.data.website}
+                                    style={styles.detailsValue}
+                                />
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.mainEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Contact Number</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.mainPhone || "—"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsSectionLabel}>Primary Contact</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Name</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactName || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Phone</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactPhone || "—"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsSectionLabel}>Secondary Contact</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Name</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactName || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Phone</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactPhone || "—"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsModalFooter}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={() => {
+                                        const target = viewDetails;
+                                        setViewDetails(null);
+                                        if (target) openEditModal(target);
+                                    }}
+                                >
+                                    <i className="ti ti-pencil" style={{ fontSize: 13 }} />
+                                    Edit
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.addSubmitBtn,
+                                        flex: 1,
+                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                    }}
+                                    onClick={() => {
+                                        const target = viewDetails;
+                                        setViewDetails(null);
+                                        if (target) {
+                                            openDeleteConfirm(
+                                                target.type,
+                                                target.data.id,
+                                                target.data.name
+                                            );
+                                        }
+                                    }}
+                                >
+                                    <i className="ti ti-trash" style={{ fontSize: 13 }} />
+                                    Delete
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1052,6 +1606,7 @@ export default function Clients() {
                                 onClick={closeAddModal}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
@@ -1072,19 +1627,18 @@ export default function Clients() {
                                 />
                             </div>
 
-                            {activeTab === "client" && (
-                                <div>
-                                    <label style={styles.formLabel}>Country</label>
-                                    <input
-                                        style={styles.formInput}
-                                        value={addForm.country}
-                                        onChange={(e) =>
-                                            setAddForm({ ...addForm, country: e.target.value })
-                                        }
-                                        placeholder="e.g. India"
-                                    />
-                                </div>
-                            )}
+                            {/* Country now shown for both Client and Subclient forms. */}
+                            <div>
+                                <label style={styles.formLabel}>Country</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={addForm.country}
+                                    onChange={(e) =>
+                                        setAddForm({ ...addForm, country: e.target.value })
+                                    }
+                                    placeholder="e.g. India"
+                                />
+                            </div>
 
                             {/* Client lookup — required for Subclient */}
                             {activeTab === "subclient" && (
@@ -1127,6 +1681,9 @@ export default function Clients() {
                                 </select>
                             </div>
 
+                            {/* Same fieldset for both Client and Subclient */}
+                            {renderContactFieldset(addForm, setAddForm)}
+
                             {addError && <p style={styles.formError}>{addError}</p>}
 
                             <button
@@ -1157,6 +1714,7 @@ export default function Clients() {
                                 onClick={closeEditModal}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
@@ -1174,19 +1732,18 @@ export default function Clients() {
                                 />
                             </div>
 
-                            {editTarget.type === "client" && (
-                                <div>
-                                    <label style={styles.formLabel}>Country</label>
-                                    <input
-                                        style={styles.formInput}
-                                        value={editForm.country}
-                                        onChange={(e) =>
-                                            setEditForm({ ...editForm, country: e.target.value })
-                                        }
-                                        placeholder="e.g. India"
-                                    />
-                                </div>
-                            )}
+                            {/* Country now shown for both Client and Subclient forms. */}
+                            <div>
+                                <label style={styles.formLabel}>Country</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={editForm.country}
+                                    onChange={(e) =>
+                                        setEditForm({ ...editForm, country: e.target.value })
+                                    }
+                                    placeholder="e.g. India"
+                                />
+                            </div>
 
                             {editTarget.type === "subclient" && (
                                 <div>
@@ -1228,6 +1785,9 @@ export default function Clients() {
                                 </select>
                             </div>
 
+                            {/* Same fieldset for both Client and Subclient */}
+                            {renderContactFieldset(editForm, setEditForm)}
+
                             {editError && <p style={styles.formError}>{editError}</p>}
 
                             <button
@@ -1258,13 +1818,14 @@ export default function Clients() {
                                 onClick={closeDeleteConfirm}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
                         </div>
 
                         <div style={styles.detailsBody}>
-                            <p style={{ margin: 0, fontSize: 13, color: "#4b4560" }}>
+                            <p style={{ margin: 0, fontSize: 13, color: "#3b4a63" }}>
                                 This action can't be undone. Are you sure you want to delete this{" "}
                                 {deleteTarget.type}?
                             </p>
@@ -1316,6 +1877,7 @@ export default function Clients() {
                                 onClick={() => setBulkResult(null)}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
@@ -1384,6 +1946,7 @@ export default function Clients() {
                                 onClick={() => setBulkError("")}
                                 type="button"
                                 aria-label="Close"
+                                title="Close"
                             >
                                 ✕
                             </button>
@@ -1405,7 +1968,7 @@ const styles: Record<string, CSSProperties> = {
         height: "100vh",
         flex: 1,
         minHeight: 0,
-        background: "#f5f3ff",
+        background: "#f4f7fb",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         overflow: "hidden",
     },
@@ -1416,7 +1979,7 @@ const styles: Record<string, CSSProperties> = {
         height: "100vh",
         minHeight: 0,
         width: "100%",
-        background: "#f5f3ff",
+        background: "#f4f7fb",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         position: "relative",
         overflow: "hidden",
@@ -1443,7 +2006,7 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#1e1b3a" },
+    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#16233c" },
     mobileActionGroup: { display: "flex", alignItems: "center", gap: 6 },
     addBtnMobile: {
         display: "flex",
@@ -1453,7 +2016,7 @@ const styles: Record<string, CSSProperties> = {
         height: 32,
         borderRadius: "50%",
         border: "none",
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         cursor: "pointer",
     },
@@ -1464,9 +2027,9 @@ const styles: Record<string, CSSProperties> = {
         width: 32,
         height: 32,
         borderRadius: "50%",
-        border: "1px solid #ddd6fe",
+        border: "1px solid #cfe0f5",
         background: "#fff",
-        color: "#6d28d9",
+        color: "#204297",
         cursor: "pointer",
     },
     overlay: {
@@ -1495,40 +2058,39 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
         minHeight: 0,
     },
-    contentColMobile: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" },
+    contentColMobile: { flex: 1, display: "flex", flexDirection: "column" },
     contentBody: {
         display: "flex",
         flexDirection: "column",
         padding: "20px 24px",
         flex: 1,
-        overflowY: "auto",
         minHeight: 0,
         maxWidth: "100%",
         boxSizing: "border-box",
-        gap: 16,
+        gap: 14,
     },
 
-    tabRow: { display: "flex", gap: 8 },
+    tabRow: { display: "flex", gap: 8, flexShrink: 0 },
     tabBtn: {
         display: "flex",
         alignItems: "center",
         background: "#fff",
-        color: "#4b4560",
-        border: "1px solid #ececf5",
+        color: "#3b4a63",
+        border: "1px solid #e4e9f2",
         borderRadius: 10,
         padding: "10px 18px",
         fontSize: 13,
         fontWeight: 700,
         cursor: "pointer",
+        transition: "border-color .15s ease, color .15s ease",
     },
     tabBtnActive: {
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "1px solid transparent",
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
     },
 
     headerRow: {
@@ -1537,8 +2099,9 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "space-between",
         gap: 16,
         flexWrap: "wrap",
+        flexShrink: 0,
     },
-    headerSubtext: { margin: 0, fontSize: 13, color: "#9c96b8" },
+    headerSubtext: { margin: 0, fontSize: 13, color: "#7c8aa3" },
     headerActions: {
         display: "flex",
         alignItems: "center",
@@ -1550,8 +2113,8 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#6d28d9",
-        border: "1px solid #ddd6fe",
+        color: "#204297",
+        border: "1px solid #cfe0f5",
         borderRadius: 10,
         padding: "11px 16px",
         fontSize: 13,
@@ -1563,7 +2126,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
         borderRadius: 10,
@@ -1571,7 +2134,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 13,
         fontWeight: 700,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         whiteSpace: "nowrap",
     },
 
@@ -1583,6 +2146,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: 14,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        flexShrink: 0,
     },
     filterRowMobile: {
         display: "flex",
@@ -1592,6 +2156,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: 14,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        flexShrink: 0,
     },
     searchWrap: {
         display: "flex",
@@ -1599,8 +2164,8 @@ const styles: Record<string, CSSProperties> = {
         gap: 8,
         flex: 1,
         minWidth: 180,
-        background: "#fafafa",
-        border: "1px solid #ececf5",
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
         borderRadius: 10,
         padding: "9px 12px",
     },
@@ -1609,16 +2174,16 @@ const styles: Record<string, CSSProperties> = {
         outline: "none",
         background: "transparent",
         fontSize: 13,
-        color: "#1e1b3a",
+        color: "#16233c",
         width: "100%",
     },
     filterSelect: {
-        border: "1px solid #ececf5",
-        background: "#fafafa",
+        border: "1px solid #e4e9f2",
+        background: "#fafbfc",
         borderRadius: 10,
         padding: "9px 12px",
         fontSize: 13,
-        color: "#4b4560",
+        color: "#3b4a63",
         outline: "none",
         cursor: "pointer",
         minWidth: 120,
@@ -1627,8 +2192,8 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 4,
-        background: "#fafafa",
-        border: "1px solid #ececf5",
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
         borderRadius: 10,
         padding: 4,
         flexShrink: 0,
@@ -1642,68 +2207,35 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         background: "transparent",
         borderRadius: 7,
-        color: "#9c96b8",
+        color: "#7c8aa3",
         cursor: "pointer",
     },
     viewToggleBtnActive: {
-        background: "#ede9fe",
-        color: "#6d28d9",
+        background: "#e7ecf8",
+        color: "#204297",
     },
 
-    scrollArea: { flex: 1, minHeight: 0 },
+    // Scrollable: fills remaining vertical space in contentBody and only
+    // scrolls (shows a scrollbar) once the rendered cards/rows exceed that
+    // height. When there's little content, this behaves like a normal
+    // block with no scroll affordance.
+    scrollArea: {
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
+    },
 
     cardGrid: {
         display: "grid",
         gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-        gap: 16,
+        gap: 14,
     },
     cardGridMobile: {
         display: "grid",
         gridTemplateColumns: "1fr",
         gap: 12,
     },
-    cardList: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-    },
-    rowCard: {
-        display: "flex",
-        alignItems: "center",
-        background: "#fff",
-        border: "1px solid #f0ecff",
-        borderRadius: 14,
-        padding: "12px 18px",
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-        gap: 20,
-    },
-    rowLeft: {
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        flex: "0 0 260px",
-        minWidth: 0,
-    },
-    rowStats: {
-        display: "flex",
-        alignItems: "center",
-        gap: 40,
-        flex: 1,
-    },
-    rowStatBlock: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        minWidth: 64,
-    },
-    rowActions: {
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        marginLeft: "auto",
-        flexShrink: 0,
-    },
+
     emptyState: {
         display: "flex",
         flexDirection: "column",
@@ -1712,77 +2244,268 @@ const styles: Record<string, CSSProperties> = {
         gap: 10,
         padding: "60px 0",
     },
-    emptyText: { margin: 0, fontSize: 13, color: "#9c96b8" },
+    emptyText: { margin: 0, fontSize: 13, color: "#7c8aa3" },
 
     card: {
         display: "flex",
         flexDirection: "column",
         background: "#fff",
-        border: "1px solid #f0ecff",
-        borderRadius: 16,
-        padding: 18,
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-        gap: 14,
+        border: "1px solid #e5edf7",
+        borderRadius: 14,
+        padding: 13,
+        boxShadow: "0 4px 14px rgba(0,0,0,.04)",
+        gap: 9,
     },
-    cardTop: { display: "flex", alignItems: "flex-start", gap: 12 },
+    cardTop: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 10,
+        minHeight: 40,
+    },
+    // Simplified card header used in the original design: avatar, name, and
+    // a small tinted count badge underneath — no status pill, no icon actions.
+    cardHeaderSimple: {
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+    },
+    cardNameBlockSimple: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 6,
+        minWidth: 0,
+    },
+    cardCountBadge: {
+        fontSize: 11,
+        fontWeight: 700,
+        padding: "3px 10px",
+        borderRadius: 20,
+        whiteSpace: "nowrap",
+        width: "fit-content",
+    },
+    cardSimpleInfoRows: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+    },
+    cardSimpleInfoRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        minWidth: 0,
+    },
+    cardSimpleInfoValue: {
+        fontSize: 12.5,
+        color: "#3b4a63",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
     avatar: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        width: 42,
-        height: 42,
+        width: 34,
+        height: 34,
         borderRadius: "50%",
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 700,
         flexShrink: 0,
     },
-    cardNameBlock: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
-    cardNameRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
-    cardName: { fontSize: 14, fontWeight: 700, color: "#1e1b3a" },
-    cardCountry: { fontSize: 12, color: "#9c96b8" },
+    cardNameBlock: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        gap: 4,
+        minWidth: 0,
+        flex: "0 1 auto",
+        textAlign: "left",
+    },
+    cardNameRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap", minWidth: 0 },
+    cardName: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#16233c",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        minWidth: 0,
+    },
+    cardCountry: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 12,
+        color: "#7c8aa3",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        minWidth: 0,
+    },
     cardLookup: {
         display: "flex",
         alignItems: "center",
         gap: 4,
         fontSize: 11,
-        color: "#7c3aed",
+        color: "#08A1CE",
         fontWeight: 600,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        minWidth: 0,
+    },
+    cardTopActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        flexShrink: 0,
+        marginLeft: "auto",
+    },
+    subclientsBox: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#eef1fb",
+        borderRadius: 10,
+        padding: "10px 14px",
+    },
+    subclientsBoxLeft: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 12,
+        fontWeight: 700,
+        color: "#3454ad",
+    },
+    cardContactRow: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: "10px 0 0",
+        borderTop: "1px solid #eef2f9",
+    },
+    cardContactItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 12,
+        color: "#3b4a63",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    cardInfoRows: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 7,
+        paddingTop: 9,
+        borderTop: "1px solid #eef2f9",
+    },
+    cardInfoRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 6,
+        minWidth: 0,
+    },
+    cardInfoIcon: { fontSize: 12, color: "#a7b3c8", flexShrink: 0 },
+    cardInfoLabel: {
+        fontSize: 11.5,
+        color: "#8592a8",
+        fontWeight: 500,
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+    },
+    cardInfoColon: { fontSize: 11.5, color: "#8592a8", flexShrink: 0 },
+    cardInfoValue: {
+        fontSize: 12,
+        color: "#26314a",
+        fontWeight: 600,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    cardInfoValueTruncate: {
+        fontSize: 12,
+        color: "#26314a",
+        fontWeight: 600,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        minWidth: 0,
+        flex: 1,
     },
 
     statusPill: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
         fontSize: 10,
         fontWeight: 700,
-        padding: "2px 9px",
+        padding: "3px 10px",
         borderRadius: 20,
         whiteSpace: "nowrap",
+        width: "fit-content",
     },
-    statusPillActive: { background: "#dcfce7", color: "#15803d" },
+    statusDot: {
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: "currentColor",
+        flexShrink: 0,
+    },
+    statusPillActive: { background: "#e1f7f3", color: "#0f8a78" },
     statusPillInactive: { background: "#fee2e2", color: "#dc2626" },
 
     statsRow: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
-        borderTop: "1px solid #f5f3ff",
-        borderBottom: "1px solid #f5f3ff",
+        borderTop: "1px solid #eef2f9",
+        borderBottom: "1px solid #eef2f9",
         padding: "12px 0",
     },
     statBlock: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
-    statLabel: { fontSize: 11, color: "#9c96b8" },
-    statValue: { fontSize: 15, fontWeight: 700, color: "#1e1b3a" },
+    statDivider: { width: 1, alignSelf: "stretch", background: "#eef2f9" },
+    statLabel: { fontSize: 11, color: "#7c8aa3" },
+    statValue: { fontSize: 15, fontWeight: 700, color: "#16233c" },
 
-    cardFooter: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+    cardFooter: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingTop: 2,
+        marginTop: "auto",
+    },
     viewDetailsBtn: {
         display: "flex",
         alignItems: "center",
         gap: 4,
         border: "none",
         background: "transparent",
-        color: "#6d28d9",
+        color: "#204297",
         fontSize: 12,
         fontWeight: 700,
         cursor: "pointer",
         padding: 0,
+    },
+    viewDetailsBtnFilled: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        flex: 1,
+        border: "none",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        color: "#fff",
+        fontSize: 12.5,
+        fontWeight: 700,
+        borderRadius: 10,
+        padding: "11px 16px",
+        cursor: "pointer",
+        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
     },
     cardActions: { display: "flex", alignItems: "center", gap: 8 },
     iconBtn: {
@@ -1792,10 +2515,24 @@ const styles: Record<string, CSSProperties> = {
         width: 30,
         height: 30,
         borderRadius: 8,
-        border: "1px solid #ececf5",
-        background: "#fff",
-        color: "#4b4560",
+        border: "1px solid #d8e3fa",
+        background: "#eef2fc",
+        color: "#3454ad",
         cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease, color .15s ease",
+    },
+    iconBtnGhost: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        border: "1px solid #e4e9f2",
+        background: "#fafbfc",
+        color: "#7c8aa3",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease, color .15s ease",
     },
     iconBtnDanger: {
         display: "flex",
@@ -1808,79 +2545,121 @@ const styles: Record<string, CSSProperties> = {
         background: "#fef2f2",
         color: "#dc2626",
         cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease",
+    },
+    iconBtnDangerGhost: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        border: "1px solid #f8d7d7",
+        background: "#fdf4f4",
+        color: "#dc2626",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease",
     },
 
-    paginationRow: {
+    // ---- Table (list view) ----
+    tableWrap: {
+        background: "#fff",
+        border: "1px solid #e5edf7",
+        borderRadius: 16,
+        boxShadow: "0 6px 20px rgba(16,38,89,.06)",
+        overflowX: "auto",
+    },
+    table: {
+        width: "100%",
+        borderCollapse: "separate",
+        borderSpacing: 0,
+        fontSize: 13,
+        tableLayout: "fixed",
+    },
+    th: {
+        textAlign: "left",
+        padding: "15px 18px",
+        boxSizing: "border-box",
+        fontSize: 11,
+        fontWeight: 800,
+        color: "#204297",
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        borderBottom: "2px solid #e1e9f7",
+        background: "linear-gradient(180deg, #f3f7fd, #eef3fb)",
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+    },
+    tr: {
+        borderBottom: "1px solid #eef2f9",
+        transition: "background .12s ease",
+    },
+    td: {
+        padding: "14px 18px",
+        boxSizing: "border-box",
+        verticalAlign: "middle",
+        textAlign: "left",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    tdNameCell: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        background: "#fff",
-        borderRadius: 14,
-        padding: "12px 16px",
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-    },
-    paginationRowMobile: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
+        justifyContent: "flex-start",
         gap: 10,
-        background: "#fff",
-        borderRadius: 14,
-        padding: "12px 16px",
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        minWidth: 0,
     },
-    paginationText: { fontSize: 12, color: "#9c96b8" },
-    paginationControls: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
-    pageArrowBtn: {
+    avatarSm: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        width: 28,
-        height: 28,
-        borderRadius: 8,
-        border: "1px solid #ececf5",
-        background: "#fff",
-        color: "#4b4560",
-        cursor: "pointer",
+        width: 34,
+        height: 34,
+        borderRadius: "50%",
+        fontSize: 11,
+        fontWeight: 700,
+        flexShrink: 0,
+        border: "2px solid #fff",
+        boxShadow: "0 0 0 1px #e5edf7",
     },
-    pageNumBtn: {
+    tdNameText: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#16233c",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    tdMuted: {
+        fontSize: 12.5,
+        color: "#5a6c85",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    tdContactStack: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
+    tdContactLine: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        minWidth: 28,
-        height: 28,
-        borderRadius: 8,
-        border: "1px solid #ececf5",
-        background: "#fff",
-        color: "#4b4560",
+        justifyContent: "flex-start",
+        gap: 6,
         fontSize: 12,
-        fontWeight: 600,
-        cursor: "pointer",
-        padding: "0 6px",
+        color: "#3b4a63",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
     },
-    pageNumBtnActive: {
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
-        color: "#fff",
-        border: "1px solid transparent",
-    },
-    perPageSelect: {
-        border: "1px solid #ececf5",
-        background: "#fff",
-        borderRadius: 8,
-        padding: "6px 10px",
-        fontSize: 12,
-        color: "#4b4560",
-        outline: "none",
-        cursor: "pointer",
-        marginLeft: 6,
-    },
+    tdActions: { display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8 },
 
     detailsModal: {
         background: "#fff",
         borderRadius: 16,
-        width: 420,
-        maxWidth: "92vw",
+        width: 560,
+        maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
         boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
@@ -1888,8 +2667,8 @@ const styles: Record<string, CSSProperties> = {
     addModal: {
         background: "#fff",
         borderRadius: 16,
-        width: 420,
-        maxWidth: "92vw",
+        width: 640,
+        maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
         boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
@@ -1903,7 +2682,7 @@ const styles: Record<string, CSSProperties> = {
         padding: "22px 28px 16px",
         borderBottom: "1px solid #f0f0f0",
     },
-    detailsTitle: { margin: 0, fontSize: 18, fontWeight: 700, color: "#1e1b3a" },
+    detailsTitle: { margin: 0, fontSize: 18, fontWeight: 700, color: "#16233c" },
     closeBtn: {
         position: "absolute",
         top: 18,
@@ -1927,41 +2706,75 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "space-between",
         gap: 12,
     },
-    detailsLabel: { fontSize: 12, color: "#9c96b8", fontWeight: 600 },
-    detailsValue: { fontSize: 13, color: "#1e1b3a", fontWeight: 600 },
+    detailsLabel: { fontSize: 12, color: "#7c8aa3", fontWeight: 600 },
+    detailsValue: { fontSize: 13, color: "#16233c", fontWeight: 600 },
+    detailsSectionLabel: {
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#204297",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginTop: 6,
+        paddingTop: 10,
+        borderTop: "1px solid #e5edf7",
+    },
+    detailsModalFooter: {
+        display: "flex",
+        gap: 10,
+        marginTop: 6,
+        paddingTop: 16,
+        borderTop: "1px solid #f0f0f0",
+    },
 
-    addBody: { padding: "20px 28px 28px", display: "flex", flexDirection: "column", gap: 14 },
+    addBody: {
+        padding: "20px 28px 28px",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: "14px 16px",
+    },
     formLabel: {
         display: "block",
         marginBottom: 6,
-        color: "#4b4560",
+        color: "#3b4a63",
         fontSize: 12,
         fontWeight: 600,
     },
     formInput: {
         width: "100%",
         padding: "10px 12px",
-        background: "#fafafa",
-        border: "1px solid #ececf5",
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
         outline: "none",
         fontSize: 13,
         borderRadius: 8,
         boxSizing: "border-box",
-        color: "#1e1b3a",
+        color: "#16233c",
     },
-    formError: { color: "#dc2626", margin: 0, fontWeight: 600, fontSize: 12 },
+    formError: { color: "#dc2626", margin: 0, fontWeight: 600, fontSize: 12, gridColumn: "1 / -1" },
+    formSectionLabel: {
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#204297",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginTop: 4,
+        paddingTop: 10,
+        borderTop: "1px solid #e5edf7",
+        gridColumn: "1 / -1",
+    },
     addSubmitBtn: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
         borderRadius: 10,
         padding: "12px 20px",
         fontSize: 13,
         fontWeight: 700,
-        boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
+        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        gridColumn: "1 / -1",
     },
 };
