@@ -5,7 +5,7 @@ import ResetPassword from "./pages/auth/resetPassword";
 import ReportDashboard from "./pages/admin/reportdashboard";
 import Dashboard from "./pages/admin/dashboard";
 import Header from "./components/header";
-import Sidebar from "./components/Sidebar";
+import Sidebar from "./components/sidebar";
 import AddUser from "./pages/admin/adduser";
 import Clients from "./pages/admin/clients";
 import Employees from "./pages/admin/employees";
