@@ -7,9 +7,17 @@
 //      placeholder password (see AddUser.tsx changes).
 //   2. Backend checks for duplicates BY EMAIL ONLY (not role/password).
 //   3. Backend creates the Supabase auth user with the placeholder password.
-//   4. Backend immediately fires a password-reset email for that user,
-//      so they never actually log in with the generated password —
-//      they always land on /reset-password to set their own.
+//   4. Backend mints a recovery link via Supabase Admin (generateLink) and
+//      returns it directly in the API response — NO EMAIL IS SENT.
+//      The admin/caller is expected to copy this link and share it with
+//      the new user manually (WhatsApp, SMS, in person, etc.) so they can
+//      set their own password. This avoids any dependency on an email
+//      provider (Supabase's built-in mailer or Resend) entirely.
+//
+//   NOTE: We deliberately do NOT use supabaseAdmin.auth.resetPasswordForEmail()
+//   here, since that method both mints AND sends the email through Supabase's
+//   built-in mailer. generateLink() only mints the link — it never sends
+//   anything — which is exactly what we want for this manual-share flow.
 //
 // Env vars required:
 //   SUPABASE_URL
@@ -18,6 +26,7 @@
 
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 
 const router = express.Router();
 
@@ -65,11 +74,16 @@ async function emailExists(email) {
 }
 
 /**
- * Creates the Supabase auth user with the placeholder password, then
- * immediately triggers a "reset password" email so the user sets their
- * own password on first access instead of ever using the generated one.
+ * Creates the Supabase auth user with the placeholder password, then mints
+ * a recovery link via Supabase Admin. The link is returned to the caller —
+ * NOTHING IS EMAILED. The admin UI is expected to display this link so it
+ * can be copied and shared with the new user manually.
  */
-async function createUserAndSendResetLink({ email, tempPassword, metadata }) {
+async function createUserAndGenerateResetLink({
+  email,
+  tempPassword,
+  metadata,
+}) {
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
     password: tempPassword,
@@ -78,31 +92,124 @@ async function createUserAndSendResetLink({ email, tempPassword, metadata }) {
   });
   if (error) throw error;
 
-  // Account creation succeeded at this point — don't let a failed/rate-limited
-  // reset email turn this into a hard failure. Report it separately instead.
-  let resetEmailSent = true;
-  let resetEmailError = null;
+  // ---------------------------------------------------------------------
+  // Insert the matching row into user_master.
+  //
+  // The login/forgotPassword code (authService.js) does NOT check Supabase
+  // Auth directly — it looks the user up in this custom table first, by
+  // "Email" (the real/contact email), then uses "Login Email" for the
+  // actual supabase.auth call and "Auth User Id" / "Role" for the session.
+  // Without this row, a user can exist in Supabase Auth (so createUser
+  // succeeds) but be completely invisible to login/forgot-password.
+  //
+  // "Login Email" and "Email" are set to the same address here — this
+  // system supports multiple role-accounts under one real email with
+  // *different* login emails, but this flow only ever creates one
+  // Supabase Auth user per call, so they're the same value for now.
+  // ---------------------------------------------------------------------
+  let userMasterInserted = true;
+  let userMasterError = null;
+
   try {
-    const { error: resetError } =
-      await supabaseAdmin.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.APP_URL}/reset-password`,
+    const { error: insertError } = await supabaseAdmin
+      .from("user_master")
+      .insert({
+        "First Name": metadata?.firstName || null,
+        "Last Name": metadata?.lastName || null,
+        "Employee ID": metadata?.employeeId || null,
+        Department: metadata?.department || null,
+        "Date of Birth": metadata?.dob || null,
+        "Date of Joining": metadata?.doj || null,
+        "Reporting Manager": metadata?.reportingManager || null,
+        "Worked In Teams": metadata?.workedInTeams || null,
+        Designation: metadata?.designation || null,
+        Email: email,
+        "Login Email": email,
+        Role: metadata?.role || null,
+        "Auth User Id": data.user.id,
       });
-    if (resetError) throw resetError;
+    if (insertError) throw insertError;
   } catch (err) {
-    resetEmailSent = false;
-    resetEmailError =
+    userMasterInserted = false;
+    userMasterError = err?.message || JSON.stringify(err);
+    // This is a real problem even though createUser already succeeded —
+    // the user won't be able to log in or reset their password until this
+    // row exists, so log it loudly.
+    console.error(`user_master insert FAILED for ${email}. Raw error:`, err);
+  }
+
+  // Account creation succeeded at this point — don't let a failed link
+  // generation turn this into a hard failure. Report it separately instead.
+  let resetLinkGenerated = true;
+  let resetLinkError = null;
+  let resetLink = null;
+
+  try {
+    // generateLink only MINTS the recovery link — it does NOT send anything.
+    const { data: linkData, error: linkError } =
+      await supabaseAdmin.auth.admin.generateLink({
+        type: "recovery",
+        email,
+        options: {
+          redirectTo: `${process.env.APP_URL}/reset-password`,
+        },
+      });
+    if (linkError) throw linkError;
+
+    resetLink = linkData?.properties?.action_link;
+    if (!resetLink) {
+      throw new Error("Supabase did not return an action_link.");
+    }
+  } catch (err) {
+    resetLinkGenerated = false;
+    resetLinkError =
       err?.message ||
       err?.error_description ||
       err?.msg ||
       err?.error ||
       (typeof err === "string" ? err : JSON.stringify(err)) ||
-      "Unknown error sending reset email.";
-    // Log the FULL raw error server-side, not just the extracted message,
-    // so we can see the real shape of whatever Supabase/SMTP returned.
-    console.error(`Reset email failed for ${email}. Raw error:`, err);
+      "Unknown error generating reset link.";
+    // Log the FULL raw error server-side, not just the extracted message.
+    console.error(`Reset link generation failed for ${email}. Raw error:`, err);
   }
 
-  return { user: data.user, resetEmailSent, resetEmailError };
+  // Email the link via Gmail SMTP (see mailer.js). Only attempted if the
+  // link was actually generated. A failure here doesn't undo the account
+  // or the link — it's reported separately so the caller can still copy
+  // the link and share it manually as a fallback.
+  let resetEmailSent = false;
+  let resetEmailError = null;
+
+  if (resetLinkGenerated && resetLink) {
+    try {
+      await sendMail({
+        to: email,
+        subject: "Welcome — set up your account",
+        html: buildResetLinkEmailHtml({
+          heading: "Welcome!",
+          bodyText:
+            "Your account has been created. Click below to set your own password and finish setting up your account.",
+          actionLink: resetLink,
+          buttonText: "Create Password",
+        }),
+      });
+      resetEmailSent = true;
+    } catch (err) {
+      resetEmailError = err?.message || JSON.stringify(err);
+      console.error(`Reset email FAILED to send for ${email}. Raw error:`, err);
+    }
+  }
+
+  return {
+    user: data.user,
+    resetLink,
+    resetLinkGenerated,
+    resetLinkError,
+    resetEmailSent,
+    resetEmailError,
+    userMasterInserted,
+    userMasterError,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -131,32 +238,47 @@ router.post("/add-user", async (req, res) => {
     // generate one here too as a safety net.
     const tempPassword = body.password || generateFallbackPassword();
 
-    const { user, resetEmailSent, resetEmailError } =
-      await createUserAndSendResetLink({
-        email,
-        tempPassword,
-        metadata: {
-          fullName: body.fullName,
-          firstName: body.firstName,
-          lastName: body.lastName,
-          employeeId: body.employeeId,
-          designation: body.designation,
-          department: body.department,
-          dob: body.dob,
-          doj: body.doj,
-          reportingManager: body.reportingManager,
-          workedInTeams: body.workedInTeams,
-          role: (body.role || "").toString().toUpperCase().trim(),
-        },
-      });
-
-    return res.status(201).json({
-      message: resetEmailSent
-        ? "User created, reset link sent."
-        : "User created, but reset email could not be sent (see resetEmailError). You may need to resend it once your SMTP/rate limit is sorted.",
+    const {
       user,
+      resetLink,
+      resetLinkGenerated,
+      resetLinkError,
       resetEmailSent,
       resetEmailError,
+      userMasterInserted,
+      userMasterError,
+    } = await createUserAndGenerateResetLink({
+      email,
+      tempPassword,
+      metadata: {
+        fullName: body.fullName,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        employeeId: body.employeeId,
+        designation: body.designation,
+        department: body.department,
+        dob: body.dob,
+        doj: body.doj,
+        reportingManager: body.reportingManager,
+        workedInTeams: body.workedInTeams,
+        role: (body.role || "").toString().toUpperCase().trim(),
+      },
+    });
+
+    return res.status(201).json({
+      message: !userMasterInserted
+        ? `User created in Auth, but user_master insert failed (${userMasterError}) — this user CANNOT log in until this is fixed.`
+        : resetEmailSent
+          ? "User created, reset link emailed."
+          : "User created, but the reset email could not be sent — copy resetLink and share it manually.",
+      user,
+      resetLink,
+      resetLinkGenerated,
+      resetLinkError,
+      resetEmailSent,
+      resetEmailError,
+      userMasterInserted,
+      userMasterError,
     });
   } catch (err) {
     console.error("add-user error:", err);
@@ -217,41 +339,53 @@ router.post("/bulk-add-user", async (req, res) => {
 
         const tempPassword = rawUser.password || generateFallbackPassword();
 
-        const { resetEmailSent, resetEmailError } =
-          await createUserAndSendResetLink({
-            email,
-            tempPassword,
-            metadata: {
-              fullName: rawUser.firstName
-                ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
-                : undefined,
-              firstName: rawUser.firstName,
-              lastName: rawUser.lastName,
-              employeeId: rawUser.employeeId,
-              designation: rawUser.designation,
-              department: rawUser.department,
-              dob: rawUser.dob,
-              doj: rawUser.doj,
-              reportingManager: rawUser.reportingManager,
-              workedInTeams: rawUser.workedInTeams,
-              role: (rawUser.role || "").toString().toUpperCase().trim(),
-            },
-          });
+        const {
+          resetLink,
+          resetLinkGenerated,
+          resetLinkError,
+          resetEmailSent,
+          resetEmailError,
+          userMasterInserted,
+          userMasterError,
+        } = await createUserAndGenerateResetLink({
+          email,
+          tempPassword,
+          metadata: {
+            fullName: rawUser.firstName
+              ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
+              : undefined,
+            firstName: rawUser.firstName,
+            lastName: rawUser.lastName,
+            employeeId: rawUser.employeeId,
+            designation: rawUser.designation,
+            department: rawUser.department,
+            dob: rawUser.dob,
+            doj: rawUser.doj,
+            reportingManager: rawUser.reportingManager,
+            workedInTeams: rawUser.workedInTeams,
+            role: (rawUser.role || "").toString().toUpperCase().trim(),
+          },
+        });
 
         // Account creation always counts as success here — email delivery
-        // is reported separately so a rate limit doesn't look like a failed signup.
+        // is reported separately so a failed send doesn't look like a
+        // failed signup. resetLink is still included as a manual fallback.
         results.push({
           email,
           success: true,
-          message: resetEmailSent
-            ? "User created, reset link sent."
-            : `User created, but reset email failed (${resetEmailError}). Resend later once SMTP/rate limit is fixed.`,
+          resetLink,
+          resetEmailSent,
+          userMasterInserted,
+          message: !userMasterInserted
+            ? `User created in Auth, but user_master insert failed (${userMasterError}) — CANNOT log in until fixed.`
+            : resetEmailSent
+              ? "User created, reset link emailed."
+              : `User created, but reset email failed (${resetEmailError}). Use resetLink to share manually.`,
         });
 
-        // Small delay between rows to reduce the chance of hitting
-        // Supabase's default email rate limit during bulk uploads.
-        // Once you've set up a custom SMTP provider, this can be removed.
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        // Small delay between rows — Gmail SMTP has its own send-rate
+        // limits, so don't hammer it in a tight bulk loop.
+        await new Promise((resolve) => setTimeout(resolve, 300));
       } catch (innerErr) {
         results.push({
           email,

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -12,9 +13,87 @@ router.use((req, res, next) => {
   next();
 });
 
-// ---------- existing routes (unchanged) ----------
+// ---------- brand theme ----------
+const BRAND = {
+  blue: "FF204297", // RGB(32,66,151)
+  lightBlue: "FF08A1CE", // RGB(8,161,206)
+  green: "FF2EBBA8", // RGB(46,187,168)
+  white: "FFFFFFFF",
+};
 
-// GET /api/clients
+function styleHeaderCell(cell, colorHex) {
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: colorHex },
+  };
+  cell.font = { bold: true, color: { argb: BRAND.white }, size: 11 };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  cell.border = {
+    top: { style: "thin", color: { argb: BRAND.white } },
+    left: { style: "thin", color: { argb: BRAND.white } },
+    bottom: { style: "thin", color: { argb: BRAND.white } },
+    right: { style: "thin", color: { argb: BRAND.white } },
+  };
+}
+
+// ---------- helpers: map between frontend (camelCase) <-> db (snake_case) ----------
+
+function toClientResponse(client, subclientsCount, branchesCount) {
+  return {
+    id: client.id,
+    name: client.name,
+    country: client.country,
+    status: client.status,
+    subclients: subclientsCount,
+    branches: branchesCount,
+    users: 0, // placeholder until a users table/relation exists
+    website: client.website,
+    mainEmail: client.main_email,
+    mainPhone: client.main_phone,
+    primaryContactName: client.primary_contact_name,
+    primaryContactEmail: client.primary_contact_email,
+    primaryContactPhone: client.primary_contact_phone,
+    secondaryContactName: client.secondary_contact_name,
+    secondaryContactEmail: client.secondary_contact_email,
+    secondaryContactPhone: client.secondary_contact_phone,
+  };
+}
+
+function fromClientBody(body) {
+  const {
+    name,
+    country,
+    status,
+    website,
+    mainEmail,
+    mainPhone,
+    primaryContactName,
+    primaryContactEmail,
+    primaryContactPhone,
+    secondaryContactName,
+    secondaryContactEmail,
+    secondaryContactPhone,
+  } = body;
+
+  return {
+    name: name?.trim(),
+    country: country || null,
+    status: status === "Inactive" ? "Inactive" : "Active",
+    website: website || null,
+    main_email: mainEmail || null,
+    main_phone: mainPhone || null,
+    primary_contact_name: primaryContactName || null,
+    primary_contact_email: primaryContactEmail || null,
+    primary_contact_phone: primaryContactPhone || null,
+    secondary_contact_name: secondaryContactName || null,
+    secondary_contact_email: secondaryContactEmail || null,
+    secondary_contact_phone: secondaryContactPhone || null,
+  };
+}
+
+// ---------- GET /api/clients ----------
+
 router.get("/", async (req, res) => {
   try {
     const { data: clients, error } = await supabase
@@ -27,15 +106,13 @@ router.get("/", async (req, res) => {
     const { data: subclients } = await supabase.from("subclients").select("*");
     const { data: branches } = await supabase.from("branches").select("*");
 
-    const formatted = clients.map((client) => ({
-      id: client.id,
-      name: client.name,
-      country: client.country,
-      status: client.status,
-      subclients: subclients.filter((s) => s.client_id === client.id).length,
-      branches: branches.filter((b) => b.client_id === client.id).length,
-      users: 0,
-    }));
+    const formatted = clients.map((client) =>
+      toClientResponse(
+        client,
+        subclients.filter((s) => s.client_id === client.id).length,
+        branches.filter((b) => b.client_id === client.id).length,
+      ),
+    );
 
     res.json(formatted);
   } catch (err) {
@@ -44,78 +121,179 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/clients
+// ---------- POST /api/clients ----------
+
 router.post("/", async (req, res) => {
   try {
-    const { name, country, status } = req.body;
-
-    if (!name || !name.trim()) {
+    if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
     }
 
     const { data: client, error } = await supabase
       .from("clients")
-      .insert({
-        name: name.trim(),
-        country: country || null,
-        status: status === "Inactive" ? "Inactive" : "Active",
-      })
+      .insert(fromClientBody(req.body))
       .select()
       .single();
 
     if (error) throw error;
 
-    res.status(201).json(client);
+    res.status(201).json(toClientResponse(client, 0, 0));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to create client" });
   }
 });
 
-// ---------- NEW: Excel template download ----------
-// MOVED ABOVE "/:id" so it isn't shadowed by the param route
+// ---------- Excel template download (styled) ----------
+// MUST be declared above "/:id" so it isn't shadowed by the param route.
+
+const CLIENT_TEMPLATE_COLUMNS = [
+  { header: "Client Name", key: "clientName", width: 22, color: BRAND.blue },
+  {
+    header: "Client Country",
+    key: "clientCountry",
+    width: 18,
+    color: BRAND.blue,
+  },
+  {
+    header: "Client Status",
+    key: "clientStatus",
+    width: 16,
+    color: BRAND.blue,
+  },
+  { header: "Website", key: "website", width: 26, color: BRAND.lightBlue },
+  {
+    header: "Company Email",
+    key: "companyEmail",
+    width: 26,
+    color: BRAND.lightBlue,
+  },
+  {
+    header: "Company Phone",
+    key: "companyPhone",
+    width: 20,
+    color: BRAND.lightBlue,
+  },
+  {
+    header: "Primary Contact Name",
+    key: "primaryContactName",
+    width: 22,
+    color: BRAND.green,
+  },
+  {
+    header: "Primary Contact Email",
+    key: "primaryContactEmail",
+    width: 26,
+    color: BRAND.green,
+  },
+  {
+    header: "Primary Contact Phone",
+    key: "primaryContactPhone",
+    width: 20,
+    color: BRAND.green,
+  },
+  {
+    header: "Secondary Contact Name",
+    key: "secondaryContactName",
+    width: 22,
+    color: BRAND.green,
+  },
+  {
+    header: "Secondary Contact Email",
+    key: "secondaryContactEmail",
+    width: 26,
+    color: BRAND.green,
+  },
+  {
+    header: "Secondary Contact Phone",
+    key: "secondaryContactPhone",
+    width: 20,
+    color: BRAND.green,
+  },
+  {
+    header: "Subclient Name",
+    key: "subclientName",
+    width: 22,
+    color: BRAND.blue,
+  },
+  {
+    header: "Subclient Status",
+    key: "subclientStatus",
+    width: 16,
+    color: BRAND.blue,
+  },
+  {
+    header: "Branch Name",
+    key: "branchName",
+    width: 22,
+    color: BRAND.lightBlue,
+  },
+  {
+    header: "Branch Status",
+    key: "branchStatus",
+    width: 16,
+    color: BRAND.lightBlue,
+  },
+];
 
 // GET /api/clients/bulk/template
-router.get("/bulk/template", (req, res) => {
+router.get("/bulk/template", async (req, res) => {
   try {
-    const headers = [
-      "Client Name",
-      "Client Country",
-      "Client Status",
-      "Subclient Name",
-      "Subclient Status",
-      "Branch Name",
-      "Branch Status",
-    ];
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Clients");
 
-    const sampleRows = [
+    sheet.columns = CLIENT_TEMPLATE_COLUMNS.map((c) => ({
+      header: c.header,
+      key: c.key,
+      width: c.width,
+    }));
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 26;
+    CLIENT_TEMPLATE_COLUMNS.forEach((col, idx) =>
+      styleHeaderCell(headerRow.getCell(idx + 1), col.color),
+    );
+
+    sheet.addRows([
       {
-        "Client Name": "Acme Corp",
-        "Client Country": "India",
-        "Client Status": "Active",
-        "Subclient Name": "Acme North",
-        "Subclient Status": "Active",
-        "Branch Name": "Gurugram Branch",
-        "Branch Status": "Active",
+        clientName: "Acme Corp",
+        clientCountry: "India",
+        clientStatus: "Active",
+        website: "https://acme.com",
+        companyEmail: "hello@acme.com",
+        companyPhone: "+91 98765 43210",
+        primaryContactName: "Jordan Lee",
+        primaryContactEmail: "jordan@acme.com",
+        primaryContactPhone: "+91 90000 00001",
+        secondaryContactName: "Sam Rao",
+        secondaryContactEmail: "sam@acme.com",
+        secondaryContactPhone: "+91 90000 00002",
+        subclientName: "Acme North",
+        subclientStatus: "Active",
+        branchName: "Gurugram Branch",
+        branchStatus: "Active",
       },
       {
-        "Client Name": "Acme Corp",
-        "Client Country": "India",
-        "Client Status": "Active",
-        "Subclient Name": "Acme North",
-        "Subclient Status": "Active",
-        "Branch Name": "Delhi Branch",
-        "Branch Status": "Active",
+        clientName: "Acme Corp",
+        clientCountry: "India",
+        clientStatus: "Active",
+        website: "https://acme.com",
+        companyEmail: "hello@acme.com",
+        companyPhone: "+91 98765 43210",
+        primaryContactName: "Jordan Lee",
+        primaryContactEmail: "jordan@acme.com",
+        primaryContactPhone: "+91 90000 00001",
+        secondaryContactName: "Sam Rao",
+        secondaryContactEmail: "sam@acme.com",
+        secondaryContactPhone: "+91 90000 00002",
+        subclientName: "Acme North",
+        subclientStatus: "Active",
+        branchName: "Delhi Branch",
+        branchStatus: "Active",
       },
-    ];
+    ]);
 
-    const worksheet = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
-    worksheet["!cols"] = headers.map(() => ({ wch: 20 }));
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Clients");
-
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
 
     res.setHeader(
       "Content-Type",
@@ -125,15 +303,17 @@ router.get("/bulk/template", (req, res) => {
       "Content-Disposition",
       "attachment; filename=client_bulk_upload_template.xlsx",
     );
-    res.send(buffer);
+
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to generate template" });
   }
 });
 
-// ---------- NEW: Excel bulk upload ----------
-// MOVED ABOVE "/:id" so it isn't shadowed by the param route
+// ---------- Excel bulk upload ----------
+// MUST be declared above "/:id" so it isn't shadowed by the param route.
 
 // POST /api/clients/bulk/upload
 router.post("/bulk/upload", upload.single("file"), async (req, res) => {
@@ -154,10 +334,9 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
         .json({ message: "Uploaded file has no data rows" });
     }
 
-    // in-memory caches so we don't hit the DB repeatedly for the same name
-    const clientCache = new Map(); // name(lower) -> client row
-    const subclientCache = new Map(); // `${clientId}::name(lower)` -> subclient row
-    const branchCache = new Map(); // `${clientId}::name(lower)` -> branch row
+    const clientCache = new Map();
+    const subclientCache = new Map();
+    const branchCache = new Map();
 
     const results = {
       created: { clients: 0, subclients: 0, branches: 0 },
@@ -175,6 +354,21 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
         const clientCountry = norm(row["Client Country"]) || null;
         const clientStatus =
           norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
+
+        const website = norm(row["Website"]) || null;
+        const companyEmail = norm(row["Company Email"]) || null;
+        const companyPhone = norm(row["Company Phone"]) || null;
+
+        const primaryContactName = norm(row["Primary Contact Name"]) || null;
+        const primaryContactEmail = norm(row["Primary Contact Email"]) || null;
+        const primaryContactPhone = norm(row["Primary Contact Phone"]) || null;
+
+        const secondaryContactName =
+          norm(row["Secondary Contact Name"]) || null;
+        const secondaryContactEmail =
+          norm(row["Secondary Contact Email"]) || null;
+        const secondaryContactPhone =
+          norm(row["Secondary Contact Phone"]) || null;
 
         const subName = norm(row["Subclient Name"]);
         const subStatus =
@@ -212,6 +406,15 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
                 name: clientName,
                 country: clientCountry,
                 status: clientStatus,
+                website,
+                main_email: companyEmail,
+                main_phone: companyPhone,
+                primary_contact_name: primaryContactName,
+                primary_contact_email: primaryContactEmail,
+                primary_contact_phone: primaryContactPhone,
+                secondary_contact_name: secondaryContactName,
+                secondary_contact_email: secondaryContactEmail,
+                secondary_contact_phone: secondaryContactPhone,
               })
               .select()
               .single();
@@ -299,11 +502,13 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
       }
     }
 
-    res.status(200).json({
-      message: "Bulk upload processed",
-      totalRows: rows.length,
-      ...results,
-    });
+    res
+      .status(200)
+      .json({
+        message: "Bulk upload processed",
+        totalRows: rows.length,
+        ...results,
+      });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to process bulk upload" });
@@ -311,8 +516,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 });
 
 // ---------- GET /api/clients/:id ----------
-// MOVED BELOW the bulk routes — this is a catch-all-ish param route,
-// so anything specific (like /bulk/*) must be declared before it.
+// Declared below the /bulk/* routes since this is a param route.
 
 router.get("/:id", async (req, res) => {
   try {
@@ -332,38 +536,39 @@ router.get("/:id", async (req, res) => {
       .from("subclients")
       .select("*")
       .eq("client_id", id);
-
     const { data: branches } = await supabase
       .from("branches")
       .select("*")
       .eq("client_id", id);
 
-    res.json({ ...client, subclients, branches });
+    res.json({
+      ...toClientResponse(
+        client,
+        subclients?.length || 0,
+        branches?.length || 0,
+      ),
+      subclients,
+      branches,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch client" });
   }
 });
 
-// ---------- NEW: Update client ----------
+// ---------- PUT /api/clients/:id ----------
 
-// PUT /api/clients/:id
 router.put("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { name, country, status } = req.body;
 
-    if (!name || !name.trim()) {
+    if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
     }
 
     const { data: client, error } = await supabase
       .from("clients")
-      .update({
-        name: name.trim(),
-        country: country || null,
-        status: status === "Inactive" ? "Inactive" : "Active",
-      })
+      .update(fromClientBody(req.body))
       .eq("id", id)
       .select()
       .single();
@@ -371,16 +576,26 @@ router.put("/:id", async (req, res) => {
     if (error) throw error;
     if (!client) return res.status(404).json({ message: "Client not found" });
 
-    res.json(client);
+    const { data: subclients } = await supabase
+      .from("subclients")
+      .select("id")
+      .eq("client_id", id);
+    const { data: branches } = await supabase
+      .from("branches")
+      .select("id")
+      .eq("client_id", id);
+
+    res.json(
+      toClientResponse(client, subclients?.length || 0, branches?.length || 0),
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to update client" });
   }
 });
 
-// ---------- NEW: Delete client ----------
+// ---------- DELETE /api/clients/:id ----------
 
-// DELETE /api/clients/:id
 router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -397,7 +612,6 @@ router.delete("/:id", async (req, res) => {
     const { error } = await supabase.from("clients").delete().eq("id", id);
 
     if (error) {
-      // Likely a foreign key violation because subclients/branches still reference this client
       if (error.code === "23503") {
         return res.status(409).json({
           message:

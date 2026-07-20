@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -11,7 +12,101 @@ router.use((req, res, next) => {
   next();
 });
 
-// ---------- existing routes (unchanged) ----------
+// ---------- brand theme (matches clients.js) ----------
+const BRAND = {
+  blue: "FF204297", // RGB(32,66,151)
+  lightBlue: "FF08A1CE", // RGB(8,161,206)
+  green: "FF2EBBA8", // RGB(46,187,168)
+  orange: "FFEA580C", // used for the Secondary Contact group
+  white: "FFFFFFFF",
+};
+
+function styleHeaderCell(cell, colorHex) {
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: colorHex },
+  };
+  cell.font = { bold: true, color: { argb: BRAND.white }, size: 11 };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  cell.border = {
+    top: { style: "thin", color: { argb: BRAND.white } },
+    left: { style: "thin", color: { argb: BRAND.white } },
+    bottom: { style: "thin", color: { argb: BRAND.white } },
+    right: { style: "thin", color: { argb: BRAND.white } },
+  };
+}
+
+// ---------------------------------------------------------------------
+// Shared field map — single source of truth for every place that reads or
+// writes the "extra" Subclient fields (Country / Website / Main contact /
+// Primary contact / Secondary contact), so the DB columns, the Excel
+// template, the bulk-upload parser, and the Add/Edit endpoints can never
+// drift out of parity with each other (or with clients.js) again.
+//
+// `db`     -> actual Supabase/Postgres column name (snake_case)
+// `api`    -> camelCase field name used in JSON request/response bodies
+// `header` -> column header text used in the Excel template/upload
+// ---------------------------------------------------------------------
+const CONTACT_FIELD_MAP = [
+  { db: "country", api: "country", header: "Country" },
+  { db: "website", api: "website", header: "Website" },
+  { db: "main_email", api: "mainEmail", header: "Main Email" },
+  { db: "main_phone", api: "mainPhone", header: "Main Phone" },
+  {
+    db: "primary_contact_name",
+    api: "primaryContactName",
+    header: "Primary Contact Name",
+  },
+  {
+    db: "primary_contact_email",
+    api: "primaryContactEmail",
+    header: "Primary Contact Email",
+  },
+  {
+    db: "primary_contact_phone",
+    api: "primaryContactPhone",
+    header: "Primary Contact Phone",
+  },
+  {
+    db: "secondary_contact_name",
+    api: "secondaryContactName",
+    header: "Secondary Contact Name",
+  },
+  {
+    db: "secondary_contact_email",
+    api: "secondaryContactEmail",
+    header: "Secondary Contact Email",
+  },
+  {
+    db: "secondary_contact_phone",
+    api: "secondaryContactPhone",
+    header: "Secondary Contact Phone",
+  },
+];
+
+// Builds the { db_column: value } object used for Supabase insert/update,
+// pulling from a camelCase request body. Missing/empty values become null
+// rather than being omitted, so clearing a field in Edit actually clears it.
+function toDbContactFields(body) {
+  const out = {};
+  for (const f of CONTACT_FIELD_MAP) {
+    const val = body[f.api];
+    out[f.db] = val === undefined || val === "" ? null : val;
+  }
+  return out;
+}
+
+// Builds the camelCase API fields from a raw Supabase row.
+function toApiContactFields(row) {
+  const out = {};
+  for (const f of CONTACT_FIELD_MAP) {
+    out[f.api] = row[f.db] ?? null;
+  }
+  return out;
+}
+
+// ---------- GET /api/subclients ----------
 
 router.get("/", async (req, res) => {
   try {
@@ -32,6 +127,8 @@ router.get("/", async (req, res) => {
       clientId: subclient.client_id,
       clientName: clients.find((c) => c.id === subclient.client_id)?.name || "",
       branches: branches.filter((b) => b.subclient_id === subclient.id).length,
+      users: 0, // placeholder until a users table/relation exists
+      ...toApiContactFields(subclient),
     }));
 
     res.json(formatted);
@@ -41,8 +138,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/subclients
-// Body: { name, clientId, status }
+// ---------- POST /api/subclients ----------
+// Body: { name, clientId, status, country, website, mainEmail, mainPhone,
+//         primaryContactName, primaryContactEmail, primaryContactPhone,
+//         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
 router.post("/", async (req, res) => {
   try {
     const { name, clientId, status } = req.body;
@@ -60,46 +159,140 @@ router.post("/", async (req, res) => {
         name: name.trim(),
         client_id: Number(clientId),
         status: status === "Inactive" ? "Inactive" : "Active",
+        ...toDbContactFields(req.body),
       })
       .select()
       .single();
 
     if (error) throw error;
 
-    res.status(201).json(subclient);
+    res.status(201).json({
+      ...subclient,
+      ...toApiContactFields(subclient),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to create subclient" });
   }
 });
 
-// ---------- NEW: Excel template download ----------
+// ---------- Excel template download (styled) ----------
+// Column groups mirror clients.js: core identity (blue), company info
+// (light blue), primary contact (green), secondary contact (orange) — so
+// the Subclient template visually matches the Client template while adding
+// the Client Name lookup column that's unique to Subclients.
+
+const SUBCLIENT_TEMPLATE_COLUMNS = [
+  { header: "Client Name", key: "clientName", width: 24, color: BRAND.blue },
+  {
+    header: "Subclient Name",
+    key: "subclientName",
+    width: 24,
+    color: BRAND.blue,
+  },
+  { header: "Country", key: "country", width: 16, color: BRAND.blue },
+  {
+    header: "Subclient Status",
+    key: "subclientStatus",
+    width: 16,
+    color: BRAND.blue,
+  },
+
+  { header: "Website", key: "website", width: 26, color: BRAND.lightBlue },
+  { header: "Main Email", key: "mainEmail", width: 26, color: BRAND.lightBlue },
+  { header: "Main Phone", key: "mainPhone", width: 18, color: BRAND.lightBlue },
+
+  {
+    header: "Primary Contact Name",
+    key: "primaryContactName",
+    width: 22,
+    color: BRAND.green,
+  },
+  {
+    header: "Primary Contact Email",
+    key: "primaryContactEmail",
+    width: 28,
+    color: BRAND.green,
+  },
+  {
+    header: "Primary Contact Phone",
+    key: "primaryContactPhone",
+    width: 20,
+    color: BRAND.green,
+  },
+
+  {
+    header: "Secondary Contact Name",
+    key: "secondaryContactName",
+    width: 22,
+    color: BRAND.orange,
+  },
+  {
+    header: "Secondary Contact Email",
+    key: "secondaryContactEmail",
+    width: 28,
+    color: BRAND.orange,
+  },
+  {
+    header: "Secondary Contact Phone",
+    key: "secondaryContactPhone",
+    width: 20,
+    color: BRAND.orange,
+  },
+];
 
 // GET /api/subclients/bulk/template
-router.get("/bulk/template", (req, res) => {
+router.get("/bulk/template", async (req, res) => {
   try {
-    const headers = ["Client Name", "Subclient Name", "Subclient Status"];
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Subclients");
 
-    const sampleRows = [
+    sheet.columns = SUBCLIENT_TEMPLATE_COLUMNS.map((c) => ({
+      header: c.header,
+      key: c.key,
+      width: c.width,
+    }));
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 26;
+    SUBCLIENT_TEMPLATE_COLUMNS.forEach((col, idx) =>
+      styleHeaderCell(headerRow.getCell(idx + 1), col.color),
+    );
+
+    sheet.addRows([
       {
-        "Client Name": "Acme Corp",
-        "Subclient Name": "Acme North",
-        "Subclient Status": "Active",
+        clientName: "Acme Corp",
+        subclientName: "Acme North",
+        country: "India",
+        subclientStatus: "Active",
+        website: "https://acmenorth.com",
+        mainEmail: "hello@acmenorth.com",
+        mainPhone: "+91 98765 43210",
+        primaryContactName: "Ravi Kumar",
+        primaryContactEmail: "ravi.kumar@acmenorth.com",
+        primaryContactPhone: "+91 98765 43211",
+        secondaryContactName: "Priya Singh",
+        secondaryContactEmail: "priya.singh@acmenorth.com",
+        secondaryContactPhone: "+91 98765 43212",
       },
       {
-        "Client Name": "Acme Corp",
-        "Subclient Name": "Acme South",
-        "Subclient Status": "Active",
+        clientName: "Acme Corp",
+        subclientName: "Acme South",
+        country: "India",
+        subclientStatus: "Active",
+        website: "https://acmesouth.com",
+        mainEmail: "hello@acmesouth.com",
+        mainPhone: "+91 98765 43220",
+        primaryContactName: "Anil Mehta",
+        primaryContactEmail: "anil.mehta@acmesouth.com",
+        primaryContactPhone: "+91 98765 43221",
+        secondaryContactName: "",
+        secondaryContactEmail: "",
+        secondaryContactPhone: "",
       },
-    ];
+    ]);
 
-    const worksheet = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
-    worksheet["!cols"] = headers.map(() => ({ wch: 22 }));
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Subclients");
-
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
 
     res.setHeader(
       "Content-Type",
@@ -109,14 +302,16 @@ router.get("/bulk/template", (req, res) => {
       "Content-Disposition",
       "attachment; filename=subclient_bulk_upload_template.xlsx",
     );
-    res.send(buffer);
+
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to generate template" });
   }
 });
 
-// ---------- NEW: Excel bulk upload ----------
+// ---------- Excel bulk upload ----------
 
 // POST /api/subclients/bulk/upload
 router.post("/bulk/upload", upload.single("file"), async (req, res) => {
@@ -137,7 +332,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
         .json({ message: "Uploaded file has no data rows" });
     }
 
-    const clientCache = new Map(); // name(lower) -> client row
+    const clientCache = new Map();
     const results = { created: { subclients: 0 }, rowErrors: [] };
     const norm = (v) => (v || "").toString().trim();
 
@@ -188,6 +383,15 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           clientCache.set(clientKey, client);
         }
 
+        // ---- pull the extra contact/company fields straight from the
+        // sheet's header text, using the same map that drives the
+        // template, so column coverage always stays in sync. ----
+        const contactFields = {};
+        for (const f of CONTACT_FIELD_MAP) {
+          const val = norm(row[f.header]);
+          contactFields[f.db] = val === "" ? null : val;
+        }
+
         // ---- resolve/create subclient ----
         const { data: existingSub } = await supabase
           .from("subclients")
@@ -197,9 +401,12 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           .maybeSingle();
 
         if (!existingSub) {
-          const { error: subErr } = await supabase
-            .from("subclients")
-            .insert({ name: subName, client_id: client.id, status: subStatus });
+          const { error: subErr } = await supabase.from("subclients").insert({
+            name: subName,
+            client_id: client.id,
+            status: subStatus,
+            ...contactFields,
+          });
 
           if (subErr) throw subErr;
           results.created.subclients++;
@@ -224,10 +431,10 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// ---------- NEW: Update subclient ----------
-
-// PUT /api/subclients/:id
-// Body: { name, clientId, status }
+// ---------- PUT /api/subclients/:id ----------
+// Body: { name, clientId, status, country, website, mainEmail, mainPhone,
+//         primaryContactName, primaryContactEmail, primaryContactPhone,
+//         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
 router.put("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -246,6 +453,7 @@ router.put("/:id", async (req, res) => {
         name: name.trim(),
         client_id: Number(clientId),
         status: status === "Inactive" ? "Inactive" : "Active",
+        ...toDbContactFields(req.body),
       })
       .eq("id", id)
       .select()
@@ -255,16 +463,18 @@ router.put("/:id", async (req, res) => {
     if (!subclient)
       return res.status(404).json({ message: "Subclient not found" });
 
-    res.json(subclient);
+    res.json({
+      ...subclient,
+      ...toApiContactFields(subclient),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to update subclient" });
   }
 });
 
-// ---------- NEW: Delete subclient ----------
+// ---------- DELETE /api/subclients/:id ----------
 
-// DELETE /api/subclients/:id
 router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -282,7 +492,6 @@ router.delete("/:id", async (req, res) => {
     const { error } = await supabase.from("subclients").delete().eq("id", id);
 
     if (error) {
-      // Likely a foreign key violation because branches still reference this subclient
       if (error.code === "23503") {
         return res.status(409).json({
           message:
