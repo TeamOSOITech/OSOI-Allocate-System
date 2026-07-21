@@ -79,23 +79,13 @@ const login = async (email, password) => {
 };
 
 // UPDATED: Forgot password — generates a reset link for every role-account
-// registered under this real email (there may be more than one, since this
-// system allows multiple accounts per email under different roles), then
-// EMAILS each link via Gmail SMTP (see mailer.js) rather than sending it
-// through Supabase's own mailer.
+// registered under this real email, then EMAILS each link via Gmail SMTP
+// (see mailer.js) rather than sending it through Supabase's own mailer.
 //
-// Why not supabase.auth.resetPasswordForEmail(): that method both mints AND
-// sends the email through Supabase's built-in mailer, which is rate-limited
-// to ~2-4 emails/hour on the default project — trivially hit, as we saw
-// (`over_email_send_rate_limit`, HTTP 429).
-//
-// supabase.auth.admin.generateLink() only MINTS the link — it never sends
-// anything — so we generate it here and email it ourselves via the shared
-// Gmail transporter, sidestepping that limit entirely.
-//
-// REQUIRES a service-role client, not the anon/public client — generateLink
-// is an admin-only method. Check ../../config/db.js: it needs to use
-// SUPABASE_SERVICE_ROLE_KEY, same as supabaseAdmin in userRoutes.js.
+// IMPORTANT: link generation + emailing now happens in the BACKGROUND,
+// after the HTTP response has already been sent. This keeps the request
+// fast even if Gmail SMTP is slow to respond, instead of the caller
+// waiting on every email to actually be delivered before getting a reply.
 const forgotPassword = async (email) => {
   const supabase = getSupabaseClient();
 
@@ -114,8 +104,6 @@ const forgotPassword = async (email) => {
 
   // Always respond the same way whether or not the email exists —
   // this prevents leaking which emails have accounts to an attacker.
-  // (This is why we email the link instead of returning it in the API
-  // response — the response itself stays identical either way.)
   if (!rows || rows.length === 0) {
     console.log(
       "No accounts found for this email (not revealing this to caller).",
@@ -123,41 +111,47 @@ const forgotPassword = async (email) => {
     return { message: "If an account exists, a reset link has been sent." };
   }
 
-  for (const row of rows) {
-    const loginEmail = row["Login Email"];
-    if (!loginEmail) continue;
+  // Fire off link generation + email sending in the background.
+  // Deliberately NOT awaited here — the function returns to the caller
+  // immediately below, and this loop keeps running after the response
+  // has already gone out.
+  (async () => {
+    for (const row of rows) {
+      const loginEmail = row["Login Email"];
+      if (!loginEmail) continue;
 
-    try {
-      const { data: linkData, error: linkError } =
-        await supabase.auth.admin.generateLink({
-          type: "recovery",
-          email: loginEmail,
-          options: {
-            redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
-          },
+      try {
+        const { data: linkData, error: linkError } =
+          await supabase.auth.admin.generateLink({
+            type: "recovery",
+            email: loginEmail,
+            options: {
+              redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+            },
+          });
+
+        if (linkError) throw linkError;
+
+        const actionLink = linkData?.properties?.action_link;
+        if (!actionLink) throw new Error("No action_link returned.");
+
+        await sendMail({
+          to: email, // send to the real/contact email, not the internal Login Email
+          subject: "Password reset request",
+          html: buildResetLinkEmailHtml({
+            heading: "Reset your password",
+            bodyText: `We received a request to reset the password for your ${row["Role"]} account. Click below to set a new password.`,
+            actionLink,
+            buttonText: "Reset Password",
+          }),
         });
 
-      if (linkError) throw linkError;
-
-      const actionLink = linkData?.properties?.action_link;
-      if (!actionLink) throw new Error("No action_link returned.");
-
-      await sendMail({
-        to: email, // send to the real/contact email, not the internal Login Email
-        subject: "Password reset request",
-        html: buildResetLinkEmailHtml({
-          heading: "Reset your password",
-          bodyText: `We received a request to reset the password for your ${row["Role"]} account. Click below to set a new password.`,
-          actionLink,
-          buttonText: "Reset Password",
-        }),
-      });
-
-      console.log(`Reset email sent for role ${row["Role"]} -> ${email}`);
-    } catch (err) {
-      console.error(`RESET LINK/EMAIL FAILED for ${loginEmail}:`, err);
+        console.log(`Reset email sent for role ${row["Role"]} -> ${email}`);
+      } catch (err) {
+        console.error(`RESET LINK/EMAIL FAILED for ${loginEmail}:`, err);
+      }
     }
-  }
+  })();
 
   return { message: "If an account exists, a reset link has been sent." };
 };
