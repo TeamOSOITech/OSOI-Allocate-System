@@ -4,6 +4,7 @@ import ForgotPassword from "./pages/auth/forgotPassword";
 import ResetPassword from "./pages/auth/resetPassword";
 import ReportDashboard from "./pages/admin/reportdashboard";
 import Dashboard from "./pages/admin/dashboard";
+import Products from "./pages/admin/products";
 import Header from "./components/header";
 import Sidebar from "./components/sidebar";
 import AddUser from "./pages/admin/adduser";
@@ -148,6 +149,18 @@ function App() {
                         <PrivateRoute requiredRole="ADMIN">
                             <AppLayout onLogout={handleLogout}>
                                 <Dashboard user={user} onLogout={handleLogout} />
+                            </AppLayout>
+                        </PrivateRoute>
+                    }
+                />
+
+                {/* NEW: Products — replaces the old Task Progress sidebar link */}
+                <Route
+                    path="/products"
+                    element={
+                        <PrivateRoute>
+                            <AppLayout onLogout={handleLogout}>
+                                <Products user={user} onLogout={handleLogout} />
                             </AppLayout>
                         </PrivateRoute>
                     }

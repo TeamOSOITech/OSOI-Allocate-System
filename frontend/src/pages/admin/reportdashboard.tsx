@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
-import Sidebar from "../../components/sidebar";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface StatCardData {
@@ -37,7 +36,6 @@ function useIsMobile() {
 
 export default function ReportDashboard() {
     const isMobile = useIsMobile();
-    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [verticalCases, setVerticalCases] = useState<VerticalCase[]>([]);
     const [verticalsLoading, setVerticalsLoading] = useState(true);
     const [verticalsError, setVerticalsError] = useState<string | null>(null);
@@ -77,37 +75,8 @@ export default function ReportDashboard() {
             }}
         >
             {/* Mobile hamburger topbar */}
-            {isMobile && (
-                <div style={styles.mobileTopbar}>
-                    <button
-                        style={styles.hamburgerBtn}
-                        onClick={() => setSidebarOpen(!sidebarOpen)}
-                    >
-                        ☰
-                    </button>
-                    <span style={styles.mobileTitle}>Report Dashboard</span>
-                </div>
-            )}
 
             {/* Sidebar */}
-            {isMobile ? (
-                <>
-                    {sidebarOpen && (
-                        <div style={styles.overlay} onClick={() => setSidebarOpen(false)} />
-                    )}
-
-                    <div
-                        style={{
-                            ...styles.sidebarDrawer,
-                            transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                        }}
-                    >
-                        <Sidebar />
-                    </div>
-                </>
-            ) : (
-                <Sidebar />
-            )}
 
             {/* Content */}
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>

@@ -29,9 +29,9 @@ const menuItems: MenuItem[] = [
         roles: ["MANAGER", "ADMIN"],
     },
     {
-        label: "Task Progress",
-        icon: "ti ti-file-description",
-        path: "/task-progress",
+        label: "Products",
+        icon: "ti ti-package",
+        path: "/products",
         roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
     },
     {
@@ -64,8 +64,7 @@ const menuItems: MenuItem[] = [
 
 const pathToLabel: Record<string, string> = {
     "/tasks": "Today's Task",
-    "/task-progress": "Task Progress",
-    "/dashboard": "Task Progress",
+    "/products": "Products",
     "/report": "Report",
     "/reportdashboard": "Report",
     "/clients": "Clients Preview",
@@ -142,8 +141,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
             navigate("/clients");
         } else if (item.label === "Employee Preview") {
             navigate("/employees");
-        } else if (item.label === "Task Progress") {
-            navigate("/dashboard");
+        } else if (item.label === "Products") {
+            navigate("/products");
         } else if (item.label === "Report") {
             navigate("/report");
         } else if (item.label === "Billing") {
@@ -249,26 +248,6 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     width: `${SIDEBAR_WIDTH}px`,
                     background: "#fff",
                     padding: "20px 14px",
-                    // NOTE: deliberately NOT position: fixed/sticky at the
-                    // inline-style level. Those are only pinned relative to
-                    // the nearest ancestor with a transform, filter,
-                    // perspective, or will-change — if any wrapper in the
-                    // app tree has one (common with animation/layout
-                    // libraries), "fixed" silently scrolls with that
-                    // ancestor instead of the viewport. On desktop this
-                    // stays a plain flex child inside a height-locked
-                    // (100vh, overflow: hidden) parent — see Layout.tsx —
-                    // which makes the sidebar immovable by construction.
-                    // Below MOBILE_BREAKPOINT the CSS above overrides this
-                    // with position: fixed on purpose, to turn it into an
-                    // off-canvas drawer instead.
-                    //
-                    // IMPORTANT: height is 100% (not 100vh) on desktop. This
-                    // sidebar sits BELOW the page Header in AppLayout, so
-                    // its available height is "viewport minus header" — not
-                    // the full viewport. On mobile the media query above
-                    // forces height: 100vh since the drawer floats above
-                    // everything, header included.
                     height: "100%",
                     display: "flex",
                     flexDirection: "column",
@@ -456,17 +435,11 @@ transform/filter/will-change. Only the <main> content pane has
 overflowY: auto, so it scrolls independently and only shows a scrollbar when
 its content overflows.
 
-RESPONSIVE BEHAVIOR (new): below 768px viewport width, the sidebar switches
+RESPONSIVE BEHAVIOR: below 768px viewport width, the sidebar switches
 to an off-canvas drawer:
   - A fixed hamburger button (top-left) toggles it open/closed.
   - The <aside> becomes position: fixed and slides in/out via transform.
   - A semi-transparent backdrop appears behind it; clicking the backdrop,
     clicking a nav item, or logging out all close the drawer.
   - Desktop layout (>= 768px) is completely unchanged from before.
-
-One thing to check in App.js: on mobile the sidebar no longer occupies flex
-space (it's fixed/overlaid), so `<main>` doesn't need to reserve room for it
-— content will naturally use the full width, with the hamburger button
-floating on top. If any page has fixed top padding that assumed a
-persistent sidebar, double check it still looks right at narrow widths.
 */
