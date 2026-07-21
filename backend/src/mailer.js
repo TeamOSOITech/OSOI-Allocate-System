@@ -1,43 +1,20 @@
 // mailer.js
-//
-// Shared email sender using Gmail SMTP via Nodemailer, sending from
-// team@osoitech.com (an existing, working Google Workspace mailbox).
-//
-// Why Gmail SMTP instead of Resend: sending "as" a mailbox you already
-// own and control needs no separate domain verification — Gmail already
-// trusts its own mailbox. This was the fastest path to reliable delivery
-// without needing DNS/domain access.
-//
-// Setup required (one-time):
-//   1. Enable 2-Step Verification on the team@osoitech.com Google account.
-//   2. Generate an App Password: myaccount.google.com/apppasswords
-//   3. Add to .env:
-//        GMAIL_USER=team@osoitech.com
-//        GMAIL_APP_PASSWORD=<the 16-character app password>
-//
-// Gmail's free-tier sending limit is roughly 500 emails/day — plenty for
-// transactional account/reset emails, not suitable for bulk marketing.
-//
-// npm install nodemailer
-
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
-  connectionTimeout: 10000, // max 10 sec to connect to Gmail SMTP
-  greetingTimeout: 10000, // max 10 sec to receive SMTP greeting
-  socketTimeout: 10000, // max 10 sec of socket inactivity
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
+  family: 4, // force IPv4 — fixes ENETUNREACH on hosts without IPv6 egress
 });
 
-/**
- * Sends an email via the shared Gmail SMTP transporter.
- * Throws on failure — callers should wrap in their own try/catch if they
- * want to treat email failure as non-fatal (e.g. account already created).
- */
 async function sendMail({ to, subject, html }) {
   return transporter.sendMail({
     from: `"Allocate System" <${process.env.GMAIL_USER}>`,
