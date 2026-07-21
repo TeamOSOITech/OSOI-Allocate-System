@@ -103,11 +103,11 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                     height: 56,
                     borderRadius: "50%",
                     border: "none",
-                    background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                    background: "linear-gradient(135deg, #08A1CE, #204297)",
                     color: "#fff",
                     fontSize: 24,
                     cursor: "pointer",
-                    boxShadow: "0 8px 20px rgba(124,58,237,0.4)",
+                    boxShadow: "0 8px 20px rgba(32,66,151,0.4)",
                     zIndex: 9999,
                     display: "flex",
                     alignItems: "center",
@@ -143,7 +143,7 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                     gap: 8,
                 }}
             >
-                <h3 style={{ margin: 0, color: "#6D28D9", fontSize: 16, flex: 1 }}>
+                <h3 style={{ margin: 0, color: "#204297", fontSize: 16, flex: 1 }}>
                     🎤 AI Voice Assistant
                 </h3>
                 <select
@@ -153,9 +153,9 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                         fontSize: 12,
                         padding: "4px 8px",
                         borderRadius: 6,
-                        border: "1px solid #ddd6fe",
-                        color: "#6D28D9",
-                        background: "#F5F3FF",
+                        border: "1px solid #b6def0",
+                        color: "#204297",
+                        background: "#eef6fb",
                         cursor: "pointer",
                         flexShrink: 0,
                     }}
@@ -188,7 +188,7 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
             <div
                 style={{
                     minHeight: 90,
-                    background: "#F5F3FF",
+                    background: "#eef6fb",
                     borderRadius: 10,
                     padding: 12,
                     fontSize: 14,
@@ -199,7 +199,7 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                 {transcript || "Say something..."}
             </div>
 
-            <p style={{ color: listening ? "green" : "gray", fontWeight: 600 }}>
+            <p style={{ color: listening ? "#2EBBA8" : "gray", fontWeight: 600 }}>
                 {listening ? "🎙 Listening..." : "Microphone Off"}
             </p>
 
@@ -217,7 +217,7 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
                         border: "none",
                         borderRadius: 10,
                         cursor: "pointer",
-                        background: "#8B5CF6",
+                        background: "#08A1CE",
                         color: "#fff",
                         fontWeight: 600,
                     }}

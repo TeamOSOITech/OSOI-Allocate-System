@@ -867,7 +867,7 @@ const Login = () => {
                                     width: "100%",
                                 }}
                             >
-                                Forgot Password?
+                                Reset Password?
                             </button>
 
                             <p
