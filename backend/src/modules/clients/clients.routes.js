@@ -316,6 +316,11 @@ router.get("/bulk/template", async (req, res) => {
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
 
 // POST /api/clients/bulk/upload
+//
+// Response shape (matches the "Bulk Add Users" results list on the
+// frontend): every row in the sheet gets ONE entry in `results`, whether it
+// succeeded or failed, so the UI can render a full row-by-row list instead
+// of only showing errors.
 router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -338,19 +343,25 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
     const subclientCache = new Map();
     const branchCache = new Map();
 
-    const results = {
-      created: { clients: 0, subclients: 0, branches: 0 },
-      rowErrors: [],
-    };
+    // Per-row results — pushed exactly once per row, either "created" or
+    // "failed" — plus running totals for the created/failed counters shown
+    // in the summary line ("X created · Y failed").
+    const results = [];
+    let createdCount = 0;
+    let failedCount = 0;
 
     const norm = (v) => (v || "").toString().trim();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // account for header row in Excel
+      const clientNameRaw = norm(row["Client Name"]);
+      // Best-effort identifier shown in the UI even if the row fails before
+      // the client name is known to be valid.
+      const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
 
       try {
-        const clientName = norm(row["Client Name"]);
+        const clientName = clientNameRaw;
         const clientCountry = norm(row["Client Country"]) || null;
         const clientStatus =
           norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
@@ -379,8 +390,11 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           norm(row["Branch Status"]) === "Inactive" ? "Inactive" : "Active";
 
         if (!clientName) {
-          results.rowErrors.push({
+          failedCount++;
+          results.push({
             row: rowNum,
+            identifier: rowIdentifier,
+            status: "failed",
             message: "Client Name is required",
           });
           continue;
@@ -421,7 +435,6 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 
             if (clientErr) throw clientErr;
             client = newClient;
-            results.created.clients++;
           }
           clientCache.set(clientKey, client);
         }
@@ -454,7 +467,6 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 
               if (subErr) throw subErr;
               subclient = newSub;
-              results.created.subclients++;
             }
             subclientCache.set(subKey, subclient);
           }
@@ -488,27 +500,39 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 
               if (branchErr) throw branchErr;
               branch = newBranch;
-              results.created.branches++;
             }
             branchCache.set(branchKey, branch);
           }
         }
+
+        // Row processed without throwing -> counts as "created" for this
+        // row, whether the client itself was brand-new or already existed
+        // and this row just added a subclient/branch under it.
+        createdCount++;
+        results.push({
+          row: rowNum,
+          identifier: rowIdentifier,
+          status: "created",
+        });
       } catch (rowErr) {
         console.error(`Row ${rowNum} error:`, rowErr);
-        results.rowErrors.push({
+        failedCount++;
+        results.push({
           row: rowNum,
+          identifier: rowIdentifier,
+          status: "failed",
           message: rowErr.message || "Unknown error",
         });
       }
     }
 
-    res
-      .status(200)
-      .json({
-        message: "Bulk upload processed",
-        totalRows: rows.length,
-        ...results,
-      });
+    res.status(200).json({
+      message: "Bulk upload processed",
+      totalRows: rows.length,
+      createdCount,
+      failedCount,
+      results,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to process bulk upload" });

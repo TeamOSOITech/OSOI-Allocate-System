@@ -314,6 +314,11 @@ router.get("/bulk/template", async (req, res) => {
 // ---------- Excel bulk upload ----------
 
 // POST /api/subclients/bulk/upload
+//
+// Response shape (matches the "Bulk Add Users" results list on the
+// frontend, and mirrors clients.js): every row in the sheet gets ONE entry
+// in `results`, whether it succeeded or failed, so the UI can render a
+// full row-by-row list instead of only showing errors.
 router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -333,29 +338,50 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
     }
 
     const clientCache = new Map();
-    const results = { created: { subclients: 0 }, rowErrors: [] };
+
+    // Per-row results — pushed exactly once per row, either "created" or
+    // "failed" — plus running totals for the created/failed counters shown
+    // in the summary line ("X created · Y failed").
+    const results = [];
+    let createdCount = 0;
+    let failedCount = 0;
+
     const norm = (v) => (v || "").toString().trim();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2;
+      const clientNameRaw = norm(row["Client Name"]);
+      const subNameRaw = norm(row["Subclient Name"]);
+      // Best-effort identifier shown in the UI even if the row fails before
+      // both names are known to be valid.
+      const rowIdentifier =
+        clientNameRaw && subNameRaw
+          ? `${subNameRaw} (${clientNameRaw})`
+          : subNameRaw || clientNameRaw || `Row ${rowNum}`;
 
       try {
-        const clientName = norm(row["Client Name"]);
-        const subName = norm(row["Subclient Name"]);
+        const clientName = clientNameRaw;
+        const subName = subNameRaw;
         const subStatus =
           norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
 
         if (!clientName) {
-          results.rowErrors.push({
+          failedCount++;
+          results.push({
             row: rowNum,
+            identifier: rowIdentifier,
+            status: "failed",
             message: "Client Name is required",
           });
           continue;
         }
         if (!subName) {
-          results.rowErrors.push({
+          failedCount++;
+          results.push({
             row: rowNum,
+            identifier: rowIdentifier,
+            status: "failed",
             message: "Subclient Name is required",
           });
           continue;
@@ -373,8 +399,11 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
             .maybeSingle();
 
           if (!existing) {
-            results.rowErrors.push({
+            failedCount++;
+            results.push({
               row: rowNum,
+              identifier: rowIdentifier,
+              status: "failed",
               message: `Client "${clientName}" not found. Create the client first.`,
             });
             continue;
@@ -409,12 +438,23 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           });
 
           if (subErr) throw subErr;
-          results.created.subclients++;
         }
+
+        // Row processed without throwing -> counts as "created" for this
+        // row, whether the subclient was brand-new or already existed.
+        createdCount++;
+        results.push({
+          row: rowNum,
+          identifier: rowIdentifier,
+          status: "created",
+        });
       } catch (rowErr) {
         console.error(`Row ${rowNum} error:`, rowErr);
-        results.rowErrors.push({
+        failedCount++;
+        results.push({
           row: rowNum,
+          identifier: rowIdentifier,
+          status: "failed",
           message: rowErr.message || "Unknown error",
         });
       }
@@ -423,7 +463,9 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
     res.status(200).json({
       message: "Bulk upload processed",
       totalRows: rows.length,
-      ...results,
+      createdCount,
+      failedCount,
+      results,
     });
   } catch (err) {
     console.error(err);

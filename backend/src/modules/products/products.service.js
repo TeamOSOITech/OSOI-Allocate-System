@@ -1,4 +1,4 @@
-const supabase = require("../../config/supabaseClient"); // adjust path to your supabase client
+const supabase = require("../../config/supabaseClient");
 
 const TABLE = "product_master";
 
@@ -24,11 +24,11 @@ const getProductById = async (id) => {
 };
 
 const createProduct = async (payload) => {
-  const { product_name, time_taken, client, subclient } = payload;
+  const { product_name, time_taken, time_unit, client, subclient } = payload;
 
   const { data, error } = await supabase
     .from(TABLE)
-    .insert([{ product_name, time_taken, client, subclient }])
+    .insert([{ product_name, time_taken, time_unit, client, subclient }])
     .select()
     .single();
 
@@ -36,14 +36,25 @@ const createProduct = async (payload) => {
   return data;
 };
 
+const bulkCreateProducts = async (productsArray) => {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert(productsArray)
+    .select();
+
+  if (error) throw error;
+  return data;
+};
+
 const updateProduct = async (id, payload) => {
-  const { product_name, time_taken, client, subclient } = payload;
+  const { product_name, time_taken, time_unit, client, subclient } = payload;
 
   const { data, error } = await supabase
     .from(TABLE)
     .update({
       product_name,
       time_taken,
+      time_unit,
       client,
       subclient,
       updated_at: new Date().toISOString(),
@@ -72,6 +83,7 @@ module.exports = {
   getAllProducts,
   getProductById,
   createProduct,
+  bulkCreateProducts,
   updateProduct,
   deleteProduct,
 };
