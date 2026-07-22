@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
+import * as XLSX from "xlsx";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -26,6 +27,7 @@ type Product = {
     id: string;
     product_name: string;
     time_taken: string;
+    time_unit: string;
     client: string;
     subclient: string;
     created_at?: string;
@@ -35,11 +37,18 @@ type Product = {
 type ProductForm = {
     product_name: string;
     time_taken: string;
+    time_unit: string;
     client: string;
     subclient: string;
 };
 
-const emptyForm: ProductForm = { product_name: "", time_taken: "", client: "", subclient: "" };
+const emptyForm: ProductForm = {
+    product_name: "",
+    time_taken: "",
+    time_unit: "",
+    client: "",
+    subclient: "",
+};
 
 type DeleteTarget = { id: string; name: string };
 
@@ -73,6 +82,14 @@ function getAvatarColors(name: string) {
     const key = name || "";
     for (let i = 0; i < key.length; i++) hash = key.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+
+// Formats a time value with its unit for display, e.g. "20 min" / "2 hr".
+// Falls back to "—" when either piece is missing.
+function formatTimeTaken(value?: string | number | null, unit?: string | null) {
+    if (value === null || value === undefined || value === "") return "—";
+    const unitLabel = unit === "hours" ? "hr" : unit === "minutes" ? "min" : "";
+    return unitLabel ? `${value} ${unitLabel}` : `${value}`;
 }
 
 // Injected once — inline style objects can't express :hover/:focus, so the
@@ -142,6 +159,10 @@ const GLOBAL_CSS = `
 .pr-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
 `;
 
+// Columns required in the bulk-upload sheet, shown in the modal's info
+// callout and used to build the downloadable sample sheet client-side.
+const BULK_REQUIRED_COLUMNS_TEXT = "Product Name, Time Taken, Client, Subclient";
+
 const Products = () => {
     const isMobile = useIsMobile();
 
@@ -171,6 +192,12 @@ const Products = () => {
     const [deleteError, setDeleteError] = useState("");
 
     // ---- Bulk upload state ----
+    // Bulk upload now lives inside its own modal (opened via the "Bulk
+    // Upload" button) instead of firing immediately off a hidden file
+    // input, matching the Add User page's "Bulk Add Users" modal pattern:
+    // required-columns callout -> Choose File -> explicit Upload button.
+    const [showBulkModal, setShowBulkModal] = useState(false);
+    const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
     const [bulkError, setBulkError] = useState("");
@@ -248,6 +275,10 @@ const Products = () => {
             setAddError("Product name is required.");
             return;
         }
+        if (!addForm.time_unit) {
+            setAddError("Please select a unit (Minutes or Hours) for Time Taken.");
+            return;
+        }
 
         setAddSubmitting(true);
         try {
@@ -276,6 +307,7 @@ const Products = () => {
         setEditForm({
             product_name: product.product_name || "",
             time_taken: product.time_taken || "",
+            time_unit: product.time_unit || "",
             client: product.client || "",
             subclient: product.subclient || "",
         });
@@ -292,6 +324,10 @@ const Products = () => {
         setEditError("");
         if (!editForm.product_name.trim()) {
             setEditError("Product name is required.");
+            return;
+        }
+        if (!editForm.time_unit) {
+            setEditError("Please select a unit (Minutes or Hours) for Time Taken.");
             return;
         }
 
@@ -350,16 +386,60 @@ const Products = () => {
     };
 
     // ---- Bulk upload handlers ----
-    // Template is always served/generated as an .xlsx workbook by the backend
-    // at /api/products/bulk/template, mirroring the Clients/Subclients pattern.
 
+    // FIX: the sample sheet button previously called
+    // `${ENDPOINT}/bulk/template?format=xlsx`, which 404s ("Cannot GET
+    // /api/products/bulk/template") because that route doesn't exist on
+    // the backend. Rather than depend on a backend endpoint, the template
+    // is now generated entirely client-side with the `xlsx` package —
+    // same approach already used by the Add User page's "Sample Sheet"
+    // button — so the download works with zero backend changes.
     const handleDownloadTemplate = () => {
-        window.open(`${ENDPOINT}/bulk/template?format=xlsx`, "_blank");
+        const templateData = [
+            {
+                "Product Name": "Inventory Sync",
+                "Time Taken": "2 hours",
+                Client: "Acme Corp",
+                Subclient: "Barret and Co",
+            },
+        ];
+
+        const worksheet = XLSX.utils.json_to_sheet(templateData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Products");
+        XLSX.writeFile(workbook, "bulk_add_products_template.xlsx");
     };
 
-    const handleBulkFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    // Bulk upload now lives in its own modal (matching the Add User page's
+    // "Bulk Add Users" modal) instead of firing immediately off a hidden
+    // file input: choosing a file just stages it, and the actual POST only
+    // happens once "Upload & Create Products" is clicked.
+    const openBulkModal = () => {
+        setBulkFile(null);
+        setBulkResult(null);
+        setBulkError("");
+        setShowBulkModal(true);
+    };
+
+    const closeBulkModal = () => {
+        setShowBulkModal(false);
+        setBulkFile(null);
+        setBulkResult(null);
+        setBulkError("");
+    };
+
+    const handleBulkFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        setBulkFile(file);
+        setBulkResult(null);
+        setBulkError("");
+    };
+
+    const handleBulkUploadSubmit = async () => {
+        if (!bulkFile) {
+            setBulkError("Please select an Excel file first.");
+            return;
+        }
 
         setBulkUploading(true);
         setBulkError("");
@@ -367,7 +447,7 @@ const Products = () => {
 
         try {
             const formData = new FormData();
-            formData.append("file", file);
+            formData.append("file", bulkFile);
 
             const token = localStorage.getItem("accessToken");
             const response = await fetch(`${ENDPOINT}/bulk/upload`, {
@@ -388,7 +468,6 @@ const Products = () => {
             setBulkError(err?.message || "Something went wrong during bulk upload.");
         } finally {
             setBulkUploading(false);
-            e.target.value = "";
         }
     };
 
@@ -412,14 +491,32 @@ const Products = () => {
             </div>
             <div>
                 <label style={styles.formLabel}>Time Taken</label>
-                <input
-                    style={styles.formInput}
-                    value={formState.time_taken}
-                    onChange={(e) =>
-                        setFormState((prev) => ({ ...prev, time_taken: e.target.value }))
-                    }
-                    placeholder="e.g. 2 hours"
-                />
+                <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                        style={{ ...styles.formInput, flex: 1 }}
+                        value={formState.time_taken}
+                        onChange={(e) =>
+                            setFormState((prev) => ({ ...prev, time_taken: e.target.value }))
+                        }
+                        placeholder="e.g. 20"
+                        type="number"
+                        min="0"
+                    />
+                    <select
+                        style={{ ...styles.formInput, flex: 1 }}
+                        value={formState.time_unit}
+                        onChange={(e) =>
+                            setFormState((prev) => ({ ...prev, time_unit: e.target.value }))
+                        }
+                        required
+                    >
+                        <option value="" disabled>
+                            Select unit
+                        </option>
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                    </select>
+                </div>
             </div>
             <div>
                 <label style={styles.formLabel}>Client</label>
@@ -478,18 +575,18 @@ const Products = () => {
                                     </span>
                                 </span>
 
+                                {/* Bulk Upload now opens a modal (matching the Add User
+                                    page's "Bulk Add Users" modal) instead of firing an
+                                    upload the instant a file is chosen. */}
                                 <span className="pr-tooltip-wrap">
-                                    <label style={styles.secondaryBtn}>
+                                    <button
+                                        type="button"
+                                        style={styles.secondaryBtn}
+                                        onClick={openBulkModal}
+                                    >
                                         <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                        {bulkUploading ? "Uploading..." : "Bulk Upload"}
-                                        <input
-                                            type="file"
-                                            accept=".xlsx,.xls"
-                                            hidden
-                                            onChange={handleBulkFileChange}
-                                            disabled={bulkUploading}
-                                        />
-                                    </label>
+                                        Bulk Upload
+                                    </button>
                                     <span className="pr-tooltip-bubble">
                                         Upload products from an Excel (.xlsx) file
                                     </span>
@@ -665,7 +762,10 @@ const Products = () => {
                                                                 className="ti ti-clock"
                                                                 style={{ fontSize: 12 }}
                                                             />
-                                                            {p.time_taken || "—"}
+                                                            {formatTimeTaken(
+                                                                p.time_taken,
+                                                                p.time_unit
+                                                            )}
                                                         </span>
                                                     </td>
                                                     <td style={styles.td}>
@@ -775,7 +875,7 @@ const Products = () => {
                                                         style={styles.cardInfoIcon}
                                                     />
                                                     <span style={styles.cardSimpleInfoValue}>
-                                                        {p.time_taken || "—"}
+                                                        {formatTimeTaken(p.time_taken, p.time_unit)}
                                                     </span>
                                                 </div>
                                                 <div style={styles.cardSimpleInfoRow}>
@@ -842,7 +942,7 @@ const Products = () => {
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Time Taken</span>
                                 <span style={styles.detailsValue}>
-                                    {viewDetails.time_taken || "—"}
+                                    {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
                                 </span>
                             </div>
                             <div style={styles.detailsRow}>
@@ -1035,94 +1135,111 @@ const Products = () => {
                 </div>
             )}
 
-            {/* Bulk upload result modal */}
-            {bulkResult && (
-                <div style={styles.overlay} onClick={() => setBulkResult(null)}>
-                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Bulk Upload Result</h3>
+            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal on the
+                Add User page: title/subtitle, required-columns callout,
+                Choose File row, and an explicit Upload button, with
+                results/errors rendered inline below once a file is
+                submitted. */}
+            {showBulkModal && (
+                <div style={styles.overlay} onClick={closeBulkModal}>
+                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.bulkModalHeader}>
+                            <h3 style={styles.bulkModalTitle}>Bulk Add Products</h3>
+                            <p style={styles.bulkModalSubtitle}>
+                                Upload an Excel file to create multiple products at once
+                            </p>
                             <button
                                 style={styles.closeBtn}
-                                onClick={() => setBulkResult(null)}
+                                onClick={closeBulkModal}
                                 type="button"
                                 aria-label="Close"
-                                title="Close"
                             >
                                 ✕
                             </button>
                         </div>
 
-                        <div style={styles.detailsBody}>
-                            <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Total Rows</span>
-                                <span style={styles.detailsValue}>{bulkResult.totalRows}</span>
-                            </div>
+                        <div style={styles.bulkInfoBox}>
+                            <span style={styles.bulkInfoLabel}>Required columns</span>
+                            <p style={styles.bulkInfoText}>{BULK_REQUIRED_COLUMNS_TEXT}</p>
+                        </div>
 
-                            {bulkResult.created &&
-                                Object.entries(bulkResult.created).map(([key, val]) => (
-                                    <div style={styles.detailsRow} key={key}>
-                                        <span style={styles.detailsLabel}>
-                                            Created {key.charAt(0).toUpperCase() + key.slice(1)}
-                                        </span>
-                                        <span style={styles.detailsValue}>{val}</span>
-                                    </div>
-                                ))}
+                        <div style={styles.bulkUploadRow}>
+                            <label style={styles.fileInputWrapper}>
+                                <input
+                                    type="file"
+                                    accept=".xlsx,.xls"
+                                    onChange={handleBulkFileSelect}
+                                    style={styles.fileInputHidden}
+                                    disabled={bulkUploading}
+                                />
+                                <span style={styles.fileInputButton}>Choose File</span>
+                                <span style={styles.fileInputName}>
+                                    {bulkFile ? bulkFile.name : "No file chosen"}
+                                </span>
+                            </label>
+                            <button
+                                type="button"
+                                onClick={handleBulkUploadSubmit}
+                                disabled={bulkUploading}
+                                style={{
+                                    ...styles.bulkUploadBtn,
+                                    opacity: bulkUploading ? 0.7 : 1,
+                                    cursor: bulkUploading ? "not-allowed" : "pointer",
+                                }}
+                            >
+                                {bulkUploading ? "Uploading…" : "Upload & Create Products"}
+                            </button>
+                        </div>
 
-                            {bulkResult.rowErrors && bulkResult.rowErrors.length > 0 && (
-                                <div>
-                                    <p
-                                        style={{
-                                            ...styles.detailsLabel,
-                                            marginBottom: 8,
-                                            display: "block",
-                                        }}
-                                    >
-                                        Errors ({bulkResult.rowErrors.length})
-                                    </p>
-                                    <div
-                                        style={{
-                                            maxHeight: 220,
-                                            overflowY: "auto",
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            gap: 6,
-                                        }}
-                                    >
-                                        {bulkResult.rowErrors.map((re, idx) => (
-                                            <div
-                                                key={idx}
-                                                style={{ fontSize: 12, color: "#dc2626" }}
-                                            >
-                                                Row {re.row}: {re.message}
-                                            </div>
-                                        ))}
-                                    </div>
+                        {bulkError && (
+                            <p style={{ ...styles.formError, margin: "0 28px 20px" }}>
+                                {bulkError}
+                            </p>
+                        )}
+
+                        {bulkResult && (
+                            <div style={styles.resultsSection}>
+                                <div style={styles.resultsSummary}>
+                                    <span style={styles.resultsSummaryText}>
+                                        <strong>{bulkResult.totalRows}</strong> total rows
+                                    </span>
                                 </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {/* Bulk upload error modal */}
-            {bulkError && (
-                <div style={styles.overlay} onClick={() => setBulkError("")}>
-                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Upload Failed</h3>
-                            <button
-                                style={styles.closeBtn}
-                                onClick={() => setBulkError("")}
-                                type="button"
-                                aria-label="Close"
-                                title="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div style={styles.detailsBody}>
-                            <p style={styles.formError}>{bulkError}</p>
-                        </div>
+                                {bulkResult.created &&
+                                    Object.entries(bulkResult.created).map(([key, val]) => (
+                                        <div style={styles.detailsRow} key={key}>
+                                            <span style={styles.detailsLabel}>
+                                                Created {key.charAt(0).toUpperCase() + key.slice(1)}
+                                            </span>
+                                            <span style={styles.detailsValue}>{val}</span>
+                                        </div>
+                                    ))}
+
+                                {bulkResult.rowErrors && bulkResult.rowErrors.length > 0 && (
+                                    <div style={{ marginTop: 12 }}>
+                                        <p
+                                            style={{
+                                                ...styles.detailsLabel,
+                                                marginBottom: 8,
+                                                display: "block",
+                                            }}
+                                        >
+                                            Errors ({bulkResult.rowErrors.length})
+                                        </p>
+                                        <div style={styles.resultsList}>
+                                            {bulkResult.rowErrors.map((re, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    style={{ fontSize: 12, color: "#dc2626" }}
+                                                >
+                                                    Row {re.row}: {re.message}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1665,5 +1782,98 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: 700,
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         gridColumn: "1 / -1",
+    },
+
+    // ---- Bulk Upload modal (matches Add User's "Bulk Add Users" modal,
+    // recolored to this page's blue #08A1CE -> #204297 brand gradient) ----
+    bulkModal: {
+        background: "#fff",
+        borderRadius: 16,
+        width: 560,
+        maxWidth: "92vw",
+        maxHeight: "88vh",
+        overflowY: "auto",
+        boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+    },
+    bulkModalHeader: {
+        position: "relative",
+        textAlign: "center",
+        padding: "24px 28px 16px",
+        borderBottom: "1px solid #f0f0f0",
+    },
+    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#204297" },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#7c8aa3" },
+    bulkInfoBox: {
+        margin: "20px 28px",
+        padding: "14px 16px",
+        background: "#eaf6fb",
+        borderLeft: "3px solid #08A1CE",
+        borderRadius: 6,
+    },
+    bulkInfoLabel: {
+        display: "block",
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#204297",
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        marginBottom: 4,
+    },
+    bulkInfoText: { margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 },
+    bulkUploadRow: {
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 10,
+        margin: "0 28px 24px",
+    },
+    fileInputWrapper: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "8px 12px",
+        cursor: "pointer",
+        flex: 1,
+        minWidth: 200,
+        background: "#fafafa",
+    },
+    fileInputHidden: { display: "none" },
+    fileInputButton: {
+        background: "#204297",
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "6px 12px",
+        borderRadius: 6,
+        whiteSpace: "nowrap",
+    },
+    fileInputName: {
+        fontSize: 13,
+        color: "#6b7280",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    bulkUploadBtn: {
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "10px 20px",
+        fontSize: 14,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+    },
+    resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
+    resultsSummary: { marginBottom: 12 },
+    resultsSummaryText: { fontSize: 14, color: "#16233c" },
+    resultsList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxHeight: 260,
+        overflowY: "auto",
     },
 };

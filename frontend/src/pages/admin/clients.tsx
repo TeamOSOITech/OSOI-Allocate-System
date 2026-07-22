@@ -117,10 +117,21 @@ type TabKey = "client" | "subclient";
 type ViewDetailsTarget =
     { type: "client"; data: Client } | { type: "subclient"; data: SubclientRow };
 
+// Row-level bulk result, one entry per row in the uploaded sheet — whether
+// that row succeeded or failed — so the modal can render a full list
+// exactly like the "Bulk Add Users" page does.
+type BulkRowResult = {
+    row: number;
+    identifier: string;
+    status: "created" | "failed";
+    message?: string;
+};
+
 type BulkResult = {
     totalRows: number;
-    created: Record<string, number>;
-    rowErrors: { row: number; message: string }[];
+    createdCount: number;
+    failedCount: number;
+    results: BulkRowResult[];
 };
 
 type DeleteTarget = {
@@ -202,6 +213,12 @@ const GLOBAL_CSS = `
 .cl-scroll-area::-webkit-scrollbar-track { background: transparent; }
 .cl-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .cl-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+
+/* Bulk upload results list scrollbar (Bulk Add Users style) */
+.cl-results-list::-webkit-scrollbar { width: 8px; }
+.cl-results-list::-webkit-scrollbar-track { background: transparent; }
+.cl-results-list::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
+.cl-results-list::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
 `;
 
 export default function Clients() {
@@ -256,6 +273,13 @@ export default function Clients() {
     const [deleteError, setDeleteError] = useState("");
 
     // ---- Bulk upload state ----
+    // Bulk upload now lives inside its own modal (opened via the "Bulk
+    // Upload" button) instead of firing immediately off a hidden file
+    // input, matching the Add User page's "Bulk Add Users" modal pattern:
+    // required-columns callout -> Choose File -> explicit Upload button ->
+    // full created/failed row-by-row results list.
+    const [showBulkModal, setShowBulkModal] = useState(false);
+    const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
     const [bulkError, setBulkError] = useState("");
@@ -567,9 +591,40 @@ export default function Clients() {
         window.open(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`, "_blank");
     };
 
-    const handleBulkFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    // Required-columns copy shown inside the Bulk Upload modal, mirroring
+    // the info callout on the Add User page's "Bulk Add Users" modal.
+    // Subclients carry one extra lookup column (Client) that Clients don't.
+    const bulkRequiredColumnsText =
+        activeTab === "client"
+            ? "Name, Country, Status, Website, Main Email, Main Phone, Primary Contact Name, Primary Contact Email, Primary Contact Phone, Secondary Contact Name, Secondary Contact Email, Secondary Contact Phone"
+            : "Name, Client, Country, Status, Website, Main Email, Main Phone, Primary Contact Name, Primary Contact Email, Primary Contact Phone, Secondary Contact Name, Secondary Contact Email, Secondary Contact Phone";
+
+    const openBulkModal = () => {
+        setBulkFile(null);
+        setBulkResult(null);
+        setBulkError("");
+        setShowBulkModal(true);
+    };
+
+    const closeBulkModal = () => {
+        setShowBulkModal(false);
+        setBulkFile(null);
+        setBulkResult(null);
+        setBulkError("");
+    };
+
+    const handleBulkFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        setBulkFile(file);
+        setBulkResult(null);
+        setBulkError("");
+    };
+
+    const handleBulkUploadSubmit = async () => {
+        if (!bulkFile) {
+            setBulkError("Please select an Excel file first.");
+            return;
+        }
 
         setBulkUploading(true);
         setBulkError("");
@@ -578,7 +633,7 @@ export default function Clients() {
         try {
             const endpoint = BULK_ENDPOINT_MAP[activeTab];
             const formData = new FormData();
-            formData.append("file", file);
+            formData.append("file", bulkFile);
 
             const response = await fetch(`${apiBase}/api/${endpoint}/bulk/upload`, {
                 method: "POST",
@@ -591,13 +646,16 @@ export default function Clients() {
                 throw new Error(data?.message || "Bulk upload failed");
             }
 
+            // Backend is expected to return: { totalRows, createdCount,
+            // failedCount, results: [{ row, identifier, status, message? }] }
+            // so every row — created AND failed — can be listed in the UI,
+            // matching the "Bulk Add Users" results list.
             setBulkResult(data as BulkResult);
             await fetchAll();
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong during bulk upload.");
         } finally {
             setBulkUploading(false);
-            e.target.value = "";
         }
     };
 
@@ -773,18 +831,18 @@ export default function Clients() {
                                     </span>
                                 </span>
 
+                                {/* Bulk Upload now opens a modal (matching the Add User
+                                    page's "Bulk Add Users" modal) instead of firing an
+                                    upload the instant a file is chosen. */}
                                 <span className="cl-tooltip-wrap">
-                                    <label style={styles.secondaryBtn}>
+                                    <button
+                                        type="button"
+                                        style={styles.secondaryBtn}
+                                        onClick={openBulkModal}
+                                    >
                                         <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                        {bulkUploading ? "Uploading..." : "Bulk Upload"}
-                                        <input
-                                            type="file"
-                                            accept=".xlsx,.xls"
-                                            hidden
-                                            onChange={handleBulkFileChange}
-                                            disabled={bulkUploading}
-                                        />
-                                    </label>
+                                        Bulk Upload
+                                    </button>
                                     <span className="cl-tooltip-bubble">
                                         Upload {tabLabel.toLowerCase()}s from an Excel (.xlsx) file
                                     </span>
@@ -1866,94 +1924,135 @@ export default function Clients() {
                 </div>
             )}
 
-            {/* Bulk upload result modal */}
-            {bulkResult && (
-                <div style={styles.overlay} onClick={() => setBulkResult(null)}>
-                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Bulk Upload Result</h3>
+            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal exactly:
+                title/subtitle, required-columns callout, Choose File row with
+                an explicit Upload button, then a "X created · Y failed"
+                summary followed by a full scrollable list of EVERY row
+                (created and failed) with a status pill on the right, and
+                the failure reason shown under the row when it failed. */}
+            {showBulkModal && (
+                <div style={styles.overlay} onClick={closeBulkModal}>
+                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.bulkModalHeader}>
+                            <h3 style={styles.bulkModalTitle}>
+                                Bulk {activeTab === "client" ? "Add Clients" : "Add Subclients"}
+                            </h3>
+                            <p style={styles.bulkModalSubtitle}>
+                                Upload an Excel file to create multiple {activeTab}s at once
+                            </p>
                             <button
                                 style={styles.closeBtn}
-                                onClick={() => setBulkResult(null)}
+                                onClick={closeBulkModal}
                                 type="button"
                                 aria-label="Close"
-                                title="Close"
                             >
                                 ✕
                             </button>
                         </div>
 
-                        <div style={styles.detailsBody}>
-                            <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Total Rows</span>
-                                <span style={styles.detailsValue}>{bulkResult.totalRows}</span>
-                            </div>
+                        <div style={styles.bulkInfoBox}>
+                            <span style={styles.bulkInfoLabel}>Required columns</span>
+                            <p style={styles.bulkInfoText}>{bulkRequiredColumnsText}</p>
+                        </div>
 
-                            {bulkResult.created &&
-                                Object.entries(bulkResult.created).map(([key, val]) => (
-                                    <div style={styles.detailsRow} key={key}>
-                                        <span style={styles.detailsLabel}>
-                                            Created {key.charAt(0).toUpperCase() + key.slice(1)}
-                                        </span>
-                                        <span style={styles.detailsValue}>{val}</span>
-                                    </div>
-                                ))}
+                        <div style={styles.bulkUploadRow}>
+                            <label style={styles.fileInputWrapper}>
+                                <input
+                                    type="file"
+                                    accept=".xlsx,.xls"
+                                    onChange={handleBulkFileSelect}
+                                    style={styles.fileInputHidden}
+                                    disabled={bulkUploading}
+                                />
+                                <span style={styles.fileInputButton}>Choose File</span>
+                                <span style={styles.fileInputName}>
+                                    {bulkFile ? bulkFile.name : "No file chosen"}
+                                </span>
+                            </label>
+                            <button
+                                type="button"
+                                onClick={handleBulkUploadSubmit}
+                                disabled={bulkUploading}
+                                style={{
+                                    ...styles.bulkUploadBtn,
+                                    opacity: bulkUploading ? 0.7 : 1,
+                                    cursor: bulkUploading ? "not-allowed" : "pointer",
+                                }}
+                            >
+                                {bulkUploading
+                                    ? "Uploading…"
+                                    : `Upload & Create ${
+                                          activeTab === "client" ? "Clients" : "Subclients"
+                                      }`}
+                            </button>
+                        </div>
 
-                            {bulkResult.rowErrors && bulkResult.rowErrors.length > 0 && (
-                                <div>
-                                    <p
-                                        style={{
-                                            ...styles.detailsLabel,
-                                            marginBottom: 8,
-                                            display: "block",
-                                        }}
-                                    >
-                                        Errors ({bulkResult.rowErrors.length})
-                                    </p>
-                                    <div
-                                        style={{
-                                            maxHeight: 220,
-                                            overflowY: "auto",
-                                            display: "flex",
-                                            flexDirection: "column",
-                                            gap: 6,
-                                        }}
-                                    >
-                                        {bulkResult.rowErrors.map((re, idx) => (
-                                            <div
-                                                key={idx}
-                                                style={{ fontSize: 12, color: "#dc2626" }}
-                                            >
-                                                Row {re.row}: {re.message}
-                                            </div>
-                                        ))}
-                                    </div>
+                        {bulkError && (
+                            <p style={{ ...styles.formError, margin: "0 28px 20px" }}>
+                                {bulkError}
+                            </p>
+                        )}
+
+                        {bulkResult && (
+                            <div style={styles.resultsSection}>
+                                <div style={styles.resultsSummary}>
+                                    <span style={styles.resultsSummaryText}>
+                                        <strong style={{ color: "#16233c" }}>
+                                            {bulkResult.createdCount}
+                                        </strong>{" "}
+                                        created
+                                        {" · "}
+                                        <strong
+                                            style={{
+                                                color:
+                                                    bulkResult.failedCount > 0
+                                                        ? "#dc2626"
+                                                        : "#16233c",
+                                            }}
+                                        >
+                                            {bulkResult.failedCount}
+                                        </strong>{" "}
+                                        failed
+                                    </span>
                                 </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {/* Bulk upload error modal */}
-            {bulkError && (
-                <div style={styles.overlay} onClick={() => setBulkError("")}>
-                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Upload Failed</h3>
-                            <button
-                                style={styles.closeBtn}
-                                onClick={() => setBulkError("")}
-                                type="button"
-                                aria-label="Close"
-                                title="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div style={styles.detailsBody}>
-                            <p style={styles.formError}>{bulkError}</p>
-                        </div>
+                                <div className="cl-results-list" style={styles.resultsList}>
+                                    {bulkResult.results.map((r) => (
+                                        <div key={r.row} style={styles.resultRow}>
+                                            <div style={styles.resultRowLeft}>
+                                                <span style={styles.resultRowIdentifier}>
+                                                    {r.identifier}
+                                                </span>
+                                                {r.status === "failed" && r.message && (
+                                                    <span style={styles.resultRowSubtext}>
+                                                        {r.message}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {r.status === "created" ? (
+                                                <span
+                                                    style={{
+                                                        ...styles.resultPill,
+                                                        ...styles.resultPillCreated,
+                                                    }}
+                                                >
+                                                    Created
+                                                </span>
+                                            ) : (
+                                                <span
+                                                    style={{
+                                                        ...styles.resultPill,
+                                                        ...styles.resultPillFailed,
+                                                    }}
+                                                >
+                                                    ✕ Failed
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -2218,7 +2317,7 @@ const styles: Record<string, CSSProperties> = {
     // Scrollable: fills remaining vertical space in contentBody and only
     // scrolls (shows a scrollbar) once the rendered cards/rows exceed that
     // height. When there's little content, this behaves like a normal
-    // block with no scroll affordance.
+    // block with no scroll affordance at all.
     scrollArea: {
         flex: 1,
         minHeight: 0,
@@ -2777,4 +2876,134 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         gridColumn: "1 / -1",
     },
+
+    // ---- Bulk Upload modal (matches "Bulk Add Users": purple title, purple
+    // required-columns callout, purple Choose File button, blue Upload
+    // button consistent with the rest of the page, and a scrollable
+    // created/failed results list) ----
+    bulkModal: {
+        background: "#fff",
+        borderRadius: 16,
+        width: 560,
+        maxWidth: "92vw",
+        maxHeight: "88vh",
+        overflowY: "auto",
+        boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+    },
+    bulkModalHeader: {
+        position: "relative",
+        textAlign: "center",
+        padding: "24px 28px 16px",
+        borderBottom: "1px solid #f0f0f0",
+    },
+    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#5b21b6" },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#7c8aa3" },
+    bulkInfoBox: {
+        margin: "20px 28px",
+        padding: "14px 16px",
+        background: "#f3eefc",
+        borderLeft: "3px solid #7c3aed",
+        borderRadius: 6,
+    },
+    bulkInfoLabel: {
+        display: "block",
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#5b21b6",
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        marginBottom: 4,
+    },
+    bulkInfoText: { margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 },
+    bulkUploadRow: {
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 10,
+        margin: "0 28px 24px",
+    },
+    fileInputWrapper: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "8px 12px",
+        cursor: "pointer",
+        flex: 1,
+        minWidth: 200,
+        background: "#fafafa",
+    },
+    fileInputHidden: { display: "none" },
+    fileInputButton: {
+        background: "#5b21b6",
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "6px 12px",
+        borderRadius: 6,
+        whiteSpace: "nowrap",
+    },
+    fileInputName: {
+        fontSize: 13,
+        color: "#6b7280",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    bulkUploadBtn: {
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "10px 20px",
+        fontSize: 14,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+    },
+    resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
+    resultsSummary: { marginBottom: 14, textAlign: "center" },
+    resultsSummaryText: { fontSize: 14, color: "#16233c" },
+    resultsList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxHeight: 320,
+        overflowY: "auto",
+    },
+    resultRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        background: "#fafafa",
+        border: "1px solid #f0f0f0",
+        borderRadius: 8,
+        padding: "10px 14px",
+    },
+    resultRowLeft: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minWidth: 0,
+    },
+    resultRowIdentifier: {
+        fontSize: 13,
+        fontWeight: 600,
+        color: "#16233c",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    resultRowSubtext: { fontSize: 12, color: "#9ca3af" },
+    resultPill: {
+        fontSize: 11,
+        fontWeight: 700,
+        padding: "4px 10px",
+        borderRadius: 20,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    resultPillCreated: { background: "#e1f7f3", color: "#0f8a78" },
+    resultPillFailed: { background: "#fee2e2", color: "#dc2626" },
 };
