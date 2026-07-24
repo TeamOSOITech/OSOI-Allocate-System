@@ -27,8 +27,15 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
+const { authenticate } = require("../../middlewares/auth");
+const { requirePermission } = require("../../middlewares/rbac");
 
 const router = express.Router();
+
+// FIX: this entire router previously had ZERO authentication — anyone
+// could create user accounts (with a Supabase auth login!) by hitting
+// these endpoints directly, no token needed.
+router.use(authenticate);
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
@@ -216,193 +223,201 @@ async function createUserAndGenerateResetLink({
 // POST /api/users/add-user  (single user)
 // ---------------------------------------------------------------------------
 
-router.post("/add-user", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const email = normalizeEmail(body.email);
+router.post(
+  "/add-user",
+  requirePermission("users.onboard"),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = normalizeEmail(body.email);
 
-    if (!body.fullName || !email || !body.role) {
+      if (!body.fullName || !email || !body.role) {
+        return res
+          .status(400)
+          .json({ message: "Full name, email and role are required." });
+      }
+
+      const alreadyExists = await emailExists(email);
+      if (alreadyExists) {
+        return res
+          .status(409)
+          .json({ message: `A user with email ${email} already exists.` });
+      }
+
+      // Password is optional from the frontend now — if somehow missing,
+      // generate one here too as a safety net.
+      const tempPassword = body.password || generateFallbackPassword();
+
+      const {
+        user,
+        resetLink,
+        resetLinkGenerated,
+        resetLinkError,
+        resetEmailSent,
+        resetEmailError,
+        userMasterInserted,
+        userMasterError,
+      } = await createUserAndGenerateResetLink({
+        email,
+        tempPassword,
+        metadata: {
+          fullName: body.fullName,
+          firstName: body.firstName,
+          lastName: body.lastName,
+          employeeId: body.employeeId,
+          designation: body.designation,
+          department: body.department,
+          dob: body.dob,
+          doj: body.doj,
+          reportingManager: body.reportingManager,
+          workedInTeams: body.workedInTeams,
+          role: (body.role || "").toString().toUpperCase().trim(),
+        },
+      });
+
+      return res.status(201).json({
+        message: !userMasterInserted
+          ? `User created in Auth, but user_master insert failed (${userMasterError}) — this user CANNOT log in until this is fixed.`
+          : resetEmailSent
+            ? "User created, reset link emailed."
+            : "User created, but the reset email could not be sent — copy resetLink and share it manually.",
+        user,
+        resetLink,
+        resetLinkGenerated,
+        resetLinkError,
+        resetEmailSent,
+        resetEmailError,
+        userMasterInserted,
+        userMasterError,
+      });
+    } catch (err) {
+      console.error("add-user error:", err);
       return res
-        .status(400)
-        .json({ message: "Full name, email and role are required." });
+        .status(500)
+        .json({ message: err.message || "Failed to create user." });
     }
-
-    const alreadyExists = await emailExists(email);
-    if (alreadyExists) {
-      return res
-        .status(409)
-        .json({ message: `A user with email ${email} already exists.` });
-    }
-
-    // Password is optional from the frontend now — if somehow missing,
-    // generate one here too as a safety net.
-    const tempPassword = body.password || generateFallbackPassword();
-
-    const {
-      user,
-      resetLink,
-      resetLinkGenerated,
-      resetLinkError,
-      resetEmailSent,
-      resetEmailError,
-      userMasterInserted,
-      userMasterError,
-    } = await createUserAndGenerateResetLink({
-      email,
-      tempPassword,
-      metadata: {
-        fullName: body.fullName,
-        firstName: body.firstName,
-        lastName: body.lastName,
-        employeeId: body.employeeId,
-        designation: body.designation,
-        department: body.department,
-        dob: body.dob,
-        doj: body.doj,
-        reportingManager: body.reportingManager,
-        workedInTeams: body.workedInTeams,
-        role: (body.role || "").toString().toUpperCase().trim(),
-      },
-    });
-
-    return res.status(201).json({
-      message: !userMasterInserted
-        ? `User created in Auth, but user_master insert failed (${userMasterError}) — this user CANNOT log in until this is fixed.`
-        : resetEmailSent
-          ? "User created, reset link emailed."
-          : "User created, but the reset email could not be sent — copy resetLink and share it manually.",
-      user,
-      resetLink,
-      resetLinkGenerated,
-      resetLinkError,
-      resetEmailSent,
-      resetEmailError,
-      userMasterInserted,
-      userMasterError,
-    });
-  } catch (err) {
-    console.error("add-user error:", err);
-    return res
-      .status(500)
-      .json({ message: err.message || "Failed to create user." });
-  }
-});
+  },
+);
 
 // ---------------------------------------------------------------------------
 // POST /api/users/bulk-add-user  (array of users from Excel)
 // ---------------------------------------------------------------------------
 
-router.post("/bulk-add-user", async (req, res) => {
-  try {
-    const users = Array.isArray(req.body?.users) ? req.body.users : [];
-    if (users.length === 0) {
-      return res.status(400).json({ message: "No users provided." });
-    }
-
-    const results = [];
-    const seenEmails = new Set();
-
-    for (const rawUser of users) {
-      const email = normalizeEmail(rawUser.email);
-
-      if (!email) {
-        results.push({
-          email: rawUser.email || "(missing)",
-          success: false,
-          message: "Missing email.",
-        });
-        continue;
+router.post(
+  "/bulk-add-user",
+  requirePermission("users.onboard"),
+  async (req, res) => {
+    try {
+      const users = Array.isArray(req.body?.users) ? req.body.users : [];
+      if (users.length === 0) {
+        return res.status(400).json({ message: "No users provided." });
       }
 
-      // Duplicate check within THIS upload batch — email only, role/password ignored
-      if (seenEmails.has(email)) {
-        results.push({
-          email,
-          success: false,
-          message: "Duplicate email in this file — skipped.",
-        });
-        continue;
-      }
-      seenEmails.add(email);
+      const results = [];
+      const seenEmails = new Set();
 
-      try {
-        // Duplicate check against existing DB/auth users — email only
-        const alreadyExists = await emailExists(email);
-        if (alreadyExists) {
+      for (const rawUser of users) {
+        const email = normalizeEmail(rawUser.email);
+
+        if (!email) {
           results.push({
-            email,
+            email: rawUser.email || "(missing)",
             success: false,
-            message: "User with this email already exists.",
+            message: "Missing email.",
           });
           continue;
         }
 
-        const tempPassword = rawUser.password || generateFallbackPassword();
+        // Duplicate check within THIS upload batch — email only, role/password ignored
+        if (seenEmails.has(email)) {
+          results.push({
+            email,
+            success: false,
+            message: "Duplicate email in this file — skipped.",
+          });
+          continue;
+        }
+        seenEmails.add(email);
 
-        const {
-          resetLink,
-          resetLinkGenerated,
-          resetLinkError,
-          resetEmailSent,
-          resetEmailError,
-          userMasterInserted,
-          userMasterError,
-        } = await createUserAndGenerateResetLink({
-          email,
-          tempPassword,
-          metadata: {
-            fullName: rawUser.firstName
-              ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
-              : undefined,
-            firstName: rawUser.firstName,
-            lastName: rawUser.lastName,
-            employeeId: rawUser.employeeId,
-            designation: rawUser.designation,
-            department: rawUser.department,
-            dob: rawUser.dob,
-            doj: rawUser.doj,
-            reportingManager: rawUser.reportingManager,
-            workedInTeams: rawUser.workedInTeams,
-            role: (rawUser.role || "").toString().toUpperCase().trim(),
-          },
-        });
+        try {
+          // Duplicate check against existing DB/auth users — email only
+          const alreadyExists = await emailExists(email);
+          if (alreadyExists) {
+            results.push({
+              email,
+              success: false,
+              message: "User with this email already exists.",
+            });
+            continue;
+          }
 
-        // Account creation always counts as success here — email delivery
-        // is reported separately so a failed send doesn't look like a
-        // failed signup. resetLink is still included as a manual fallback.
-        results.push({
-          email,
-          success: true,
-          resetLink,
-          resetEmailSent,
-          userMasterInserted,
-          message: !userMasterInserted
-            ? `User created in Auth, but user_master insert failed (${userMasterError}) — CANNOT log in until fixed.`
-            : resetEmailSent
-              ? "User created, reset link emailed."
-              : `User created, but reset email failed (${resetEmailError}). Use resetLink to share manually.`,
-        });
+          const tempPassword = rawUser.password || generateFallbackPassword();
 
-        // Small delay between rows — Gmail SMTP has its own send-rate
-        // limits, so don't hammer it in a tight bulk loop.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      } catch (innerErr) {
-        results.push({
-          email,
-          success: false,
-          message: innerErr.message || "Failed to create this user.",
-        });
+          const {
+            resetLink,
+            resetLinkGenerated,
+            resetLinkError,
+            resetEmailSent,
+            resetEmailError,
+            userMasterInserted,
+            userMasterError,
+          } = await createUserAndGenerateResetLink({
+            email,
+            tempPassword,
+            metadata: {
+              fullName: rawUser.firstName
+                ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
+                : undefined,
+              firstName: rawUser.firstName,
+              lastName: rawUser.lastName,
+              employeeId: rawUser.employeeId,
+              designation: rawUser.designation,
+              department: rawUser.department,
+              dob: rawUser.dob,
+              doj: rawUser.doj,
+              reportingManager: rawUser.reportingManager,
+              workedInTeams: rawUser.workedInTeams,
+              role: (rawUser.role || "").toString().toUpperCase().trim(),
+            },
+          });
+
+          // Account creation always counts as success here — email delivery
+          // is reported separately so a failed send doesn't look like a
+          // failed signup. resetLink is still included as a manual fallback.
+          results.push({
+            email,
+            success: true,
+            resetLink,
+            resetEmailSent,
+            userMasterInserted,
+            message: !userMasterInserted
+              ? `User created in Auth, but user_master insert failed (${userMasterError}) — CANNOT log in until fixed.`
+              : resetEmailSent
+                ? "User created, reset link emailed."
+                : `User created, but reset email failed (${resetEmailError}). Use resetLink to share manually.`,
+          });
+
+          // Small delay between rows — Gmail SMTP has its own send-rate
+          // limits, so don't hammer it in a tight bulk loop.
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        } catch (innerErr) {
+          results.push({
+            email,
+            success: false,
+            message: innerErr.message || "Failed to create this user.",
+          });
+        }
       }
-    }
 
-    return res.status(200).json({ results });
-  } catch (err) {
-    console.error("bulk-add-user error:", err);
-    return res
-      .status(500)
-      .json({ message: err.message || "Bulk upload failed." });
-  }
-});
+      return res.status(200).json({ results });
+    } catch (err) {
+      console.error("bulk-add-user error:", err);
+      return res
+        .status(500)
+        .json({ message: err.message || "Bulk upload failed." });
+    }
+  },
+);
 
 function generateFallbackPassword() {
   const chars =

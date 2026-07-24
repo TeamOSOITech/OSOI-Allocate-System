@@ -4,8 +4,13 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
+const { authenticate } = require("../../middlewares/auth");
+const { authorize } = require("../../middlewares/rbac");
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// FIX: this entire router previously had ZERO authentication.
+router.use(authenticate);
 
 router.use((req, res, next) => {
   res.set("Cache-Control", "no-store");
@@ -142,7 +147,7 @@ router.get("/", async (req, res) => {
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.post("/", async (req, res) => {
+router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     const { name, clientId, status } = req.body;
 
@@ -319,165 +324,172 @@ router.get("/bulk/template", async (req, res) => {
 // frontend, and mirrors clients.js): every row in the sheet gets ONE entry
 // in `results`, whether it succeeded or failed, so the UI can render a
 // full row-by-row list instead of only showing errors.
-router.post("/bulk/upload", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded" });
-    }
+router.post(
+  "/bulk/upload",
+  authorize("SUPER_ADMIN"),
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: "",
-    });
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+        defval: "",
+      });
 
-    if (!rows.length) {
-      return res
-        .status(400)
-        .json({ message: "Uploaded file has no data rows" });
-    }
+      if (!rows.length) {
+        return res
+          .status(400)
+          .json({ message: "Uploaded file has no data rows" });
+      }
 
-    const clientCache = new Map();
+      const clientCache = new Map();
 
-    // Per-row results — pushed exactly once per row, either "created" or
-    // "failed" — plus running totals for the created/failed counters shown
-    // in the summary line ("X created · Y failed").
-    const results = [];
-    let createdCount = 0;
-    let failedCount = 0;
+      // Per-row results — pushed exactly once per row, either "created" or
+      // "failed" — plus running totals for the created/failed counters shown
+      // in the summary line ("X created · Y failed").
+      const results = [];
+      let createdCount = 0;
+      let failedCount = 0;
 
-    const norm = (v) => (v || "").toString().trim();
+      const norm = (v) => (v || "").toString().trim();
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowNum = i + 2;
-      const clientNameRaw = norm(row["Client Name"]);
-      const subNameRaw = norm(row["Subclient Name"]);
-      // Best-effort identifier shown in the UI even if the row fails before
-      // both names are known to be valid.
-      const rowIdentifier =
-        clientNameRaw && subNameRaw
-          ? `${subNameRaw} (${clientNameRaw})`
-          : subNameRaw || clientNameRaw || `Row ${rowNum}`;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        const clientNameRaw = norm(row["Client Name"]);
+        const subNameRaw = norm(row["Subclient Name"]);
+        // Best-effort identifier shown in the UI even if the row fails before
+        // both names are known to be valid.
+        const rowIdentifier =
+          clientNameRaw && subNameRaw
+            ? `${subNameRaw} (${clientNameRaw})`
+            : subNameRaw || clientNameRaw || `Row ${rowNum}`;
 
-      try {
-        const clientName = clientNameRaw;
-        const subName = subNameRaw;
-        const subStatus =
-          norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
+        try {
+          const clientName = clientNameRaw;
+          const subName = subNameRaw;
+          const subStatus =
+            norm(row["Subclient Status"]) === "Inactive"
+              ? "Inactive"
+              : "Active";
 
-        if (!clientName) {
-          failedCount++;
-          results.push({
-            row: rowNum,
-            identifier: rowIdentifier,
-            status: "failed",
-            message: "Client Name is required",
-          });
-          continue;
-        }
-        if (!subName) {
-          failedCount++;
-          results.push({
-            row: rowNum,
-            identifier: rowIdentifier,
-            status: "failed",
-            message: "Subclient Name is required",
-          });
-          continue;
-        }
-
-        // ---- resolve client (must already exist — no auto-create here) ----
-        const clientKey = clientName.toLowerCase();
-        let client = clientCache.get(clientKey);
-
-        if (!client) {
-          const { data: existing } = await supabase
-            .from("clients")
-            .select("*")
-            .ilike("name", clientName)
-            .maybeSingle();
-
-          if (!existing) {
+          if (!clientName) {
             failedCount++;
             results.push({
               row: rowNum,
               identifier: rowIdentifier,
               status: "failed",
-              message: `Client "${clientName}" not found. Create the client first.`,
+              message: "Client Name is required",
             });
             continue;
           }
-          client = existing;
-          clientCache.set(clientKey, client);
-        }
+          if (!subName) {
+            failedCount++;
+            results.push({
+              row: rowNum,
+              identifier: rowIdentifier,
+              status: "failed",
+              message: "Subclient Name is required",
+            });
+            continue;
+          }
 
-        // ---- pull the extra contact/company fields straight from the
-        // sheet's header text, using the same map that drives the
-        // template, so column coverage always stays in sync. ----
-        const contactFields = {};
-        for (const f of CONTACT_FIELD_MAP) {
-          const val = norm(row[f.header]);
-          contactFields[f.db] = val === "" ? null : val;
-        }
+          // ---- resolve client (must already exist — no auto-create here) ----
+          const clientKey = clientName.toLowerCase();
+          let client = clientCache.get(clientKey);
 
-        // ---- resolve/create subclient ----
-        const { data: existingSub } = await supabase
-          .from("subclients")
-          .select("*")
-          .eq("client_id", client.id)
-          .ilike("name", subName)
-          .maybeSingle();
+          if (!client) {
+            const { data: existing } = await supabase
+              .from("clients")
+              .select("*")
+              .ilike("name", clientName)
+              .maybeSingle();
 
-        if (!existingSub) {
-          const { error: subErr } = await supabase.from("subclients").insert({
-            name: subName,
-            client_id: client.id,
-            status: subStatus,
-            ...contactFields,
+            if (!existing) {
+              failedCount++;
+              results.push({
+                row: rowNum,
+                identifier: rowIdentifier,
+                status: "failed",
+                message: `Client "${clientName}" not found. Create the client first.`,
+              });
+              continue;
+            }
+            client = existing;
+            clientCache.set(clientKey, client);
+          }
+
+          // ---- pull the extra contact/company fields straight from the
+          // sheet's header text, using the same map that drives the
+          // template, so column coverage always stays in sync. ----
+          const contactFields = {};
+          for (const f of CONTACT_FIELD_MAP) {
+            const val = norm(row[f.header]);
+            contactFields[f.db] = val === "" ? null : val;
+          }
+
+          // ---- resolve/create subclient ----
+          const { data: existingSub } = await supabase
+            .from("subclients")
+            .select("*")
+            .eq("client_id", client.id)
+            .ilike("name", subName)
+            .maybeSingle();
+
+          if (!existingSub) {
+            const { error: subErr } = await supabase.from("subclients").insert({
+              name: subName,
+              client_id: client.id,
+              status: subStatus,
+              ...contactFields,
+            });
+
+            if (subErr) throw subErr;
+          }
+
+          // Row processed without throwing -> counts as "created" for this
+          // row, whether the subclient was brand-new or already existed.
+          createdCount++;
+          results.push({
+            row: rowNum,
+            identifier: rowIdentifier,
+            status: "created",
           });
-
-          if (subErr) throw subErr;
+        } catch (rowErr) {
+          console.error(`Row ${rowNum} error:`, rowErr);
+          failedCount++;
+          results.push({
+            row: rowNum,
+            identifier: rowIdentifier,
+            status: "failed",
+            message: rowErr.message || "Unknown error",
+          });
         }
-
-        // Row processed without throwing -> counts as "created" for this
-        // row, whether the subclient was brand-new or already existed.
-        createdCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "created",
-        });
-      } catch (rowErr) {
-        console.error(`Row ${rowNum} error:`, rowErr);
-        failedCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "failed",
-          message: rowErr.message || "Unknown error",
-        });
       }
-    }
 
-    res.status(200).json({
-      message: "Bulk upload processed",
-      totalRows: rows.length,
-      createdCount,
-      failedCount,
-      results,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to process bulk upload" });
-  }
-});
+      res.status(200).json({
+        message: "Bulk upload processed",
+        totalRows: rows.length,
+        createdCount,
+        failedCount,
+        results,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to process bulk upload" });
+    }
+  },
+);
 
 // ---------- PUT /api/subclients/:id ----------
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.put("/:id", async (req, res) => {
+router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, clientId, status } = req.body;
@@ -517,7 +529,7 @@ router.put("/:id", async (req, res) => {
 
 // ---------- DELETE /api/subclients/:id ----------
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     const id = Number(req.params.id);
 

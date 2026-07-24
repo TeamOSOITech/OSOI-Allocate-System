@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const helmet = require("helmet");
+const compression = require("compression");
 const cors = require("cors");
 
 const app = express();
@@ -13,6 +14,7 @@ const supabase = require("./src/config/supabaseClient");
 // 🔐 Security middleware
 // ========================
 app.use(helmet());
+app.use(compression());
 
 // ========================
 // 🧠 Body parser
@@ -44,43 +46,19 @@ app.use("/api/users", require("./src/modules/users/user.routes"));
 app.use("/api/clients", require("./src/modules/clients/clients.routes"));
 app.use("/api/subclients", require("./src/modules/clients/subclients.routes"));
 app.use("/api/employees", require("./src/modules/employees/employees.routes"));
+app.use("/api/approvals", require("./src/modules/approvals/approvals.routes"));
+// FIX: this route file existed but was never mounted anywhere — the
+// /profile endpoint was dead code until now.
+app.use("/api", require("./src/modules/profiles/profile.route"));
 
 // ========================
-// ✅ TEST SUPABASE AUTH
+// ⚠️ REMOVED: /test-auth
 // ========================
-app.get("/test-auth", async (req, res) => {
-  try {
-    console.log("Testing Supabase Auth...");
-
-    const { data, error } = await supabase.auth.admin.listUsers();
-
-    if (error) {
-      console.error("List Users Error:", error);
-
-      return res.status(500).json({
-        success: false,
-        error,
-      });
-    }
-
-    return res.json({
-      success: true,
-      totalUsers: data.users.length,
-      users: data.users.map((u) => ({
-        id: u.id,
-        email: u.email,
-      })),
-    });
-  } catch (err) {
-    console.error("TEST AUTH ERROR:", err);
-
-    return res.status(500).json({
-      success: false,
-      message: err.message,
-      error: err,
-    });
-  }
-});
+// This debug endpoint called supabase.auth.admin.listUsers() with NO
+// authentication at all — anyone who found the URL could dump every
+// user's id + email. It was leftover from development. If you need
+// this for debugging again, add `authenticate` + `authorize("SUPER_ADMIN")`
+// and never leave it reachable in a deployed environment.
 
 // ========================
 // ❤️ HEALTH CHECK

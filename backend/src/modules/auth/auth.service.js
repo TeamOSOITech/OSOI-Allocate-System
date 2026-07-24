@@ -1,9 +1,7 @@
-const getSupabaseClient = require("../../config/db");
+const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 
 const login = async (email, password) => {
-  const supabase = getSupabaseClient();
-
   console.log("==================================");
   console.log("Login attempt for real email:", email);
 
@@ -55,7 +53,15 @@ const login = async (email, password) => {
     );
   }
 
-  const normalizedRole = String(rawRole).trim().toUpperCase();
+  // FIX: roles are now stored/checked as SNAKE_CASE codes (TEAM_MEMBER,
+  // VERTICAL_HEAD, PROCESS_LEAD, OPS_MANAGER, AUDIT_MANAGER, SUPER_ADMIN)
+  // per src/config/permissions.js. If user_master.Role still has spaces
+  // ("Team Member"), .toUpperCase() alone would produce "TEAM MEMBER",
+  // which would NOT match any permission — so we also collapse spaces.
+  const normalizedRole = String(rawRole)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
 
   console.log("=================================");
   console.log("LOGIN USER:", matchedUser);
@@ -87,8 +93,6 @@ const login = async (email, password) => {
 // fast even if Gmail SMTP is slow to respond, instead of the caller
 // waiting on every email to actually be delivered before getting a reply.
 const forgotPassword = async (email) => {
-  const supabase = getSupabaseClient();
-
   console.log("==================================");
   console.log("Forgot password request for:", email);
 

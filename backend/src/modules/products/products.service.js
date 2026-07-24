@@ -6,6 +6,7 @@ const getAllProducts = async () => {
   const { data, error } = await supabase
     .from(TABLE)
     .select("*")
+    .eq("hidden", false)
     .order("created_at", { ascending: false });
 
   if (error) throw error;

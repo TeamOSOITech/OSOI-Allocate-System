@@ -15,6 +15,7 @@ function mapRow(row) {
     employeeCode: row["Employee ID"] ?? null,
     name: `${firstName} ${lastName}`.trim(),
     email: row["Email"] ?? null,
+    role: row["Role"] ?? null, // needed so pages can filter by role (e.g. Reporting Manager dropdown = Process Leads)
     designation: row["Designation"] ?? null,
     department: row["Department"] ?? null,
     reportingManager: row["Reporting Manager"] ?? null,
