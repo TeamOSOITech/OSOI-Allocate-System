@@ -60,20 +60,29 @@ const Login = () => {
             }
 
             localStorage.setItem("accessToken", data.data.accessToken);
+            localStorage.setItem("refreshToken", data.data.refreshToken);
             localStorage.setItem("user", JSON.stringify(data.data.user));
 
             const userRole = data.data.user.role;
 
+            // FIX: this switch only knew the OLD roles (ADMIN/MANAGER/
+            // EMPLOYEE). After migrating user_master."Role" to the new
+            // 6-tier system, every login fell through to "Invalid role"
+            // below — nobody could actually get in, even with a correct
+            // password, because the role string never matched a case.
             switch (userRole) {
-                case "ADMIN":
+                case "SUPER_ADMIN":
+                case "OPS_MANAGER":
+                case "AUDIT_MANAGER":
+                case "PROCESS_LEAD":
                     window.location.href = "/dashboard";
                     break;
 
-                case "MANAGER":
+                case "VERTICAL_HEAD":
                     window.location.href = "/workinprogress";
                     break;
 
-                case "EMPLOYEE":
+                case "TEAM_MEMBER":
                     window.location.href = "/report";
                     break;
 

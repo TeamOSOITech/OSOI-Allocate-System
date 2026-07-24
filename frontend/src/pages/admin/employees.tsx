@@ -133,11 +133,11 @@ export default function Employees() {
     //const [sidebarOpen, setSidebarOpen] = useState(false);
 
     // ---- Role gating ----
-    // Only admins/managers can see and use the edit/delete controls.
-    // Everyone else (e.g. plain "employee" role) gets a read-only view.
-    // Matches the pattern used in sidebar.tsx: the logged-in user object is
-    // stored in localStorage under "user" (see login.tsx), with role values
-    // like "ADMIN" / "MANAGER" / "EMPLOYEE".
+    // Only roles holding the "employees.manage" permission can see and use
+    // the edit/delete controls (matches employees.routes.js on the
+    // backend — Ops Manager / Super Admin). Everyone else gets a
+    // read-only view. Role values are the new 6-tier codes — see
+    // backend src/config/permissions.js.
     let currentUser: { role?: string } | null = null;
     try {
         const userStr = localStorage.getItem("user");
@@ -145,8 +145,8 @@ export default function Employees() {
     } catch {
         currentUser = null;
     }
-    const role = (currentUser?.role || "EMPLOYEE").toUpperCase();
-    const canManage = role === "ADMIN" || role === "MANAGER";
+    const role = (currentUser?.role || "TEAM_MEMBER").toUpperCase();
+    const canManage = role === "SUPER_ADMIN" || role === "OPS_MANAGER";
 
     const [search, setSearch] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("All");
@@ -175,7 +175,13 @@ export default function Employees() {
         setLoading(true);
         setError("");
         try {
-            const res = await fetch(`${apiBase}/api/employees`, { cache: "no-store" });
+            // FIX: /api/employees now requires authentication (was
+            // previously wide open) — this fetch was sending no token.
+            const token = localStorage.getItem("accessToken");
+            const res = await fetch(`${apiBase}/api/employees`, {
+                cache: "no-store",
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            });
             if (!res.ok) throw new Error("Failed to load employees");
             setEmployees(await res.json());
         } catch (err: any) {
@@ -240,9 +246,13 @@ export default function Employees() {
         if (!editForm) return;
         setSaving(true);
         try {
+            const token = localStorage.getItem("accessToken");
             const res = await fetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
                 body: JSON.stringify(editForm),
             });
             if (!res.ok) throw new Error("Update failed");
@@ -280,8 +290,10 @@ export default function Employees() {
         setDeleting(true);
 
         try {
+            const token = localStorage.getItem("accessToken");
             const response = await fetch(`${apiBase}/api/employees/${employeeToDelete.id}`, {
                 method: "DELETE",
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             });
 
             if (!response.ok) throw new Error("Delete failed");

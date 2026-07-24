@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 
@@ -202,19 +203,13 @@ const Products = () => {
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
     const [bulkError, setBulkError] = useState("");
 
-    const authHeaders = (): HeadersInit => {
-        const token = localStorage.getItem("accessToken");
-        return {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        };
-    };
-
     const fetchProducts = async () => {
         setLoading(true);
         setError("");
         try {
-            const res = await fetch(ENDPOINT, { headers: authHeaders() });
+            const res = await authFetch(ENDPOINT, {
+                headers: { "Content-Type": "application/json" },
+            });
             const json = await res.json();
             if (!res.ok || json.success === false) {
                 throw new Error(json.message || "Failed to load products");
@@ -282,9 +277,9 @@ const Products = () => {
 
         setAddSubmitting(true);
         try {
-            const res = await fetch(ENDPOINT, {
+            const res = await authFetch(ENDPOINT, {
                 method: "POST",
-                headers: authHeaders(),
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(addForm),
             });
             const json = await res.json();
@@ -333,9 +328,9 @@ const Products = () => {
 
         setEditSubmitting(true);
         try {
-            const res = await fetch(`${ENDPOINT}/${editTarget.id}`, {
+            const res = await authFetch(`${ENDPOINT}/${editTarget.id}`, {
                 method: "PUT",
-                headers: authHeaders(),
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(editForm),
             });
             const json = await res.json();
@@ -368,9 +363,8 @@ const Products = () => {
         setDeleting(true);
         setDeleteError("");
         try {
-            const res = await fetch(`${ENDPOINT}/${deleteTarget.id}`, {
+            const res = await authFetch(`${ENDPOINT}/${deleteTarget.id}`, {
                 method: "DELETE",
-                headers: authHeaders(),
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
@@ -449,10 +443,8 @@ const Products = () => {
             const formData = new FormData();
             formData.append("file", bulkFile);
 
-            const token = localStorage.getItem("accessToken");
-            const response = await fetch(`${ENDPOINT}/bulk/upload`, {
+            const response = await authFetch(`${ENDPOINT}/bulk/upload`, {
                 method: "POST",
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
                 body: formData,
             });
 

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
@@ -87,6 +88,35 @@ export default function AddUser() {
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState("");
 
+    // Reporting Manager dropdown = every current Process Lead, fetched
+    // live from /api/employees and filtered by role. Previously this was
+    // two hardcoded fake names ("Joyce", "SPRAINT") — now it reflects
+    // whoever actually holds the PROCESS_LEAD role today.
+    const [processLeads, setProcessLeads] = useState<{ id: string; name: string; email: string }[]>(
+        []
+    );
+    const [processLeadsError, setProcessLeadsError] = useState("");
+
+    useEffect(() => {
+        const fetchProcessLeads = async () => {
+            try {
+                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/employees`, {
+                    cache: "no-store",
+                });
+                if (!res.ok) throw new Error("Failed to load Process Leads");
+                const all = await res.json();
+                setProcessLeads(
+                    (all || [])
+                        .filter((e: any) => e.role === "PROCESS_LEAD")
+                        .map((e: any) => ({ id: e.id, name: e.name, email: e.email }))
+                );
+            } catch (err: any) {
+                setProcessLeadsError("Could not load Reporting Manager list.");
+            }
+        };
+        fetchProcessLeads();
+    }, []);
+
     const generatePassword = () => {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
         let pass = "";
@@ -114,7 +144,7 @@ export default function AddUser() {
                 "Reporting Manager": "manager@example.com",
                 "Worked In Teams": "Tech",
                 Password: "Sample@123",
-                Role: "EMPLOYEE",
+                Role: "TEAM_MEMBER",
             },
         ];
 
@@ -162,7 +192,7 @@ export default function AddUser() {
                 role: (row["Role"] || "").toString().toUpperCase().trim(),
             }));
 
-            const response = await fetch(
+            const response = await authFetch(
                 `${import.meta.env.VITE_API_URL}/api/users/bulk-add-user`,
                 {
                     method: "POST",
@@ -205,7 +235,7 @@ export default function AddUser() {
             firstSpaceIndex === -1 ? "" : trimmedName.slice(firstSpaceIndex + 1).trim();
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/add-user`, {
+            const response = await authFetch(`${import.meta.env.VITE_API_URL}/api/users/add-user`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ...formData, firstName, lastName }),
@@ -472,9 +502,12 @@ export default function AddUser() {
                                             }
                                         >
                                             <option value="">Select Role</option>
-                                            <option value="ADMIN">Admin</option>
-                                            <option value="MANAGER">Manager</option>
-                                            <option value="EMPLOYEE">Employee</option>
+                                            <option value="TEAM_MEMBER">Team Member</option>
+                                            <option value="VERTICAL_HEAD">Vertical Head</option>
+                                            <option value="PROCESS_LEAD">Process Lead</option>
+                                            <option value="OPS_MANAGER">Ops Manager</option>
+                                            <option value="AUDIT_MANAGER">Audit Manager</option>
+                                            <option value="SUPER_ADMIN">Super Admin</option>
                                         </select>
                                     </div>
                                     <div>
@@ -489,11 +522,26 @@ export default function AddUser() {
                                                 })
                                             }
                                         >
-                                            <option value="">Select Manager</option>
-                                            <option value="Joyce">joyce@gmail.com</option>
-                                            <option value="SPRAINT">spraint@gmail.com</option>
+                                            <option value="">
+                                                {processLeads.length === 0
+                                                    ? "No Process Leads found"
+                                                    : "Select Manager"}
+                                            </option>
+                                            {processLeads.map((pl) => (
+                                                <option key={pl.id} value={pl.email}>
+                                                    {pl.name} ({pl.email})
+                                                </option>
+                                            ))}
                                         </select>
-                                        <p style={styles.note}>* Please enter Email only</p>
+                                        {processLeadsError ? (
+                                            <p style={{ ...styles.note, color: "#dc2626" }}>
+                                                {processLeadsError}
+                                            </p>
+                                        ) : (
+                                            <p style={styles.note}>
+                                                * Lists everyone currently set as Process Lead
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label style={styles.label}>Worked In Teams</label>

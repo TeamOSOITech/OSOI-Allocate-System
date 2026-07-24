@@ -8,57 +8,64 @@ type MenuItem = {
     roles: string[];
 };
 
+// Role groups replacing the old ADMIN/MANAGER/EMPLOYEE checks — mirrors
+// ADMIN_TIER_ROLES / ADMIN_AND_VERTICAL_HEAD_ROLES in App.jsx and the
+// permission matrix in the backend's src/config/permissions.js.
+const ADMIN_TIER = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
+const ADMIN_AND_VERTICAL_HEAD = [...ADMIN_TIER, "VERTICAL_HEAD"];
+const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
+
 const menuItems: MenuItem[] = [
-    { label: "Add User", icon: "ti ti-user-plus", path: "/admin/add-user", roles: ["ADMIN"] },
+    { label: "Add User", icon: "ti ti-user-plus", path: "/admin/add-user", roles: ADMIN_TIER },
     {
         label: "Today's Task",
         icon: "ti ti-clipboard-list",
         path: "/tasks",
-        roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
+        roles: EVERYONE,
     },
     {
         label: "Clients Preview",
         icon: "ti ti-users",
         path: "/clients",
-        roles: ["MANAGER", "ADMIN"],
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "Employee Preview",
         icon: "ti ti-eye",
         path: "/employees",
-        roles: ["MANAGER", "ADMIN"],
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "Products",
         icon: "ti ti-package",
         path: "/products",
-        roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
+        roles: EVERYONE,
     },
     {
         label: "Report",
         icon: "ti ti-chart-line",
         path: "/report",
-        roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
+        roles: EVERYONE,
     },
     {
         label: "History",
         icon: "ti ti-history",
         path: "/history",
-        roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
+        roles: EVERYONE,
     },
-    { label: "Admin", icon: "ti ti-user", path: "/admin", roles: ["ADMIN"] },
-    { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ["ADMIN"] },
+    { label: "Admin", icon: "ti ti-user", path: "/admin", roles: ADMIN_TIER },
+    { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ADMIN_TIER },
     {
         label: "Quality Scores",
         icon: "ti ti-star",
         path: "/quality-scores",
-        roles: ["ADMIN", "MANAGER"],
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "Profile",
         icon: "ti ti-settings",
         path: "/profile",
-        roles: ["EMPLOYEE", "MANAGER", "ADMIN"],
+        roles: EVERYONE,
     },
 ];
 
@@ -116,7 +123,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
 
     const userStr = localStorage.getItem("user");
     const user = userStr ? JSON.parse(userStr) : null;
-    const role = user?.role || "EMPLOYEE";
+    const role = user?.role || "TEAM_MEMBER";
 
     const visibleItems = menuItems.filter((item) => item.roles.includes(role));
 
@@ -179,7 +186,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         position: fixed !important;
                         top: 0;
                         left: 0;
-                        height: 100vh !important;
+                        height: 100dvh !important;
                         width: ${SIDEBAR_WIDTH_MOBILE}px !important;
                         transform: translateX(-100%);
                         transition: transform 0.22s ease;

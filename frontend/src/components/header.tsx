@@ -166,7 +166,11 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "8px 12px",
+        // FIX: Sidebar renders a fixed hamburger button at top:14px,
+        // left:14px, 38px square. This header previously started at
+        // padding-left:12px, so its logo/title sat directly under that
+        // button on mobile. Left padding now clears it.
+        padding: "8px 12px 8px 60px",
         minHeight: "56px",
         borderBottom: "1px solid #eef1f7",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",

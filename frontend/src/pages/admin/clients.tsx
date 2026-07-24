@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 
 const MOBILE_BREAKPOINT = 768;
@@ -291,8 +292,8 @@ export default function Clients() {
         setError("");
         try {
             const [clientsRes, subclientsRes] = await Promise.all([
-                fetch(`${apiBase}/api/clients`, { cache: "no-store" }),
-                fetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/clients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
             ]);
 
             if (!clientsRes.ok) throw new Error("Failed to load clients");
@@ -416,7 +417,7 @@ export default function Clients() {
                 body.clientId = Number(addForm.clientId);
             }
 
-            const response = await fetch(url, {
+            const response = await authFetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -521,7 +522,7 @@ export default function Clients() {
                 body.clientId = Number(editForm.clientId);
             }
 
-            const response = await fetch(url, {
+            const response = await authFetch(url, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -560,7 +561,7 @@ export default function Clients() {
 
         try {
             const endpoint = BULK_ENDPOINT_MAP[deleteTarget.type];
-            const response = await fetch(`${apiBase}/api/${endpoint}/${deleteTarget.id}`, {
+            const response = await authFetch(`${apiBase}/api/${endpoint}/${deleteTarget.id}`, {
                 method: "DELETE",
             });
 
@@ -635,7 +636,7 @@ export default function Clients() {
             const formData = new FormData();
             formData.append("file", bulkFile);
 
-            const response = await fetch(`${apiBase}/api/${endpoint}/bulk/upload`, {
+            const response = await authFetch(`${apiBase}/api/${endpoint}/bulk/upload`, {
                 method: "POST",
                 body: formData,
             });
