@@ -21,7 +21,7 @@ function useIsMobile() {
 // that lookup doesn't resolve to anything meaningful in the browser bundle
 // unless your build tool is specifically configured to inline it.
 // Change this if your backend runs on a different host/port.
-const API_BASE = "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_URL;
 const ENDPOINT = `${API_BASE}/api/products`;
 
 type Product = {
