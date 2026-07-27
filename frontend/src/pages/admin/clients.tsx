@@ -225,6 +225,19 @@ const GLOBAL_CSS = `
 export default function Clients() {
     const isMobile = useIsMobile();
 
+    // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
+    // for both /api/clients and /api/subclients — hide the buttons for
+    // anyone who'd just get a 403 from clicking them (Phase 5: hide
+    // create actions from every role except the ones actually allowed).
+    let currentUser: { role?: string } | null = null;
+    try {
+        const userStr = localStorage.getItem("user");
+        currentUser = userStr ? JSON.parse(userStr) : null;
+    } catch {
+        currentUser = null;
+    }
+    const canManage = (currentUser?.role || "").toUpperCase() === "SUPER_ADMIN";
+
     const [activeTab, setActiveTab] = useState<TabKey>("client");
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
@@ -835,29 +848,34 @@ export default function Clients() {
                                 {/* Bulk Upload now opens a modal (matching the Add User
                                     page's "Bulk Add Users" modal) instead of firing an
                                     upload the instant a file is chosen. */}
-                                <span className="cl-tooltip-wrap">
-                                    <button
-                                        type="button"
-                                        style={styles.secondaryBtn}
-                                        onClick={openBulkModal}
-                                    >
-                                        <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                        Bulk Upload
-                                    </button>
-                                    <span className="cl-tooltip-bubble">
-                                        Upload {tabLabel.toLowerCase()}s from an Excel (.xlsx) file
+                                {canManage && (
+                                    <span className="cl-tooltip-wrap">
+                                        <button
+                                            type="button"
+                                            style={styles.secondaryBtn}
+                                            onClick={openBulkModal}
+                                        >
+                                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                            Bulk Upload
+                                        </button>
+                                        <span className="cl-tooltip-bubble">
+                                            Upload {tabLabel.toLowerCase()}s from an Excel (.xlsx)
+                                            file
+                                        </span>
                                     </span>
-                                </span>
+                                )}
 
-                                <button
-                                    style={styles.addBtn}
-                                    type="button"
-                                    onClick={openAddModal}
-                                    title={`Add a new ${tabLabel.toLowerCase()}`}
-                                >
-                                    <i className="ti ti-plus" style={{ fontSize: 14 }} />
-                                    Add {tabLabel}
-                                </button>
+                                {canManage && (
+                                    <button
+                                        style={styles.addBtn}
+                                        type="button"
+                                        onClick={openAddModal}
+                                        title={`Add a new ${tabLabel.toLowerCase()}`}
+                                    >
+                                        <i className="ti ti-plus" style={{ fontSize: 14 }} />
+                                        Add {tabLabel}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}

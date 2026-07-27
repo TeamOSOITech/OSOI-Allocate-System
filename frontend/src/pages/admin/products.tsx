@@ -21,6 +21,12 @@ function useIsMobile() {
 // that lookup doesn't resolve to anything meaningful in the browser bundle
 // unless your build tool is specifically configured to inline it.
 // Change this if your backend runs on a different host/port.
+// FIX: this was hardcoded to "http://localhost:3001", so the DEPLOYED
+// (Vercel) frontend was trying to call the user's OWN machine's
+// localhost instead of the real deployed backend — which obviously
+// never connects, and looks exactly like a network/cold-start failure.
+// Every other page uses import.meta.env.VITE_API_URL; this one just
+// never got updated to match.
 const API_BASE = import.meta.env.VITE_API_URL;
 const ENDPOINT = `${API_BASE}/api/products`;
 
@@ -165,6 +171,19 @@ const GLOBAL_CSS = `
 const BULK_REQUIRED_COLUMNS_TEXT = "Product Name, Time Taken, Client, Subclient";
 
 const Products = () => {
+    // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
+    // for /api/products — hide the buttons for anyone who'd just get a
+    // 403 from clicking them (Phase 5: hide create actions from every
+    // role except the ones actually allowed).
+    let currentUser: { role?: string } | null = null;
+    try {
+        const userStr = localStorage.getItem("user");
+        currentUser = userStr ? JSON.parse(userStr) : null;
+    } catch {
+        currentUser = null;
+    }
+    const canManage = (currentUser?.role || "").toUpperCase() === "SUPER_ADMIN";
+
     const isMobile = useIsMobile();
 
     const [products, setProducts] = useState<Product[]>([]);
@@ -570,29 +589,33 @@ const Products = () => {
                                 {/* Bulk Upload now opens a modal (matching the Add User
                                     page's "Bulk Add Users" modal) instead of firing an
                                     upload the instant a file is chosen. */}
-                                <span className="pr-tooltip-wrap">
-                                    <button
-                                        type="button"
-                                        style={styles.secondaryBtn}
-                                        onClick={openBulkModal}
-                                    >
-                                        <i className="ti ti-upload" style={{ fontSize: 14 }} />
-                                        Bulk Upload
-                                    </button>
-                                    <span className="pr-tooltip-bubble">
-                                        Upload products from an Excel (.xlsx) file
+                                {canManage && (
+                                    <span className="pr-tooltip-wrap">
+                                        <button
+                                            type="button"
+                                            style={styles.secondaryBtn}
+                                            onClick={openBulkModal}
+                                        >
+                                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                            Bulk Upload
+                                        </button>
+                                        <span className="pr-tooltip-bubble">
+                                            Upload products from an Excel (.xlsx) file
+                                        </span>
                                     </span>
-                                </span>
+                                )}
 
-                                <button
-                                    style={styles.addBtn}
-                                    type="button"
-                                    onClick={openAddModal}
-                                    title="Add a new product"
-                                >
-                                    <i className="ti ti-plus" style={{ fontSize: 14 }} />
-                                    Add Product
-                                </button>
+                                {canManage && (
+                                    <button
+                                        style={styles.addBtn}
+                                        type="button"
+                                        onClick={openAddModal}
+                                        title="Add a new product"
+                                    >
+                                        <i className="ti ti-plus" style={{ fontSize: 14 }} />
+                                        Add Product
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -600,15 +623,17 @@ const Products = () => {
                     {isMobile && (
                         <div style={styles.headerRowMobile}>
                             <h2 style={styles.pageTitle}>Products</h2>
-                            <button
-                                style={styles.addBtn}
-                                type="button"
-                                onClick={openAddModal}
-                                title="Add a new product"
-                            >
-                                <i className="ti ti-plus" style={{ fontSize: 14 }} />
-                                Add
-                            </button>
+                            {canManage && (
+                                <button
+                                    style={styles.addBtn}
+                                    type="button"
+                                    onClick={openAddModal}
+                                    title="Add a new product"
+                                >
+                                    <i className="ti ti-plus" style={{ fontSize: 14 }} />
+                                    Add
+                                </button>
+                            )}
                         </div>
                     )}
 

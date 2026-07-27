@@ -16,7 +16,16 @@ const ADMIN_AND_VERTICAL_HEAD = [...ADMIN_TIER, "VERTICAL_HEAD"];
 const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
 
 const menuItems: MenuItem[] = [
-    { label: "Add User", icon: "ti ti-user-plus", path: "/admin/add-user", roles: ADMIN_TIER },
+    // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
+    // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
+    // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
+    // Manager saw this link, clicked through, and hit a confusing 403.
+    {
+        label: "Add User",
+        icon: "ti ti-user-plus",
+        path: "/admin/add-user",
+        roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
+    },
     {
         label: "Today's Task",
         icon: "ti ti-clipboard-list",

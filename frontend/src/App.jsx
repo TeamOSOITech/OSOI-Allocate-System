@@ -196,7 +196,7 @@ function App() {
                     <Route
                         path="/admin/add-user"
                         element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                            <PrivateRoute requiredRole={["SUPER_ADMIN", "PROCESS_LEAD"]}>
                                 <AppLayout onLogout={handleLogout}>
                                     <AddUser />
                                 </AppLayout>
