@@ -33,6 +33,12 @@ const menuItems: MenuItem[] = [
         roles: EVERYONE,
     },
     {
+        label: "Daily Work",
+        icon: "ti ti-clipboard-plus",
+        path: "/daily-work",
+        roles: ADMIN_AND_VERTICAL_HEAD,
+    },
+    {
         label: "Clients Preview",
         icon: "ti ti-users",
         path: "/clients",
@@ -81,6 +87,7 @@ const menuItems: MenuItem[] = [
 const pathToLabel: Record<string, string> = {
     "/tasks": "Today's Task",
     "/products": "Products",
+    "/daily-work": "Daily Work",
     "/report": "Report",
     "/reportdashboard": "Report",
     "/clients": "Clients Preview",
@@ -150,24 +157,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
         // Close the drawer on mobile after navigating — nobody wants it
         // still hanging open over the page they just chose.
         setIsOpen(false);
-
-        if (item.label === "Add User") {
-            navigate("/admin/add-user");
-        } else if (item.label === "Clients Preview") {
-            navigate("/clients");
-        } else if (item.label === "Employee Preview") {
-            navigate("/employees");
-        } else if (item.label === "Products") {
-            navigate("/products");
-        } else if (item.label === "Report") {
-            navigate("/report");
-        } else if (item.label === "Billing") {
-            navigate("/billing");
-        } else if (item.label === "Quality Scores") {
-            navigate("/quality-scores");
-        } else {
-            navigate("/workinprogress");
-        }
+        navigate(item.path);
     };
 
     return (

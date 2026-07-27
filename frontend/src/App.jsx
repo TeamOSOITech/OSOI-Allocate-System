@@ -17,6 +17,7 @@ const ResetPassword = lazy(() => import("./pages/auth/resetPassword"));
 const ReportDashboard = lazy(() => import("./pages/admin/reportdashboard"));
 const Dashboard = lazy(() => import("./pages/admin/dashboard"));
 const Products = lazy(() => import("./pages/admin/products"));
+const DailyWork = lazy(() => import("./pages/admin/dailywork"));
 const AddUser = lazy(() => import("./pages/admin/adduser"));
 const Clients = lazy(() => import("./pages/admin/clients"));
 const Employees = lazy(() => import("./pages/admin/employees"));
@@ -176,6 +177,21 @@ function App() {
                             <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                 <AppLayout onLogout={handleLogout}>
                                     <Dashboard user={user} onLogout={handleLogout} />
+                                </AppLayout>
+                            </PrivateRoute>
+                        }
+                    />
+
+                    {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
+Gated the same as Clients Preview: admin-tier + Vertical Head,
+since creating a batch requires tasks.allocate.team/org on the
+backend anyway (Vertical Head = own team, others = org-wide). */}
+                    <Route
+                        path="/daily-work"
+                        element={
+                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                <AppLayout onLogout={handleLogout}>
+                                    <DailyWork />
                                 </AppLayout>
                             </PrivateRoute>
                         }
