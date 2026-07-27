@@ -895,7 +895,10 @@ const Landing = () => {
                     </a>
                 </nav>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <button className="lp-nav-login-btn" onClick={() => navigate("/login")}>
+                    <button
+                        className="lp-nav-login-btn"
+                        onClick={() => window.open("/login", "_blank", "noopener,noreferrer")}
+                    >
                         Login
                     </button>
                     <button
