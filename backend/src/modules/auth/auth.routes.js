@@ -1,10 +1,37 @@
 const router = require("express").Router();
+const rateLimit = require("express-rate-limit");
 const { loginHandler } = require("./auth.controller");
 const { forgotPasswordHandler } = require("./auth.controller");
 
-// Login using Supabase Authentication
-router.post("/login", loginHandler);
+// SECURITY FIX: these endpoints had NO rate limiting at all — an
+// attacker could try unlimited passwords per second against any known
+// email (credential stuffing / brute force), or spam the
+// forgot-password email sender. Both are now capped per IP.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again in a few minutes.",
+  },
+});
 
-router.post("/forgot-password", forgotPasswordHandler);
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5, // 5 reset requests per IP per window — prevents email-bombing a target
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many password reset requests. Please try again later.",
+  },
+});
+
+// Login using Supabase Authentication
+router.post("/login", loginLimiter, loginHandler);
+
+router.post("/forgot-password", forgotPasswordLimiter, forgotPasswordHandler);
 
 module.exports = router;

@@ -2,9 +2,6 @@ const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 
 const login = async (email, password) => {
-  console.log("==================================");
-  console.log("Login attempt for real email:", email);
-
   const { data: candidates, error: candidatesError } = await supabase
     .from("user_master")
     .select("*")
@@ -22,8 +19,6 @@ const login = async (email, password) => {
 
   for (const candidate of candidates) {
     const loginEmail = candidate["Login Email"];
-
-    console.log("Trying Login Email:", loginEmail);
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: loginEmail,
@@ -63,10 +58,12 @@ const login = async (email, password) => {
     .toUpperCase()
     .replace(/\s+/g, "_");
 
-  console.log("=================================");
-  console.log("LOGIN USER:", matchedUser);
-  console.log("ROLE:", normalizedRole);
-  console.log("=================================");
+  console.log(
+    "Login successful for user:",
+    matchedUser["Auth User Id"],
+    "role:",
+    normalizedRole,
+  );
 
   return {
     accessToken: authData.session.access_token,
@@ -76,6 +73,7 @@ const login = async (email, password) => {
       id: authData.user.id,
       email: matchedUser["Email"],
       role: normalizedRole,
+      organizationId: matchedUser["organization_id"],
       firstName: matchedUser["First Name"],
       lastName: matchedUser["Last Name"],
       department: matchedUser["Department"],

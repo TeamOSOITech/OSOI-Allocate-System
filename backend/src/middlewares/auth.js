@@ -19,17 +19,16 @@ const authenticate = async (req, res, next) => {
         .json({ success: false, message: "Invalid or expired token" });
     }
 
-    // FIX: this was previously `.select('"Role"')` — the literal quote
-    // characters get sent to PostgREST as part of the column name, so it
-    // looked for a column literally called `"Role"` (with quotes in the
-    // name) and always failed. That failure was then caught by the
-    // generic catch block below and reported as "Invalid or expired
-    // token" even though the real token was completely fine — very
-    // misleading. Column name goes in unquoted; supabase-js/PostgREST
-    // handles the exact case-sensitive name on its own.
+    // MULTI-TENANCY: now also fetches organization_id alongside Role.
+    // Every org-scoped route reads req.user.organizationId from here —
+    // this is the single source of truth for "which tenant is this
+    // request allowed to touch", so it must be resolved server-side
+    // from the authenticated user's own row, never trusted from the
+    // request body/query string (that would let a client claim to be
+    // any organization it wants).
     const { data: profile, error: profileError } = await supabase
       .from("user_master")
-      .select("Role")
+      .select("Role, organization_id")
       .eq("Auth User Id", data.user.id)
       .single();
 
@@ -51,6 +50,16 @@ const authenticate = async (req, res, next) => {
         .json({ success: false, message: "No role assigned to this account" });
     }
 
+    if (!profile?.organization_id) {
+      console.error("AUTH: no organization_id found for user", data.user.id);
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "No organization assigned to this account",
+        });
+    }
+
     // Roles are checked as SNAKE_CASE codes (TEAM_MEMBER, VERTICAL_HEAD,
     // PROCESS_LEAD, OPS_MANAGER, AUDIT_MANAGER, SUPER_ADMIN) — see
     // src/config/permissions.js. Collapse spaces so a display-style value
@@ -59,6 +68,7 @@ const authenticate = async (req, res, next) => {
       userId: data.user.id,
       email: data.user.email,
       role: String(profile.Role).trim().toUpperCase().replace(/\s+/g, "_"),
+      organizationId: profile.organization_id,
     };
 
     next();

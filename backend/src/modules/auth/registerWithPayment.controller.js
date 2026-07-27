@@ -1,40 +1,31 @@
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
+// registerWithPayment.controller.js (FIXED)
+//
+// This replaces the previous version, which was disconnected from the
+// rest of the app: it wrote to a `users` table with a bcrypt hash and
+// signed its own custom JWT — completely bypassing Supabase Auth and
+// `user_master`, which is what every other route (and the `authenticate`
+// middleware) actually relies on. It was also never wired into
+// auth.routes.js, so it wasn't reachable yet.
+//
+// This version:
+//   1. Creates a new `organizations` row (this signup becomes tenant #2,
+//      #3, etc. — OSOI is tenant #1, seeded by the migration).
+//   2. Creates the person via Supabase Auth (supabase.auth.admin.createUser),
+//      exactly like migrateAdmins.js does for existing admins.
+//   3. Creates their `user_master` row with organization_id + Role =
+//      SUPER_ADMIN (org-level super admin — see permissions.js; this is
+//      the org's own top role, not a platform-operator concept).
+//   4. Creates a `subscriptions` row tied to the new organization, on
+//      the plan they paid for.
+//   5. Signs them in via supabase.auth.signInWithPassword so the
+//      response shape matches the normal /api/auth/login response
+//      exactly — same accessToken/refreshToken/user shape Landing.tsx
+//      and every other page already expect.
 
-// TODO: same as billing.controller.js — point this at your existing
-// Supabase client instead of a fresh import if one already exists.
 const supabase = require("../../config/supabaseClient");
-
-// TODO: if you already have a generateTokens()/signTokens() helper in
-// auth.service.js (used by your normal login flow), delete the
-// signTokens() function below and import that one instead — keeping
-// token generation in one place avoids the two flows drifting apart.
-const signTokens = (user) => {
-  const accessToken = jwt.sign(
-    { id: user.id, role: user.role },
-    process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRY || "15m" },
-  );
-  const refreshToken = jwt.sign(
-    { id: user.id },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRY || "7d" },
-  );
-  return { accessToken, refreshToken };
-};
 
 // POST /api/auth/register-with-payment
 // body: { token, name, password }
-//
-// Flow:
-//   1. Look up the signup_token in payment_signups (must exist, be
-//      unused, and not be expired).
-//   2. Create the user account tied to that email + plan.
-//   3. Mark the payment_signups row as used so the link can't be
-//      redeemed a second time.
-//   4. Sign in the new user immediately (same response shape as your
-//      normal /api/auth/login), so Landing.tsx's role-redirect logic
-//      keeps working unchanged.
 const registerWithPaymentHandler = async (req, res) => {
   try {
     const { token, name, password } = req.body;
@@ -77,13 +68,15 @@ const registerWithPaymentHandler = async (req, res) => {
     }
 
     // 2. Make sure an account for this email doesn't already exist
-    const { data: existingUser } = await supabase
-      .from("users") // TODO: adjust table name if yours differs
+    //    (checked against user_master, the real identity table — the
+    //    previous version checked a `users` table nothing else uses)
+    const { data: existingProfile } = await supabase
+      .from("user_master")
       .select("id")
-      .eq("email", signup.email)
+      .eq("Email", signup.email)
       .maybeSingle();
 
-    if (existingUser) {
+    if (existingProfile) {
       return res
         .status(409)
         .json({
@@ -92,49 +85,120 @@ const registerWithPaymentHandler = async (req, res) => {
         });
     }
 
-    // 3. Create the account
-    const passwordHash = await bcrypt.hash(password, 10);
+    // 3. Create the new organization (this signup = a brand new tenant)
+    const orgSlug =
+      signup.email
+        .split("@")[0]
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "-") +
+      "-" +
+      Date.now().toString(36);
 
-    // TODO: "OPS_MANAGER" is a guess at the right role for someone
-    // who just paid and is setting up their organization. Swap in
-    // whatever role your schema uses for a new org owner/admin.
-    const { data: newUser, error: createError } = await supabase
-      .from("users")
-      .insert({
-        name,
-        email: signup.email,
-        password_hash: passwordHash,
-        role: "OPS_MANAGER",
-        plan: signup.plan,
-      })
+    const { data: organization, error: orgError } = await supabase
+      .from("organizations")
+      .insert({ name: name.trim(), slug: orgSlug, status: "trialing" })
       .select()
       .single();
 
-    if (createError) throw createError;
+    if (orgError) throw orgError;
 
-    // 4. Mark the signup token as used (prevents replay)
+    // 4. Create the Supabase Auth user
+    const { data: authData, error: authError } =
+      await supabase.auth.admin.createUser({
+        email: signup.email,
+        password,
+        email_confirm: true,
+      });
+
+    if (authError) {
+      // Roll back the org row so we don't leave an orphaned tenant behind
+      await supabase.from("organizations").delete().eq("id", organization.id);
+      throw authError;
+    }
+
+    // 5. Create their user_master row — org-level SUPER_ADMIN, since
+    //    they're the first (and so far only) person in this new org.
+    const [firstName, ...rest] = name.trim().split(/\s+/);
+    const { error: profileError } = await supabase.from("user_master").insert({
+      "Auth User Id": authData.user.id,
+      "First Name": firstName || name.trim(),
+      "Last Name": rest.join(" ") || null,
+      Email: signup.email,
+      "Login Email": signup.email,
+      Role: "SUPER_ADMIN",
+      organization_id: organization.id,
+    });
+
+    if (profileError) {
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      await supabase.from("organizations").delete().eq("id", organization.id);
+      throw profileError;
+    }
+
+    // 6. Look up the plan they paid for and create their subscription
+    const { data: plan } = await supabase
+      .from("plans")
+      .select("id, price_per_user")
+      .ilike("name", signup.plan)
+      .single();
+
+    if (plan) {
+      await supabase.from("subscriptions").insert({
+        organization_id: organization.id,
+        plan_id: plan.id,
+        status: "active",
+        price_per_user_snapshot: plan.price_per_user,
+        current_period_start: new Date().toISOString(),
+        current_period_end: new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+      });
+    } else {
+      console.error(
+        `No matching plan found for signup.plan="${signup.plan}" — subscription NOT created. Check plans table names match PLAN_CONFIG keys.`,
+      );
+    }
+
+    // 7. Mark the signup token as used (prevents replay)
     await supabase
       .from("payment_signups")
       .update({ used: true })
       .eq("signup_token", token);
 
-    // 5. Sign the user in immediately
-    const { accessToken, refreshToken } = signTokens(newUser);
+    // 8. Sign in immediately, same shape as normal /api/auth/login
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.signInWithPassword({
+        email: signup.email,
+        password,
+      });
+
+    if (sessionError || !sessionData?.session) {
+      // Account was created successfully even if auto-login fails —
+      // tell them to log in manually rather than erroring the whole flow.
+      return res.status(201).json({
+        success: true,
+        message: "Account created. Please log in.",
+        data: { requiresLogin: true },
+      });
+    }
 
     return res.status(201).json({
       success: true,
       data: {
-        accessToken,
-        refreshToken,
+        accessToken: sessionData.session.access_token,
+        refreshToken: sessionData.session.refresh_token,
         user: {
-          id: newUser.id,
-          name: newUser.name,
-          email: newUser.email,
-          role: newUser.role,
+          id: authData.user.id,
+          email: signup.email,
+          role: "SUPER_ADMIN",
+          firstName: firstName || name.trim(),
+          lastName: rest.join(" ") || null,
+          organizationId: organization.id,
         },
       },
     });
   } catch (err) {
+    console.error("REGISTER WITH PAYMENT ERROR:", err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };

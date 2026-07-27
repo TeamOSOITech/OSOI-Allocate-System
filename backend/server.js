@@ -47,6 +47,10 @@ app.use("/api/clients", require("./src/modules/clients/clients.routes"));
 app.use("/api/subclients", require("./src/modules/clients/subclients.routes"));
 app.use("/api/employees", require("./src/modules/employees/employees.routes"));
 app.use("/api/approvals", require("./src/modules/approvals/approvals.routes"));
+app.use(
+  "/api/allocations",
+  require("./src/modules/allocations/allocations.routes"),
+);
 // FIX: this route file existed but was never mounted anywhere — the
 // /profile endpoint was dead code until now.
 app.use("/api", require("./src/modules/profiles/profile.route"));

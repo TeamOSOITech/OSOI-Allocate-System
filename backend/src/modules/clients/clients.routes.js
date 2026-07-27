@@ -5,7 +5,17 @@ const XLSX = require("xlsx");
 const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
 
+// MULTI-TENANCY + SECURITY FIX: this file previously had NO auth
+// middleware at all — every endpoint below was reachable by anyone,
+// logged in or not. `authenticate` also resolves req.user.organizationId,
+// which every query below now filters on.
+const { authenticate } = require("../../middlewares/auth");
+
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Require a valid session for every route in this file, and make
+// req.user (incl. organizationId) available to every handler below.
+router.use(authenticate);
 
 // Prevent browser caching
 router.use((req, res, next) => {
@@ -90,21 +100,33 @@ function fromClientBody(body) {
     secondary_contact_email: secondaryContactEmail || null,
     secondary_contact_phone: secondaryContactPhone || null,
   };
+  // NOTE: organization_id is intentionally NOT read from the body
+  // anywhere in this file — it always comes from req.user.organizationId,
+  // set server-side by the authenticate middleware.
 }
 
 // ---------- GET /api/clients ----------
 
 router.get("/", async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
+
     const { data: clients, error } = await supabase
       .from("clients")
       .select("*")
+      .eq("organization_id", orgId)
       .order("name", { ascending: true });
 
     if (error) throw error;
 
-    const { data: subclients } = await supabase.from("subclients").select("*");
-    const { data: branches } = await supabase.from("branches").select("*");
+    const { data: subclients } = await supabase
+      .from("subclients")
+      .select("*")
+      .eq("organization_id", orgId);
+    const { data: branches } = await supabase
+      .from("branches")
+      .select("*")
+      .eq("organization_id", orgId);
 
     const formatted = clients.map((client) =>
       toClientResponse(
@@ -131,7 +153,10 @@ router.post("/", async (req, res) => {
 
     const { data: client, error } = await supabase
       .from("clients")
-      .insert(fromClientBody(req.body))
+      .insert({
+        ...fromClientBody(req.body),
+        organization_id: req.user.organizationId, // stamped server-side, never from body
+      })
       .select()
       .single();
 
@@ -146,6 +171,8 @@ router.post("/", async (req, res) => {
 
 // ---------- Excel template download (styled) ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
+// (Unchanged from the original — a static template has nothing tenant-
+// specific to leak.)
 
 const CLIENT_TEMPLATE_COLUMNS = [
   { header: "Client Name", key: "clientName", width: 22, color: BRAND.blue },
@@ -236,7 +263,6 @@ const CLIENT_TEMPLATE_COLUMNS = [
   },
 ];
 
-// GET /api/clients/bulk/template
 router.get("/bulk/template", async (req, res) => {
   try {
     const workbook = new ExcelJS.Workbook();
@@ -315,14 +341,10 @@ router.get("/bulk/template", async (req, res) => {
 // ---------- Excel bulk upload ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
 
-// POST /api/clients/bulk/upload
-//
-// Response shape (matches the "Bulk Add Users" results list on the
-// frontend): every row in the sheet gets ONE entry in `results`, whether it
-// succeeded or failed, so the UI can render a full row-by-row list instead
-// of only showing errors.
 router.post("/bulk/upload", upload.single("file"), async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
+
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
@@ -343,9 +365,6 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
     const subclientCache = new Map();
     const branchCache = new Map();
 
-    // Per-row results — pushed exactly once per row, either "created" or
-    // "failed" — plus running totals for the created/failed counters shown
-    // in the summary line ("X created · Y failed").
     const results = [];
     let createdCount = 0;
     let failedCount = 0;
@@ -354,10 +373,8 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const rowNum = i + 2; // account for header row in Excel
+      const rowNum = i + 2;
       const clientNameRaw = norm(row["Client Name"]);
-      // Best-effort identifier shown in the UI even if the row fails before
-      // the client name is known to be valid.
       const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
 
       try {
@@ -400,7 +417,8 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           continue;
         }
 
-        // ---- resolve client ----
+        // ---- resolve client (scoped to this org — a same-named client
+        // in another org must NOT be matched or reused here) ----
         const clientKey = clientName.toLowerCase();
         let client = clientCache.get(clientKey);
 
@@ -408,6 +426,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           const { data: existing } = await supabase
             .from("clients")
             .select("*")
+            .eq("organization_id", orgId)
             .ilike("name", clientName)
             .maybeSingle();
 
@@ -429,6 +448,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
                 secondary_contact_name: secondaryContactName,
                 secondary_contact_email: secondaryContactEmail,
                 secondary_contact_phone: secondaryContactPhone,
+                organization_id: orgId,
               })
               .select()
               .single();
@@ -439,7 +459,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           clientCache.set(clientKey, client);
         }
 
-        // ---- resolve subclient (optional) ----
+        // ---- resolve subclient (optional), scoped to org + client ----
         if (subName) {
           const subKey = `${client.id}::${subName.toLowerCase()}`;
           let subclient = subclientCache.get(subKey);
@@ -448,6 +468,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
             const { data: existingSub } = await supabase
               .from("subclients")
               .select("*")
+              .eq("organization_id", orgId)
               .eq("client_id", client.id)
               .ilike("name", subName)
               .maybeSingle();
@@ -461,6 +482,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
                   name: subName,
                   client_id: client.id,
                   status: subStatus,
+                  organization_id: orgId,
                 })
                 .select()
                 .single();
@@ -472,7 +494,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           }
         }
 
-        // ---- resolve branch (optional) ----
+        // ---- resolve branch (optional), scoped to org + client ----
         if (branchName) {
           const branchKey = `${client.id}::${branchName.toLowerCase()}`;
           let branch = branchCache.get(branchKey);
@@ -481,6 +503,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
             const { data: existingBranch } = await supabase
               .from("branches")
               .select("*")
+              .eq("organization_id", orgId)
               .eq("client_id", client.id)
               .ilike("name", branchName)
               .maybeSingle();
@@ -494,6 +517,7 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
                   name: branchName,
                   client_id: client.id,
                   status: branchStatus,
+                  organization_id: orgId,
                 })
                 .select()
                 .single();
@@ -505,9 +529,6 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
           }
         }
 
-        // Row processed without throwing -> counts as "created" for this
-        // row, whether the client itself was brand-new or already existed
-        // and this row just added a subclient/branch under it.
         createdCount++;
         results.push({
           row: rowNum,
@@ -544,13 +565,15 @@ router.post("/bulk/upload", upload.single("file"), async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const id = Number(req.params.id);
 
     const { data: client, error } = await supabase
       .from("clients")
       .select("*")
       .eq("id", id)
-      .single();
+      .eq("organization_id", orgId) // cross-org requests get a 404, not a 403 —
+      .single(); // don't reveal that the id exists elsewhere
 
     if (error || !client) {
       return res.status(404).json({ message: "Client not found" });
@@ -559,10 +582,12 @@ router.get("/:id", async (req, res) => {
     const { data: subclients } = await supabase
       .from("subclients")
       .select("*")
+      .eq("organization_id", orgId)
       .eq("client_id", id);
     const { data: branches } = await supabase
       .from("branches")
       .select("*")
+      .eq("organization_id", orgId)
       .eq("client_id", id);
 
     res.json({
@@ -584,6 +609,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const id = Number(req.params.id);
 
     if (!req.body?.name || !req.body.name.trim()) {
@@ -594,6 +620,7 @@ router.put("/:id", async (req, res) => {
       .from("clients")
       .update(fromClientBody(req.body))
       .eq("id", id)
+      .eq("organization_id", orgId) // can't update a row belonging to another org
       .select()
       .single();
 
@@ -603,10 +630,12 @@ router.put("/:id", async (req, res) => {
     const { data: subclients } = await supabase
       .from("subclients")
       .select("id")
+      .eq("organization_id", orgId)
       .eq("client_id", id);
     const { data: branches } = await supabase
       .from("branches")
       .select("id")
+      .eq("organization_id", orgId)
       .eq("client_id", id);
 
     res.json(
@@ -622,18 +651,24 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const id = Number(req.params.id);
 
     const { data: existing, error: findErr } = await supabase
       .from("clients")
       .select("id")
       .eq("id", id)
+      .eq("organization_id", orgId)
       .maybeSingle();
 
     if (findErr) throw findErr;
     if (!existing) return res.status(404).json({ message: "Client not found" });
 
-    const { error } = await supabase.from("clients").delete().eq("id", id);
+    const { error } = await supabase
+      .from("clients")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", orgId);
 
     if (error) {
       if (error.code === "23503") {
