@@ -22,6 +22,11 @@ const AddUser = lazy(() => import("./pages/admin/adduser"));
 const Clients = lazy(() => import("./pages/admin/clients"));
 const Employees = lazy(() => import("./pages/admin/employees"));
 const WorkInProgress = lazy(() => import("./pages/workinprogress"));
+const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
+const Attendance = lazy(() => import("./pages/admin/attendance"));
+const QC = lazy(() => import("./pages/admin/qc"));
+//const Profile = lazy(() => import("./pages/admin/profile"));
+const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
 const PrivateRoute = ({ children, requiredRole = null }) => {
@@ -197,6 +202,44 @@ backend anyway (Vertical Head = own team, others = org-wide). */}
                         }
                     />
 
+                    {/* NEW: Manual Allocation — Page 4. Same gate as Smart Auto Allocation. */}
+                    <Route
+                        path="/today's-allocation"
+                        element={
+                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                <AppLayout onLogout={handleLogout}>
+                                    <ManualAllocation />
+                                </AppLayout>
+                            </PrivateRoute>
+                        }
+                    />
+
+                    {/* NEW: Attendance — Page 6. Same gate as Daily Work — marking
+                    attendance is a prerequisite for Smart Auto Allocation. */}
+                    <Route
+                        path="/attendance"
+                        element={
+                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                <AppLayout onLogout={handleLogout}>
+                                    <Attendance />
+                                </AppLayout>
+                            </PrivateRoute>
+                        }
+                    />
+
+                    {/* NEW: Production Reports — Page 8. Open to everyone, same as
+                    Report/History — read-only view over Daily Work data. */}
+                    <Route
+                        path="/production-reports"
+                        element={
+                            <PrivateRoute>
+                                <AppLayout onLogout={handleLogout}>
+                                    <ProductionReports />
+                                </AppLayout>
+                            </PrivateRoute>
+                        }
+                    />
+
                     {/* NEW: Products — replaces the old Task Progress sidebar link */}
                     <Route
                         path="/products"
@@ -232,13 +275,14 @@ backend anyway (Vertical Head = own team, others = org-wide). */}
                         }
                     />
 
-                    {/* NEW: Quality Scores — Admin and Manager only */}
+                    {/* Quality Scores — Admin and Manager only. Was WorkInProgress
+                    placeholder; now the real QC page (Page 7). */}
                     <Route
                         path="/quality-scores"
                         element={
                             <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
                                 <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
+                                    <QC />
                                 </AppLayout>
                             </PrivateRoute>
                         }
@@ -282,16 +326,8 @@ backend anyway (Vertical Head = own team, others = org-wide). */}
                             </PrivateRoute>
                         }
                     />
-                    <Route
-                        path="/profile"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                    {/* Was WorkInProgress placeholder; now the real Profile page (Page 9). */}
+
                     <Route
                         path="/tasks"
                         element={

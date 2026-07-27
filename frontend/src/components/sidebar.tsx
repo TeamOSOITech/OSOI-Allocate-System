@@ -48,6 +48,19 @@ const menuItems: MenuItem[] = [
         roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
+        label: "Attendance",
+        icon: "ti ti-clipboard-check",
+        path: "/attendance",
+        roles: ADMIN_AND_VERTICAL_HEAD,
+    },
+
+    {
+        label: "Today's Allocation",
+        icon: "ti ti-hand-stop",
+        path: "/today's-allocation",
+        roles: ADMIN_AND_VERTICAL_HEAD,
+    },
+    {
         label: "Clients Preview",
         icon: "ti ti-users",
         path: "/clients",
@@ -69,6 +82,12 @@ const menuItems: MenuItem[] = [
         label: "Report",
         icon: "ti ti-chart-line",
         path: "/report",
+        roles: EVERYONE,
+    },
+    {
+        label: "Production Reports",
+        icon: "ti ti-file-analytics",
+        path: "/production-reports",
         roles: EVERYONE,
     },
     {
@@ -100,6 +119,9 @@ const pathToLabel: Record<string, string> = {
     "/daily-work": "Daily Work",
     "/report": "Report",
     "/reportdashboard": "Report",
+    "/production-reports": "Production Reports",
+    "/attendance": "Attendance",
+    "/today's-allocation": "Today's Allocation",
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",
