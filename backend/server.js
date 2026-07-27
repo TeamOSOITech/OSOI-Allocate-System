@@ -38,25 +38,64 @@ app.options("*", cors());
 // ========================
 // 🛣️ ROUTES
 // ========================
-app.use("/api/auth", require("./src/modules/auth/auth.routes"));
-app.use("/api/tasks", require("./src/modules/tasks/tasks.routes"));
-app.use("/api/reports", require("./src/modules/reports/reports.routes"));
-app.use("/api/products", require("./src/modules/products/products.routes"));
-app.use("/api/users", require("./src/modules/users/user.routes"));
-app.use("/api/clients", require("./src/modules/clients/clients.routes"));
-app.use("/api/subclients", require("./src/modules/clients/subclients.routes"));
-app.use("/api/employees", require("./src/modules/employees/employees.routes"));
-app.use("/api/approvals", require("./src/modules/approvals/approvals.routes"));
+// ========================
+// 🛣️ ROUTES
+// ========================
+
+function loadRoute(name, path) {
+  const route = require(path);
+
+  console.log(`\n====================`);
+  console.log(`${name}`);
+  console.log("Type:", typeof route);
+  console.log("Constructor:", route?.constructor?.name);
+  console.log("Keys:", Object.keys(route));
+  console.log("====================\n");
+
+  return route;
+}
+
+app.use("/api/auth", loadRoute("auth", "./src/modules/auth/auth.routes"));
+app.use("/api/tasks", loadRoute("tasks", "./src/modules/tasks/tasks.routes"));
+app.use(
+  "/api/reports",
+  loadRoute("reports", "./src/modules/reports/reports.routes"),
+);
+app.use(
+  "/api/products",
+  loadRoute("products", "./src/modules/products/products.routes"),
+);
+app.use("/api/users", loadRoute("users", "./src/modules/users/user.routes"));
+app.use(
+  "/api/clients",
+  loadRoute("clients", "./src/modules/clients/clients.routes"),
+);
+app.use(
+  "/api/subclients",
+  loadRoute("subclients", "./src/modules/clients/subclients.routes"),
+);
+app.use(
+  "/api/employees",
+  loadRoute("employees", "./src/modules/employees/employees.routes"),
+);
+app.use(
+  "/api/approvals",
+  loadRoute("approvals", "./src/modules/approvals/approvals.routes"),
+);
 app.use(
   "/api/allocations",
-  require("./src/modules/allocations/allocations.routes"),
+  loadRoute("allocations", "./src/modules/allocations/allocations.routes"),
 );
-// PAGE 2 (Daily Work) — feeds the allocations module above; a batch
-// must exist here before Smart Auto / Manual Allocation can run.
-app.use("/api/daily-work", require("./src/modules/dailywork/dailywork.routes"));
-// FIX: this route file existed but was never mounted anywhere — the
-// /profile endpoint was dead code until now.
-app.use("/api", require("./src/modules/profiles/profile.route"));
+app.use(
+  "/api/daily-work",
+  loadRoute("dailywork", "./src/modules/dailywork/dailywork.routes"),
+);
+app.use(
+  "/api/attendance",
+  loadRoute("attendance", "./src/modules/attendance/attendance.routes"),
+);
+app.use("/api/qc", loadRoute("qc", "./src/modules/qualitychecks/qc.routes"));
+app.use("/api", loadRoute("profile", "./src/modules/profiles/profile.route"));
 
 // ========================
 // ⚠️ REMOVED: /test-auth
