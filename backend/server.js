@@ -51,6 +51,9 @@ app.use(
   "/api/allocations",
   require("./src/modules/allocations/allocations.routes"),
 );
+// PAGE 2 (Daily Work) — feeds the allocations module above; a batch
+// must exist here before Smart Auto / Manual Allocation can run.
+app.use("/api/daily-work", require("./src/modules/dailyWork/dailyWork.routes"));
 // FIX: this route file existed but was never mounted anywhere — the
 // /profile endpoint was dead code until now.
 app.use("/api", require("./src/modules/profiles/profile.route"));
