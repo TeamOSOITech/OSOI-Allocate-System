@@ -47,12 +47,8 @@ const menuItems: MenuItem[] = [
         path: "/daily-work",
         roles: ADMIN_AND_VERTICAL_HEAD,
     },
-    {
-        label: "Attendance",
-        icon: "ti ti-clipboard-check",
-        path: "/attendance",
-        roles: ADMIN_AND_VERTICAL_HEAD,
-    },
+    // REMOVED: standalone Attendance nav link — leave-marking now lives
+    // inline inside Manual/Smart Allocation instead of a separate page.
 
     {
         label: "Today's Allocation",
@@ -120,7 +116,6 @@ const pathToLabel: Record<string, string> = {
     "/report": "Report",
     "/reportdashboard": "Report",
     "/production-reports": "Production Reports",
-    "/attendance": "Attendance",
     "/today's-allocation": "Today's Allocation",
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",

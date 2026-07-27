@@ -17,13 +17,12 @@ const MOBILE_BREAKPOINT = 768;
 
 const BRAND = {
     blue: "#204297",
-    violet: "#7C3AED",
     lightBlue: "#08A1CE",
     green: "#2EBBA8",
     amber: "#F59E0B",
     red: "#DC2626",
 };
-const GRADIENT = `linear-gradient(90deg, ${BRAND.blue} 0%, ${BRAND.violet} 100%)`;
+const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`; // matches Products/Clients/Landing gradient exactly
 
 // --- Minimal inline icon set (no external icon library required) ---
 type IconProps = { size?: number; color?: string; style?: CSSProperties };
@@ -285,7 +284,7 @@ export default function ProductionReports() {
                         icon={Layers}
                         label="Batches"
                         value={filtered.length}
-                        color={BRAND.violet}
+                        color={BRAND.lightBlue}
                     />
                     <SummaryStat
                         icon={Box}
@@ -365,7 +364,7 @@ export default function ProductionReports() {
                     ) : filtered.length === 0 ? (
                         <div style={styles.emptyState}>
                             <div style={styles.emptyIconWrap}>
-                                <FileChart size={36} color={BRAND.violet} />
+                                <FileChart size={36} color={BRAND.lightBlue} />
                             </div>
                             <div style={styles.emptyText}>No batches found in this date range.</div>
                         </div>
@@ -438,7 +437,7 @@ export default function ProductionReports() {
                 <defs>
                     <linearGradient id="waveGradient" x1="0" y1="0" x2="1" y2="0">
                         <stop offset="0%" stopColor={BRAND.blue} />
-                        <stop offset="100%" stopColor={BRAND.violet} />
+                        <stop offset="100%" stopColor={BRAND.lightBlue} />
                     </linearGradient>
                 </defs>
             </svg>
@@ -609,9 +608,9 @@ const styles: Record<string, CSSProperties> = {
         gap: 7,
         padding: "9px 16px",
         borderRadius: 8,
-        border: `1px solid ${BRAND.violet}`,
+        border: `1px solid ${BRAND.lightBlue}`,
         background: "#fff",
-        color: BRAND.violet,
+        color: BRAND.lightBlue,
         fontWeight: 600,
         fontSize: 12.5,
     },

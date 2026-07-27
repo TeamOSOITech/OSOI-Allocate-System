@@ -7,13 +7,12 @@ const MOBILE_BREAKPOINT = 768;
 
 const BRAND = {
     blue: "#204297",
-    violet: "#5B3DF5",
     lightBlue: "#08A1CE",
     green: "#2EBBA8",
     amber: "#F59E0B",
     red: "#DC2626",
 };
-const GRADIENT = `linear-gradient(90deg, ${BRAND.blue} 0%, ${BRAND.violet} 100%)`;
+const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`; // matches Products/Clients/Landing gradient exactly
 
 // --- Minimal inline icon set (no external icon library required) ---
 type IconProps = { size?: number; color?: string; style?: CSSProperties };
@@ -362,7 +361,11 @@ export default function Allocation() {
         setQtyByEmployee((prev) => ({ ...prev, [employeeId]: String(Math.max(0, value)) }));
     };
 
-    const toggleLeave = (employeeId: string) => {
+    const toggleLeave = async (employeeId: string) => {
+        const willBeOnLeave = !onLeaveIds.has(employeeId);
+
+        // Optimistic UI update first — feels instant, matches every other
+        // toggle in this app.
         setOnLeaveIds((prev) => {
             const next = new Set(prev);
             if (next.has(employeeId)) next.delete(employeeId);
@@ -370,6 +373,27 @@ export default function Allocation() {
             return next;
         });
         setQtyByEmployee((prev) => ({ ...prev, [employeeId]: "0" }));
+
+        // Persist to the real attendance table — this is now the ONLY
+        // attendance UI in the app (the standalone Attendance page is
+        // gone), so this click must actually save, not just affect this
+        // one allocation run. Binary only: LEAVE (unavailable) or
+        // PRESENT (available) — no separate ABSENT state in this UI.
+        if (!selectedBatch) return;
+        try {
+            await authFetch(`${API_BASE}/api/attendance/bulk`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    date: selectedBatch.workDate,
+                    records: [{ employeeId, status: willBeOnLeave ? "LEAVE" : "PRESENT" }],
+                }),
+            });
+        } catch {
+            // Network/cold-start hiccup — the toggle still reflects locally
+            // and the next full page load will re-sync from the server,
+            // so this fails silently rather than blocking the click.
+        }
     };
 
     const handleAutoDistribute = () => {
@@ -562,7 +586,7 @@ export default function Allocation() {
                             <div style={styles.infoBox}>
                                 <InfoCircle
                                     size={15}
-                                    color={BRAND.violet}
+                                    color={BRAND.lightBlue}
                                     style={{ flexShrink: 0, marginTop: 1 }}
                                 />
                                 <div>
@@ -583,7 +607,7 @@ export default function Allocation() {
                             label="Total Cases"
                             sub="Total quantity"
                             value={selectedBatch.pendingQty}
-                            color={BRAND.violet}
+                            color={BRAND.lightBlue}
                         />
                         <SummaryStat
                             icon={Users}
@@ -838,7 +862,7 @@ export default function Allocation() {
                                 <TotalStat
                                     label="Total Allocated"
                                     value={totalEntered}
-                                    color={BRAND.violet}
+                                    color={BRAND.lightBlue}
                                 />
                                 <TotalStat
                                     label="Remaining"
@@ -1053,7 +1077,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: 12,
         padding: 14,
     },
-    infoTitle: { fontSize: 12.5, fontWeight: 700, color: BRAND.violet, marginBottom: 3 },
+    infoTitle: { fontSize: 12.5, fontWeight: 700, color: BRAND.lightBlue, marginBottom: 3 },
     infoText: { fontSize: 11.5, color: "#5b4b8a", lineHeight: 1.5 },
     summaryRow: {
         display: "grid",

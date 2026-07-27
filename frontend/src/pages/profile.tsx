@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
-import { authFetch } from "../../utils/authFetch";
+import { authFetch } from "../utils/authFetch";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;

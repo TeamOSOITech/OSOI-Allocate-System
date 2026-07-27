@@ -111,7 +111,6 @@ const MOBILE_BREAKPOINT = 768;
 
 const BRAND = {
     blue: "#204297",
-    violet: "#5B3DF5",
     lightBlue: "#08A1CE",
     green: "#2EBBA8",
     amber: "#F59E0B",
@@ -119,7 +118,7 @@ const BRAND = {
 };
 
 // Header gradient used for the primary save button and the "Save Attendance" bar
-const GRADIENT = `linear-gradient(90deg, ${BRAND.blue} 0%, ${BRAND.violet} 100%)`;
+const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`; // matches Products/Clients/Landing gradient exactly
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -301,7 +300,7 @@ export default function Attendance() {
                     icon={HelpCircle}
                     label="Unmarked"
                     value={counts.unmarked}
-                    color={BRAND.violet}
+                    color={BRAND.lightBlue}
                 />
             </div>
 

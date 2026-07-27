@@ -23,7 +23,8 @@ const Clients = lazy(() => import("./pages/admin/clients"));
 const Employees = lazy(() => import("./pages/admin/employees"));
 const WorkInProgress = lazy(() => import("./pages/workinprogress"));
 const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
-const Attendance = lazy(() => import("./pages/admin/attendance"));
+// Attendance is no longer a standalone page — leave-marking lives inside
+// manualallocation.tsx instead.
 const QC = lazy(() => import("./pages/admin/qc"));
 //const Profile = lazy(() => import("./pages/admin/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
@@ -214,18 +215,9 @@ backend anyway (Vertical Head = own team, others = org-wide). */}
                         }
                     />
 
-                    {/* NEW: Attendance — Page 6. Same gate as Daily Work — marking
-                    attendance is a prerequisite for Smart Auto Allocation. */}
-                    <Route
-                        path="/attendance"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <Attendance />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                    {/* REMOVED: standalone /attendance route. Leave-marking now
+                    lives inline inside Manual/Smart Allocation (manualallocation.tsx)
+                    instead of a separate page — one place instead of two. */}
 
                     {/* NEW: Production Reports — Page 8. Open to everyone, same as
                     Report/History — read-only view over Daily Work data. */}

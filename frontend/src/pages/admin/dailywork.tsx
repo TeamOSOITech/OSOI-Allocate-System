@@ -216,19 +216,19 @@ export default function DailyWork() {
                 <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
                     <KpiCard
                         icon="ti ti-package"
-                        iconBg="linear-gradient(135deg, #6366f1, #4338ca)"
+                        iconBg="linear-gradient(135deg, #08A1CE, #204297)"
                         label="Products"
                         value={products.length}
                         footer="Total Products"
-                        dotColor="#4338ca"
+                        dotColor="#204297"
                     />
                     <KpiCard
                         icon="ti ti-users"
-                        iconBg="linear-gradient(135deg, #38bdf8, #2563eb)"
+                        iconBg="linear-gradient(135deg, #08A1CE, #204297)"
                         label="Allocated"
                         value={totalAllocated}
                         footer="Total Allocated"
-                        dotColor="#2563eb"
+                        dotColor="#08A1CE"
                     />
                     <KpiCard
                         icon="ti ti-check"
@@ -531,7 +531,7 @@ const styles: Record<string, CSSProperties> = {
     topBar: {
         height: "4px",
         width: "100%",
-        background: "linear-gradient(90deg, #6d28d9, #4338ca, #0ea5a4, #10b981)",
+        background: "linear-gradient(90deg, #204297, #08A1CE, #2EBBA8)",
     },
     contentBody: {
         display: "flex",
@@ -547,7 +547,7 @@ const styles: Record<string, CSSProperties> = {
         width: 42,
         height: 42,
         borderRadius: "10px",
-        background: "linear-gradient(135deg, #6366f1, #4338ca)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         display: "flex",
         alignItems: "center",
@@ -572,7 +572,7 @@ const styles: Record<string, CSSProperties> = {
     },
     breadcrumbSep: { color: "#c7cbe0" },
     breadcrumbItem: { color: "#64748b" },
-    breadcrumbActive: { color: "#4338ca", fontWeight: 700 },
+    breadcrumbActive: { color: "#204297", fontWeight: 700 },
 
     kpiRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" },
     kpiRowMobile: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" },
@@ -595,7 +595,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    kpiLabel: { fontSize: "12px", fontWeight: 600, color: "#4338ca" },
+    kpiLabel: { fontSize: "12px", fontWeight: 600, color: "#204297" },
     kpiValue: { fontSize: "22px", fontWeight: 800, color: "#1e1b4b" },
     kpiFooter: {
         display: "flex",
@@ -634,7 +634,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: "8px",
         padding: "14px 18px",
-        background: "linear-gradient(90deg, #4338ca, #2563eb)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         fontSize: "14px",
         fontWeight: 700,
@@ -649,7 +649,7 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: 600,
         color: "#374151",
     },
-    labelIcon: { fontSize: 13, color: "#6366f1" },
+    labelIcon: { fontSize: 13, color: "#204297" },
     input: {
         border: "1px solid #e2e4f0",
         borderRadius: "8px",
@@ -687,7 +687,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: "8px",
-        background: "linear-gradient(90deg, #4338ca, #2563eb)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
         borderRadius: "8px",
@@ -724,7 +724,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: "6px",
         background: "#eef2ff",
-        color: "#4338ca",
+        color: "#204297",
         fontSize: "11px",
         fontWeight: 700,
         padding: "5px 10px",
@@ -734,7 +734,7 @@ const styles: Record<string, CSSProperties> = {
     tableHead: {
         display: "flex",
         padding: "10px 18px",
-        background: "linear-gradient(90deg, #4338ca, #2563eb)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         gap: "8px",
     },
     tableHeadLabel: { flex: 1, fontSize: "11.5px", fontWeight: 700, color: "#e0e7ff" },
@@ -773,7 +773,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: "7px",
         border: "1px solid #e2e4f0",
         background: "#fff",
-        color: "#4338ca",
+        color: "#204297",
         fontSize: "12px",
         fontWeight: 700,
         cursor: "pointer",
@@ -782,7 +782,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
     },
     pageBtnActive: {
-        background: "linear-gradient(90deg, #4338ca, #2563eb)",
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
     },

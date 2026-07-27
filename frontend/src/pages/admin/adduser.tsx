@@ -74,7 +74,7 @@ export default function AddUser() {
         dob: "",
         doj: "",
         reportingManager: "",
-        workedInTeams: "",
+        Teams: "",
         password: "",
         role: "",
     });
@@ -142,7 +142,7 @@ export default function AddUser() {
                 "Date of Birth": "1995-05-10",
                 "Date of Joining": "2023-01-15",
                 "Reporting Manager": "manager@example.com",
-                "Worked In Teams": "Tech",
+                Teams: "Tech",
                 Password: "Sample@123",
                 Role: "TEAM_MEMBER",
             },
@@ -187,7 +187,7 @@ export default function AddUser() {
                 dob: row["Date of Birth"] || "",
                 doj: row["Date of Joining"] || "",
                 reportingManager: row["Reporting Manager"] || "",
-                workedInTeams: row["Worked In Teams"] || "",
+                Teams: row["Teams"] || "",
                 password: row["Password"] || "",
                 role: (row["Role"] || "").toString().toUpperCase().trim(),
             }));
@@ -275,7 +275,7 @@ export default function AddUser() {
             dob: data.dob || prev.dob,
             doj: data.doj || prev.doj,
             reportingManager: data.reportingManager || prev.reportingManager,
-            workedInTeams: data.workedInTeams || prev.workedInTeams,
+            Teams: data.Teams || prev.Teams,
         }));
     };
 
@@ -544,14 +544,14 @@ export default function AddUser() {
                                         )}
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Worked In Teams</label>
+                                        <label style={styles.label}>Teams</label>
                                         <select
                                             style={styles.input}
-                                            value={formData.workedInTeams}
+                                            value={formData.Teams}
                                             onChange={(e) =>
                                                 setFormData({
                                                     ...formData,
-                                                    workedInTeams: e.target.value,
+                                                    Teams: e.target.value,
                                                 })
                                             }
                                         >
@@ -698,8 +698,8 @@ export default function AddUser() {
                                 <span style={styles.bulkInfoLabel}>Required columns</span>
                                 <p style={styles.bulkInfoText}>
                                     Full Name, Email, Employee ID, Designation, Department, Date of
-                                    Birth, Date of Joining, Reporting Manager, Worked In Teams,
-                                    Password, Role (ADMIN / MANAGER / EMPLOYEE)
+                                    Birth, Date of Joining, Reporting Manager, Teams, Password, Role
+                                    (ADMIN / MANAGER / EMPLOYEE)
                                 </p>
                             </div>
 
