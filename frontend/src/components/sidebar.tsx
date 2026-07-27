@@ -16,6 +16,15 @@ const ADMIN_AND_VERTICAL_HEAD = [...ADMIN_TIER, "VERTICAL_HEAD"];
 const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
 
 const menuItems: MenuItem[] = [
+    // /dashboard route is gated to ADMIN_TIER_ROLES in App.jsx, so this
+    // link uses the same role list to avoid showing it to someone who'd
+    // just hit a 403 clicking through.
+    {
+        label: "Dashboard",
+        icon: "ti ti-layout-dashboard",
+        path: "/dashboard",
+        roles: ADMIN_TIER,
+    },
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
@@ -85,6 +94,7 @@ const menuItems: MenuItem[] = [
 ];
 
 const pathToLabel: Record<string, string> = {
+    "/dashboard": "Dashboard",
     "/tasks": "Today's Task",
     "/products": "Products",
     "/daily-work": "Daily Work",
