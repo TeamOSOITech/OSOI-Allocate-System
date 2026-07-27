@@ -8,7 +8,7 @@ const {
   createDailyWork,
   updateDailyWork,
   deleteDailyWork,
-} = require("./dailyWork.controller");
+} = require("./dailywork.controller");
 
 router.use(authenticate);
 
