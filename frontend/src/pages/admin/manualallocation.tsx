@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 
@@ -11,10 +11,19 @@ const BRAND = {
     green: "#2EBBA8",
     amber: "#F59E0B",
     red: "#DC2626",
+    grey: "#9CA3AF",
 };
-const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`; // matches Products/Clients/Landing gradient exactly
+const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
-// --- Minimal inline icon set (no external icon library required) ---
+function withAlpha(hex: string, alpha: number) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// ---- minimal inline icon set (no external icon lib needed) ----
 type IconProps = { size?: number; color?: string; style?: CSSProperties };
 const iconBase = (size: number) => ({
     width: size,
@@ -26,8 +35,7 @@ const iconBase = (size: number) => ({
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
 });
-
-function Calendar({ size = 16, color = "currentColor", ...rest }: IconProps) {
+function Calendar({ size = 15, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
             <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -37,12 +45,14 @@ function Calendar({ size = 16, color = "currentColor", ...rest }: IconProps) {
         </svg>
     );
 }
-function RefreshCw({ size = 16, color = "currentColor", ...rest }: IconProps) {
+function CalendarCheck({ size = 20, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
-            <polyline points="23 4 23 10 17 10" />
-            <polyline points="1 20 1 14 7 14" />
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+            <path d="m9 16 2 2 4-4" />
         </svg>
     );
 }
@@ -55,7 +65,56 @@ function Box({ size = 16, color = "currentColor", ...rest }: IconProps) {
         </svg>
     );
 }
-function Users({ size = 16, color = "currentColor", ...rest }: IconProps) {
+function CheckCircle2({ size = 16, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <circle cx="12" cy="12" r="10" />
+            <path d="m9 12 2 2 4-4" />
+        </svg>
+    );
+}
+function Clock({ size = 12, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+        </svg>
+    );
+}
+function Zap({ size = 15, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        </svg>
+    );
+}
+function Edit3({ size = 15, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+    );
+}
+function Save({ size = 16, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+            <polyline points="17 21 17 13 7 13 7 21" />
+            <polyline points="7 3 7 8 15 8" />
+        </svg>
+    );
+}
+function AlertTriangle({ size = 14, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+    );
+}
+function Users({ size = 34, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -65,87 +124,91 @@ function Users({ size = 16, color = "currentColor", ...rest }: IconProps) {
         </svg>
     );
 }
-function Gauge({ size = 16, color = "currentColor", ...rest }: IconProps) {
+function Download({ size = 15, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
-            <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-            <path d="M4.6 19a9 9 0 1 1 14.8 0" />
-            <line x1="12" y1="12" x2="15" y2="9" />
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
     );
 }
-function Gift({ size = 16, color = "currentColor", ...rest }: IconProps) {
+function Filter({ size = 15, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
-            <polyline points="20 12 20 22 4 22 4 12" />
-            <rect x="2" y="7" width="20" height="5" />
-            <line x1="12" y1="22" x2="12" y2="7" />
-            <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7Z" />
-            <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7Z" />
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
     );
 }
-function CheckCircle2({ size = 14, color = "currentColor", ...rest }: IconProps) {
+function MoreVertical({ size = 16, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
-            <circle cx="12" cy="12" r="10" />
-            <path d="m9 12 2 2 4-4" />
+            <circle cx="12" cy="12" r="1" />
+            <circle cx="12" cy="5" r="1" />
+            <circle cx="12" cy="19" r="1" />
         </svg>
     );
 }
-function ChevronUp({ size = 12, color = "currentColor", ...rest }: IconProps) {
+
+// Decorative header illustration — calendar with a checkmark badge and a
+// gift box, recolored to the brand blue/teal palette (no external image
+// asset needed).
+function HeaderIllustration() {
     return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <polyline points="18 15 12 9 6 15" />
+        <svg width="110" height="90" viewBox="0 0 110 90" fill="none">
+            <circle cx="18" cy="14" r="2" fill={BRAND.lightBlue} opacity="0.6" />
+            <circle cx="100" cy="20" r="1.6" fill={BRAND.green} opacity="0.7" />
+            <circle cx="12" cy="60" r="1.6" fill="#FBBF24" opacity="0.7" />
+            <circle cx="96" cy="66" r="2" fill={BRAND.lightBlue} opacity="0.5" />
+
+            <rect x="30" y="16" width="52" height="46" rx="8" fill={withAlpha(BRAND.blue, 0.08)} />
+            <rect x="30" y="16" width="52" height="14" rx="8" fill={BRAND.blue} />
+            <rect x="40" y="6" width="4" height="14" rx="2" fill={BRAND.blue} />
+            <rect x="68" y="6" width="4" height="14" rx="2" fill={BRAND.blue} />
+            {[0, 1, 2].map((row) =>
+                [0, 1, 2, 3].map((col) => (
+                    <rect
+                        key={`${row}-${col}`}
+                        x={38 + col * 11}
+                        y={38 + row * 8}
+                        width="6"
+                        height="6"
+                        rx="1.5"
+                        fill={withAlpha(BRAND.blue, 0.18)}
+                    />
+                ))
+            )}
+            <circle cx="82" cy="62" r="13" fill={BRAND.green} />
+            <path
+                d="M76 62l4 4 8-8"
+                stroke="#fff"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+            />
+            <rect x="82" y="48" width="18" height="16" rx="3" fill={BRAND.lightBlue} />
+            <rect x="82" y="54" width="18" height="4" fill="#fff" opacity="0.6" />
+            <rect x="89" y="48" width="4" height="16" fill="#fff" opacity="0.6" />
+            <path d="M91 48c-3-4-9-4-9 0" stroke={BRAND.lightBlue} strokeWidth="2" fill="none" />
+            <path d="M91 48c3-4 9-4 9 0" stroke={BRAND.lightBlue} strokeWidth="2" fill="none" />
         </svg>
     );
 }
-function ChevronDown({ size = 12, color = "currentColor", ...rest }: IconProps) {
+
+function EmptyStateIcon() {
     return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <polyline points="6 9 12 15 18 9" />
-        </svg>
-    );
-}
-function Send({ size = 15, color = "currentColor", ...rest }: IconProps) {
-    return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-        </svg>
-    );
-}
-function Undo2({ size = 14, color = "currentColor", ...rest }: IconProps) {
-    return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <path d="M9 14 4 9l5-5" />
-            <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11" />
-        </svg>
-    );
-}
-function Zap({ size = 16, color = "currentColor", ...rest }: IconProps) {
-    return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-        </svg>
-    );
-}
-function Hand({ size = 16, color = "currentColor", ...rest }: IconProps) {
-    return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
-            <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6" />
-            <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
-            <path d="M6 14v-2a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v3a8 8 0 0 0 8 8h1a7 7 0 0 0 7-7v-4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2" />
-        </svg>
-    );
-}
-function InfoCircle({ size = 15, color = "currentColor", ...rest }: IconProps) {
-    return (
-        <svg {...iconBase(size)} color={color} {...rest}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
+        <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+            <circle cx="28" cy="28" r="28" fill={withAlpha(BRAND.blue, 0.06)} />
+            <rect x="14" y="24" width="28" height="16" rx="3" fill={withAlpha(BRAND.blue, 0.12)} />
+            <path
+                d="M14 28h8l2 4h8l2-4h8"
+                stroke={withAlpha(BRAND.blue, 0.35)}
+                strokeWidth="2"
+                fill="none"
+            />
+            <circle cx="20" cy="20" r="2" fill="#FBBF24" />
+            <circle cx="38" cy="18" r="1.6" fill="#FBBF24" />
         </svg>
     );
 }
@@ -162,6 +225,17 @@ function useIsMobile() {
     return isMobile;
 }
 
+function todayStr() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+// ---------------- types ----------------
+type Product = { id: string; product_name: string };
+
 type DailyWorkBatch = {
     id: string;
     workDate: string;
@@ -176,19 +250,25 @@ type Employee = {
     id: string;
     name: string;
     employeeCode: string | null;
-    team?: string | null;
-    department?: string | null;
+    department: string | null;
+    workedInTeams: string | null;
 };
-type AttendanceRow = { employeeId: string; status: string };
 
-function formatDisplayDate(iso: string) {
-    const [y, m, d] = (iso || "").split("-");
-    if (!y || !m || !d) return iso;
-    return `${d}-${m}-${y}`;
+type RowStatus = "PRESENT" | "HALF" | "LEAVE";
+type RowState = { status: RowStatus; qty: number };
+
+const STATUS_META: Record<RowStatus, { label: string; color: string; icon: typeof Box }> = {
+    PRESENT: { label: "Present", color: BRAND.green, icon: CheckCircle2 },
+    HALF: { label: "Half", color: BRAND.amber, icon: Clock },
+    LEAVE: { label: "Leave", color: BRAND.grey, icon: Calendar },
+};
+
+function initials(name: string) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
 }
-
-// Deterministic pastel avatar color from a name, so the same person always
-// gets the same color across sessions.
 const AVATAR_PALETTE = ["#E9E4FB", "#FCE7D6", "#DCEFFB", "#FCE4EC", "#E1F3EC", "#EDEBFF"];
 const AVATAR_TEXT = ["#6D4FE0", "#C2761B", "#1785B0", "#C2447A", "#1E9A78", "#5B3DF5"];
 function avatarColors(name: string) {
@@ -197,823 +277,917 @@ function avatarColors(name: string) {
     const idx = hash % AVATAR_PALETTE.length;
     return { bg: AVATAR_PALETTE[idx], fg: AVATAR_TEXT[idx] };
 }
-function initials(name: string) {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return "?";
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[1][0]).toUpperCase();
+
+function downloadCsv(filename: string, rows: string[][]) {
+    const csv = rows
+        .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+        .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
-function withAlpha(hex: string, alpha: number) {
-    const n = parseInt(hex.slice(1), 16);
-    const r = (n >> 16) & 255;
-    const g = (n >> 8) & 255;
-    const b = n & 255;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-type Tab = "smart" | "manual";
-
-export default function Allocation() {
+export default function ManualAllocation() {
     const isMobile = useIsMobile();
-    const [tab, setTab] = useState<Tab>("smart");
 
-    const [batches, setBatches] = useState<DailyWorkBatch[]>([]);
-    const [employees, setEmployees] = useState<Employee[]>([]);
-    const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
-
-    const [selectedId, setSelectedId] = useState("");
-    const [productFilter, setProductFilter] = useState("");
-    const [teamFilter, setTeamFilter] = useState("");
+    // ---- filter bar state ----
+    const [date, setDate] = useState(todayStr());
+    const [products, setProducts] = useState<Product[]>([]);
+    const [productId, setProductId] = useState(""); // "" = All
     const [departmentFilter, setDepartmentFilter] = useState("");
+    const [teamFilter, setTeamFilter] = useState("");
+    const [filtersOpen, setFiltersOpen] = useState(true);
 
-    const [qtyByEmployee, setQtyByEmployee] = useState<Record<string, string>>({});
-    const [onLeaveIds, setOnLeaveIds] = useState<Set<string>>(new Set());
+    // ---- data ----
+    const [batchesForDate, setBatchesForDate] = useState<DailyWorkBatch[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
+    const [rows, setRows] = useState<Record<string, RowState>>({});
 
+    // ---- ui state ----
+    const [manualEdit, setManualEdit] = useState(false);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
+    const [error, setError] = useState("");
+    const [toast, setToast] = useState("");
+    const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
 
-    const loadInitial = async () => {
+    const showToast = (msg: string) => {
+        setToast(msg);
+        setTimeout(() => setToast(""), 3000);
+    };
+
+    // close the row action menu on outside click
+    useEffect(() => {
+        const onClick = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setOpenMenuFor(null);
+            }
+        };
+        document.addEventListener("mousedown", onClick);
+        return () => document.removeEventListener("mousedown", onClick);
+    }, []);
+
+    // ---- selected batch (the one specific daily_work row for date+product) ----
+    const selectedBatch = useMemo(
+        () => batchesForDate.find((b) => b.productId === productId) || null,
+        [batchesForDate, productId]
+    );
+
+    // ---- load products (once) ----
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/products`);
+                const json = await res.json();
+                if (res.ok) setProducts(json.data || []);
+            } catch (err) {
+                console.error("Failed to load products:", err);
+            }
+        })();
+    }, []);
+
+    // ---- load employees (once) ----
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/employees`);
+                const json = await res.json();
+                if (res.ok) setEmployees(Array.isArray(json) ? json : json.data || []);
+            } catch (err) {
+                console.error("Failed to load employees:", err);
+            }
+        })();
+    }, []);
+
+    // ---- load daily_work batches whenever the date changes ----
+    const loadBatches = useCallback(async () => {
         setLoading(true);
-        setError(null);
+        setError("");
         try {
-            const [batchRes, empRes] = await Promise.all([
-                authFetch(`${API_BASE}/api/daily-work`),
-                authFetch(`${API_BASE}/api/employees`),
-            ]);
-            const batchJson = await batchRes.json();
-            const empJson = await empRes.json();
-            if (!batchRes.ok || !batchJson.success)
-                throw new Error(batchJson.message || "Failed to load batches");
-            if (!empRes.ok) throw new Error("Failed to load employees");
-            const batchList: DailyWorkBatch[] = batchJson.data || [];
-            setBatches(batchList);
-            setEmployees(Array.isArray(empJson) ? empJson : empJson.data || []);
-            setSelectedId((prev) => {
-                if (prev && batchList.some((b) => b.id === prev && b.pendingQty > 0)) return prev;
-                return batchList.find((b) => b.pendingQty > 0)?.id || "";
-            });
+            const res = await authFetch(`${API_BASE}/api/daily-work?date=${date}`);
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json.message || "Failed to load daily work");
+            setBatchesForDate(json.data || []);
         } catch (err: any) {
-            setError(err.message || "Failed to load data");
+            setError(err.message || "Failed to load daily work for this date");
+            setBatchesForDate([]);
         } finally {
             setLoading(false);
         }
-    };
+    }, [date]);
 
     useEffect(() => {
-        loadInitial();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        loadBatches();
+    }, [loadBatches]);
 
-    const products = useMemo(
-        () => Array.from(new Set(batches.map((b) => b.productName).filter(Boolean))) as string[],
-        [batches]
-    );
-    const pendingBatches = useMemo(() => {
-        let list = batches.filter((b) => b.pendingQty > 0);
-        if (productFilter) list = list.filter((b) => b.productName === productFilter);
-        return list;
-    }, [batches, productFilter]);
-
-    useEffect(() => {
-        if (selectedId && !pendingBatches.some((b) => b.id === selectedId)) {
-            setSelectedId("");
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [productFilter]);
-
-    const selectedBatch = useMemo(
-        () => batches.find((b) => b.id === selectedId) || null,
-        [batches, selectedId]
-    );
-
-    // Load who's marked present for this batch's date, so allocation only
-    // targets people who actually showed up.
-    useEffect(() => {
-        if (!selectedBatch) {
-            setPresentIds(new Set());
-            return;
-        }
-        (async () => {
-            try {
-                const res = await authFetch(
-                    `${API_BASE}/api/attendance?date=${selectedBatch.workDate}`
-                );
-                const json = await res.json();
-                if (res.ok && json.success) {
-                    const present = (json.data as AttendanceRow[])
-                        .filter((r) => r.status === "PRESENT")
-                        .map((r) => r.employeeId);
-                    setPresentIds(new Set(present));
-                }
-            } catch {
-                setPresentIds(new Set());
-            }
-        })();
-        setQtyByEmployee({});
-        setOnLeaveIds(new Set());
-        setSuccess(null);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedBatch?.id]);
-
-    const teams = useMemo(
-        () => Array.from(new Set(employees.map((e) => e.team).filter(Boolean))) as string[],
-        [employees]
-    );
+    // ---- filtered employee list (department/team narrow who participates) ----
     const departments = useMemo(
         () => Array.from(new Set(employees.map((e) => e.department).filter(Boolean))) as string[],
         [employees]
     );
-
-    const visibleEmployees = useMemo(() => {
-        let list =
-            presentIds.size === 0 ? employees : employees.filter((e) => presentIds.has(e.id));
-        if (teamFilter) list = list.filter((e) => e.team === teamFilter);
+    const teams = useMemo(
+        () =>
+            Array.from(new Set(employees.map((e) => e.workedInTeams).filter(Boolean))) as string[],
+        [employees]
+    );
+    const filteredEmployees = useMemo(() => {
+        let list = employees;
         if (departmentFilter) list = list.filter((e) => e.department === departmentFilter);
+        if (teamFilter) list = list.filter((e) => e.workedInTeams === teamFilter);
         return list;
-    }, [employees, presentIds, teamFilter, departmentFilter]);
+    }, [employees, departmentFilter, teamFilter]);
 
-    const eligibleForSmart = useMemo(
-        () => visibleEmployees.filter((e) => !onLeaveIds.has(e.id)),
-        [visibleEmployees, onLeaveIds]
+    // ---- when the selected batch changes, prefill rows: restore a previous
+    // save if one exists for this batch, otherwise default everyone to
+    // Present / qty 0 ----
+    useEffect(() => {
+        setManualEdit(false);
+        setError("");
+
+        if (!selectedBatch) {
+            setRows({});
+            return;
+        }
+
+        (async () => {
+            let previous: Record<string, RowState> = {};
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/allocations?dailyWorkId=${selectedBatch.id}`
+                );
+                const json = await res.json();
+                if (res.ok && json.success) {
+                    (json.data || []).forEach((a: any) => {
+                        const status: RowStatus = ["PRESENT", "HALF", "LEAVE"].includes(a.status)
+                            ? a.status
+                            : "PRESENT";
+                        previous[a.employee_id] = { status, qty: a.allocated_qty || 0 };
+                    });
+                }
+            } catch {
+                // no previous save — fall through to defaults below
+            }
+
+            const next: Record<string, RowState> = {};
+            filteredEmployees.forEach((emp) => {
+                next[emp.id] = previous[emp.id] || { status: "PRESENT", qty: 0 };
+            });
+            setRows(next);
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedBatch?.id]);
+
+    // ---- KPI numbers ----
+    const totalQty = useMemo(() => {
+        if (productId) return selectedBatch?.totalQty ?? 0;
+        return batchesForDate.reduce((sum, b) => sum + b.totalQty, 0);
+    }, [productId, selectedBatch, batchesForDate]);
+
+    const allocatedQty = useMemo(() => {
+        if (productId) return Object.values(rows).reduce((sum, r) => sum + (r.qty || 0), 0);
+        return batchesForDate.reduce((sum, b) => sum + b.allocatedQty, 0);
+    }, [productId, rows, batchesForDate]);
+
+    const remainingQty = totalQty - allocatedQty;
+
+    // ---- status counts (for the smart allocation formula) ----
+    const presentCount = useMemo(
+        () => Object.values(rows).filter((r) => r.status === "PRESENT").length,
+        [rows]
+    );
+    const halfCount = useMemo(
+        () => Object.values(rows).filter((r) => r.status === "HALF").length,
+        [rows]
     );
 
-    const baseQty =
-        selectedBatch && eligibleForSmart.length > 0
-            ? Math.floor(selectedBatch.pendingQty / eligibleForSmart.length)
-            : 0;
-    const leftover =
-        selectedBatch && eligibleForSmart.length > 0
-            ? selectedBatch.pendingQty - baseQty * eligibleForSmart.length
-            : 0;
+    // ---- SMART ALLOCATION LOGIC ----
+    // total_units = present + half*0.5
+    // base_qty = floor(total_qty / total_units)
+    // Present -> base_qty, Half -> base_qty/2, Leave -> 0
+    const handleSmartAllocation = () => {
+        if (!selectedBatch) return;
+        const totalUnits = presentCount + halfCount * 0.5;
+        if (totalUnits <= 0) {
+            setError("Mark at least one employee Present or Half before running Smart Allocation.");
+            return;
+        }
+        const baseQty = Math.floor(selectedBatch.totalQty / totalUnits);
 
-    const totalEntered = useMemo(
-        () => Object.values(qtyByEmployee).reduce((sum, v) => sum + (Number(v) || 0), 0),
-        [qtyByEmployee]
-    );
-    const remaining = selectedBatch ? selectedBatch.pendingQty - totalEntered : 0;
-    const hasEntries = Object.values(qtyByEmployee).some((v) => (Number(v) || 0) > 0);
-
-    const setQty = (employeeId: string, value: number) => {
-        if (onLeaveIds.has(employeeId)) return;
-        setQtyByEmployee((prev) => ({ ...prev, [employeeId]: String(Math.max(0, value)) }));
-    };
-
-    const toggleLeave = async (employeeId: string) => {
-        const willBeOnLeave = !onLeaveIds.has(employeeId);
-
-        // Optimistic UI update first — feels instant, matches every other
-        // toggle in this app.
-        setOnLeaveIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(employeeId)) next.delete(employeeId);
-            else next.add(employeeId);
+        setRows((prev) => {
+            const next = { ...prev };
+            Object.keys(next).forEach((employeeId) => {
+                const status = next[employeeId].status;
+                const qty =
+                    status === "PRESENT"
+                        ? baseQty
+                        : status === "HALF"
+                          ? Math.round(baseQty / 2)
+                          : 0;
+                next[employeeId] = { status, qty };
+            });
             return next;
         });
-        setQtyByEmployee((prev) => ({ ...prev, [employeeId]: "0" }));
-
-        // Persist to the real attendance table — this is now the ONLY
-        // attendance UI in the app (the standalone Attendance page is
-        // gone), so this click must actually save, not just affect this
-        // one allocation run. Binary only: LEAVE (unavailable) or
-        // PRESENT (available) — no separate ABSENT state in this UI.
-        if (!selectedBatch) return;
-        try {
-            await authFetch(`${API_BASE}/api/attendance/bulk`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    date: selectedBatch.workDate,
-                    records: [{ employeeId, status: willBeOnLeave ? "LEAVE" : "PRESENT" }],
-                }),
-            });
-        } catch {
-            // Network/cold-start hiccup — the toggle still reflects locally
-            // and the next full page load will re-sync from the server,
-            // so this fails silently rather than blocking the click.
-        }
+        setError("");
     };
 
-    const handleAutoDistribute = () => {
-        if (!selectedBatch || eligibleForSmart.length === 0) return;
-        const next: Record<string, string> = {};
-        eligibleForSmart.forEach((emp, i) => {
-            const qty = baseQty + (i < leftover ? 1 : 0);
-            next[emp.id] = String(qty);
+    // ---- status button click ----
+    const setStatus = (employeeId: string, status: RowStatus) => {
+        setRows((prev) => {
+            const current = prev[employeeId] || { status: "PRESENT", qty: 0 };
+            const qty = status === "LEAVE" ? 0 : current.qty;
+            return { ...prev, [employeeId]: { status, qty } };
         });
-        onLeaveIds.forEach((id) => {
-            next[id] = "0";
+    };
+
+    // ---- manual qty edit ----
+    const setQty = (employeeId: string, qty: number) => {
+        setRows((prev) => ({
+            ...prev,
+            [employeeId]: {
+                ...(prev[employeeId] || { status: "PRESENT", qty: 0 }),
+                qty: Math.max(0, qty),
+            },
+        }));
+    };
+
+    // ---- row quick-action menu ----
+    const resetRow = (employeeId: string) => {
+        setRows((prev) => ({ ...prev, [employeeId]: { status: "PRESENT", qty: 0 } }));
+        setOpenMenuFor(null);
+    };
+    const markPresentRow = (employeeId: string) => {
+        setStatus(employeeId, "PRESENT");
+        setOpenMenuFor(null);
+    };
+
+    // ---- EXPORT (CSV of current filtered table) ----
+    const handleExport = () => {
+        const header = [
+            "#",
+            "Employee Name",
+            "Employee Code",
+            "Dept",
+            "Team",
+            "Status",
+            "Allocated Qty",
+        ];
+        const body = filteredEmployees.map((emp, idx) => {
+            const r = rows[emp.id] || { status: "PRESENT" as RowStatus, qty: 0 };
+            return [
+                String(idx + 1),
+                emp.name,
+                emp.employeeCode || "",
+                emp.department || "",
+                emp.workedInTeams || "",
+                STATUS_META[r.status].label,
+                String(r.qty),
+            ];
         });
-        setQtyByEmployee(next);
-        setSuccess(null);
-        setError(null);
+        const productLabel = selectedBatch?.productName || "all-products";
+        downloadCsv(`manual-allocation_${date}_${productLabel}.csv`, [header, ...body]);
     };
 
-    const handleUndo = () => {
-        setQtyByEmployee({});
-        setError(null);
-    };
-
-    const handleSubmit = async () => {
-        if (!selectedBatch) return;
-        const allocations = Object.entries(qtyByEmployee)
-            .filter(([employeeId]) => !onLeaveIds.has(employeeId))
-            .map(([employeeId, qty]) => ({ employeeId, qty: Number(qty) || 0 }))
-            .filter((a) => a.qty > 0);
-
-        if (allocations.length === 0) {
-            setError("Enter at least one quantity greater than 0");
-            return;
-        }
-        if (remaining < 0) {
-            setError("Total entered exceeds the pending quantity for this batch");
-            return;
-        }
-
-        setSubmitting(true);
-        setError(null);
-        try {
-            const res = await authFetch(`${API_BASE}/api/allocations/manual`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ dailyWorkId: selectedBatch.id, allocations }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success) throw new Error(json.message || "Allocation failed");
-            setSuccess(
-                `Allocated ${allocations.reduce((s, a) => s + a.qty, 0)} units. ${json.data.summary.pendingQty} still pending.`
-            );
-            setQtyByEmployee({});
-            setOnLeaveIds(new Set());
-            loadInitial();
-        } catch (err: any) {
-            setError(err.message || "Allocation failed");
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    const isSmart = tab === "smart";
+    const productSelected = !!productId;
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            <div style={styles.headerRow}>
-                <div>
-                    <h1 style={styles.title}>
-                        {isSmart ? "Smart Allocation" : "Manual Allocation"}
-                    </h1>
-                    <p style={styles.subtitle}>
-                        {isSmart
-                            ? "Automatically distribute cases equally among available employees."
-                            : "Hand out exact quantities per employee for a pending batch."}
-                    </p>
-                </div>
-                <div style={styles.headerActions}>
-                    {selectedBatch && (
-                        <div style={styles.dateBadge}>
-                            <Calendar size={14} color="#6b7280" />
-                            <span>{formatDisplayDate(selectedBatch.workDate)}</span>
+            <div style={styles.topBar} />
+
+            <div style={isMobile ? styles.pageMobile : styles.page}>
+                {/* ---- Header card with icon box + decorative illustration ---- */}
+                <div style={isMobile ? styles.headerCardMobile : styles.headerCard}>
+                    <div style={styles.headerLeft}>
+                        <div style={styles.headerIconBox}>
+                            <CalendarCheck size={22} color={BRAND.blue} />
+                        </div>
+                        <div>
+                            <h1 style={styles.title}>Today's Allocation</h1>
+                            <p style={styles.subtitle}>
+                                Pick a date and product, then Smart Allocate or hand out quantities
+                                by hand — Present/Half/Leave decides who gets a share.
+                            </p>
+                        </div>
+                    </div>
+                    {!isMobile && (
+                        <div style={styles.headerIllustration}>
+                            <HeaderIllustration />
                         </div>
                     )}
-                    <button style={styles.refreshBtn} onClick={loadInitial} disabled={loading}>
-                        <RefreshCw size={14} />
-                        Refresh
-                    </button>
                 </div>
-            </div>
 
-            <div style={styles.tabBar}>
-                <button
-                    style={{ ...styles.tabBtn, ...(isSmart ? styles.tabBtnActive : {}) }}
-                    onClick={() => setTab("smart")}
-                >
-                    <Zap size={14} />
-                    Smart Allocation
-                </button>
-                <button
-                    style={{ ...styles.tabBtn, ...(!isSmart ? styles.tabBtnActive : {}) }}
-                    onClick={() => setTab("manual")}
-                >
-                    <Hand size={14} />
-                    Manual Allocation
-                </button>
-            </div>
-
-            {error && <div style={styles.errorBanner}>{error}</div>}
-            {success && <div style={styles.successBanner}>{success}</div>}
-
-            <div style={styles.card}>
-                <div style={isMobile ? styles.batchRowMobile : styles.batchRow}>
-                    <div
-                        style={
-                            isMobile
-                                ? { ...styles.productField, width: "100%" }
-                                : styles.productField
-                        }
-                    >
-                        <label style={styles.label}>Product</label>
-                        <select
-                            style={styles.select}
-                            value={productFilter}
-                            onChange={(e) => setProductFilter(e.target.value)}
-                        >
-                            <option value="">All Products</option>
-                            {products.map((p) => (
-                                <option key={p} value={p}>
-                                    {p}
-                                </option>
-                            ))}
-                        </select>
+                {error && (
+                    <div style={styles.errorBanner}>
+                        <AlertTriangle size={14} />
+                        {error}
                     </div>
-                    <div style={styles.batchField}>
-                        <label style={styles.label}>Select Daily Work batch</label>
-                        <select
-                            style={styles.select}
-                            value={selectedId}
-                            onChange={(e) => setSelectedId(e.target.value)}
-                            disabled={loading}
-                        >
-                            <option value="">
-                                {loading ? "Loading..." : "-- Select batch --"}
-                            </option>
-                            {pendingBatches.map((b) => (
-                                <option key={b.id} value={b.id}>
-                                    {formatDisplayDate(b.workDate)} • {b.productName || "Unknown"} •
-                                    Pending {b.pendingQty}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-            </div>
+                )}
 
-            {selectedBatch && (
-                <>
-                    <div style={isMobile ? styles.filterRowMobile : styles.filterRow}>
-                        <div style={styles.filterField}>
-                            <label style={styles.label}>Team</label>
-                            <select
-                                style={styles.select}
-                                value={teamFilter}
-                                onChange={(e) => setTeamFilter(e.target.value)}
-                            >
-                                <option value="">All Teams</option>
-                                {teams.map((t) => (
-                                    <option key={t} value={t}>
-                                        {t}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div style={styles.filterField}>
-                            <label style={styles.label}>Department</label>
-                            <select
-                                style={styles.select}
-                                value={departmentFilter}
-                                onChange={(e) => setDepartmentFilter(e.target.value)}
-                            >
-                                <option value="">All Departments</option>
-                                {departments.map((d) => (
-                                    <option key={d} value={d}>
-                                        {d}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        {isSmart && (
-                            <div style={styles.infoBox}>
-                                <InfoCircle
-                                    size={15}
-                                    color={BRAND.lightBlue}
-                                    style={{ flexShrink: 0, marginTop: 1 }}
+                {/* ---- 1. TOP FILTER BAR ---- */}
+                {filtersOpen && (
+                    <div style={styles.card}>
+                        <div style={isMobile ? styles.filterBarMobile : styles.filterBar}>
+                            <div style={styles.filterField}>
+                                <label style={styles.label}>
+                                    <Calendar size={12} color={BRAND.blue} /> Date
+                                </label>
+                                <input
+                                    type="date"
+                                    value={date}
+                                    onChange={(e) => setDate(e.target.value)}
+                                    style={styles.select}
                                 />
-                                <div>
-                                    <div style={styles.infoTitle}>About Smart Allocation</div>
-                                    <div style={styles.infoText}>
-                                        base_qty = floor(total_qty / present_count). Leftover units
-                                        go one by one to the first employees in the list until
-                                        nothing's left.
-                                    </div>
-                                </div>
                             </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.label}>
+                                    <Box size={12} color={BRAND.blue} /> Product
+                                </label>
+                                <select
+                                    value={productId}
+                                    onChange={(e) => setProductId(e.target.value)}
+                                    style={styles.select}
+                                >
+                                    <option value="">All Products</option>
+                                    {products.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.product_name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.label}>
+                                    <Users size={12} color={BRAND.blue} /> Department
+                                </label>
+                                <select
+                                    value={departmentFilter}
+                                    onChange={(e) => setDepartmentFilter(e.target.value)}
+                                    style={styles.select}
+                                >
+                                    <option value="">All Departments</option>
+                                    {departments.map((d) => (
+                                        <option key={d} value={d}>
+                                            {d}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.label}>
+                                    <Users size={12} color={BRAND.blue} /> Team
+                                </label>
+                                <select
+                                    value={teamFilter}
+                                    onChange={(e) => setTeamFilter(e.target.value)}
+                                    style={styles.select}
+                                >
+                                    <option value="">All Teams</option>
+                                    {teams.map((t) => (
+                                        <option key={t} value={t}>
+                                            {t}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {!productSelected && (
+                            <p style={styles.allNote}>
+                                <AlertTriangle size={12} color={BRAND.amber} /> "All Products" is
+                                summary-only. Select one product to run Smart Allocation, Manual
+                                Edit, or Allocate &amp; Save.
+                            </p>
                         )}
                     </div>
+                )}
 
-                    <div style={isMobile ? styles.summaryRowMobile : styles.summaryRow}>
-                        <SummaryStat
-                            icon={Box}
-                            label="Total Cases"
-                            sub="Total quantity"
-                            value={selectedBatch.pendingQty}
-                            color={BRAND.lightBlue}
-                        />
-                        <SummaryStat
-                            icon={Users}
-                            label="Present Employees"
-                            sub="Available to allocate"
-                            value={eligibleForSmart.length}
-                            color={BRAND.green}
-                        />
-                        {isSmart ? (
-                            <>
-                                <SummaryStat
-                                    icon={Gauge}
-                                    label="Base Allocation"
-                                    sub="Per employee (base_qty)"
-                                    value={baseQty}
-                                    color={BRAND.blue}
-                                />
-                                <SummaryStat
-                                    icon={Gift}
-                                    label="Leftover"
-                                    sub="Will be distributed"
-                                    value={leftover}
-                                    color={BRAND.amber}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <SummaryStat
-                                    icon={Gauge}
-                                    label="Total Entered"
-                                    sub="Entered so far"
-                                    value={totalEntered}
-                                    color={BRAND.blue}
-                                />
-                                <SummaryStat
-                                    icon={CheckCircle2}
-                                    label="Remaining"
-                                    sub="Left to allocate"
-                                    value={remaining}
-                                    color={remaining < 0 ? BRAND.red : BRAND.amber}
-                                />
-                            </>
-                        )}
+                {/* ---- KPI CARDS ---- */}
+                <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
+                    <KpiCard
+                        icon={Box}
+                        label="Total Qty"
+                        subLabel="Total quantity to allocate"
+                        value={totalQty}
+                        color={BRAND.blue}
+                    />
+                    <KpiCard
+                        icon={Users}
+                        label="Present Employees"
+                        subLabel="Currently present"
+                        value={presentCount}
+                        color={BRAND.green}
+                    />
+                    <KpiCard
+                        icon={CheckCircle2}
+                        label="Allocated"
+                        subLabel="Already allocated"
+                        value={allocatedQty}
+                        color={BRAND.lightBlue}
+                    />
+                    <KpiCard
+                        icon={AlertTriangle}
+                        label="Remaining"
+                        subLabel="Yet to allocate"
+                        value={remainingQty}
+                        color={remainingQty > 0 ? BRAND.amber : BRAND.green}
+                    />
+                </div>
+
+                {/* ---- 2. ACTION BUTTONS ---- */}
+                <div style={styles.actionBar}>
+                    <div style={styles.actionBarLeft}>
+                        <button
+                            style={{
+                                ...styles.smartBtn,
+                                opacity: productSelected ? 1 : 0.5,
+                                cursor: productSelected ? "pointer" : "not-allowed",
+                            }}
+                            disabled={!productSelected}
+                            onClick={handleSmartAllocation}
+                        >
+                            <Zap size={14} />
+                            Smart Allocation
+                        </button>
+                        <button
+                            style={{
+                                ...styles.manualBtn,
+                                ...(manualEdit ? styles.manualBtnActive : {}),
+                                opacity: productSelected ? 1 : 0.5,
+                                cursor: productSelected ? "pointer" : "not-allowed",
+                            }}
+                            disabled={!productSelected}
+                            onClick={() => setManualEdit((v) => !v)}
+                        >
+                            <Edit3 size={14} />
+                            Manual Edit: {manualEdit ? "ON" : "OFF"}
+                        </button>
                     </div>
-
-                    {isSmart && (
-                        <div style={styles.autoDistributeBar}>
-                            <div style={styles.autoDistributeText}>
-                                <div style={styles.autoDistributeTitle}>
-                                    Auto Distribute Equally
-                                </div>
-                                <div style={styles.autoDistributeSub}>
-                                    Click to evenly distribute cases among present employees.
-                                </div>
-                            </div>
+                    {!isMobile && (
+                        <div style={styles.actionBarRight}>
                             <button
-                                style={{
-                                    ...styles.autoDistributeBtn,
-                                    opacity: eligibleForSmart.length === 0 ? 0.5 : 1,
-                                }}
-                                disabled={eligibleForSmart.length === 0}
-                                onClick={handleAutoDistribute}
+                                style={styles.iconTextBtn}
+                                onClick={handleExport}
+                                disabled={!productSelected}
+                                title="Export current table to CSV"
                             >
-                                <Zap size={14} />
-                                Auto Distribute
+                                <Download size={14} />
+                                Export
+                            </button>
+                            <button
+                                style={styles.iconOnlyBtn}
+                                onClick={() => setFiltersOpen((v) => !v)}
+                                title={filtersOpen ? "Hide filters" : "Show filters"}
+                            >
+                                <Filter size={15} />
                             </button>
                         </div>
                     )}
+                </div>
 
-                    {presentIds.size === 0 && (
-                        <p style={styles.noteWarning}>
-                            No PRESENT attendance found for{" "}
-                            {formatDisplayDate(selectedBatch.workDate)} — showing all employees.
-                            Mark attendance first for an accurate list.
-                        </p>
-                    )}
-
-                    <div style={styles.tableCard}>
-                        <div style={styles.tableHeadRow}>
-                            <span style={{ flex: 1.4 }}>
-                                Employees ({visibleEmployees.length}{" "}
-                                {presentIds.size === 0 ? "" : "Present"})
-                            </span>
-                            {isSmart && (
-                                <span style={styles.tableHeadNote}>
-                                    Mark Leave for employees who should not receive allocation
-                                </span>
-                            )}
-                        </div>
-                        <div style={styles.tableSubHeadRow}>
-                            <span style={{ flex: 1.4 }}>Employee</span>
-                            {!isMobile && <span style={{ width: 110 }}>Team</span>}
-                            {!isMobile && <span style={{ width: 110 }}>Department</span>}
-                            {!isMobile && <span style={{ width: 90 }}>Status</span>}
-                            <span style={{ width: 130, textAlign: "right" }}>Case Allocation</span>
-                            {isSmart && (
-                                <span style={{ width: 80, textAlign: "right" }}>Leave</span>
-                            )}
-                        </div>
-
-                        {hasEntries && (
-                            <div style={styles.undoBar}>
-                                <span style={styles.undoBarText}>
-                                    {
-                                        Object.values(qtyByEmployee).filter(
-                                            (v) => (Number(v) || 0) > 0
-                                        ).length
-                                    }{" "}
-                                    quantity entered — not saved yet.
-                                </span>
-                                <button style={styles.undoButton} onClick={handleUndo}>
-                                    <Undo2 size={13} />
-                                    Undo All
-                                </button>
-                            </div>
-                        )}
-
-                        {visibleEmployees.length === 0 ? (
-                            <div style={styles.emptyNote}>No employees to show.</div>
-                        ) : (
-                            visibleEmployees.map((emp) => {
-                                const { bg, fg } = avatarColors(emp.name);
-                                const onLeave = onLeaveIds.has(emp.id);
-                                const qty = Number(qtyByEmployee[emp.id] || 0);
-                                return (
-                                    <div
-                                        key={emp.id}
-                                        style={{ ...styles.tableRow, opacity: onLeave ? 0.5 : 1 }}
-                                    >
-                                        <div style={{ ...styles.empInfo, flex: 1.4 }}>
-                                            <div
-                                                style={{
-                                                    ...styles.avatar,
-                                                    background: bg,
-                                                    color: fg,
-                                                }}
-                                            >
-                                                {initials(emp.name)}
-                                            </div>
-                                            <div>
-                                                <div style={styles.empName}>{emp.name}</div>
-                                                {emp.employeeCode && (
-                                                    <div style={styles.empCode}>
-                                                        {emp.employeeCode}
-                                                    </div>
-                                                )}
-                                            </div>
+                {/* ---- 3. MAIN TABLE ----
+                    A real <table> is used (not stacked CSS-grid divs) so the
+                    header and every row are guaranteed to share the exact
+                    same column widths — the browser's table layout engine
+                    enforces this across <thead> and <tbody> automatically,
+                    which independent grid containers per row cannot. */}
+                <div style={styles.tableCard}>
+                    <table style={styles.table}>
+                        <colgroup>
+                            <col style={{ width: isMobile ? 28 : 40 }} />
+                            <col />
+                            {!isMobile && <col style={{ width: "13%" }} />}
+                            {!isMobile && <col style={{ width: "13%" }} />}
+                            {!isMobile && <col style={{ width: "15%" }} />}
+                            <col style={{ width: isMobile ? "34%" : "24%" }} />
+                            <col style={{ width: isMobile ? 84 : 120 }} />
+                            <col style={{ width: 28 }} />
+                        </colgroup>
+                        <thead>
+                            <tr style={styles.theadRow}>
+                                <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
+                                <th style={styles.th}>Employee Name</th>
+                                {!isMobile && <th style={styles.th}>Dept</th>}
+                                {!isMobile && <th style={styles.th}>Team</th>}
+                                {!isMobile && <th style={styles.th}>Product</th>}
+                                <th style={styles.th}>Status</th>
+                                <th style={{ ...styles.th, textAlign: "right" }}>Allocated Qty</th>
+                                <th style={{ ...styles.th, paddingRight: 18 }} />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {loading ? (
+                                <tr>
+                                    <td style={styles.emptyNote} colSpan={isMobile ? 5 : 8}>
+                                        Loading...
+                                    </td>
+                                </tr>
+                            ) : !productSelected ? (
+                                <tr>
+                                    <td colSpan={isMobile ? 5 : 8}>
+                                        <div style={styles.emptyState}>
+                                            <EmptyStateIcon />
+                                            <span style={styles.emptyStateText}>
+                                                Select a product above to see the employee list.
+                                            </span>
                                         </div>
-                                        {!isMobile && (
-                                            <span
-                                                style={{
-                                                    width: 110,
-                                                    fontSize: 13,
-                                                    color: "#374151",
-                                                }}
-                                            >
-                                                {emp.team || "-"}
+                                    </td>
+                                </tr>
+                            ) : filteredEmployees.length === 0 ? (
+                                <tr>
+                                    <td colSpan={isMobile ? 5 : 8}>
+                                        <div style={styles.emptyState}>
+                                            <EmptyStateIcon />
+                                            <span style={styles.emptyStateText}>
+                                                No employees match this Department/Team filter.
                                             </span>
-                                        )}
-                                        {!isMobile && (
-                                            <span
-                                                style={{
-                                                    width: 110,
-                                                    fontSize: 13,
-                                                    color: "#374151",
-                                                }}
-                                            >
-                                                {emp.department || "-"}
-                                            </span>
-                                        )}
-                                        {!isMobile && (
-                                            <span style={{ width: 90 }}>
-                                                <span style={styles.statusBadge}>
-                                                    <span style={styles.statusDot} />
-                                                    Present
-                                                </span>
-                                            </span>
-                                        )}
-                                        <div
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                filteredEmployees.map((emp, idx) => {
+                                    const r = rows[emp.id] || {
+                                        status: "PRESENT" as RowStatus,
+                                        qty: 0,
+                                    };
+                                    const { bg, fg } = avatarColors(emp.name);
+                                    const isLeave = r.status === "LEAVE";
+                                    return (
+                                        <tr
+                                            key={emp.id}
                                             style={{
-                                                width: 130,
-                                                display: "flex",
-                                                justifyContent: "flex-end",
+                                                background: isLeave
+                                                    ? "#f3f4f6"
+                                                    : idx % 2 === 0
+                                                      ? "#fff"
+                                                      : "#fafaff",
+                                                opacity: isLeave ? 0.65 : 1,
                                             }}
                                         >
-                                            <div style={styles.stepper}>
-                                                <input
-                                                    style={{
-                                                        ...styles.stepperInput,
-                                                        background: onLeave ? "#f3f4f6" : "#fff",
-                                                    }}
-                                                    type="number"
-                                                    min={0}
-                                                    disabled={onLeave}
-                                                    value={qtyByEmployee[emp.id] || ""}
-                                                    placeholder="0"
-                                                    onChange={(e) =>
-                                                        setQty(emp.id, Number(e.target.value) || 0)
-                                                    }
-                                                />
-                                                <div style={styles.stepperArrows}>
-                                                    <button
-                                                        style={styles.stepperArrowBtn}
-                                                        disabled={onLeave}
-                                                        onClick={() => setQty(emp.id, qty + 1)}
-                                                        aria-label="Increase"
-                                                    >
-                                                        <ChevronUp size={11} />
-                                                    </button>
-                                                    <button
-                                                        style={styles.stepperArrowBtn}
-                                                        disabled={onLeave}
-                                                        onClick={() => setQty(emp.id, qty - 1)}
-                                                        aria-label="Decrease"
-                                                    >
-                                                        <ChevronDown size={11} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        {isSmart && (
-                                            <div
+                                            <td
                                                 style={{
-                                                    width: 80,
-                                                    display: "flex",
-                                                    justifyContent: "flex-end",
+                                                    ...styles.td,
+                                                    paddingLeft: 18,
+                                                    fontSize: 12,
+                                                    color: "#9ca3af",
                                                 }}
                                             >
-                                                <label style={styles.leaveLabel}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={onLeave}
-                                                        onChange={() => toggleLeave(emp.id)}
-                                                        style={{ cursor: "pointer" }}
-                                                    />
-                                                    On Leave
-                                                </label>
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })
-                        )}
+                                                {idx + 1}
+                                            </td>
+                                            <td style={styles.td}>
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 10,
+                                                        minWidth: 0,
+                                                    }}
+                                                >
+                                                    <div
+                                                        style={{
+                                                            ...styles.avatar,
+                                                            background: bg,
+                                                            color: fg,
+                                                        }}
+                                                    >
+                                                        {initials(emp.name)}
+                                                    </div>
+                                                    <div style={{ minWidth: 0 }}>
+                                                        <div style={styles.empName}>{emp.name}</div>
+                                                        {emp.employeeCode && (
+                                                            <div style={styles.empCode}>
+                                                                {emp.employeeCode}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            {!isMobile && (
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontSize: 13,
+                                                        color: "#374151",
+                                                    }}
+                                                >
+                                                    {emp.department || "-"}
+                                                </td>
+                                            )}
+                                            {!isMobile && (
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontSize: 13,
+                                                        color: "#374151",
+                                                    }}
+                                                >
+                                                    {emp.workedInTeams || "-"}
+                                                </td>
+                                            )}
+                                            {!isMobile && (
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontSize: 13,
+                                                        fontWeight: 600,
+                                                        color: BRAND.blue,
+                                                    }}
+                                                >
+                                                    {selectedBatch?.productName || "-"}
+                                                </td>
+                                            )}
+                                            <td style={styles.td}>
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        gap: 6,
+                                                        flexWrap: "wrap",
+                                                    }}
+                                                >
+                                                    {(
+                                                        ["PRESENT", "HALF", "LEAVE"] as RowStatus[]
+                                                    ).map((s) => {
+                                                        const active = r.status === s;
+                                                        const meta = STATUS_META[s];
+                                                        const StatusIcon = meta.icon;
+                                                        return (
+                                                            <button
+                                                                key={s}
+                                                                onClick={() => setStatus(emp.id, s)}
+                                                                style={{
+                                                                    ...styles.statusBtn,
+                                                                    background: active
+                                                                        ? meta.color
+                                                                        : withAlpha(
+                                                                              meta.color,
+                                                                              0.06
+                                                                          ),
+                                                                    color: active
+                                                                        ? "#fff"
+                                                                        : meta.color,
+                                                                    border: `1px solid ${
+                                                                        active
+                                                                            ? meta.color
+                                                                            : withAlpha(
+                                                                                  meta.color,
+                                                                                  0.35
+                                                                              )
+                                                                    }`,
+                                                                }}
+                                                            >
+                                                                <StatusIcon
+                                                                    size={12}
+                                                                    color={
+                                                                        active ? "#fff" : meta.color
+                                                                    }
+                                                                />
+                                                                {meta.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </td>
+                                            <td style={styles.td}>
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        justifyContent: "flex-end",
+                                                    }}
+                                                >
+                                                    {manualEdit ? (
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            value={r.qty}
+                                                            disabled={isLeave}
+                                                            onChange={(e) =>
+                                                                setQty(
+                                                                    emp.id,
+                                                                    Number(e.target.value) || 0
+                                                                )
+                                                            }
+                                                            style={styles.qtyInput}
+                                                        />
+                                                    ) : (
+                                                        <span
+                                                            style={{
+                                                                ...styles.qtyPill,
+                                                                background: withAlpha(
+                                                                    BRAND.lightBlue,
+                                                                    0.12
+                                                                ),
+                                                                color: BRAND.blue,
+                                                            }}
+                                                        >
+                                                            {r.qty}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td
+                                                style={{
+                                                    ...styles.td,
+                                                    paddingRight: 18,
+                                                    position: "relative",
+                                                }}
+                                            >
+                                                <button
+                                                    style={styles.dotsBtn}
+                                                    onClick={() =>
+                                                        setOpenMenuFor(
+                                                            openMenuFor === emp.id ? null : emp.id
+                                                        )
+                                                    }
+                                                >
+                                                    <MoreVertical size={15} color="#9ca3af" />
+                                                </button>
+                                                {openMenuFor === emp.id && (
+                                                    <div ref={menuRef} style={styles.rowMenu}>
+                                                        <button
+                                                            style={styles.rowMenuItem}
+                                                            onClick={() => markPresentRow(emp.id)}
+                                                        >
+                                                            Mark Present
+                                                        </button>
+                                                        <button
+                                                            style={styles.rowMenuItem}
+                                                            onClick={() => resetRow(emp.id)}
+                                                        >
+                                                            Reset to 0
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
+                        </tbody>
+                    </table>
+                </div>
 
-                        {visibleEmployees.length > 0 && (
-                            <div style={styles.totalsRow}>
-                                <TotalStat
-                                    label="Total Cases"
-                                    value={selectedBatch.pendingQty}
-                                    color="#1a1a2e"
-                                />
-                                <TotalStat
-                                    label="Total Allocated"
-                                    value={totalEntered}
-                                    color={BRAND.lightBlue}
-                                />
-                                <TotalStat
-                                    label="Remaining"
-                                    value={remaining}
-                                    color={remaining < 0 ? BRAND.red : BRAND.green}
-                                    withCheck={remaining === 0}
-                                />
-                            </div>
-                        )}
+                {/* ---- 6. BOTTOM BUTTON ---- */}
+                <button
+                    style={{
+                        ...styles.saveBtn,
+                        opacity: submitting || !productSelected ? 0.6 : 1,
+                        cursor: submitting || !productSelected ? "not-allowed" : "pointer",
+                    }}
+                    disabled={submitting || !productSelected}
+                    onClick={async () => {
+                        if (!selectedBatch) {
+                            setError('Select a specific product (not "All") before saving.');
+                            return;
+                        }
+                        const rowsPayload = filteredEmployees.map((emp) => {
+                            const r = rows[emp.id] || { status: "PRESENT" as RowStatus, qty: 0 };
+                            return { employeeId: emp.id, status: r.status, allocatedQty: r.qty };
+                        });
+                        if (rowsPayload.length === 0) {
+                            setError(
+                                "No employees to allocate — check your Department/Team filters."
+                            );
+                            return;
+                        }
+                        setSubmitting(true);
+                        setError("");
+                        try {
+                            const res = await authFetch(`${API_BASE}/api/allocations/bulk-upsert`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    dailyWorkId: selectedBatch.id,
+                                    rows: rowsPayload,
+                                }),
+                            });
+                            const json = await res.json();
+                            if (!res.ok || !json.success)
+                                throw new Error(json.message || "Failed to save allocation");
+                            showToast("Allocation Saved");
+                            loadBatches();
+                        } catch (err: any) {
+                            setError(err.message || "Failed to save allocation");
+                        } finally {
+                            setSubmitting(false);
+                        }
+                    }}
+                >
+                    <Save size={16} />
+                    {submitting ? "Saving..." : "Allocate & Save"}
+                </button>
+
+                {toast && (
+                    <div style={styles.toast}>
+                        <CheckCircle2 size={16} color="#fff" />
+                        {toast}
                     </div>
-
-                    <button
-                        style={{
-                            ...styles.submitButton,
-                            opacity: submitting ? 0.6 : 1,
-                            cursor: submitting ? "not-allowed" : "pointer",
-                        }}
-                        disabled={submitting}
-                        onClick={handleSubmit}
-                    >
-                        <Send size={15} />
-                        {submitting ? "Allocating..." : "Submit Allocation"}
-                    </button>
-                    <p style={styles.footnote}>
-                        Please review allocations before submitting. Employees marked as Leave will
-                        not receive any cases.
-                    </p>
-                </>
-            )}
+                )}
+            </div>
         </div>
     );
 }
 
-function SummaryStat({
+function KpiCard({
     icon: Icon,
     label,
-    sub,
+    subLabel,
     value,
     color,
 }: {
     icon: typeof Box;
     label: string;
-    sub: string;
+    subLabel: string;
     value: number;
     color: string;
 }) {
     return (
-        <div style={styles.statCard}>
-            <div style={{ ...styles.statIconWrap, background: withAlpha(color, 0.12) }}>
-                <Icon size={17} color={color} />
+        <div style={{ ...styles.kpiCard, background: withAlpha(color, 0.07) }}>
+            <div style={styles.dotPattern}>
+                {Array.from({ length: 12 }, (_, i) => (
+                    <span key={i} style={{ ...styles.dot, background: withAlpha(color, 0.35) }} />
+                ))}
             </div>
-            <div>
-                <div style={{ ...styles.statValue, color }}>{value}</div>
-                <div style={styles.statLabel}>{label}</div>
-                <div style={styles.statSub}>{sub}</div>
+            <div style={{ ...styles.kpiIconWrap, background: withAlpha(color, 0.16) }}>
+                <Icon size={20} color={color} />
             </div>
-        </div>
-    );
-}
-
-function TotalStat({
-    label,
-    value,
-    color,
-    withCheck,
-}: {
-    label: string;
-    value: number;
-    color: string;
-    withCheck?: boolean;
-}) {
-    return (
-        <div style={styles.totalStat}>
-            <div style={styles.totalStatLabel}>{label}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ ...styles.totalStatValue, color }}>{value}</div>
-                {withCheck && <CheckCircle2 size={16} color={BRAND.green} />}
+            <div style={{ minWidth: 0 }}>
+                <div style={{ ...styles.kpiValue, color }}>{value}</div>
+                <div style={styles.kpiLabel}>{label}</div>
+                <div style={styles.kpiSubLabel}>{subLabel}</div>
             </div>
         </div>
     );
 }
 
 const styles: Record<string, CSSProperties> = {
-    root: { padding: "28px 32px", width: "100%", boxSizing: "border-box" },
-    rootMobile: { padding: "16px", width: "100%", boxSizing: "border-box" },
-    headerRow: {
+    root: {
+        width: "100%",
+        minHeight: "100%",
+        background: "linear-gradient(180deg, #EEF1FB 0%, #F7F8FC 40%)",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    },
+    rootMobile: {
+        width: "100%",
+        minHeight: "100%",
+        background: "linear-gradient(180deg, #EEF1FB 0%, #F7F8FC 40%)",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    },
+    topBar: {
+        height: "4px",
+        width: "100%",
+        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
+    },
+    page: { padding: "24px 32px 32px", width: "100%", boxSizing: "border-box" },
+    pageMobile: { padding: "14px 14px 20px" },
+
+    headerCard: {
+        background: "#fff",
+        borderRadius: 18,
+        padding: "22px 28px",
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "flex-start",
-        flexWrap: "wrap",
-        gap: 12,
+        alignItems: "center",
+        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
         marginBottom: 18,
     },
-    title: { fontSize: 24, fontWeight: 800, color: "#1a1a2e", margin: 0 },
-    subtitle: { fontSize: 13, color: "#6b7280", marginTop: 6 },
-    headerActions: { display: "flex", gap: 10, alignItems: "center" },
-    dateBadge: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
+    headerCardMobile: {
         background: "#fff",
-        border: "1px solid #e5e7eb",
-        borderRadius: 10,
-        padding: "9px 14px",
-        fontSize: 13,
-        color: "#374151",
-        fontWeight: 500,
+        borderRadius: 16,
+        padding: "16px 16px",
+        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
+        marginBottom: 14,
     },
-    refreshBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: GRADIENT,
-        color: "#fff",
-        border: "none",
-        borderRadius: 10,
-        padding: "10px 16px",
-        fontSize: 13,
-        fontWeight: 600,
-        cursor: "pointer",
-    },
-    tabBar: {
-        display: "flex",
-        gap: 8,
-        background: "#fff",
-        border: "1px solid #ececec",
+    headerLeft: { display: "flex", gap: 16, alignItems: "flex-start" },
+    headerIconBox: {
+        width: 46,
+        height: 46,
         borderRadius: 12,
-        padding: 6,
-        marginBottom: 18,
-    },
-    tabBtn: {
-        flex: 1,
+        background: withAlpha(BRAND.blue, 0.1),
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: 8,
-        padding: "11px 16px",
-        borderRadius: 8,
-        border: "none",
-        background: "transparent",
+        flexShrink: 0,
+    },
+    title: { fontSize: 22, fontWeight: 800, color: "#1a1a2e", margin: 0 },
+    subtitle: {
+        fontSize: 12.5,
         color: "#6b7280",
-        fontWeight: 700,
-        fontSize: 13.5,
-        cursor: "pointer",
+        maxWidth: 480,
+        margin: "5px 0 0",
+        lineHeight: 1.6,
     },
-    tabBtnActive: {
-        background: GRADIENT,
-        color: "#fff",
-        boxShadow: "0 2px 8px rgba(91,61,245,0.25)",
-    },
+    headerIllustration: { flexShrink: 0, marginLeft: 20 },
+
     errorBanner: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
         background: "#FEF2F2",
         color: BRAND.red,
         border: "1px solid #FECACA",
@@ -1022,282 +1196,335 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 13,
         marginBottom: 16,
     },
-    successBanner: {
-        background: "rgba(46,187,168,0.1)",
-        color: BRAND.green,
-        border: `1px solid ${BRAND.green}`,
-        borderRadius: 8,
-        padding: "10px 14px",
-        fontSize: 13,
-        marginBottom: 16,
-    },
+
     card: {
         background: "#fff",
-        borderRadius: 12,
-        padding: 20,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-        marginBottom: 18,
-    },
-    label: { fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 8 },
-    batchRow: { display: "flex", gap: 16, alignItems: "flex-start" },
-    batchRowMobile: { display: "flex", flexDirection: "column", gap: 14 },
-    productField: { width: 220, flexShrink: 0 },
-    batchField: { flex: 1, minWidth: 0 },
-    select: {
-        width: "100%",
-        padding: "10px 12px",
-        borderRadius: 8,
-        border: "1px solid #d1d5db",
-        fontSize: 13.5,
-    },
-    filterRow: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr 1.6fr",
-        gap: 14,
-        marginBottom: 18,
-        alignItems: "stretch",
-    },
-    filterRowMobile: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        marginBottom: 16,
-    },
-    filterField: {
-        background: "#fff",
-        borderRadius: 12,
-        padding: 16,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-    },
-    infoBox: {
-        display: "flex",
-        gap: 10,
-        background: "#F3EEFE",
-        border: "1px solid #E4D9FC",
-        borderRadius: 12,
-        padding: 14,
-    },
-    infoTitle: { fontSize: 12.5, fontWeight: 700, color: BRAND.lightBlue, marginBottom: 3 },
-    infoText: { fontSize: 11.5, color: "#5b4b8a", lineHeight: 1.5 },
-    summaryRow: {
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: 14,
-        marginBottom: 18,
-    },
-    summaryRowMobile: {
-        display: "grid",
-        gridTemplateColumns: "repeat(2, 1fr)",
-        gap: 10,
-        marginBottom: 16,
-    },
-    statCard: {
-        background: "#fff",
-        borderRadius: 12,
-        padding: "14px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-    },
-    statIconWrap: {
-        width: 38,
-        height: 38,
-        borderRadius: "50%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
-    statValue: { fontSize: 20, fontWeight: 800, lineHeight: 1.1 },
-    statLabel: { fontSize: 12, color: "#374151", fontWeight: 600, marginTop: 3 },
-    statSub: { fontSize: 10.5, color: "#9ca3af", marginTop: 1 },
-    autoDistributeBar: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 14,
-        background: "#fff",
-        borderRadius: 12,
-        padding: "16px 20px",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-        marginBottom: 18,
-        flexWrap: "wrap",
-    },
-    autoDistributeText: {},
-    autoDistributeTitle: { fontSize: 13.5, fontWeight: 700, color: "#1a1a2e" },
-    autoDistributeSub: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-    autoDistributeBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: GRADIENT,
-        color: "#fff",
-        border: "none",
-        borderRadius: 10,
-        padding: "11px 18px",
-        fontSize: 13,
-        fontWeight: 700,
-        cursor: "pointer",
-        flexShrink: 0,
-    },
-    noteWarning: {
-        fontSize: 12,
-        color: BRAND.amber,
-        marginBottom: 14,
-        background: "rgba(245,158,11,0.08)",
-        padding: "10px 14px",
-        borderRadius: 8,
-    },
-    tableCard: {
-        background: "#fff",
         borderRadius: 14,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-        overflow: "hidden",
-        marginBottom: 18,
+        padding: 18,
+        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
+        marginBottom: 16,
     },
-    tableHeadRow: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "14px 20px 4px",
-        fontSize: 13,
-        fontWeight: 700,
-        color: "#1a1a2e",
-    },
-    tableHeadNote: { fontSize: 11.5, color: "#9ca3af", fontWeight: 500 },
-    tableSubHeadRow: {
-        display: "flex",
-        padding: "8px 20px 12px",
-        borderBottom: "1px solid #f1f1f1",
-        fontSize: 11,
-        fontWeight: 700,
-        color: "#9ca3af",
-        textTransform: "uppercase",
-        letterSpacing: 0.3,
-        gap: 8,
-    },
-    tableRow: {
-        display: "flex",
-        alignItems: "center",
-        padding: "12px 20px",
-        borderBottom: "1px solid #f1f1f1",
-        gap: 8,
-        flexWrap: "wrap",
-    },
-    empInfo: { display: "flex", alignItems: "center", gap: 12 },
-    avatar: {
-        width: 34,
-        height: 34,
-        borderRadius: "50%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 12,
-        fontWeight: 700,
-        flexShrink: 0,
-    },
-    empName: { fontSize: 13.5, color: "#1a1a2e", fontWeight: 600 },
-    empCode: { fontSize: 11.5, color: "#9ca3af", marginTop: 1 },
-    statusBadge: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        fontSize: 12,
-        color: BRAND.green,
-        fontWeight: 600,
-    },
-    statusDot: {
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        background: BRAND.green,
-        display: "inline-block",
-    },
-    stepper: { display: "flex", alignItems: "center", gap: 4 },
-    stepperInput: {
-        width: 58,
-        padding: "7px 8px",
-        borderRadius: 8,
-        border: "1px solid #d1d5db",
-        fontSize: 13,
-        textAlign: "center",
-        fontWeight: 600,
-        color: BRAND.blue,
-    },
-    stepperArrows: { display: "flex", flexDirection: "column", gap: 1 },
-    stepperArrowBtn: {
-        width: 20,
-        height: 15,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        border: "1px solid #d1d5db",
-        background: "#fff",
-        color: "#6b7280",
-        borderRadius: 4,
-        cursor: "pointer",
-        padding: 0,
-    },
-    leaveLabel: {
+    filterBar: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 },
+    filterBarMobile: { display: "flex", flexDirection: "column", gap: 12 },
+    filterField: {},
+    label: {
         display: "flex",
         alignItems: "center",
         gap: 5,
         fontSize: 11.5,
-        color: "#6b7280",
-        fontWeight: 500,
-        whiteSpace: "nowrap",
+        fontWeight: 700,
+        color: BRAND.blue,
+        marginBottom: 6,
     },
-    emptyNote: { padding: "24px", textAlign: "center", color: "#9ca3af", fontSize: 13 },
-    undoBar: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "10px 20px",
-        background: "#FFFBEB",
-        borderBottom: "1px solid #FDE68A",
-        flexWrap: "wrap",
-        gap: 10,
+    select: {
+        width: "100%",
+        padding: "9px 10px",
+        borderRadius: 8,
+        border: "1px solid #e2e4f0",
+        fontSize: 13,
+        boxSizing: "border-box",
+        background: "#fafbff",
     },
-    undoBarText: { fontSize: 12.5, color: "#92400E" },
-    undoButton: {
+    allNote: {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: "6px 12px",
+        fontSize: 11.5,
+        color: "#92400E",
+        background: "#FFFBEB",
+        padding: "8px 12px",
         borderRadius: 7,
-        border: `1px solid ${BRAND.amber}`,
-        background: "#fff",
-        color: BRAND.amber,
-        fontWeight: 600,
+        marginTop: 12,
+    },
+
+    kpiRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 16 },
+    kpiRowMobile: {
+        display: "grid",
+        gridTemplateColumns: "repeat(2, 1fr)",
+        gap: 10,
+        marginBottom: 14,
+    },
+    kpiCard: {
+        position: "relative",
+        overflow: "hidden",
+        borderRadius: 14,
+        padding: "16px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        minWidth: 0,
+    },
+    dotPattern: {
+        position: "absolute",
+        right: 14,
+        top: "50%",
+        transform: "translateY(-50%)",
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 1fr)",
+        gap: 5,
+        opacity: 0.6,
+    },
+    dot: { width: 3, height: 3, borderRadius: "50%" },
+    kpiIconWrap: {
+        width: 42,
+        height: 42,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        zIndex: 1,
+    },
+    kpiValue: { fontSize: 21, fontWeight: 800, zIndex: 1, position: "relative", lineHeight: 1.2 },
+    kpiLabel: {
         fontSize: 12,
+        color: "#374151",
+        fontWeight: 700,
+        marginTop: 2,
+        zIndex: 1,
+        position: "relative",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    kpiSubLabel: {
+        fontSize: 10.5,
+        color: "#9ca3af",
+        fontWeight: 500,
+        marginTop: 1,
+        zIndex: 1,
+        position: "relative",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+
+    actionBar: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 10,
+        marginBottom: 16,
+        flexWrap: "wrap",
+    },
+    actionBarLeft: { display: "flex", gap: 10, flexWrap: "wrap" },
+    actionBarRight: { display: "flex", gap: 8 },
+    smartBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: GRADIENT,
+        color: "#fff",
+        border: "none",
+        borderRadius: 999,
+        padding: "11px 20px",
+        fontSize: 13.5,
+        fontWeight: 700,
+        boxShadow: `0 4px 14px ${withAlpha(BRAND.blue, 0.3)}`,
+    },
+    manualBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#fff",
+        color: BRAND.blue,
+        border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+        borderRadius: 999,
+        padding: "11px 20px",
+        fontSize: 13.5,
+        fontWeight: 700,
+    },
+    manualBtnActive: {
+        background: withAlpha(BRAND.amber, 0.12),
+        border: `1px solid ${BRAND.amber}`,
+        color: BRAND.amber,
+    },
+    iconTextBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        background: "#fff",
+        color: BRAND.blue,
+        border: "1px solid #e2e4f0",
+        borderRadius: 10,
+        padding: "11px 16px",
+        fontSize: 13,
+        fontWeight: 600,
         cursor: "pointer",
     },
-    totalsRow: {
+    iconOnlyBtn: {
         display: "flex",
-        justifyContent: "space-around",
-        padding: "16px 20px",
-        background: "#fafafa",
-        borderTop: "1px solid #f1f1f1",
-        flexWrap: "wrap",
-        gap: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        width: 40,
+        background: "#fff",
+        color: BRAND.blue,
+        border: "1px solid #e2e4f0",
+        borderRadius: 10,
+        cursor: "pointer",
     },
-    totalStat: { textAlign: "center" },
-    totalStatLabel: { fontSize: 11.5, color: "#6b7280", marginBottom: 4 },
-    totalStatValue: { fontSize: 18, fontWeight: 800 },
-    submitButton: {
+
+    tableCard: {
+        background: "#fff",
+        borderRadius: 16,
+        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
+        overflow: "visible",
+        marginBottom: 18,
+    },
+    table: {
+        width: "100%",
+        borderCollapse: "collapse",
+        tableLayout: "fixed",
+    },
+    theadRow: {
+        background: "#f9fafb",
+        borderBottom: "1px solid #f1f1f1",
+    },
+    th: {
+        textAlign: "left",
+        padding: "12px 10px",
+        fontSize: 11.5,
+        fontWeight: 700,
+        color: "#6b7280",
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        whiteSpace: "nowrap",
+    },
+    td: {
+        textAlign: "left",
+        verticalAlign: "middle",
+        padding: "10px 10px",
+        borderBottom: "1px solid #f1f1f1",
+    },
+    avatar: {
+        width: 32,
+        height: 32,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 11.5,
+        fontWeight: 700,
+        flexShrink: 0,
+    },
+    empName: {
+        fontSize: 13,
+        color: "#1a1a2e",
+        fontWeight: 600,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    empCode: { fontSize: 11, color: "#9ca3af", marginTop: 1 },
+    statusBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "5px 11px",
+        borderRadius: 999,
+        fontSize: 11.5,
+        fontWeight: 700,
+        cursor: "pointer",
+    },
+    qtyInput: {
+        width: 70,
+        padding: "7px 8px",
+        borderRadius: 7,
+        border: "1px solid #d1d5db",
+        fontSize: 13,
+        textAlign: "center",
+        fontWeight: 700,
+        color: BRAND.blue,
+    },
+    qtyPill: {
+        display: "inline-flex",
+        minWidth: 40,
+        justifyContent: "center",
+        padding: "5px 10px",
+        borderRadius: 999,
+        fontSize: 12.5,
+        fontWeight: 700,
+    },
+    dotsBtn: {
+        width: 26,
+        height: 26,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        borderRadius: 6,
+    },
+    rowMenu: {
+        position: "absolute",
+        right: 18,
+        top: "100%",
+        marginTop: 4,
+        background: "#fff",
+        borderRadius: 8,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+        border: "1px solid #f1f1f1",
+        zIndex: 20,
+        overflow: "hidden",
+        minWidth: 130,
+    },
+    rowMenuItem: {
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "9px 14px",
+        fontSize: 12.5,
+        color: "#374151",
+        background: "#fff",
+        border: "none",
+        cursor: "pointer",
+    },
+    emptyNote: {
+        padding: "28px",
+        textAlign: "center" as const,
+        color: "#9ca3af",
+        fontSize: 13,
+    },
+    emptyState: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+        padding: "36px 20px",
+    },
+    emptyStateText: { fontSize: 13, color: "#9ca3af" },
+
+    saveBtn: {
         width: "100%",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        padding: "14px",
-        borderRadius: 10,
+        padding: "16px",
+        borderRadius: 12,
         border: "none",
         background: GRADIENT,
         color: "#fff",
         fontWeight: 700,
-        fontSize: 14,
+        fontSize: 14.5,
+        boxShadow: `0 6px 18px ${withAlpha(BRAND.blue, 0.3)}`,
     },
-    footnote: { fontSize: 12, color: "#9ca3af", textAlign: "center", marginTop: 10 },
+
+    toast: {
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: BRAND.green,
+        color: "#fff",
+        padding: "12px 18px",
+        borderRadius: 10,
+        fontSize: 13.5,
+        fontWeight: 600,
+        boxShadow: "0 4px 14px rgba(0,0,0,0.2)",
+        zIndex: 1000,
+    },
 };
