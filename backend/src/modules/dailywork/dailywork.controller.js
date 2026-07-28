@@ -31,7 +31,7 @@ async function getProductNameMap(productIds) {
   if (uniqueIds.length === 0) return {};
 
   const { data, error } = await supabase
-    .from("products")
+    .from("product_master")
     .select("id, product_name")
     .in("id", uniqueIds);
 
@@ -169,12 +169,10 @@ async function createDailyWork(req, res) {
 
     const qty = Number(totalQty);
     if (!Number.isFinite(qty) || qty <= 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "totalQty must be a positive number",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "totalQty must be a positive number",
+      });
     }
 
     const { data: dup, error: dupError } = await supabase
