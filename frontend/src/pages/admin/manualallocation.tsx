@@ -124,6 +124,14 @@ function Users({ size = 34, color = "currentColor", ...rest }: IconProps) {
         </svg>
     );
 }
+function Search({ size = 14, color = "currentColor", ...rest }: IconProps) {
+    return (
+        <svg {...iconBase(size)} color={color} {...rest}>
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+    );
+}
 function Download({ size = 15, color = "currentColor", ...rest }: IconProps) {
     return (
         <svg {...iconBase(size)} color={color} {...rest}>
@@ -300,7 +308,7 @@ export default function ManualAllocation() {
     const [date, setDate] = useState(todayStr());
     const [products, setProducts] = useState<Product[]>([]);
     const [productId, setProductId] = useState(""); // "" = All
-    const [departmentFilter, setDepartmentFilter] = useState("");
+    const [searchText, setSearchText] = useState("");
     const [teamFilter, setTeamFilter] = useState("");
     const [filtersOpen, setFiltersOpen] = useState(true);
 
@@ -388,11 +396,8 @@ export default function ManualAllocation() {
         loadBatches();
     }, [loadBatches]);
 
-    // ---- filtered employee list (department/team narrow who participates) ----
-    const departments = useMemo(
-        () => Array.from(new Set(employees.map((e) => e.department).filter(Boolean))) as string[],
-        [employees]
-    );
+    // ---- filtered employee list: Team dropdown narrows first, then the
+    // single search box matches name, department, team, product, or status ----
     const teams = useMemo(
         () =>
             Array.from(new Set(employees.map((e) => e.workedInTeams).filter(Boolean))) as string[],
@@ -400,10 +405,26 @@ export default function ManualAllocation() {
     );
     const filteredEmployees = useMemo(() => {
         let list = employees;
-        if (departmentFilter) list = list.filter((e) => e.department === departmentFilter);
         if (teamFilter) list = list.filter((e) => e.workedInTeams === teamFilter);
-        return list;
-    }, [employees, departmentFilter, teamFilter]);
+
+        const q = searchText.trim().toLowerCase();
+        if (!q) return list;
+        return list.filter((e) => {
+            const status = rows[e.id]?.status || "PRESENT";
+            const haystack = [
+                e.name,
+                e.employeeCode,
+                e.department,
+                e.workedInTeams,
+                selectedBatch?.productName,
+                STATUS_META[status]?.label,
+            ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+            return haystack.includes(q);
+        });
+    }, [employees, teamFilter, searchText, rows, selectedBatch]);
 
     // ---- when the selected batch changes, prefill rows: restore a previous
     // save if one exists for this batch, otherwise default everyone to
@@ -624,23 +645,6 @@ export default function ManualAllocation() {
                             </div>
                             <div style={styles.filterField}>
                                 <label style={styles.label}>
-                                    <Users size={12} color={BRAND.blue} /> Department
-                                </label>
-                                <select
-                                    value={departmentFilter}
-                                    onChange={(e) => setDepartmentFilter(e.target.value)}
-                                    style={styles.select}
-                                >
-                                    <option value="">All Departments</option>
-                                    {departments.map((d) => (
-                                        <option key={d} value={d}>
-                                            {d}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div style={styles.filterField}>
-                                <label style={styles.label}>
                                     <Users size={12} color={BRAND.blue} /> Team
                                 </label>
                                 <select
@@ -655,6 +659,18 @@ export default function ManualAllocation() {
                                         </option>
                                     ))}
                                 </select>
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.label}>
+                                    <Search size={12} color={BRAND.blue} /> Search
+                                </label>
+                                <input
+                                    type="text"
+                                    value={searchText}
+                                    onChange={(e) => setSearchText(e.target.value)}
+                                    placeholder="Search by name, department, team, product or status..."
+                                    style={styles.select}
+                                />
                             </div>
                         </div>
 
@@ -805,7 +821,7 @@ export default function ManualAllocation() {
                                         <div style={styles.emptyState}>
                                             <EmptyStateIcon />
                                             <span style={styles.emptyStateText}>
-                                                No employees match this Department/Team filter.
+                                                No employees match your search.
                                             </span>
                                         </div>
                                     </td>
@@ -1050,9 +1066,7 @@ export default function ManualAllocation() {
                             return { employeeId: emp.id, status: r.status, allocatedQty: r.qty };
                         });
                         if (rowsPayload.length === 0) {
-                            setError(
-                                "No employees to allocate — check your Department/Team filters."
-                            );
+                            setError("No employees to allocate — check your search.");
                             return;
                         }
                         setSubmitting(true);
@@ -1147,20 +1161,14 @@ const styles: Record<string, CSSProperties> = {
     pageMobile: { padding: "14px 14px 20px" },
 
     headerCard: {
-        background: "#fff",
-        borderRadius: 18,
-        padding: "22px 28px",
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
         marginBottom: 18,
     },
     headerCardMobile: {
-        background: "#fff",
-        borderRadius: 16,
-        padding: "16px 16px",
-        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
+        display: "flex",
+        flexDirection: "column",
         marginBottom: 14,
     },
     headerLeft: { display: "flex", gap: 16, alignItems: "flex-start" },
@@ -1174,13 +1182,14 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    title: { fontSize: 22, fontWeight: 800, color: "#1a1a2e", margin: 0 },
+    title: { fontSize: 24, fontWeight: 800, color: "#17181C", margin: 0, textAlign: "left" },
     subtitle: {
-        fontSize: 12.5,
-        color: "#6b7280",
+        fontSize: 13,
+        color: "#767F92",
         maxWidth: 480,
-        margin: "5px 0 0",
+        margin: "4px 0 0",
         lineHeight: 1.6,
+        textAlign: "left",
     },
     headerIllustration: { flexShrink: 0, marginLeft: 20 },
 
@@ -1204,7 +1213,11 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
         marginBottom: 16,
     },
-    filterBar: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 },
+    filterBar: {
+        display: "grid",
+        gridTemplateColumns: "0.8fr 0.8fr 0.8fr 1.6fr",
+        gap: 14,
+    },
     filterBarMobile: { display: "flex", flexDirection: "column", gap: 12 },
     filterField: {},
     label: {

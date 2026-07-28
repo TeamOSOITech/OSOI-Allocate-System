@@ -1320,10 +1320,11 @@ const styles: Record<string, CSSProperties> = {
 
     pageTitle: {
         margin: 0,
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 800,
-        color: "#16233c",
+        color: "#17181C",
         flexShrink: 0,
+        textAlign: "left",
     },
 
     headerRow: {

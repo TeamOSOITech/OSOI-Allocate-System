@@ -1049,9 +1049,15 @@ const styles: Record<string, CSSProperties> = {
         gap: 16,
         flexWrap: "wrap",
     },
-    pageTitle: { margin: 0, fontSize: 21, fontWeight: 800, color: "#16233a", letterSpacing: -0.3 },
+    pageTitle: {
+        margin: 0,
+        fontSize: 24,
+        fontWeight: 800,
+        color: "#17181C",
+        textAlign: "left",
+    },
     pageTitleCount: { fontSize: 14, fontWeight: 600, color: "#7d90a6" },
-    headerSubtext: { margin: "4px 0 0", fontSize: 13, color: "#7d90a6" },
+    headerSubtext: { margin: "4px 0 0", fontSize: 13, color: "#767F92", textAlign: "left" },
 
     filterRow: {
         display: "flex",

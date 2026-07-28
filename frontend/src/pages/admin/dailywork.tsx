@@ -554,13 +554,14 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    pageTitle: { fontSize: "20px", fontWeight: 800, color: "#1e1b4b", margin: 0 },
+    pageTitle: { fontSize: 24, fontWeight: 800, color: "#17181C", margin: 0, textAlign: "left" },
     pageSubtitle: {
-        fontSize: "12px",
-        color: "#64748b",
+        fontSize: 13,
+        color: "#767F92",
         margin: "4px 0 0",
         maxWidth: 520,
         lineHeight: 1.5,
+        textAlign: "left",
     },
     breadcrumb: {
         display: "flex",

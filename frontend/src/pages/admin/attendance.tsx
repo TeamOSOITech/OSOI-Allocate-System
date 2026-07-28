@@ -259,7 +259,7 @@ export default function Attendance() {
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
             <div style={styles.headerRow}>
-                <div>
+                <div style={styles.pageTitleBlock}>
                     <h1 style={styles.title}>Attendance</h1>
                     <p style={styles.subtitle}>
                         <Calendar size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
@@ -435,25 +435,45 @@ function SummaryChip({
 }
 
 const styles: Record<string, CSSProperties> = {
-    root: { padding: "28px 32px", width: "100%", boxSizing: "border-box" },
-    rootMobile: { padding: "16px", width: "100%", boxSizing: "border-box" },
+    root: {
+        padding: "28px 32px",
+        width: "100%",
+        boxSizing: "border-box",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    },
+    rootMobile: {
+        padding: "16px",
+        width: "100%",
+        boxSizing: "border-box",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    },
     headerRow: {
+        position: "relative",
         display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
+        alignItems: "center",
+        justifyContent: "center",
         flexWrap: "wrap",
         gap: 12,
         marginBottom: 20,
+        minHeight: 48,
     },
-    title: { fontSize: 24, fontWeight: 800, color: "#1a1a2e", margin: 0 },
+    pageTitleBlock: { textAlign: "center" },
+    title: { fontSize: 24, fontWeight: 800, color: "#17181C", margin: 0 },
     subtitle: {
         fontSize: 13,
-        color: "#6b7280",
-        marginTop: 6,
+        color: "#767F92",
+        margin: "4px 0 0",
         display: "flex",
         alignItems: "center",
+        justifyContent: "center",
     },
-    headerActions: { display: "flex", gap: 10, alignItems: "center" },
+    headerActions: {
+        position: "absolute",
+        right: 0,
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+    },
     dateBadge: {
         display: "flex",
         alignItems: "center",
