@@ -336,7 +336,7 @@ export default function ManualAllocation() {
 
     // ---- selected batch (the one specific daily_work row for date+product) ----
     const selectedBatch = useMemo(
-        () => batchesForDate.find((b) => b.productId === productId) || null,
+        () => batchesForDate.find((b) => String(b.productId) === String(productId)) || null,
         [batchesForDate, productId]
     );
 
