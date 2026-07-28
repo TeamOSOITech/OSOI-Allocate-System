@@ -5,6 +5,7 @@ const {
   listAllocations,
   autoAllocate,
   manualAllocate,
+  bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,
   clearAllocationsForBatch,
@@ -28,6 +29,11 @@ router.post(
   "/manual",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   manualAllocate,
+);
+router.post(
+  "/bulk-upsert",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  bulkUpsertAllocations,
 );
 router.post(
   "/transfer",

@@ -273,12 +273,10 @@ async function updateAllocationStatus(req, res) {
     const { status } = req.body;
     const validStatuses = ["ASSIGNED", "IN_PROGRESS", "COMPLETED"];
     if (!validStatuses.includes(status)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: `status must be one of: ${validStatuses.join(", ")}`,
-        });
+      return res.status(400).json({
+        success: false,
+        message: `status must be one of: ${validStatuses.join(", ")}`,
+      });
     }
 
     const { data: existing, error: fetchError } = await supabase
@@ -365,12 +363,10 @@ async function transferAllocation(req, res) {
       });
     }
     if (fromAllocationId === toAllocationId) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Cannot transfer to the same allocation",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Cannot transfer to the same allocation",
+      });
     }
 
     const { data: rows, error: fetchError } = await supabase
@@ -428,10 +424,119 @@ async function transferAllocation(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/allocations/bulk-upsert
+// body: { dailyWorkId, rows: [{ employeeId, status, allocatedQty }, ...] }
+//
+// Used by the Manual Allocation page's "Allocate & Save" button, which
+// saves the ENTIRE visible table in one shot — every row's Present/
+// Half/Leave status and its allocated qty — rather than adding to
+// whatever's already there (that's what /manual does). This route
+// was missing entirely, which is why the frontend's fetch got back
+// an HTML 404 page instead of JSON ("Unexpected token '<'").
+//
+// Implemented as replace-all-for-this-batch: any existing allocation
+// rows for dailyWorkId are cleared first, then the submitted rows are
+// inserted fresh. That keeps re-saving idempotent (no duplicate rows,
+// no need for a DB-level unique constraint on daily_work_id+employee_id).
+// ------------------------------------------------------------
+const VALID_ROW_STATUSES = ["PRESENT", "HALF", "LEAVE"];
+
+async function bulkUpsertAllocations(req, res) {
+  try {
+    const { dailyWorkId, rows } = req.body;
+    if (!dailyWorkId || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "dailyWorkId and a non-empty rows[] array are required",
+      });
+    }
+
+    for (const r of rows) {
+      if (
+        !r.employeeId ||
+        !VALID_ROW_STATUSES.includes(r.status) ||
+        typeof r.allocatedQty !== "number" ||
+        r.allocatedQty < 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Each row needs employeeId, status (PRESENT/HALF/LEAVE), and a non-negative allocatedQty",
+        });
+      }
+    }
+
+    const dailyWork = await getOwnedDailyWork(
+      dailyWorkId,
+      req.user.organizationId,
+    );
+    if (!dailyWork) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Daily work batch not found" });
+    }
+
+    const allocatedQty = rows.reduce((sum, r) => sum + r.allocatedQty, 0);
+    if (allocatedQty > dailyWork.total_qty) {
+      return res.status(409).json({
+        success: false,
+        message: `Total allocated (${allocatedQty}) cannot exceed this batch's total qty (${dailyWork.total_qty}).`,
+      });
+    }
+
+    // Replace-all: clear whatever was saved for this batch before, then
+    // insert the current table state fresh.
+    const { error: deleteError } = await supabase
+      .from("allocations")
+      .delete()
+      .eq("daily_work_id", dailyWorkId)
+      .eq("organization_id", req.user.organizationId);
+    if (deleteError) throw deleteError;
+
+    const insertRows = rows.map((r) => ({
+      organization_id: req.user.organizationId,
+      daily_work_id: dailyWorkId,
+      employee_id: r.employeeId,
+      allocated_qty: r.allocatedQty,
+      allocation_type: "MANUAL",
+      // NOTE: the "allocations" table's status column is a workflow
+      // status (ASSIGNED/IN_PROGRESS/COMPLETED — enforced by a DB CHECK
+      // constraint), not the Present/Half/Leave value picked in the UI.
+      // Writing r.status ("PRESENT"/"HALF"/"LEAVE") straight into this
+      // column violates that constraint. Every allocation created here
+      // starts life as ASSIGNED, same as auto/manual allocate.
+      status: "ASSIGNED",
+      created_by: req.user.userId,
+    }));
+
+    const { data: inserted, error: insertError } = await supabase
+      .from("allocations")
+      .insert(insertRows)
+      .select();
+    if (insertError) throw insertError;
+
+    res.status(201).json({
+      success: true,
+      data: {
+        allocations: inserted,
+        summary: {
+          totalQty: dailyWork.total_qty,
+          allocatedQty,
+          pendingQty: dailyWork.total_qty - allocatedQty,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listAllocations,
   autoAllocate,
   manualAllocate,
+  bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,
   clearAllocationsForBatch,
