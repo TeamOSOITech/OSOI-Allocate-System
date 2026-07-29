@@ -1,6 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
+import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
+import { useTheme, THEMES } from "../context/themecontext";
+import type { ThemeName } from "../context/themecontext";
 
 interface HeaderProps {
     userName?: string;
@@ -8,19 +11,14 @@ interface HeaderProps {
     onRefresh?: () => void;
     onHelp?: () => void;
     onNotificationsClick?: () => void;
-    onProfileClick?: () => void;
+    onProfileClick?: () => void; // called when "My Profile" is chosen from the menu
+    onChangePassword?: () => void;
+    onLogout?: () => void;
     notificationCount?: number;
 }
 
 const MOBILE_BREAKPOINT = 768;
 const SMALL_MOBILE_BREAKPOINT = 400;
-
-// ---- Brand palette ----
-const BRAND = {
-    blue: "#204297",
-    lightBlue: "#08A1CE",
-    green: "#2EBBA8",
-};
 
 function useBreakpoint() {
     const [width, setWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1024);
@@ -47,11 +45,50 @@ export default function Header({
     onHelp,
     onNotificationsClick,
     onProfileClick,
+    onChangePassword,
+    onLogout,
     notificationCount = 0,
 }: HeaderProps) {
     const { isMobile, isSmallMobile } = useBreakpoint();
+    const { colors: BRAND, themeName, setThemeName } = useTheme();
+    const navigate = useNavigate();
     const displayName = userName || "Administrator";
     const firstName = displayName.split(" ")[0];
+
+    const [menuOpen, setMenuOpen] = useState(false);
+    // Only "theme" is left as a sub-panel now — Display mode was removed,
+    // so this no longer needs to track a "display" state.
+    const [subPanel, setSubPanel] = useState<"none" | "theme">("none");
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const onClickOutside = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setMenuOpen(false);
+                setSubPanel("none");
+            }
+        };
+        const onEsc = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                setMenuOpen(false);
+                setSubPanel("none");
+            }
+        };
+        document.addEventListener("mousedown", onClickOutside);
+        document.addEventListener("keydown", onEsc);
+        return () => {
+            document.removeEventListener("mousedown", onClickOutside);
+            document.removeEventListener("keydown", onEsc);
+        };
+    }, [menuOpen]);
+
+    const closeMenu = () => {
+        setMenuOpen(false);
+        setSubPanel("none");
+    };
+
+    const styles = getStyles(BRAND);
 
     return (
         <header style={isMobile ? styles.headerMobile : styles.header}>
@@ -133,231 +170,432 @@ export default function Header({
                     </button>
                 )}
 
-                <button
-                    style={isMobile ? styles.avatarMobile : styles.avatar}
-                    onClick={onProfileClick}
-                    aria-label="Profile"
-                    title={displayName}
-                    type="button"
-                >
-                    {getInitials(displayName)}
-                </button>
+                {/* Avatar + dropdown menu */}
+                <div style={{ position: "relative" }} ref={menuRef}>
+                    <button
+                        style={isMobile ? styles.avatarMobile : styles.avatar}
+                        onClick={() => setMenuOpen((v) => !v)}
+                        aria-label="Profile menu"
+                        aria-expanded={menuOpen}
+                        title={displayName}
+                        type="button"
+                    >
+                        {getInitials(displayName)}
+                    </button>
+
+                    {menuOpen && (
+                        <div style={styles.menu}>
+                            {subPanel === "none" && (
+                                <>
+                                    {/* My Profile — navigates to /profile directly.
+                                    Still calls onProfileClick too, in case a
+                                    parent wants to react to it as well. */}
+                                    <MenuItem
+                                        icon="ti-user"
+                                        label="My Profile"
+                                        styles={styles}
+                                        onClick={() => {
+                                            closeMenu();
+                                            navigate("/profile");
+                                            onProfileClick?.();
+                                        }}
+                                    />
+                                    <MenuItem
+                                        icon="ti-palette"
+                                        label="Theme color"
+                                        chevron
+                                        styles={styles}
+                                        onClick={() => setSubPanel("theme")}
+                                    />
+                                    {/* Change password — opens the existing
+                                    /reset-password route in a new tab, rather
+                                    than navigating away from whatever the
+                                    person was doing. */}
+                                    <MenuItem
+                                        icon="ti-key"
+                                        label="Change password"
+                                        styles={styles}
+                                        onClick={() => {
+                                            closeMenu();
+                                            window.open(
+                                                "/reset-password",
+                                                "_blank",
+                                                "noopener,noreferrer"
+                                            );
+                                            onChangePassword?.();
+                                        }}
+                                    />
+                                    <div style={styles.menuDivider} />
+                                    <MenuItem
+                                        icon="ti-logout"
+                                        label="Logout"
+                                        danger
+                                        styles={styles}
+                                        onClick={() => {
+                                            closeMenu();
+                                            onLogout?.();
+                                        }}
+                                    />
+                                </>
+                            )}
+
+                            {subPanel === "theme" && (
+                                <>
+                                    <button
+                                        style={styles.menuBackRow}
+                                        onClick={() => setSubPanel("none")}
+                                        type="button"
+                                    >
+                                        <i className="ti ti-chevron-left" /> Theme color
+                                    </button>
+                                    <div style={styles.swatchGrid}>
+                                        {(Object.keys(THEMES) as ThemeName[]).map((key) => {
+                                            const palette = THEMES[key];
+                                            const active = themeName === key;
+                                            return (
+                                                <button
+                                                    key={key}
+                                                    type="button"
+                                                    title={palette.label}
+                                                    onClick={() => {
+                                                        setThemeName(key);
+                                                        closeMenu();
+                                                    }}
+                                                    style={{
+                                                        ...styles.swatchBtn,
+                                                        background: `linear-gradient(135deg, ${palette.lightBlue}, ${palette.blue})`,
+                                                        boxShadow: active
+                                                            ? `0 0 0 2px #fff, 0 0 0 4px ${palette.blue}`
+                                                            : "none",
+                                                    }}
+                                                >
+                                                    {active && (
+                                                        <i
+                                                            className="ti ti-check"
+                                                            style={{ color: "#fff", fontSize: 14 }}
+                                                        />
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <div style={styles.swatchLabels}>
+                                        {(Object.keys(THEMES) as ThemeName[]).map((key) => (
+                                            <span key={key} style={styles.swatchLabel}>
+                                                {THEMES[key].label}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </header>
     );
 }
 
-const styles: Record<string, CSSProperties> = {
-    header: {
-        position: "relative",
-        background: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 28px",
-        height: "64px",
-        flexShrink: 0,
-        borderBottom: "1px solid #eef1f7",
-        fontFamily: fontFamily.base,
-        gap: 16,
-    },
-    headerMobile: {
-        position: "relative",
-        background: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        // FIX: Sidebar renders a fixed hamburger button at top:14px,
-        // left:14px, 38px square. This header previously started at
-        // padding-left:12px, so its logo/title sat directly under that
-        // button on mobile. Left padding now clears it.
-        padding: "8px 12px 8px 60px",
-        minHeight: "56px",
-        borderBottom: "1px solid #eef1f7",
-        fontFamily: fontFamily.base,
-        gap: "8px",
-    },
+/* ---------------------------------------------------------------------- */
+/*  Menu row subcomponent                                                   */
+/* ---------------------------------------------------------------------- */
 
-    // The one signature flourish: a 3px gradient rail spanning all three
-    // brand colors, sitting right on the header's bottom edge.
-    brandRail: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: 3,
-        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
-    },
+function MenuItem({
+    icon,
+    label,
+    onClick,
+    styles,
+    chevron,
+    danger,
+    check,
+}: {
+    icon: string;
+    label: string;
+    onClick: () => void;
+    styles: Record<string, CSSProperties>;
+    chevron?: boolean;
+    danger?: boolean;
+    check?: boolean;
+}) {
+    return (
+        <button
+            type="button"
+            style={danger ? styles.menuItemDanger : styles.menuItem}
+            onClick={onClick}
+        >
+            <i className={`ti ${icon}`} style={{ fontSize: 16 }} />
+            <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+            {check && <i className="ti ti-check" style={{ fontSize: 15 }} />}
+            {chevron && (
+                <i className="ti ti-chevron-right" style={{ fontSize: 14, opacity: 0.5 }} />
+            )}
+        </button>
+    );
+}
 
-    left: { display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: 1 },
-    leftMobile: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 },
+/* ---------------------------------------------------------------------- */
+/*  Styles — built per-render from the active theme palette                */
+/* ---------------------------------------------------------------------- */
 
-    logoBlock: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        minWidth: 0,
-        flexShrink: 0,
-    },
+function getStyles(BRAND: {
+    blue: string;
+    lightBlue: string;
+    green: string;
+}): Record<string, CSSProperties> {
+    return {
+        header: {
+            position: "relative",
+            background: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 28px",
+            height: "64px",
+            flexShrink: 0,
+            borderBottom: "1px solid #eef1f7",
+            fontFamily: fontFamily.base,
+            gap: 16,
+        },
+        headerMobile: {
+            position: "relative",
+            background: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "8px 12px 8px 60px",
+            minHeight: "56px",
+            borderBottom: "1px solid #eef1f7",
+            fontFamily: fontFamily.base,
+            gap: "8px",
+        },
 
-    welcomeBlock: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        minWidth: 0,
-        overflow: "hidden",
-        paddingLeft: 20,
-        borderLeft: "1px solid #eef1f7",
-    },
-    welcome: {
-        fontSize: fontSize.md,
-        color: "#5a6c85",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-    },
-    welcomeName: { color: "#16233c" },
-    welcomeMobile: {
-        fontSize: fontSize.sm,
-        color: "#5a6c85",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        minWidth: 0,
-    },
-    dot: {
-        width: 6,
-        height: 6,
-        borderRadius: radius.circle,
-        background: BRAND.green,
-        flexShrink: 0,
-    },
+        brandRail: {
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 3,
+            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
+        },
 
-    right: { display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 },
-    rightMobile: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
+        left: { display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: 1 },
+        leftMobile: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 },
 
-    iconBtn: {
-        position: "relative",
-        width: "34px",
-        height: "34px",
-        borderRadius: radius.md,
-        border: `1px solid ${BRAND.lightBlue}33`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: BRAND.lightBlue,
-        background: `${BRAND.lightBlue}0F`,
-        cursor: "pointer",
-        padding: 0,
-        flexShrink: 0,
-        fontSize: fontSize.lg,
-        transition: "background .15s ease, border-color .15s ease, transform .15s ease",
-    },
-    iconBtnSmall: {
-        position: "relative",
-        width: "28px",
-        height: "28px",
-        borderRadius: radius.sm,
-        border: `1px solid ${BRAND.lightBlue}33`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: BRAND.lightBlue,
-        background: `${BRAND.lightBlue}0F`,
-        cursor: "pointer",
-        padding: 0,
-        flexShrink: 0,
-    },
+        logoBlock: { display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexShrink: 0 },
 
-    notifBadge: {
-        position: "absolute",
-        top: -4,
-        right: -4,
-        minWidth: 16,
-        height: 16,
-        padding: "0 3px",
-        borderRadius: radius.sm,
-        background: BRAND.green,
-        color: "#fff",
-        fontSize: fontSize.badge,
-        fontWeight: fontWeight.bold,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        border: "2px solid #fff",
-        boxSizing: "content-box",
-    },
-    notifDot: {
-        position: "absolute",
-        top: -1,
-        right: -1,
-        width: 8,
-        height: 8,
-        borderRadius: radius.circle,
-        background: BRAND.green,
-        border: "2px solid #fff",
-    },
+        welcomeBlock: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+            overflow: "hidden",
+            paddingLeft: 20,
+            borderLeft: "1px solid #eef1f7",
+        },
+        welcome: {
+            fontSize: fontSize.md,
+            color: "#5a6c85",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+        },
+        welcomeName: { color: "#16233c" },
+        welcomeMobile: {
+            fontSize: fontSize.sm,
+            color: "#5a6c85",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+        },
+        dot: {
+            width: 6,
+            height: 6,
+            borderRadius: radius.circle,
+            background: BRAND.green,
+            flexShrink: 0,
+        },
 
-    avatar: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 34,
-        height: 34,
-        borderRadius: radius.circle,
-        border: "none",
-        background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
-        color: "#fff",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.bold,
-        cursor: "pointer",
-        flexShrink: 0,
-    },
-    avatarMobile: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 28,
-        height: 28,
-        borderRadius: radius.circle,
-        border: "none",
-        background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
-        color: "#fff",
-        fontSize: fontSize.xxs,
-        fontWeight: fontWeight.bold,
-        cursor: "pointer",
-        flexShrink: 0,
-    },
+        right: { display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 },
+        rightMobile: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
 
-    refreshBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.md,
-        padding: "8px 16px",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-        boxShadow: `0 6px 14px ${BRAND.blue}29`,
-    },
-    refreshBtnMobile: {
-        background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.circle,
-        width: "30px",
-        height: "30px",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 0,
-        flexShrink: 0,
-        boxShadow: `0 4px 10px ${BRAND.blue}29`,
-    },
-};
+        iconBtn: {
+            position: "relative",
+            width: "34px",
+            height: "34px",
+            borderRadius: radius.md,
+            border: `1px solid ${BRAND.lightBlue}33`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: BRAND.lightBlue,
+            background: `${BRAND.lightBlue}0F`,
+            cursor: "pointer",
+            padding: 0,
+            flexShrink: 0,
+            fontSize: fontSize.lg,
+            transition: "background .15s ease, border-color .15s ease, transform .15s ease",
+        },
+        iconBtnSmall: {
+            position: "relative",
+            width: "28px",
+            height: "28px",
+            borderRadius: radius.sm,
+            border: `1px solid ${BRAND.lightBlue}33`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: BRAND.lightBlue,
+            background: `${BRAND.lightBlue}0F`,
+            cursor: "pointer",
+            padding: 0,
+            flexShrink: 0,
+        },
+
+        notifBadge: {
+            position: "absolute",
+            top: -4,
+            right: -4,
+            minWidth: 16,
+            height: 16,
+            padding: "0 3px",
+            borderRadius: radius.sm,
+            background: BRAND.green,
+            color: "#fff",
+            fontSize: fontSize.badge,
+            fontWeight: fontWeight.bold,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "2px solid #fff",
+            boxSizing: "content-box",
+        },
+        notifDot: {
+            position: "absolute",
+            top: -1,
+            right: -1,
+            width: 8,
+            height: 8,
+            borderRadius: radius.circle,
+            background: BRAND.green,
+            border: "2px solid #fff",
+        },
+
+        avatar: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 34,
+            height: 34,
+            borderRadius: radius.circle,
+            border: "none",
+            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            color: "#fff",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.bold,
+            cursor: "pointer",
+            flexShrink: 0,
+        },
+        avatarMobile: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 28,
+            height: 28,
+            borderRadius: radius.circle,
+            border: "none",
+            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            color: "#fff",
+            fontSize: fontSize.xxs,
+            fontWeight: fontWeight.bold,
+            cursor: "pointer",
+            flexShrink: 0,
+        },
+
+        /* ---- Dropdown menu ---- */
+        menu: {
+            position: "absolute",
+            top: "calc(100% + 10px)",
+            right: 0,
+            width: 240,
+            background: "#fff",
+            borderRadius: radius.lg,
+            boxShadow: "0 12px 32px rgba(16,24,40,0.14)",
+            border: "1px solid #eef1f7",
+            padding: 6,
+            zIndex: 1000,
+        },
+        menuItem: {
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "transparent",
+            border: "none",
+            borderRadius: radius.md,
+            padding: "10px 10px",
+            fontSize: 13.5,
+            color: "#16233c",
+            cursor: "pointer",
+            textAlign: "left",
+        },
+        menuItemDanger: {
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "transparent",
+            border: "none",
+            borderRadius: radius.md,
+            padding: "10px 10px",
+            fontSize: 13.5,
+            color: "#DC2626",
+            cursor: "pointer",
+            textAlign: "left",
+        },
+        menuDivider: { height: 1, background: "#eef1f7", margin: "6px 4px" },
+        menuBackRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            padding: "8px 10px",
+            fontSize: 12.5,
+            fontWeight: fontWeight.semibold,
+            color: "#5a6c85",
+            cursor: "pointer",
+            textAlign: "left",
+            marginBottom: 4,
+        },
+
+        swatchGrid: {
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 10,
+            padding: "4px 10px 2px",
+        },
+        swatchBtn: {
+            width: 36,
+            height: 36,
+            borderRadius: radius.circle,
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        swatchLabels: {
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 10,
+            padding: "4px 10px 6px",
+        },
+        swatchLabel: {
+            fontSize: 10,
+            color: "#5a6c85",
+            textAlign: "center",
+        },
+    };
+}

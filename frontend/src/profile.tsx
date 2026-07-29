@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
-import { authFetch } from "../utils/authFetch";
+import { authFetch } from "./utils/authFetch";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -21,20 +21,6 @@ const REASON_OPTIONS = [
     "Resource / data unavailable",
     "Other",
 ];
-
-// Small injected stylesheet so buttons/rows/cards get real :hover states
-// (inline style objects can't express :hover on their own).
-const HOVER_CSS = `
-.pf-card-hover { transition: box-shadow .18s ease, transform .18s ease; }
-.pf-card-hover:hover { box-shadow: 0 8px 24px rgba(32,66,151,0.10); transform: translateY(-1px); }
-.pf-btn { transition: background .15s ease, box-shadow .15s ease, border-color .15s ease; }
-.pf-btn-outline:hover { background: rgba(32,66,151,0.06); }
-.pf-btn-solid:hover { filter: brightness(1.06); box-shadow: 0 6px 18px rgba(32,66,151,0.25); }
-.pf-btn-danger:hover { background: rgba(220,38,38,0.06); }
-.pf-tab:hover { color: #204297; }
-.pf-row:hover { background: #FAFBFF; }
-.pf-avatar-edit:hover { filter: brightness(1.1); }
-`;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -60,24 +46,6 @@ function formatDisplayDate(iso: string | null) {
     const [y, m, d] = iso.split("-");
     if (!y || !m || !d) return iso;
     return `${d}-${m}-${y}`;
-}
-
-// Guards against the classic "Unexpected token '<', ... is not valid JSON"
-// crash — that happens when the API URL is wrong or the route 404s and the
-// server sends back an HTML error page instead of JSON. Instead of trying
-// to JSON.parse HTML, this gives a clear, actionable error message.
-async function safeJson(res: Response) {
-    const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-        const text = await res.text();
-        const looksLikeHtml = text.trim().startsWith("<");
-        throw new Error(
-            looksLikeHtml
-                ? `Server returned an HTML page instead of data (status ${res.status}). Check that VITE_API_URL points to the right backend and that this route exists.`
-                : `Unexpected response from server (status ${res.status}).`
-        );
-    }
-    return res.json();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -283,15 +251,15 @@ export default function Profile({ onLogout }: ProfileProps) {
             ]);
 
             if (profileRes) {
-                const json = await safeJson(profileRes);
+                const json = await profileRes.json();
                 if (profileRes.ok && json.success) setProfile(json.data);
             }
             if (employeeRes) {
-                const emp = await safeJson(employeeRes);
+                const emp = await employeeRes.json();
                 if (employeeRes.ok) setEmployee(emp);
             }
             if (allocRes) {
-                const json = await safeJson(allocRes);
+                const json = await allocRes.json();
                 if (allocRes.ok && json.success) setAllocations(json.data || []);
             }
         } catch (err: any) {
@@ -382,7 +350,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         const totalAllocated = todaysAllocations.reduce((s, a) => s + (a.allocated_qty || 0), 0);
         const submittedQty = todaysAllocations.reduce((s, a) => s + (a.submitted_qty ?? 0), 0);
         const pendingCount = todaysAllocations.filter(
-            (a) => a.submitted_qty === null || a.submitted_qty === undefined
+            (a) => a.allocated_qty - (a.submitted_qty ?? 0) > 0
         ).length;
         const remaining = Math.max(totalAllocated - submittedQty, 0);
         return { totalAllocated, submittedQty, pendingCount, remaining };
@@ -533,7 +501,9 @@ export default function Profile({ onLogout }: ProfileProps) {
             a.team || "-",
             a.allocatedByName || "-",
             a.allocated_qty,
-            a.submitted_qty != null ? "Submitted" : "Pending",
+            a.allocated_qty - (a.submitted_qty ?? 0) <= 0 && a.submitted_qty != null
+                ? "Submitted"
+                : "Pending",
         ]);
         const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
         const blob = new Blob([csv], { type: "text/csv" });
@@ -547,11 +517,6 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            {/* Same signature gradient rail used on Dashboard/Products pages */}
-            <div style={styles.topBar} />
-
-            <style>{HOVER_CSS}</style>
-
             <div style={styles.pageHeaderRow}>
                 <div style={styles.pageTitleBlock}>
                     <h2 style={styles.pageTitle}>My Profile</h2>
@@ -564,7 +529,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             {error && <div style={styles.noteWarning}>{error}</div>}
 
             {/* ---- Identity card ---- */}
-            <div className="pf-card-hover" style={styles.identityCard}>
+            <div style={styles.identityCard}>
                 <div style={isMobile ? styles.identityTopMobile : styles.identityTop}>
                     <div style={styles.avatarBlock}>
                         <div style={styles.avatarWrap}>
@@ -576,7 +541,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             <button
                                 type="button"
                                 style={styles.avatarEditBtn}
-                                className="pf-avatar-edit"
                                 onClick={handlePhotoClick}
                                 disabled={uploadingPhoto}
                                 title="Change photo"
@@ -609,7 +573,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <button
                         type="button"
                         style={styles.editProfileBtn}
-                        className="pf-btn pf-btn-outline"
                         disabled={savingProfile}
                         onClick={() =>
                             editingProfile ? handleSaveProfile() : setEditingProfile(true)
@@ -660,7 +623,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         {editingProfile ? (
                             <textarea
                                 style={styles.aboutTextarea}
-                                rows={4}
+                                rows={2}
                                 value={profileDraft.bio}
                                 onChange={(e) =>
                                     setProfileDraft((p) => ({ ...p, bio: e.target.value }))
@@ -676,25 +639,14 @@ export default function Profile({ onLogout }: ProfileProps) {
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
 
                 {editingProfile && (
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-outline"
-                        style={styles.cancelEditBtn}
-                        onClick={cancelEditProfile}
-                    >
+                    <button type="button" style={styles.cancelEditBtn} onClick={cancelEditProfile}>
                         Cancel
                     </button>
                 )}
 
-                <div style={styles.logoutRow}>
-                    <button
-                        className="pf-btn pf-btn-danger"
-                        style={styles.logoutButton}
-                        onClick={onLogout}
-                    >
-                        Logout
-                    </button>
-                </div>
+                <button style={styles.logoutButton} onClick={onLogout}>
+                    Logout
+                </button>
             </div>
 
             {/* ---- Stats ---- */}
@@ -734,25 +686,18 @@ export default function Profile({ onLogout }: ProfileProps) {
                 <div style={styles.tabsGroup}>
                     <button
                         style={activeTab === "today" ? styles.tabActive : styles.tab}
-                        className="pf-tab"
                         onClick={() => setActiveTab("today")}
                     >
                         Today's Allocation
                     </button>
                     <button
                         style={activeTab === "past" ? styles.tabActive : styles.tab}
-                        className="pf-tab"
                         onClick={() => setActiveTab("past")}
                     >
                         Past Allocation
                     </button>
                 </div>
-                <button
-                    type="button"
-                    className="pf-btn pf-btn-outline"
-                    style={styles.exportBtn}
-                    onClick={exportCsv}
-                >
+                <button type="button" style={styles.exportBtn} onClick={exportCsv}>
                     <DownloadIcon /> Export
                 </button>
             </div>
@@ -810,7 +755,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             </div>
 
             {/* ---- Table / mobile list ---- */}
-            <div className="pf-card-hover" style={styles.tableCard}>
+            <div style={styles.tableCard}>
                 {loading ? (
                     <EmptyState text="Loading…" />
                 ) : filteredRows.length === 0 ? (
@@ -834,6 +779,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </div>
                 ) : (
                     <table style={styles.table}>
+                        <colgroup>
+                            <col style={{ width: 40 }} />
+                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "20%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "14%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "12%" }} />
+                        </colgroup>
                         <thead>
                             <tr>
                                 <th style={styles.th}>#</th>
@@ -848,10 +803,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </thead>
                         <tbody>
                             {filteredRows.map((a, i) => {
-                                const submitted =
-                                    a.submitted_qty !== null && a.submitted_qty !== undefined;
+                                const remaining = a.allocated_qty - (a.submitted_qty ?? 0);
+                                const fullySubmitted =
+                                    a.submitted_qty !== null &&
+                                    a.submitted_qty !== undefined &&
+                                    remaining <= 0;
                                 return (
-                                    <tr key={a.id} className="pf-row" style={styles.tr}>
+                                    <tr key={a.id} style={styles.tr}>
                                         <td style={styles.td}>{i + 1}</td>
                                         <td style={{ ...styles.td, fontWeight: 700 }}>
                                             {a.productName || "-"}
@@ -863,27 +821,43 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         <td style={styles.td}>
                                             <span
                                                 style={
-                                                    submitted
+                                                    fullySubmitted
                                                         ? styles.statusDone
                                                         : styles.statusPending
                                                 }
                                             >
-                                                {submitted ? "Submitted" : "Pending"}
+                                                {fullySubmitted ? "Submitted" : "Pending"}
                                             </span>
                                         </td>
                                         <td style={styles.td}>
-                                            {submitted ? (
+                                            {fullySubmitted ? (
                                                 <span style={styles.smallMuted}>
                                                     {a.submitted_qty} submitted
                                                 </span>
                                             ) : (
-                                                <button
-                                                    type="button"
-                                                    style={styles.rowSubmitBtn}
-                                                    onClick={() => handlePickForSubmit(a)}
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        flexDirection: "column",
+                                                        gap: 2,
+                                                        alignItems: "flex-start",
+                                                    }}
                                                 >
-                                                    Submit
-                                                </button>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.rowSubmitBtn}
+                                                        onClick={() => handlePickForSubmit(a)}
+                                                    >
+                                                        Submit
+                                                    </button>
+                                                    {a.submitted_qty !== null &&
+                                                        a.submitted_qty !== undefined && (
+                                                            <span style={styles.smallMuted}>
+                                                                {a.submitted_qty} of{" "}
+                                                                {a.allocated_qty} so far
+                                                            </span>
+                                                        )}
+                                                </div>
                                             )}
                                         </td>
                                     </tr>
@@ -895,7 +869,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             </div>
 
             {/* ---- Submit Your Work ---- */}
-            <div ref={panelRef} className="pf-card-hover" style={styles.submitPanel}>
+            <div ref={panelRef} style={styles.submitPanel}>
                 <div style={styles.submitPanelTitle}>Submit Your Work</div>
                 <div style={styles.submitPanelSub}>
                     {selected
@@ -971,7 +945,6 @@ export default function Profile({ onLogout }: ProfileProps) {
 
                 <button
                     type="button"
-                    className="pf-btn pf-btn-solid"
                     style={{
                         ...styles.submitBtn,
                         opacity: !selected || submitting ? 0.6 : 1,
@@ -1025,7 +998,7 @@ function StatCard({
     sub: string;
 }) {
     return (
-        <div className="pf-card-hover" style={styles.statCard}>
+        <div style={styles.statCard}>
             <div style={{ ...styles.statIconWrap, background: `${tint}1A`, color: tint }}>
                 {icon}
             </div>
@@ -1043,14 +1016,16 @@ function EmptyState({ text }: { text: string }) {
 }
 
 function MobileRow({ index, a, onSubmit }: { index: number; a: Allocation; onSubmit: () => void }) {
-    const submitted = a.submitted_qty !== null && a.submitted_qty !== undefined;
+    const remaining = a.allocated_qty - (a.submitted_qty ?? 0);
+    const fullySubmitted =
+        a.submitted_qty !== null && a.submitted_qty !== undefined && remaining <= 0;
     return (
         <div style={styles.mobileCard}>
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
                 <span style={styles.mobileProduct}>{a.productName || "-"}</span>
-                <span style={submitted ? styles.statusDone : styles.statusPending}>
-                    {submitted ? "Submitted" : "Pending"}
+                <span style={fullySubmitted ? styles.statusDone : styles.statusPending}>
+                    {fullySubmitted ? "Submitted" : "Pending"}
                 </span>
             </div>
             <div style={styles.mobileMetaRow}>
@@ -1058,51 +1033,41 @@ function MobileRow({ index, a, onSubmit }: { index: number; a: Allocation; onSub
                 <span>{a.team || "-"}</span>
                 <span>Qty: {a.allocated_qty}</span>
             </div>
-            {submitted ? (
+            {fullySubmitted ? (
                 <div style={styles.smallMuted}>{a.submitted_qty} submitted</div>
             ) : (
-                <button type="button" style={styles.rowSubmitBtn} onClick={onSubmit}>
-                    Submit
-                </button>
+                <>
+                    <button type="button" style={styles.rowSubmitBtn} onClick={onSubmit}>
+                        Submit
+                    </button>
+                    {a.submitted_qty !== null && a.submitted_qty !== undefined && (
+                        <div style={styles.smallMuted}>
+                            {a.submitted_qty} of {a.allocated_qty} so far
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );
 }
 
 /* ---------------------------------------------------------------------- */
-/*  Styles — width/padding/gap now match the Dashboard & Products pages   */
-/*  (full-width container, same padding scale, same card radius/shadow). */
-/*  All content below is unchanged from what's currently running.         */
+/*  Styles                                                                  */
 /* ---------------------------------------------------------------------- */
 
 const styles: Record<string, CSSProperties> = {
-    topBar: {
-        height: "4px",
-        width: "100%",
-        borderRadius: 4,
-        marginBottom: 4,
-        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
-    },
     root: {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "20px 24px 28px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
+        padding: "28px 32px",
+        maxWidth: 1080,
+        margin: "0 auto",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     },
     rootMobile: {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "14px 14px 22px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
+        padding: "16px",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     },
 
-    pageHeaderRow: {},
+    pageHeaderRow: { marginBottom: 20 },
     pageTitleBlock: {},
     pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#17181C" },
     pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
@@ -1113,23 +1078,27 @@ const styles: Record<string, CSSProperties> = {
         background: "rgba(245,158,11,0.1)",
         padding: "8px 12px",
         borderRadius: 6,
+        marginBottom: 16,
     },
 
-    /* Identity card */
+    /* Identity card — shrunk per feedback: less outer padding, columns no
+    longer stretch to match each other's height (that was the main cause
+    of the block looking oversized — the "About Me" box was stretching
+    to match the tallest column even though its own content was short). */
     identityCard: {
         background: "#fff",
         borderRadius: 16,
-        padding: 24,
-        border: "1px solid #F0F1F7",
-        boxShadow: "0 4px 20px rgba(32,66,151,.06)",
+        padding: 18,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        marginBottom: 22,
     },
     identityTop: {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "flex-start",
-        marginBottom: 20,
+        marginBottom: 14,
     },
-    identityTopMobile: { display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 },
+    identityTopMobile: { display: "flex", flexDirection: "column", gap: 14, marginBottom: 14 },
     avatarBlock: { display: "flex", alignItems: "center", gap: 16 },
     avatarWrap: { position: "relative", flexShrink: 0 },
     avatar: {
@@ -1143,15 +1112,8 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         fontSize: 22,
         fontWeight: 700,
-        boxShadow: `0 0 0 4px rgba(32,66,151,0.08)`,
     },
-    avatarImg: {
-        width: 64,
-        height: 64,
-        borderRadius: "50%",
-        objectFit: "cover",
-        boxShadow: `0 0 0 4px rgba(32,66,151,0.08)`,
-    },
+    avatarImg: { width: 64, height: 64, borderRadius: "50%", objectFit: "cover" },
     avatarEditBtn: {
         position: "absolute",
         right: -2,
@@ -1184,9 +1146,9 @@ const styles: Record<string, CSSProperties> = {
         fontSize: 11,
         fontWeight: 700,
         color: "#fff",
-        background: GRADIENT,
+        background: BRAND.blue,
         padding: "3px 10px",
-        borderRadius: 999,
+        borderRadius: 6,
         letterSpacing: 0.3,
     },
     editProfileBtn: {
@@ -1216,18 +1178,24 @@ const styles: Record<string, CSSProperties> = {
     identityGrid: {
         display: "grid",
         gridTemplateColumns: "1fr 1fr 1.2fr",
-        gap: 20,
+        gap: 10,
         borderTop: "1px solid #f1f1f1",
-        paddingTop: 18,
+        paddingTop: 8,
+        alignItems: "start",
     },
     identityGridMobile: {
         display: "flex",
         flexDirection: "column",
-        gap: 16,
+        gap: 8,
         borderTop: "1px solid #f1f1f1",
-        paddingTop: 16,
+        paddingTop: 8,
     },
-    identityColumn: { display: "flex", flexDirection: "column", gap: 14 },
+    identityColumn: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        alignSelf: "start", // NEW — this column no longer stretches to match the tallest one
+    },
     contactRow: { display: "flex", alignItems: "center", gap: 10 },
     contactIcon: { color: BRAND.lightBlue, flexShrink: 0, display: "flex" },
     contactValue: { fontSize: 13.5, color: "#3D4459", fontWeight: 500 },
@@ -1237,11 +1205,11 @@ const styles: Record<string, CSSProperties> = {
     infoValue: { fontSize: 13.5, color: "#17181C", fontWeight: 600 },
     aboutBox: {
         background: "#EEF1FB",
-        borderRadius: 12,
-        padding: 16,
-        borderLeft: `3px solid ${BRAND.blue}`,
+        borderRadius: 8,
+        padding: 8,
+        alignSelf: "start", // NEW — same fix for the About Me box specifically
     },
-    aboutTitle: { fontSize: 12.5, fontWeight: 700, color: BRAND.blue, marginBottom: 6 },
+    aboutTitle: { fontSize: 11.5, fontWeight: 700, color: BRAND.blue, marginBottom: 3 },
     aboutText: { margin: 0, fontSize: 13, color: "#3D4459", lineHeight: 1.5 },
     aboutTextarea: {
         width: "100%",
@@ -1255,12 +1223,8 @@ const styles: Record<string, CSSProperties> = {
         boxSizing: "border-box",
     },
     editField: { display: "flex", flexDirection: "column", gap: 4 },
-    logoutRow: {
-        display: "flex",
-        justifyContent: "flex-end",
-        marginTop: 18,
-    },
     logoutButton: {
+        marginTop: 18,
         padding: "10px 18px",
         borderRadius: 8,
         border: `1px solid ${BRAND.red}`,
@@ -1276,8 +1240,9 @@ const styles: Record<string, CSSProperties> = {
         display: "grid",
         gridTemplateColumns: "repeat(4, 1fr)",
         gap: 16,
+        marginBottom: 22,
     },
-    statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 },
     statCard: {
         background: "#fff",
         borderRadius: 14,
@@ -1285,7 +1250,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 12,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
     },
     statIconWrap: {
         width: 40,
@@ -1305,6 +1270,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
+        marginBottom: 14,
         flexWrap: "wrap",
         gap: 10,
     },
@@ -1344,24 +1310,8 @@ const styles: Record<string, CSSProperties> = {
     },
 
     /* Filters */
-    filterRow: {
-        display: "flex",
-        gap: 12,
-        flexWrap: "wrap",
-        background: "#fff",
-        borderRadius: 14,
-        padding: 16,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
-    filterRowMobile: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        background: "#fff",
-        borderRadius: 14,
-        padding: 14,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
+    filterRow: { display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" },
+    filterRowMobile: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 },
     filterField: { display: "flex", flexDirection: "column", gap: 4, minWidth: 150 },
     smallLabel: { fontSize: 11, fontWeight: 600, color: "#3D4459" },
     textInput: {
@@ -1381,10 +1331,11 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: 14,
         padding: 6,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+        marginBottom: 22,
         overflowX: "auto",
     },
-    table: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
+    table: { width: "100%", borderCollapse: "collapse", tableLayout: "fixed", minWidth: 720 },
     th: {
         textAlign: "left",
         fontSize: 11.5,
@@ -1395,7 +1346,16 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     tr: {},
-    td: { fontSize: 13, color: "#3D4459", padding: "12px 14px", borderBottom: "1px solid #f6f6f9" },
+    td: {
+        textAlign: "left",
+        fontSize: 13,
+        color: "#3D4459",
+        padding: "12px 14px",
+        borderBottom: "1px solid #f6f6f9",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
     statusDone: {
         fontSize: 11,
         fontWeight: 700,
@@ -1445,7 +1405,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: 16,
         padding: 22,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
     },
     submitPanelTitle: { fontSize: 15.5, fontWeight: 800, color: BRAND.blue },
     submitPanelSub: { fontSize: 12.5, color: "#767F92", marginTop: 3, marginBottom: 16 },

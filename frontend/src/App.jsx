@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Header from "./components/header";
 import Sidebar from "./components/sidebar";
+import { ThemeProvider } from "./context/themecontext";
 
 // FIX (loading time): every page below was imported eagerly, so a user
 // landing on /login downloaded the JS for every admin page too —
@@ -26,7 +27,7 @@ const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
 // Attendance is no longer a standalone page — leave-marking lives inside
 // manualallocation.tsx instead.
 const QC = lazy(() => import("./pages/admin/qc"));
-//const Profile = lazy(() => import("./pages/admin/profile"));
+const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
@@ -136,216 +137,229 @@ function App() {
     };
 
     return (
-        <BrowserRouter>
-            <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
-                <Routes>
-                    <Route path="/login" element={<Login />} />
+        <ThemeProvider>
+            <BrowserRouter>
+                <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+                    <Routes>
+                        <Route path="/login" element={<Login />} />
 
-                    <Route path="/forgot-password" element={<ForgotPassword />} />
-                    <Route path="/reset-password" element={<ResetPassword />} />
+                        <Route path="/forgot-password" element={<ForgotPassword />} />
+                        <Route path="/reset-password" element={<ResetPassword />} />
 
-                    <Route
-                        path="/reportdashboard"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <ReportDashboard user={user} onLogout={handleLogout} />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/reportdashboard"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ReportDashboard user={user} onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/clients"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <Clients user={user} onLogout={handleLogout} />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/clients"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Clients user={user} onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/report"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <ReportDashboard user={user} onLogout={handleLogout} />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/report"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ReportDashboard user={user} onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/dashboard"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <Dashboard user={user} onLogout={handleLogout} />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/dashboard"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Dashboard user={user} onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
+                        {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
 Gated the same as Clients Preview: admin-tier + Vertical Head,
 since creating a batch requires tasks.allocate.team/org on the
 backend anyway (Vertical Head = own team, others = org-wide). */}
-                    <Route
-                        path="/daily-work"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <DailyWork />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/daily-work"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <DailyWork />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* NEW: Manual Allocation — Page 4. Same gate as Smart Auto Allocation. */}
-                    <Route
-                        path="/today's-allocation"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <ManualAllocation />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        {/* NEW: Manual Allocation — Page 4. Same gate as Smart Auto Allocation. */}
+                        <Route
+                            path="/today's-allocation"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ManualAllocation />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* REMOVED: standalone /attendance route. Leave-marking now
+                        {/* REMOVED: standalone /attendance route. Leave-marking now
                     lives inline inside Manual/Smart Allocation (manualallocation.tsx)
                     instead of a separate page — one place instead of two. */}
 
-                    {/* NEW: Production Reports — Page 8. Open to everyone, same as
+                        {/* NEW: Production Reports — Page 8. Open to everyone, same as
                     Report/History — read-only view over Daily Work data. */}
-                    <Route
-                        path="/production-reports"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <ProductionReports />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/production-reports"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ProductionReports />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* NEW: Products — replaces the old Task Progress sidebar link */}
-                    <Route
-                        path="/products"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <Products user={user} onLogout={handleLogout} />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        {/* NEW: Products — replaces the old Task Progress sidebar link */}
+                        <Route
+                            path="/products"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Products user={user} onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/admin/add-user"
-                        element={
-                            <PrivateRoute requiredRole={["SUPER_ADMIN", "PROCESS_LEAD"]}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <AddUser />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/admin/add-user"
+                            element={
+                                <PrivateRoute requiredRole={["SUPER_ADMIN", "PROCESS_LEAD"]}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <AddUser />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* NEW: Billing — Admin only */}
-                    <Route
-                        path="/billing"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        {/* NEW: Billing — Admin only */}
+                        <Route
+                            path="/billing"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <WorkInProgress />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* Quality Scores — Admin and Manager only. Was WorkInProgress
+                        {/* Quality Scores — Admin and Manager only. Was WorkInProgress
                     placeholder; now the real QC page (Page 7). */}
-                    <Route
-                        path="/quality-scores"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <QC />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/quality-scores"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <QC />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/workinprogress"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/workinprogress"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <WorkInProgress />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    {/* FIX: sidebar.tsx links to /admin, /history, /profile, and
+                        {/* FIX: sidebar.tsx links to /admin, /history, /profile, and
                     /tasks, but none of these had a matching route or page
                     component — clicking them dead-ended. None of these
                     pages are built yet, so point them at the existing
                     WorkInProgress placeholder for now instead of leaving a
                     broken link; swap in the real page component as each
                     one gets built. */}
-                    <Route
-                        path="/admin"
-                        element={
-                            <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
-                    <Route
-                        path="/history"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
-                    {/* Was WorkInProgress placeholder; now the real Profile page (Page 9). */}
+                        <Route
+                            path="/admin"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <WorkInProgress />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+                        <Route
+                            path="/history"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <WorkInProgress />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+                        {/* Real Profile page (Page 9) — photo, role, team, department,
+                    manager, today's + past allocations, and the Submit Work flow. */}
+                        <Route
+                            path="/profile"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Profile onLogout={handleLogout} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/tasks"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <WorkInProgress />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/tasks"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <WorkInProgress />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route
-                        path="/employees"
-                        element={
-                            <PrivateRoute>
-                                <AppLayout onLogout={handleLogout}>
-                                    <Employees />
-                                </AppLayout>
-                            </PrivateRoute>
-                        }
-                    />
+                        <Route
+                            path="/employees"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Employees />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
-                    <Route path="/" element={<Landing />} />
-                </Routes>
-            </Suspense>
-        </BrowserRouter>
+                        <Route path="/" element={<Landing />} />
+                    </Routes>
+                </Suspense>
+            </BrowserRouter>
+        </ThemeProvider>
     );
 }
 
