@@ -30,25 +30,97 @@ async function getOwnedDailyWork(dailyWorkId, organizationId) {
 }
 
 // ------------------------------------------------------------
-// GET /api/allocations?dailyWorkId=...
+// Given a list of daily_work IDs, fetch their work_date/product_id/
+// total_qty in ONE extra query, plus product names in another —
+// same manual-join pattern used in dailywork.controller.js (no FK
+// embedding, since PostgREST needs an actual DB constraint for that).
+// ------------------------------------------------------------
+async function getDailyWorkMap(dailyWorkIds) {
+  const uniqueIds = [...new Set(dailyWorkIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from("daily_work")
+    .select("id, work_date, product_id, total_qty")
+    .in("id", uniqueIds);
+  if (error) {
+    console.error("Failed to fetch daily_work for allocations:", error);
+    return {};
+  }
+
+  const productIds = [
+    ...new Set(data.map((d) => d.product_id).filter(Boolean)),
+  ];
+  let productNames = {};
+  if (productIds.length > 0) {
+    const { data: products } = await supabase
+      .from("product_master")
+      .select("id, product_name")
+      .in("id", productIds);
+    productNames = (products || []).reduce((acc, p) => {
+      acc[p.id] = p.product_name;
+      return acc;
+    }, {});
+  }
+
+  return data.reduce((acc, d) => {
+    acc[d.id] = {
+      workDate: d.work_date,
+      productId: d.product_id,
+      productName: productNames[d.product_id] || null,
+      totalQty: d.total_qty,
+    };
+    return acc;
+  }, {});
+}
+
+// ------------------------------------------------------------
+// GET /api/allocations?dailyWorkId=...&employeeId=...
+//
+// employeeId lets the Profile page pull "my allocations" (today's +
+// history). Anyone can pass their own userId; seeing someone ELSE's
+// allocations still requires an allocate/manage permission — same
+// self-or-manager rule already used by PATCH /:id/status below.
 // ------------------------------------------------------------
 async function listAllocations(req, res) {
   try {
-    const { dailyWorkId } = req.query;
+    const { dailyWorkId, employeeId } = req.query;
+
+    if (employeeId && employeeId !== req.user.userId) {
+      const { hasPermission } = require("../../config/permissions");
+      const canViewOthers =
+        hasPermission(req.user.role, "tasks.allocate.team") ||
+        hasPermission(req.user.role, "tasks.allocate.org");
+      if (!canViewOthers) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Access denied" });
+      }
+    }
+
     let query = supabase
       .from("allocations")
       .select("*")
       .eq("organization_id", req.user.organizationId)
       .order("created_at", { ascending: false });
 
-    if (dailyWorkId) {
-      query = query.eq("daily_work_id", dailyWorkId);
-    }
+    if (dailyWorkId) query = query.eq("daily_work_id", dailyWorkId);
+    if (employeeId) query = query.eq("employee_id", employeeId);
 
     const { data, error } = await query;
     if (error) throw error;
 
-    res.json({ success: true, data });
+    const dailyWorkMap = await getDailyWorkMap(
+      (data || []).map((a) => a.daily_work_id),
+    );
+    const enriched = (data || []).map((a) => ({
+      ...a,
+      workDate: dailyWorkMap[a.daily_work_id]?.workDate || null,
+      productName: dailyWorkMap[a.daily_work_id]?.productName || null,
+      batchTotalQty: dailyWorkMap[a.daily_work_id]?.totalQty ?? null,
+    }));
+
+    res.json({ success: true, data: enriched });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -532,6 +604,79 @@ async function bulkUpsertAllocations(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// PATCH /api/allocations/:id/submit
+// body: { submittedQty, reason? }
+//
+// Used from the Profile page: an employee submits how much of their
+// allocated qty they actually completed. If submittedQty differs
+// from the allocated qty (either less OR more), a reason is
+// mandatory — this is the "why did you do less/more" requirement.
+// Same self-or-manager ownership rule as updateAllocationStatus.
+// ------------------------------------------------------------
+async function submitAllocationWork(req, res) {
+  try {
+    const { id } = req.params;
+    const { submittedQty, reason } = req.body;
+
+    if (typeof submittedQty !== "number" || submittedQty < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "submittedQty must be a non-negative number",
+      });
+    }
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("allocations")
+      .select("employee_id, allocated_qty")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .single();
+    if (fetchError || !existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Allocation not found" });
+    }
+
+    const { hasPermission } = require("../../config/permissions");
+    const isOwner = existing.employee_id === req.user.userId;
+    const canManageOthers =
+      hasPermission(req.user.role, "tasks.allocate.team") ||
+      hasPermission(req.user.role, "tasks.allocate.org");
+    if (!isOwner && !canManageOthers) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    const differs = submittedQty !== existing.allocated_qty;
+    if (differs && !(reason || "").trim()) {
+      return res.status(400).json({
+        success: false,
+        message:
+          submittedQty < existing.allocated_qty
+            ? "Please give a reason for submitting less than what was allocated."
+            : "Please give a reason for submitting more than what was allocated.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("allocations")
+      .update({
+        submitted_qty: submittedQty,
+        submission_reason: differs ? reason.trim() : null,
+        submitted_at: new Date().toISOString(),
+        status: "COMPLETED",
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select();
+    if (error) throw error;
+
+    res.json({ success: true, data: data[0] });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listAllocations,
   autoAllocate,
@@ -539,5 +684,6 @@ module.exports = {
   bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,
+  submitAllocationWork,
   clearAllocationsForBatch,
 };

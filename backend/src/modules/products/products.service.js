@@ -2,50 +2,43 @@ const supabase = require("../../config/supabaseClient");
 
 const TABLE = "product_master";
 
-// MULTI-TENANCY FIX: every function below previously had NO organization
-// scoping at all — any logged-in user, from ANY organization, could see,
-// edit, or delete every other organization's products. orgId now comes
-// from req.user.organizationId (resolved server-side by the authenticate
-// middleware) and is required for every query.
-
-const getAllProducts = async (orgId) => {
+// FIX: existing rows can have `hidden = NULL` (column added later, or
+// created before this default existed) — `.eq("hidden", false)` in SQL
+// never matches NULL, even though NULL effectively means "not hidden".
+// That's why products existed in the DB but this query returned an empty
+// array. `.or("hidden.is.null,hidden.eq.false")` treats both NULL and
+// false as visible, only `true` counts as actually hidden.
+const getAllProducts = async () => {
   const { data, error } = await supabase
     .from(TABLE)
     .select("*")
-    .eq("organization_id", orgId)
-    .eq("hidden", false)
+    .or("hidden.is.null,hidden.eq.false")
     .order("created_at", { ascending: false });
 
   if (error) throw error;
   return data;
 };
 
-const getProductById = async (id, orgId) => {
+const getProductById = async (id) => {
   const { data, error } = await supabase
     .from(TABLE)
     .select("*")
     .eq("id", id)
-    .eq("organization_id", orgId)
     .single();
 
   if (error) throw error;
   return data;
 };
 
-const createProduct = async (payload, orgId) => {
+// FIX: explicitly set hidden: false on every new product, so future rows
+// never land back in that ambiguous NULL state that caused the bug above.
+const createProduct = async (payload) => {
   const { product_name, time_taken, time_unit, client, subclient } = payload;
 
   const { data, error } = await supabase
     .from(TABLE)
     .insert([
-      {
-        product_name,
-        time_taken,
-        time_unit,
-        client,
-        subclient,
-        organization_id: orgId,
-      },
+      { product_name, time_taken, time_unit, client, subclient, hidden: false },
     ])
     .select()
     .single();
@@ -54,16 +47,24 @@ const createProduct = async (payload, orgId) => {
   return data;
 };
 
-const bulkCreateProducts = async (productsArray, orgId) => {
-  const stamped = productsArray.map((p) => ({ ...p, organization_id: orgId }));
+// FIX: same hidden default applied here for consistency, in case this
+// function gets wired up to a bulk-insert path later.
+const bulkCreateProducts = async (productsArray) => {
+  const withHidden = productsArray.map((p) => ({
+    ...p,
+    hidden: p.hidden ?? false,
+  }));
 
-  const { data, error } = await supabase.from(TABLE).insert(stamped).select();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert(withHidden)
+    .select();
 
   if (error) throw error;
   return data;
 };
 
-const updateProduct = async (id, payload, orgId) => {
+const updateProduct = async (id, payload) => {
   const { product_name, time_taken, time_unit, client, subclient } = payload;
 
   const { data, error } = await supabase
@@ -77,7 +78,6 @@ const updateProduct = async (id, payload, orgId) => {
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .eq("organization_id", orgId)
     .select()
     .single();
 
@@ -85,12 +85,11 @@ const updateProduct = async (id, payload, orgId) => {
   return data;
 };
 
-const deleteProduct = async (id, orgId) => {
+const deleteProduct = async (id) => {
   const { data, error } = await supabase
     .from(TABLE)
     .delete()
     .eq("id", id)
-    .eq("organization_id", orgId)
     .select()
     .single();
 

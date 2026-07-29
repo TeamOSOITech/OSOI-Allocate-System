@@ -8,6 +8,7 @@ const {
   bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,
+  submitAllocationWork,
   clearAllocationsForBatch,
 } = require("./allocations.controller");
 
@@ -50,5 +51,8 @@ router.delete(
 // inside the controller itself (an employee can update their OWN
 // allocation without holding the allocate permission).
 router.patch("/:id/status", updateAllocationStatus);
+
+// Submitting completed work: same self-or-manager rule as above.
+router.patch("/:id/submit", submitAllocationWork);
 
 module.exports = router;
