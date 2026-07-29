@@ -97,6 +97,53 @@ const Landing = () => {
     const [checkoutLoading, setCheckoutLoading] = useState(false);
     const [checkoutError, setCheckoutError] = useState("");
 
+    // ---------- "Sign up your organization" popup (org name + email only) ----------
+    const [orgSignupOpen, setOrgSignupOpen] = useState(false);
+    const [orgName, setOrgName] = useState("");
+    const [orgEmail, setOrgEmail] = useState("");
+    const [orgSignupLoading, setOrgSignupLoading] = useState(false);
+    const [orgSignupError, setOrgSignupError] = useState("");
+    const [orgSignupSuccess, setOrgSignupSuccess] = useState("");
+
+    const handleOrgSignup = async () => {
+        setOrgSignupError("");
+        if (!orgName.trim() || !orgEmail.trim()) {
+            setOrgSignupError("Organization name and email are both required.");
+            return;
+        }
+        setOrgSignupLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/api/auth/register-organization`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    organizationName: orgName.trim(),
+                    email: orgEmail.trim(),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || "Something went wrong. Please try again.");
+            }
+            setOrgSignupSuccess(
+                data.message ||
+                    "Organization created. Check your email to set your password, then log in."
+            );
+        } catch (err: any) {
+            setOrgSignupError(err.message || "Something went wrong. Please try again.");
+        } finally {
+            setOrgSignupLoading(false);
+        }
+    };
+
+    const closeOrgSignup = () => {
+        setOrgSignupOpen(false);
+        setOrgName("");
+        setOrgEmail("");
+        setOrgSignupError("");
+        setOrgSignupSuccess("");
+    };
+
     const loadRazorpayScript = () =>
         new Promise<boolean>((resolve) => {
             if ((window as any).Razorpay) return resolve(true);
@@ -1165,7 +1212,15 @@ const Landing = () => {
 
                     <p className="lp-login-footer-note">
                         Don't have an organization?{" "}
-                        <a href="mailto:contact@osoitech.com">Sign up your organization</a>
+                        <a
+                            href="#"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                setOrgSignupOpen(true);
+                            }}
+                        >
+                            Sign up your organization
+                        </a>
                     </p>
                 </div>
             </section>
@@ -1215,6 +1270,79 @@ const Landing = () => {
                         >
                             {checkoutLoading ? "Opening secure checkout…" : "Continue to Payment"}
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ---------- "Sign up your organization" popup ---------- */}
+            {orgSignupOpen && (
+                <div
+                    className="lp-checkout-overlay"
+                    onClick={() => !orgSignupLoading && closeOrgSignup()}
+                >
+                    <div className="lp-checkout-modal" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            className="lp-checkout-close"
+                            onClick={closeOrgSignup}
+                            aria-label="Close"
+                            disabled={orgSignupLoading}
+                        >
+                            <i className="ti ti-x" />
+                        </button>
+
+                        {orgSignupSuccess ? (
+                            <>
+                                <h3 className="lp-login-title">You're all set!</h3>
+                                <p className="lp-login-subtitle">{orgSignupSuccess}</p>
+                                <button
+                                    className="lp-login-submit"
+                                    onClick={() => {
+                                        closeOrgSignup();
+                                        navigate("/login");
+                                    }}
+                                >
+                                    Go to Login
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <h3 className="lp-login-title">Sign Up Your Organization</h3>
+                                <p className="lp-login-subtitle">
+                                    Enter your organization name and email — we'll email you a link
+                                    to set your password and log in.
+                                </p>
+                                {orgSignupError && (
+                                    <div className="lp-login-error">{orgSignupError}</div>
+                                )}
+                                <input
+                                    type="text"
+                                    placeholder="Organization name"
+                                    value={orgName}
+                                    onChange={(e) => setOrgName(e.target.value)}
+                                    className="lp-login-input"
+                                    style={{ marginBottom: 10 }}
+                                    disabled={orgSignupLoading}
+                                />
+                                <input
+                                    type="email"
+                                    placeholder="Your email"
+                                    value={orgEmail}
+                                    onChange={(e) => setOrgEmail(e.target.value)}
+                                    className="lp-login-input"
+                                    style={{ marginBottom: 14 }}
+                                    disabled={orgSignupLoading}
+                                />
+                                <button
+                                    className="lp-login-submit"
+                                    onClick={handleOrgSignup}
+                                    disabled={orgSignupLoading}
+                                >
+                                    {orgSignupLoading
+                                        ? "Creating organization…"
+                                        : "Create Organization"}
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
