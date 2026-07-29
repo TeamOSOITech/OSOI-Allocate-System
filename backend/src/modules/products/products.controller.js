@@ -4,7 +4,9 @@ const productService = require("./products.service");
 
 const getAllProducts = async (req, res) => {
   try {
-    const products = await productService.getAllProducts();
+    const products = await productService.getAllProducts(
+      req.user.organizationId,
+    );
     return res.status(200).json({ success: true, data: products });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -14,7 +16,10 @@ const getAllProducts = async (req, res) => {
 const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await productService.getProductById(id);
+    const product = await productService.getProductById(
+      id,
+      req.user.organizationId,
+    );
 
     if (!product) {
       return res
@@ -45,13 +50,16 @@ const createProduct = async (req, res) => {
       });
     }
 
-    const product = await productService.createProduct({
-      product_name,
-      time_taken,
-      time_unit,
-      client,
-      subclient,
-    });
+    const product = await productService.createProduct(
+      {
+        product_name,
+        time_taken,
+        time_unit,
+        client,
+        subclient,
+      },
+      req.user.organizationId,
+    );
 
     return res.status(201).json({ success: true, data: product });
   } catch (error) {
@@ -90,6 +98,8 @@ const bulkUploadProducts = async (req, res) => {
         .status(400)
         .json({ success: false, message: "No file uploaded" });
     }
+
+    const orgId = req.user.organizationId;
 
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
@@ -146,13 +156,16 @@ const bulkUploadProducts = async (req, res) => {
       }
 
       try {
-        await productService.createProduct({
-          product_name,
-          time_taken,
-          time_unit,
-          client,
-          subclient,
-        });
+        await productService.createProduct(
+          {
+            product_name,
+            time_taken,
+            time_unit,
+            client,
+            subclient,
+          },
+          orgId,
+        );
         results.push({ identifier, row: rowNumber, success: true });
         createdCount++;
       } catch (err) {
@@ -195,13 +208,17 @@ const updateProduct = async (req, res) => {
       });
     }
 
-    const product = await productService.updateProduct(id, {
-      product_name,
-      time_taken,
-      time_unit,
-      client,
-      subclient,
-    });
+    const product = await productService.updateProduct(
+      id,
+      {
+        product_name,
+        time_taken,
+        time_unit,
+        client,
+        subclient,
+      },
+      req.user.organizationId,
+    );
 
     return res.status(200).json({ success: true, data: product });
   } catch (error) {
@@ -212,7 +229,10 @@ const updateProduct = async (req, res) => {
 const deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await productService.deleteProduct(id);
+    const product = await productService.deleteProduct(
+      id,
+      req.user.organizationId,
+    );
 
     return res.status(200).json({ success: true, data: product });
   } catch (error) {

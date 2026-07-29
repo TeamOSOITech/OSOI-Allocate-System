@@ -35,12 +35,13 @@ async function createRequest(req, res) {
     }
 
     // Business rule for QC_PERMISSION_GRANT: target user must not
-    // already be doing QC in any vertical.
+    // already be doing QC in any vertical (within this org).
     if (type === "QC_PERMISSION_GRANT" && targetUserId) {
       const { data: existingQc } = await supabase
         .from("qc_assignments")
         .select("id")
         .eq("user_id", targetUserId)
+        .eq("organization_id", req.user.organizationId)
         .limit(1);
 
       if (existingQc && existingQc.length > 0) {
@@ -60,6 +61,7 @@ async function createRequest(req, res) {
         target_user_id: targetUserId || null,
         payload: payload || {},
         status: "PENDING",
+        organization_id: req.user.organizationId,
       })
       .select()
       .single();
@@ -82,11 +84,13 @@ async function listRequests(req, res) {
       .from("approval_requests")
       .select("*")
       .eq("status", "PENDING")
+      .eq("organization_id", req.user.organizationId) // SUPER_ADMIN is org-level, not a platform operator — always scope
       .order("created_at", { ascending: false });
 
     if (req.user.role !== "SUPER_ADMIN") {
-      // Super Admin can override/see everything; everyone else only
-      // sees pending requests they're allowed to decide on, plus their own.
+      // Super Admin can see every pending request in their own org;
+      // everyone else only sees pending requests (in their own org)
+      // they're allowed to decide on, plus their own.
       query = query.or(
         `type.in.(${eligibleTypes.length ? eligibleTypes.join(",") : "NONE"}),requested_by.eq.${req.user.userId}`,
       );
@@ -116,6 +120,7 @@ async function decideRequest(req, res) {
       .from("approval_requests")
       .select("*")
       .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
       .single();
 
     if (fetchError || !request) {
@@ -149,6 +154,7 @@ async function decideRequest(req, res) {
         decided_at: new Date().toISOString(),
       })
       .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
       .select()
       .single();
 
@@ -172,20 +178,33 @@ async function applyApprovedAction(request) {
         user_id: request.target_user_id,
         vertical_id: request.payload?.verticalId || null,
         granted_via_request_id: request.id,
+        organization_id: request.organization_id,
       });
       break;
     case "NEW_VERTICAL":
       await supabase.from("verticals").insert({
         name: request.payload?.name,
         created_via_request_id: request.id,
+        organization_id: request.organization_id,
       });
       break;
-    case "HIDE_TASK":
-      await supabase
-        .from("products_master")
+    case "HIDE_TASK": {
+      // FIX: table name was "products_master" (typo — doesn't exist;
+      // the real table is "product_master", same as products.service.js),
+      // and the result was never checked, so a failure here was
+      // silently swallowed — HIDE_TASK approvals looked successful but
+      // never actually hid anything.
+      const { error: hideError } = await supabase
+        .from("product_master")
         .update({ hidden: true })
-        .eq("id", request.payload?.taskId);
+        .eq("id", request.payload?.taskId)
+        .eq("organization_id", request.organization_id);
+
+      if (hideError) {
+        console.error("HIDE_TASK failed to apply:", hideError);
+      }
       break;
+    }
   }
 }
 

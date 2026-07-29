@@ -115,15 +115,24 @@ function toApiContactFields(row) {
 
 router.get("/", async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
+
     const { data: subclients, error } = await supabase
       .from("subclients")
       .select("*")
+      .eq("organization_id", orgId)
       .order("name", { ascending: true });
 
     if (error) throw error;
 
-    const { data: clients } = await supabase.from("clients").select("id,name");
-    const { data: branches } = await supabase.from("branches").select("*");
+    const { data: clients } = await supabase
+      .from("clients")
+      .select("id,name")
+      .eq("organization_id", orgId);
+    const { data: branches } = await supabase
+      .from("branches")
+      .select("*")
+      .eq("organization_id", orgId);
 
     const formatted = subclients.map((subclient) => ({
       id: subclient.id,
@@ -149,6 +158,7 @@ router.get("/", async (req, res) => {
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
 router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const { name, clientId, status } = req.body;
 
     if (!name || !name.trim()) {
@@ -158,12 +168,26 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
       return res.status(400).json({ message: "Client is required" });
     }
 
+    // Make sure this client actually belongs to the caller's org — otherwise
+    // someone could attach a subclient to another organization's client id.
+    const { data: ownedClient } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", Number(clientId))
+      .eq("organization_id", orgId)
+      .maybeSingle();
+
+    if (!ownedClient) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+
     const { data: subclient, error } = await supabase
       .from("subclients")
       .insert({
         name: name.trim(),
         client_id: Number(clientId),
         status: status === "Inactive" ? "Inactive" : "Active",
+        organization_id: orgId,
         ...toDbContactFields(req.body),
       })
       .select()
@@ -334,6 +358,8 @@ router.post(
         return res.status(400).json({ message: "No file uploaded" });
       }
 
+      const orgId = req.user.organizationId;
+
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
@@ -406,6 +432,7 @@ router.post(
             const { data: existing } = await supabase
               .from("clients")
               .select("*")
+              .eq("organization_id", orgId)
               .ilike("name", clientName)
               .maybeSingle();
 
@@ -436,6 +463,7 @@ router.post(
           const { data: existingSub } = await supabase
             .from("subclients")
             .select("*")
+            .eq("organization_id", orgId)
             .eq("client_id", client.id)
             .ilike("name", subName)
             .maybeSingle();
@@ -445,6 +473,7 @@ router.post(
               name: subName,
               client_id: client.id,
               status: subStatus,
+              organization_id: orgId,
               ...contactFields,
             });
 
@@ -491,6 +520,7 @@ router.post(
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
 router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const id = Number(req.params.id);
     const { name, clientId, status } = req.body;
 
@@ -499,6 +529,18 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
     }
     if (!clientId) {
       return res.status(400).json({ message: "Client is required" });
+    }
+
+    // Make sure the (possibly reassigned) client belongs to this org too.
+    const { data: ownedClient } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", Number(clientId))
+      .eq("organization_id", orgId)
+      .maybeSingle();
+
+    if (!ownedClient) {
+      return res.status(404).json({ message: "Client not found" });
     }
 
     const { data: subclient, error } = await supabase
@@ -510,6 +552,7 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
         ...toDbContactFields(req.body),
       })
       .eq("id", id)
+      .eq("organization_id", orgId) // can't update another org's subclient
       .select()
       .single();
 
@@ -531,19 +574,25 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
 
 router.delete("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
+    const orgId = req.user.organizationId;
     const id = Number(req.params.id);
 
     const { data: existing, error: findErr } = await supabase
       .from("subclients")
       .select("id")
       .eq("id", id)
+      .eq("organization_id", orgId)
       .maybeSingle();
 
     if (findErr) throw findErr;
     if (!existing)
       return res.status(404).json({ message: "Subclient not found" });
 
-    const { error } = await supabase.from("subclients").delete().eq("id", id);
+    const { error } = await supabase
+      .from("subclients")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", orgId);
 
     if (error) {
       if (error.code === "23503") {

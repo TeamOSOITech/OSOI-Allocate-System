@@ -28,9 +28,12 @@ function mapRow(row) {
 }
 
 async function listEmployees(req, res) {
+  const orgId = req.user.organizationId;
+
   const { data, error } = await supabase
     .from("user_master")
     .select("*")
+    .eq("organization_id", orgId)
     .order("First Name", { ascending: true });
 
   if (error) {
@@ -44,11 +47,13 @@ async function listEmployees(req, res) {
 
 async function getEmployeeById(req, res) {
   const { id } = req.params;
+  const orgId = req.user.organizationId;
 
   const { data, error } = await supabase
     .from("user_master")
     .select("*")
     .eq("Auth User Id", id)
+    .eq("organization_id", orgId)
     .single();
 
   if (error) {
@@ -61,6 +66,7 @@ async function getEmployeeById(req, res) {
 
 async function updateEmployee(req, res) {
   const { id } = req.params;
+  const orgId = req.user.organizationId;
   const body = req.body || {};
 
   const updatePayload = {};
@@ -93,6 +99,7 @@ async function updateEmployee(req, res) {
     .from("user_master")
     .update(updatePayload)
     .eq("Auth User Id", id)
+    .eq("organization_id", orgId)
     .select()
     .single();
 
@@ -110,11 +117,13 @@ async function updateEmployee(req, res) {
 
 async function deleteEmployee(req, res) {
   const { id } = req.params;
+  const orgId = req.user.organizationId;
 
   const { error } = await supabase
     .from("user_master")
     .delete()
-    .eq("Auth User Id", id);
+    .eq("Auth User Id", id)
+    .eq("organization_id", orgId);
 
   if (error) {
     console.error("Failed to delete employee:", error);

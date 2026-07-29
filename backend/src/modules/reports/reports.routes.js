@@ -28,6 +28,7 @@ router.post("/daily", async (req, res) => {
           hours_worked: hoursWorked,
           pending_reasons: pendingReasons,
           remarks,
+          organization_id: req.user.organizationId,
         },
         { onConflict: "user_id,report_date" },
       )
@@ -47,6 +48,7 @@ router.get("/my-history", async (req, res) => {
       .from("daily_reports")
       .select("*")
       .eq("user_id", req.user.userId)
+      .eq("organization_id", req.user.organizationId)
       .order("report_date", { ascending: false })
       .limit(30);
 
@@ -72,7 +74,8 @@ router.get(
       const { data, error } = await supabase
         .from("daily_reports")
         .select("*, users(email, profiles(first_name, last_name))")
-        .eq("report_date", today);
+        .eq("report_date", today)
+        .eq("organization_id", req.user.organizationId);
 
       if (error) throw error;
       res.json({ success: true, data });

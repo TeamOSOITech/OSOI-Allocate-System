@@ -90,6 +90,7 @@ async function createUserAndGenerateResetLink({
   email,
   tempPassword,
   metadata,
+  organizationId,
 }) {
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
@@ -134,6 +135,7 @@ async function createUserAndGenerateResetLink({
         "Login Email": email,
         Role: metadata?.role || null,
         "Auth User Id": data.user.id,
+        organization_id: organizationId,
       });
     if (insertError) throw insertError;
   } catch (err) {
@@ -260,6 +262,7 @@ router.post(
       } = await createUserAndGenerateResetLink({
         email,
         tempPassword,
+        organizationId: req.user.organizationId,
         metadata: {
           fullName: body.fullName,
           firstName: body.firstName,
@@ -364,6 +367,7 @@ router.post(
           } = await createUserAndGenerateResetLink({
             email,
             tempPassword,
+            organizationId: req.user.organizationId,
             metadata: {
               fullName: rawUser.firstName
                 ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()

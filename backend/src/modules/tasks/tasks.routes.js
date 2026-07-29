@@ -14,6 +14,7 @@ router.get("/my", async (req, res) => {
       .from("tasks")
       .select("*")
       .eq("assigned_to", req.user.userId)
+      .eq("organization_id", req.user.organizationId)
       .order("created_at", { ascending: false });
 
     const todayTasks =
@@ -72,6 +73,7 @@ router.post(
           due_date: dueDate,
           priority: priority || "MEDIUM",
           status: "PENDING",
+          organization_id: req.user.organizationId,
         })
         .select();
 
@@ -96,6 +98,7 @@ router.patch("/:id/status", async (req, res) => {
       .from("tasks")
       .select("assigned_to")
       .eq("id", req.params.id)
+      .eq("organization_id", req.user.organizationId)
       .single();
 
     if (fetchError || !existing) {
@@ -122,6 +125,7 @@ router.patch("/:id/status", async (req, res) => {
         completed_at: status === "COMPLETED" ? new Date().toISOString() : null,
       })
       .eq("id", req.params.id)
+      .eq("organization_id", req.user.organizationId)
       .select();
 
     if (error) throw error;
