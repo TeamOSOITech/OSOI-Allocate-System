@@ -2,6 +2,9 @@ const router = require("express").Router();
 const rateLimit = require("express-rate-limit");
 const { loginHandler } = require("./auth.controller");
 const { forgotPasswordHandler } = require("./auth.controller");
+const {
+  registerOrganizationHandler,
+} = require("./registerOrganization.controller");
 
 // SECURITY FIX: these endpoints had NO rate limiting at all — an
 // attacker could try unlimited passwords per second against any known
@@ -29,9 +32,27 @@ const forgotPasswordLimiter = rateLimit({
   },
 });
 
+// Prevents someone from spamming new tenant/org creation from one IP
+const registerOrgLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // 5 organizations per IP per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many signup attempts. Please try again later.",
+  },
+});
+
 // Login using Supabase Authentication
 router.post("/login", loginLimiter, loginHandler);
 
 router.post("/forgot-password", forgotPasswordLimiter, forgotPasswordHandler);
+
+router.post(
+  "/register-organization",
+  registerOrgLimiter,
+  registerOrganizationHandler,
+);
 
 module.exports = router;

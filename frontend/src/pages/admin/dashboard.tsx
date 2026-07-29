@@ -11,6 +11,7 @@ import {
     ResponsiveContainer,
 } from "recharts";
 import { authFetch } from "../../utils/authFetch";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -194,7 +195,10 @@ export default function Dashboard({ user }: DashboardProps) {
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div style={styles.headerIcon}>
-                            <i className="ti ti-layout-dashboard" style={{ fontSize: 22 }} />
+                            <i
+                                className="ti ti-layout-dashboard"
+                                style={{ fontSize: fontSize["4xl"] }}
+                            />
                         </div>
                         <div>
                             <h1 style={styles.pageTitle}>Dashboard</h1>
@@ -205,14 +209,14 @@ export default function Dashboard({ user }: DashboardProps) {
                         </div>
                     </div>
                     <div style={styles.dateBadge}>
-                        <i className="ti ti-calendar" style={{ fontSize: 13 }} />
+                        <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
                         {formatDisplayDate(todayStr())}
                     </div>
                 </div>
 
                 {error && !errorDismissed && (
                     <div style={styles.errorBanner}>
-                        <i className="ti ti-alert-triangle" style={{ fontSize: 15 }} />
+                        <i className="ti ti-alert-triangle" style={{ fontSize: fontSize.lg }} />
                         <span style={{ flex: 1 }}>{error}</span>
                         <button
                             style={styles.errorDismissBtn}
@@ -220,7 +224,7 @@ export default function Dashboard({ user }: DashboardProps) {
                             aria-label="Dismiss"
                             type="button"
                         >
-                            <i className="ti ti-x" style={{ fontSize: 13 }} />
+                            <i className="ti ti-x" style={{ fontSize: fontSize.base }} />
                         </button>
                     </div>
                 )}
@@ -233,12 +237,12 @@ export default function Dashboard({ user }: DashboardProps) {
                                 <div style={{ ...styles.kpiIconWrap, background: kpi.gradient }}>
                                     <i
                                         className={kpi.icon}
-                                        style={{ fontSize: 18, color: "#fff" }}
+                                        style={{ fontSize: fontSize["2xl"], color: "#fff" }}
                                     />
                                 </div>
                                 <i
                                     className="ti ti-info-circle"
-                                    style={{ fontSize: 14, color: "#c7cbe0" }}
+                                    style={{ fontSize: fontSize.md, color: "#c7cbe0" }}
                                     aria-hidden="true"
                                 />
                             </div>
@@ -263,7 +267,7 @@ export default function Dashboard({ user }: DashboardProps) {
                             <div style={styles.emptyIconCircle}>
                                 <i
                                     className="ti ti-chart-bar"
-                                    style={{ fontSize: 26, color: BRAND.lightBlue }}
+                                    style={{ fontSize: fontSize["6xl"], color: BRAND.lightBlue }}
                                 />
                             </div>
                             <div style={styles.emptyText}>No daily work logged for today yet.</div>
@@ -275,9 +279,12 @@ export default function Dashboard({ user }: DashboardProps) {
                                 margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
                             >
                                 <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-                                <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} />
+                                <XAxis
+                                    dataKey="name"
+                                    tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
+                                />
                                 <YAxis
-                                    tick={{ fontSize: 12, fill: "#6b7280" }}
+                                    tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
                                     allowDecimals={false}
                                 />
                                 <Tooltip />
@@ -311,7 +318,7 @@ export default function Dashboard({ user }: DashboardProps) {
                             >
                                 <i
                                     className="ti ti-mood-smile"
-                                    style={{ fontSize: 26, color: BRAND.green }}
+                                    style={{ fontSize: fontSize["6xl"], color: BRAND.green }}
                                 />
                             </div>
                             <div style={styles.emptyText}>
@@ -338,7 +345,12 @@ export default function Dashboard({ user }: DashboardProps) {
                                     <div style={styles.pendingCardRow}>
                                         <span>Total: {b.totalQty}</span>
                                         <span>Allocated: {b.allocatedQty}</span>
-                                        <span style={{ color: BRAND.amber, fontWeight: 700 }}>
+                                        <span
+                                            style={{
+                                                color: BRAND.amber,
+                                                fontWeight: fontWeight.semibold,
+                                            }}
+                                        >
                                             Pending: {b.pendingQty}
                                         </span>
                                     </div>
@@ -365,7 +377,7 @@ export default function Dashboard({ user }: DashboardProps) {
                                         <td
                                             style={{
                                                 ...styles.td,
-                                                fontWeight: 700,
+                                                fontWeight: fontWeight.semibold,
                                                 color: BRAND.amber,
                                             }}
                                         >
@@ -397,13 +409,13 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         minHeight: "100%",
         background: "#f4f5fb",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
     },
     rootMobile: {
         width: "100%",
         minHeight: "100%",
         background: "#f0f0f5",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
     },
     // Same signature strip as header.tsx's brandRail — all three brand
     // colors in one gradient, used consistently at the top of the page.
@@ -432,7 +444,7 @@ const styles: Record<string, CSSProperties> = {
         width: 44,
         height: 44,
         minWidth: 44,
-        borderRadius: 12,
+        borderRadius: radius.md,
         background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
         color: "#fff",
         display: "flex",
@@ -440,9 +452,14 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    pageTitle: { fontSize: "20px", fontWeight: 800, color: "#1e1b4b", margin: 0 },
+    pageTitle: {
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.bold,
+        color: "#1e1b4b",
+        margin: 0,
+    },
     pageSubtitle: {
-        fontSize: "12px",
+        fontSize: fontSize.sm,
         color: "#64748b",
         margin: "4px 0 0",
         maxWidth: 520,
@@ -452,12 +469,12 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         color: "#fff",
         background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
         padding: "8px 14px",
-        borderRadius: 10,
+        borderRadius: radius.md,
         whiteSpace: "nowrap",
         boxShadow: `0 6px 16px rgba(32,66,151,0.28)`,
     },
@@ -468,9 +485,9 @@ const styles: Record<string, CSSProperties> = {
         background: "#fef2f2",
         color: "#b91c1c",
         border: "1px solid #fecaca",
-        borderRadius: 12,
+        borderRadius: radius.md,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
     },
     errorDismissBtn: {
         border: "none",
@@ -493,7 +510,7 @@ const styles: Record<string, CSSProperties> = {
     },
     kpiCard: {
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "16px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
     },
@@ -507,27 +524,37 @@ const styles: Record<string, CSSProperties> = {
         width: 40,
         height: 40,
         minWidth: 40,
-        borderRadius: 10,
+        borderRadius: radius.md,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
     },
-    kpiValue: { fontSize: 22, fontWeight: 800, color: "#16233a", lineHeight: 1.2 },
-    kpiLabel: { fontSize: 12, color: "#7d90a6", marginTop: 4 },
+    kpiValue: {
+        fontSize: fontSize["4xl"],
+        fontWeight: fontWeight.bold,
+        color: "#16233a",
+        lineHeight: 1.2,
+    },
+    kpiLabel: { fontSize: fontSize.sm, color: "#7d90a6", marginTop: 4 },
     panel: {
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "20px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
     },
     panelTitleRow: { marginBottom: 16 },
-    panelTitle: { fontSize: 14, fontWeight: 700, color: "#16233a", textAlign: "center" },
+    panelTitle: {
+        fontSize: fontSize.lg,
+        fontWeight: fontWeight.bold,
+        color: "#16233a",
+        textAlign: "left",
+    },
     panelTitleUnderline: {
         width: 40,
         height: 3,
         borderRadius: 2,
         background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-        margin: "8px auto 0",
+        margin: "8px 0 0", // was "8px auto 0" (auto centered it)
     },
     emptyState: {
         padding: "28px 0 12px",
@@ -539,24 +566,24 @@ const styles: Record<string, CSSProperties> = {
     emptyIconCircle: {
         width: 56,
         height: 56,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "rgba(8,161,206,0.1)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
     },
-    emptyText: { color: "#7d90a6", fontSize: 13, textAlign: "center" },
+    emptyText: { color: "#7d90a6", fontSize: fontSize.base, textAlign: "center" },
     table: { width: "100%", borderCollapse: "collapse" },
     th: {
         textAlign: "left",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         color: "#7d90a6",
         padding: "10px 12px",
         borderBottom: "2px solid #eef0f3",
     },
     td: {
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#16233a",
         padding: "12px",
         borderBottom: "1px solid #f1f2f4",
@@ -564,14 +591,14 @@ const styles: Record<string, CSSProperties> = {
     statusBadge: {
         display: "inline-block",
         padding: "4px 10px",
-        borderRadius: 20,
-        fontSize: 11,
-        fontWeight: 700,
+        borderRadius: radius.xl,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
     },
     cardList: { display: "flex", flexDirection: "column", gap: 10 },
     pendingCard: {
         border: "1px solid #eef0f3",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "12px 14px",
     },
     pendingCardTop: {
@@ -580,11 +607,15 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         marginBottom: 8,
     },
-    pendingCardProduct: { fontSize: 13, fontWeight: 700, color: "#16233a" },
+    pendingCardProduct: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#16233a",
+    },
     pendingCardRow: {
         display: "flex",
         justifyContent: "space-between",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#7d90a6",
     },
 };

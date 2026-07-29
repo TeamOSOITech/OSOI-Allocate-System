@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { authFetch } from "../../utils/authFetch";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -209,16 +210,18 @@ export default function QC() {
                 ) : (
                     checks.map((c) => (
                         <div key={c.id} style={styles.tableRow}>
-                            <span style={{ flex: 1.4, fontSize: 13 }}>
+                            <span style={{ flex: 1.4, fontSize: fontSize.base }}>
                                 {employeeName(c.employeeId)}
                             </span>
-                            <span style={{ flex: 1.2, fontSize: 13 }}>{c.productName || "-"}</span>
+                            <span style={{ flex: 1.2, fontSize: fontSize.base }}>
+                                {c.productName || "-"}
+                            </span>
                             <span
                                 style={{
                                     width: 70,
                                     textAlign: "right",
                                     color: BRAND.green,
-                                    fontWeight: 600,
+                                    fontWeight: fontWeight.medium,
                                 }}
                             >
                                 {c.passQty}
@@ -228,7 +231,7 @@ export default function QC() {
                                     width: 70,
                                     textAlign: "right",
                                     color: BRAND.red,
-                                    fontWeight: 600,
+                                    fontWeight: fontWeight.medium,
                                 }}
                             >
                                 {c.failQty}
@@ -245,62 +248,78 @@ const styles: Record<string, CSSProperties> = {
     root: { padding: "28px 32px", maxWidth: 860 },
     rootMobile: { padding: "16px" },
     header: { marginBottom: 20 },
-    title: { fontSize: 22, fontWeight: 700, color: "#1a1a2e", margin: 0 },
-    subtitle: { fontSize: 13, color: "#6b7280", marginTop: 6 },
+    title: {
+        fontSize: fontSize["4xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#1a1a2e",
+        margin: 0,
+    },
+    subtitle: { fontSize: fontSize.base, color: "#6b7280", marginTop: 6 },
     errorBanner: {
         background: "#FEF2F2",
         color: BRAND.red,
         border: "1px solid #FECACA",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         marginBottom: 16,
     },
     successBanner: {
         background: "rgba(46,187,168,0.1)",
         color: BRAND.green,
         border: `1px solid ${BRAND.green}`,
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         marginBottom: 16,
     },
     card: {
         background: "#fff",
-        borderRadius: 12,
+        borderRadius: radius.md,
         padding: 24,
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
     },
     formGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
-    label: { fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 },
+    label: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: "#374151",
+        display: "block",
+        marginBottom: 6,
+    },
     select: {
         width: "100%",
         padding: "10px 12px",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: "1px solid #d1d5db",
-        fontSize: 13,
+        fontSize: fontSize.base,
     },
     input: {
         width: "100%",
         padding: "10px 12px",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: "1px solid #d1d5db",
-        fontSize: 13,
+        fontSize: fontSize.base,
     },
     button: {
         marginTop: 18,
         padding: "10px 24px",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: "none",
         background: BRAND.blue,
         color: "#fff",
-        fontWeight: 600,
-        fontSize: 14,
+        fontWeight: fontWeight.medium,
+        fontSize: fontSize.md,
     },
-    sectionTitle: { fontSize: 15, fontWeight: 700, color: "#1a1a2e", margin: "24px 0 10px" },
+    sectionTitle: {
+        fontSize: fontSize.lg,
+        fontWeight: fontWeight.semibold,
+        color: "#1a1a2e",
+        margin: "24px 0 10px",
+    },
     tableCard: {
         background: "#fff",
-        borderRadius: 12,
+        borderRadius: radius.md,
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         overflow: "hidden",
     },
@@ -308,8 +327,8 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         padding: "10px 16px",
         background: "#f9fafb",
-        fontSize: 11,
-        fontWeight: 600,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
         color: "#6b7280",
         textTransform: "uppercase",
     },
@@ -319,5 +338,5 @@ const styles: Record<string, CSSProperties> = {
         borderTop: "1px solid #f1f1f1",
         alignItems: "center",
     },
-    emptyNote: { padding: "24px", textAlign: "center", color: "#9ca3af", fontSize: 13 },
+    emptyNote: { padding: "24px", textAlign: "center", color: "#9ca3af", fontSize: fontSize.base },
 };

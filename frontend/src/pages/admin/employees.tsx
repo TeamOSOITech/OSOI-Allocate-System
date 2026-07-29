@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 //import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
@@ -361,7 +362,7 @@ export default function Employees() {
                         <div className="emp-search-wrap" style={styles.searchWrap}>
                             <i
                                 className="ti ti-search"
-                                style={{ fontSize: 15, color: "#7d90a6" }}
+                                style={{ fontSize: fontSize.lg, color: "#7d90a6" }}
                                 aria-hidden="true"
                             />
                             <input
@@ -442,7 +443,7 @@ export default function Employees() {
                                 <div style={styles.emptyIconWrap}>
                                     <i
                                         className="ti ti-alert-triangle"
-                                        style={{ fontSize: 26, color: "#dc2626" }}
+                                        style={{ fontSize: fontSize["6xl"], color: "#dc2626" }}
                                     />
                                 </div>
                                 <p style={{ ...styles.emptyTitle, color: "#b91c1c" }}>
@@ -462,7 +463,7 @@ export default function Employees() {
                                 <div style={styles.emptyIconWrap}>
                                     <i
                                         className="ti ti-users"
-                                        style={{ fontSize: 26, color: "#08a1ce" }}
+                                        style={{ fontSize: fontSize["6xl"], color: "#08a1ce" }}
                                     />
                                 </div>
                                 <p style={styles.emptyTitle}>No employees match your filters</p>
@@ -912,14 +913,14 @@ export default function Employees() {
                         <h3
                             style={{
                                 margin: "0 0 6px",
-                                fontSize: 16,
-                                fontWeight: 800,
+                                fontSize: fontSize.xl,
+                                fontWeight: fontWeight.bold,
                                 color: "#16233a",
                             }}
                         >
                             Delete {employeeToDelete.name}?
                         </h3>
-                        <p style={{ margin: 0, fontSize: 13, color: "#7d90a6" }}>
+                        <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
                             This action cannot be undone. This will permanently remove the employee
                             record.
                         </p>
@@ -960,7 +961,7 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         minHeight: 0,
         background: "#eff4fa",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         overflow: "hidden",
     },
     rootMobile: {
@@ -971,7 +972,7 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 0,
         width: "100%",
         background: "#eff4fa",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         position: "relative",
         overflow: "hidden",
     },
@@ -993,11 +994,11 @@ const styles: Record<string, CSSProperties> = {
     hamburgerBtn: {
         border: "none",
         background: "transparent",
-        fontSize: "20px",
+        fontSize: fontSize["3xl"],
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#16233a" },
+    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#16233a" },
 
     overlay: {
         position: "fixed",
@@ -1051,20 +1052,25 @@ const styles: Record<string, CSSProperties> = {
     },
     pageTitle: {
         margin: 0,
-        fontSize: 24,
-        fontWeight: 800,
+        fontSize: fontSize["5xl"],
+        fontWeight: fontWeight.bold,
         color: "#17181C",
         textAlign: "left",
     },
-    pageTitleCount: { fontSize: 14, fontWeight: 600, color: "#7d90a6" },
-    headerSubtext: { margin: "4px 0 0", fontSize: 13, color: "#767F92", textAlign: "left" },
+    pageTitleCount: { fontSize: fontSize.md, fontWeight: fontWeight.medium, color: "#7d90a6" },
+    headerSubtext: {
+        margin: "4px 0 0",
+        fontSize: fontSize.base,
+        color: "#767F92",
+        textAlign: "left",
+    },
 
     filterRow: {
         display: "flex",
         alignItems: "center",
         gap: 12,
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(32,66,151,.06)",
         border: "1px solid #dfeaf5",
@@ -1074,7 +1080,7 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         gap: 10,
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(32,66,151,.06)",
         border: "1px solid #dfeaf5",
@@ -1087,7 +1093,7 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 180,
         background: "#f7fafc",
         border: "1px solid #dbe6f0",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "9px 12px",
         transition: "border-color .15s ease, box-shadow .15s ease",
     },
@@ -1095,7 +1101,7 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         outline: "none",
         background: "transparent",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#16233a",
         width: "100%",
     },
@@ -1105,20 +1111,20 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 20,
         height: 20,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "none",
         background: "#f1eefc",
         color: "#6f8299",
-        fontSize: 10,
+        fontSize: fontSize.xxs,
         cursor: "pointer",
         flexShrink: 0,
     },
     filterSelect: {
         border: "1px solid #dbe6f0",
         background: "#f7fafc",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "9px 12px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#374a63",
         outline: "none",
         cursor: "pointer",
@@ -1151,23 +1157,28 @@ const styles: Record<string, CSSProperties> = {
     emptyIconWrap: {
         width: 56,
         height: 56,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "#e9f5fa",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         marginBottom: 6,
     },
-    emptyTitle: { margin: 0, fontSize: 14, fontWeight: 700, color: "#233245" },
-    emptyText: { margin: 0, fontSize: 13, color: "#7d90a6", maxWidth: 320 },
+    emptyTitle: {
+        margin: 0,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        color: "#233245",
+    },
+    emptyText: { margin: 0, fontSize: fontSize.base, color: "#7d90a6", maxWidth: 320 },
     retryBtn: {
         marginTop: 10,
         border: "1px solid #b9d9ec",
         background: "#fff",
         color: "#204297",
-        fontSize: 12,
-        fontWeight: 700,
-        borderRadius: 8,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        borderRadius: radius.sm,
         padding: "7px 14px",
         cursor: "pointer",
     },
@@ -1178,7 +1189,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         border: "1px solid #e7edf5",
         borderTop: "3px solid transparent",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: 12,
         gap: 9,
         cursor: "pointer",
@@ -1190,27 +1201,27 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         background: "#fff",
         border: "1px solid #dbeaf5",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: 16,
         gap: 8,
     },
     skeletonAvatar: {
         width: 44,
         height: 44,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "#dee9f4",
         flexShrink: 0,
     },
     skeletonLineWide: {
         height: 10,
-        borderRadius: 5,
+        borderRadius: radius.xs,
         background: "#dee9f4",
         width: "85%",
         marginBottom: 8,
     },
     skeletonLineNarrow: {
         height: 10,
-        borderRadius: 5,
+        borderRadius: radius.xs,
         background: "#dee9f4",
         width: "50%",
     },
@@ -1230,15 +1241,15 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 38,
         height: 38,
-        borderRadius: "50%",
-        fontSize: 13,
-        fontWeight: 700,
+        borderRadius: radius.circle,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         flexShrink: 0,
     },
     avatarImg: {
         width: 38,
         height: 38,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         objectFit: "cover",
         flexShrink: 0,
     },
@@ -1248,7 +1259,7 @@ const styles: Record<string, CSSProperties> = {
         right: 1,
         width: 11,
         height: 11,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "2px solid #fff",
     },
     statusDotLarge: {
@@ -1257,7 +1268,7 @@ const styles: Record<string, CSSProperties> = {
         right: 3,
         width: 14,
         height: 14,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "3px solid #fff",
     },
     cardNameBlock: {
@@ -1269,8 +1280,8 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
     },
     cardName: {
-        fontSize: 14.5,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         color: "#16233a",
         textAlign: "left",
         whiteSpace: "nowrap",
@@ -1279,7 +1290,7 @@ const styles: Record<string, CSSProperties> = {
         maxWidth: "100%",
     },
     cardDesignation: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#8496ab",
         textAlign: "left",
         whiteSpace: "nowrap",
@@ -1305,12 +1316,12 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 24,
         height: 24,
-        borderRadius: 7,
+        borderRadius: radius.sm,
         border: "none",
         background: "transparent",
         color: "#9bb0c2",
         cursor: "pointer",
-        fontSize: 13,
+        fontSize: fontSize.base,
         transition: "background .15s ease, color .15s ease",
     },
     editIconBtnSmall: {
@@ -1319,12 +1330,12 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 24,
         height: 24,
-        borderRadius: 7,
+        borderRadius: radius.sm,
         border: "none",
         background: "#eef1fb",
         color: "#4a5fc7",
         cursor: "pointer",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         transition: "filter .15s ease",
     },
     deleteIconBtnSmall: {
@@ -1333,12 +1344,12 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 24,
         height: 24,
-        borderRadius: 7,
+        borderRadius: radius.sm,
         border: "none",
         background: "#fdeaea",
         color: "#dc2626",
         cursor: "pointer",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         transition: "filter .15s ease",
     },
     cardInfoRows: {
@@ -1355,28 +1366,28 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
     cardInfoIcon: {
-        fontSize: 12.5,
+        fontSize: fontSize.sm,
         color: "#9bb0c2",
         flexShrink: 0,
         position: "relative",
         top: 1,
     },
     cardInfoLabel: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#8496ab",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
         letterSpacing: 0.2,
         flexShrink: 0,
     },
     cardInfoColon: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#b7c3d1",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
         flexShrink: 0,
     },
     cardInfoValue: {
-        fontSize: 12.5,
-        fontWeight: 600,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
         color: "#16233a",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -1384,10 +1395,10 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
 
-    statLabel: { fontSize: 11, color: "#7d90a6" },
+    statLabel: { fontSize: fontSize.xs, color: "#7d90a6" },
     statValue: {
-        fontSize: 14,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         color: "#16233a",
         maxWidth: 120,
         overflow: "hidden",
@@ -1396,7 +1407,7 @@ const styles: Record<string, CSSProperties> = {
     },
 
     resultsCount: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#7d90a6",
         padding: "0 2px",
     },
@@ -1442,10 +1453,10 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         background: "rgba(255,255,255,0.2)",
         color: "#fff",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         width: 28,
         height: 28,
-        fontSize: 14,
+        fontSize: fontSize.md,
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
@@ -1477,9 +1488,9 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 64,
         height: 64,
-        borderRadius: "50%",
-        fontSize: 20,
-        fontWeight: 700,
+        borderRadius: radius.circle,
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.semibold,
         flexShrink: 0,
         border: "4px solid #fff",
         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
@@ -1487,31 +1498,36 @@ const styles: Record<string, CSSProperties> = {
     drawerAvatarImg: {
         width: 64,
         height: 64,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         objectFit: "cover",
         flexShrink: 0,
         border: "4px solid #fff",
         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
     },
-    drawerName: { margin: "10px 0 2px", fontSize: 18, fontWeight: 800, color: "#16233a" },
-    drawerDesignation: { margin: "0 0 8px", fontSize: 13, color: "#7d90a6" },
+    drawerName: {
+        margin: "10px 0 2px",
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.bold,
+        color: "#16233a",
+    },
+    drawerDesignation: { margin: "0 0 8px", fontSize: fontSize.base, color: "#7d90a6" },
     statusPill: {
         display: "inline-block",
-        fontSize: 11,
-        fontWeight: 700,
-        borderRadius: 999,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        borderRadius: radius.pill,
         padding: "3px 10px",
     },
     drawerEditBtn: {
         display: "inline-flex",
         alignItems: "center",
         gap: 5,
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         color: "#204297",
         background: "#eef1fb",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "5px 10px",
         cursor: "pointer",
     },
@@ -1519,19 +1535,19 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         border: "1px solid #dbe6f0",
         background: "#f7fafc",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "6px 9px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#16233a",
         boxSizing: "border-box",
     },
     drawerStatusSelect: {
         border: "1px solid #dbe6f0",
         background: "#f7fafc",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "5px 9px",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         color: "#16233a",
         cursor: "pointer",
     },
@@ -1542,7 +1558,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 4,
         background: "#faf9ff",
         border: "1px solid #dfeaf5",
-        borderRadius: 12,
+        borderRadius: radius.md,
         padding: "14px 8px",
     },
     drawerStatBlock: {
@@ -1563,8 +1579,8 @@ const styles: Record<string, CSSProperties> = {
     drawerSection: { display: "flex", flexDirection: "column", gap: 10 },
     drawerSectionTitle: {
         margin: 0,
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         color: "#16233a",
         borderBottom: "1px solid #f0f0f0",
         paddingBottom: 8,
@@ -1576,16 +1592,26 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "space-between",
         gap: 12,
     },
-    detailsLabel: { fontSize: 12, color: "#7d90a6", fontWeight: 600, flexShrink: 0 },
-    detailsValue: { fontSize: 13, color: "#16233a", fontWeight: 600, textAlign: "right" },
+    detailsLabel: {
+        fontSize: fontSize.sm,
+        color: "#7d90a6",
+        fontWeight: fontWeight.medium,
+        flexShrink: 0,
+    },
+    detailsValue: {
+        fontSize: fontSize.base,
+        color: "#16233a",
+        fontWeight: fontWeight.medium,
+        textAlign: "right",
+    },
     detailsInput: {
         flex: 1,
         maxWidth: 220,
         border: "1px solid #dbe6f0",
         background: "#f7fafc",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "6px 9px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#16233a",
         textAlign: "right",
         boxSizing: "border-box",
@@ -1602,11 +1628,11 @@ const styles: Record<string, CSSProperties> = {
     saveButton: {
         padding: "10px 22px",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         cursor: "pointer",
         background: "#204297",
         color: "#fff",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
     },
 
     modalOverlay: {
@@ -1622,7 +1648,7 @@ const styles: Record<string, CSSProperties> = {
     modal: {
         width: 380,
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         padding: 30,
         textAlign: "center",
         boxShadow: "0 20px 60px rgba(0,0,0,.2)",
@@ -1632,13 +1658,13 @@ const styles: Record<string, CSSProperties> = {
         width: 70,
         height: 70,
         margin: "0 auto 15px",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "#FEE2E2",
         color: "#DC2626",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        fontSize: 34,
+        fontSize: fontSize["7xl"],
     },
 
     modalButtons: {
@@ -1651,19 +1677,19 @@ const styles: Record<string, CSSProperties> = {
     cancelButton: {
         padding: "10px 22px",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         cursor: "pointer",
         background: "#E5E7EB",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
     },
 
     deleteButton: {
         padding: "10px 22px",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         cursor: "pointer",
         background: "#DC2626",
         color: "#fff",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
     },
 };

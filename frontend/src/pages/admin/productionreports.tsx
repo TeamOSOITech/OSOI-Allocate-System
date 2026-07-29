@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 // NOTE: this is a NEW page, separate from pages/admin/reportdashboard.tsx
 // (which already exists, is wired to /report and /reportdashboard, and
@@ -371,22 +372,28 @@ export default function ProductionReports() {
                     ) : (
                         filtered.map((b) => (
                             <div key={b.id} style={styles.tableRow}>
-                                <span style={{ width: 100, fontSize: 13 }}>
+                                <span style={{ width: 100, fontSize: fontSize.base }}>
                                     {formatDisplayDate(b.workDate)}
                                 </span>
-                                <span style={{ flex: 1, fontSize: 13 }}>
+                                <span style={{ flex: 1, fontSize: fontSize.base }}>
                                     {b.productName || "-"}
                                 </span>
-                                <span style={{ width: 80, textAlign: "right", fontSize: 13 }}>
+                                <span
+                                    style={{
+                                        width: 80,
+                                        textAlign: "right",
+                                        fontSize: fontSize.base,
+                                    }}
+                                >
                                     {b.totalQty}
                                 </span>
                                 <span
                                     style={{
                                         width: 90,
                                         textAlign: "right",
-                                        fontSize: 13,
+                                        fontSize: fontSize.base,
                                         color: BRAND.green,
-                                        fontWeight: 600,
+                                        fontWeight: fontWeight.medium,
                                     }}
                                 >
                                     {b.allocatedQty}
@@ -395,9 +402,9 @@ export default function ProductionReports() {
                                     style={{
                                         width: 80,
                                         textAlign: "right",
-                                        fontSize: 13,
+                                        fontSize: fontSize.base,
                                         color: BRAND.amber,
-                                        fontWeight: 600,
+                                        fontWeight: fontWeight.medium,
                                     }}
                                 >
                                     {b.pendingQty}
@@ -406,7 +413,7 @@ export default function ProductionReports() {
                                     style={{
                                         width: 100,
                                         textAlign: "right",
-                                        fontSize: 12,
+                                        fontSize: fontSize.sm,
                                         color: "#6b7280",
                                     }}
                                 >
@@ -505,8 +512,8 @@ const styles: Record<string, CSSProperties> = {
         gap: 12,
         marginBottom: 20,
     },
-    title: { fontSize: 24, fontWeight: 800, color: "#1a1a2e", margin: 0 },
-    subtitle: { fontSize: 13, color: "#6b7280", marginTop: 6 },
+    title: { fontSize: fontSize["5xl"], fontWeight: fontWeight.bold, color: "#1a1a2e", margin: 0 },
+    subtitle: { fontSize: fontSize.base, color: "#6b7280", marginTop: 6 },
     headerActions: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
     rangeBadge: {
         display: "flex",
@@ -514,11 +521,11 @@ const styles: Record<string, CSSProperties> = {
         gap: 8,
         background: "#fff",
         border: "1px solid #e5e7eb",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "9px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#374151",
-        fontWeight: 500,
+        fontWeight: fontWeight.regular,
     },
     exportButton: {
         display: "flex",
@@ -527,19 +534,19 @@ const styles: Record<string, CSSProperties> = {
         background: GRADIENT,
         color: "#fff",
         border: "none",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "10px 16px",
-        fontSize: 13,
-        fontWeight: 600,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
         cursor: "pointer",
     },
     errorBanner: {
         background: "#FEF2F2",
         color: BRAND.red,
         border: "1px solid #FECACA",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         marginBottom: 16,
     },
     summaryRow: {
@@ -556,7 +563,7 @@ const styles: Record<string, CSSProperties> = {
     },
     statCard: {
         background: "#fff",
-        borderRadius: 12,
+        borderRadius: radius.md,
         padding: "14px 16px",
         display: "flex",
         alignItems: "center",
@@ -566,38 +573,44 @@ const styles: Record<string, CSSProperties> = {
     statIconWrap: {
         width: 38,
         height: 38,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
     },
-    statValue: { fontSize: 20, fontWeight: 800, lineHeight: 1.1 },
-    statLabel: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+    statValue: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, lineHeight: 1.1 },
+    statLabel: { fontSize: fontSize.sm, color: "#6b7280", marginTop: 2 },
     filterBar: {
         display: "flex",
         gap: 16,
         alignItems: "flex-end",
         background: "#fff",
         padding: 18,
-        borderRadius: 12,
+        borderRadius: radius.md,
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         marginBottom: 16,
         flexWrap: "wrap",
     },
-    label: { fontSize: 11, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 },
+    label: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#374151",
+        display: "block",
+        marginBottom: 6,
+    },
     dateInputWrap: {
         display: "flex",
         alignItems: "center",
         gap: 8,
         border: "1px solid #d1d5db",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "8px 10px",
     },
     dateInput: {
         border: "none",
         outline: "none",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#374151",
         background: "transparent",
     },
@@ -607,16 +620,16 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 7,
         padding: "9px 16px",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: `1px solid ${BRAND.lightBlue}`,
         background: "#fff",
         color: BRAND.lightBlue,
-        fontWeight: 600,
-        fontSize: 12.5,
+        fontWeight: fontWeight.medium,
+        fontSize: fontSize.sm,
     },
     tableCard: {
         background: "#fff",
-        borderRadius: 12,
+        borderRadius: radius.md,
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         overflow: "hidden",
     },
@@ -624,8 +637,8 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         padding: "12px 20px",
         background: "#f9fafb",
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         color: "#6b7280",
         textTransform: "uppercase",
         letterSpacing: 0.3,
@@ -647,14 +660,14 @@ const styles: Record<string, CSSProperties> = {
     emptyIconWrap: {
         width: 72,
         height: 72,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "#F3EEFE",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         marginBottom: 14,
     },
-    emptyText: { color: "#9ca3af", fontSize: 13.5 },
+    emptyText: { color: "#9ca3af", fontSize: fontSize.base },
     wave: {
         position: "absolute",
         left: 0,

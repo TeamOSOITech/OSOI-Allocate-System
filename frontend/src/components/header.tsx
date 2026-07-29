@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
+import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 
 interface HeaderProps {
     userName?: string;
@@ -68,7 +69,7 @@ export default function Header({
                             width: isMobile ? 30 : 125,
                             height: isMobile ? 30 : 125,
                             objectFit: "contain",
-                            borderRadius: 8,
+                            borderRadius: radius.sm,
                             flexShrink: 0,
                         }}
                     />
@@ -125,7 +126,7 @@ export default function Header({
                         aria-label="Notifications"
                         title="Notifications"
                     >
-                        <i className="ti ti-bell" style={{ fontSize: 15 }} />
+                        <i className="ti ti-bell" style={{ fontSize: fontSize.lg }} />
                         {notificationCount > 0 && (
                             <span style={styles.notifDot} aria-hidden="true" />
                         )}
@@ -157,7 +158,7 @@ const styles: Record<string, CSSProperties> = {
         height: "64px",
         flexShrink: 0,
         borderBottom: "1px solid #eef1f7",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         gap: 16,
     },
     headerMobile: {
@@ -173,7 +174,7 @@ const styles: Record<string, CSSProperties> = {
         padding: "8px 12px 8px 60px",
         minHeight: "56px",
         borderBottom: "1px solid #eef1f7",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         gap: "8px",
     },
 
@@ -209,7 +210,7 @@ const styles: Record<string, CSSProperties> = {
         borderLeft: "1px solid #eef1f7",
     },
     welcome: {
-        fontSize: 13.5,
+        fontSize: fontSize.md,
         color: "#5a6c85",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -217,14 +218,20 @@ const styles: Record<string, CSSProperties> = {
     },
     welcomeName: { color: "#16233c" },
     welcomeMobile: {
-        fontSize: 12.5,
+        fontSize: fontSize.sm,
         color: "#5a6c85",
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
         minWidth: 0,
     },
-    dot: { width: 6, height: 6, borderRadius: "50%", background: BRAND.green, flexShrink: 0 },
+    dot: {
+        width: 6,
+        height: 6,
+        borderRadius: radius.circle,
+        background: BRAND.green,
+        flexShrink: 0,
+    },
 
     right: { display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 },
     rightMobile: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
@@ -233,7 +240,7 @@ const styles: Record<string, CSSProperties> = {
         position: "relative",
         width: "34px",
         height: "34px",
-        borderRadius: "10px",
+        borderRadius: radius.md,
         border: `1px solid ${BRAND.lightBlue}33`,
         display: "flex",
         alignItems: "center",
@@ -243,14 +250,14 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         padding: 0,
         flexShrink: 0,
-        fontSize: 15,
+        fontSize: fontSize.lg,
         transition: "background .15s ease, border-color .15s ease, transform .15s ease",
     },
     iconBtnSmall: {
         position: "relative",
         width: "28px",
         height: "28px",
-        borderRadius: "8px",
+        borderRadius: radius.sm,
         border: `1px solid ${BRAND.lightBlue}33`,
         display: "flex",
         alignItems: "center",
@@ -269,11 +276,11 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 16,
         height: 16,
         padding: "0 3px",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         background: BRAND.green,
         color: "#fff",
-        fontSize: 9,
-        fontWeight: 800,
+        fontSize: fontSize.badge,
+        fontWeight: fontWeight.bold,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -286,7 +293,7 @@ const styles: Record<string, CSSProperties> = {
         right: -1,
         width: 8,
         height: 8,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: BRAND.green,
         border: "2px solid #fff",
     },
@@ -297,12 +304,12 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 34,
         height: 34,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "none",
         background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
         color: "#fff",
-        fontSize: 12,
-        fontWeight: 800,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.bold,
         cursor: "pointer",
         flexShrink: 0,
     },
@@ -312,12 +319,12 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 28,
         height: 28,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "none",
         background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
         color: "#fff",
-        fontSize: 10.5,
-        fontWeight: 800,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.bold,
         cursor: "pointer",
         flexShrink: 0,
     },
@@ -329,10 +336,10 @@ const styles: Record<string, CSSProperties> = {
         background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
         color: "#fff",
         border: "none",
-        borderRadius: "10px",
+        borderRadius: radius.md,
         padding: "8px 16px",
-        fontSize: "12px",
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         whiteSpace: "nowrap",
         flexShrink: 0,
@@ -342,7 +349,7 @@ const styles: Record<string, CSSProperties> = {
         background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
         color: "#fff",
         border: "none",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         width: "30px",
         height: "30px",
         cursor: "pointer",

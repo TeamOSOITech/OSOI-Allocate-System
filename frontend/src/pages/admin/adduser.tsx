@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import VoiceAssistant from "../../components/voiceAssistant";
 import { speak } from "../../utils/speak";
 import FormErrorBoundary from "../../components/formErrorBoundary";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -326,7 +327,7 @@ export default function AddUser() {
                                 >
                                     <i
                                         className="ti ti-file-spreadsheet"
-                                        style={{ fontSize: 14 }}
+                                        style={{ fontSize: fontSize.md }}
                                     />
                                 </button>
                                 <span className="au-tooltip-bubble">
@@ -368,7 +369,7 @@ export default function AddUser() {
                                         >
                                             <i
                                                 className="ti ti-file-spreadsheet"
-                                                style={{ fontSize: 14 }}
+                                                style={{ fontSize: fontSize.md }}
                                             />
                                             Sample Sheet
                                         </button>
@@ -382,7 +383,10 @@ export default function AddUser() {
                                             onClick={() => setShowBulkModal(true)}
                                             type="button"
                                         >
-                                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                            <i
+                                                className="ti ti-upload"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
                                             Bulk Add Users
                                         </button>
                                         <span className="au-tooltip-bubble">
@@ -398,7 +402,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-user"
-                                    style={{ fontSize: 15, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Personal Information</span>
                             </div>
@@ -486,7 +490,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-building"
-                                    style={{ fontSize: 15, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Organization Details</span>
                             </div>
@@ -591,7 +595,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-lock"
-                                    style={{ fontSize: 15, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Security</span>
                             </div>
@@ -626,7 +630,10 @@ export default function AddUser() {
                                             onClick={generatePassword}
                                             type="button"
                                         >
-                                            <i className="ti ti-refresh" style={{ fontSize: 13 }} />
+                                            <i
+                                                className="ti ti-refresh"
+                                                style={{ fontSize: fontSize.base }}
+                                            />
                                             Generate
                                         </button>
                                         <button
@@ -634,7 +641,10 @@ export default function AddUser() {
                                             onClick={copyPassword}
                                             type="button"
                                         >
-                                            <i className="ti ti-copy" style={{ fontSize: 13 }} />
+                                            <i
+                                                className="ti ti-copy"
+                                                style={{ fontSize: fontSize.base }}
+                                            />
                                             Copy
                                         </button>
                                     </div>
@@ -650,7 +660,10 @@ export default function AddUser() {
                                         onClick={handleRegister}
                                         disabled={isSubmitting}
                                     >
-                                        <i className="ti ti-user-plus" style={{ fontSize: 15 }} />
+                                        <i
+                                            className="ti ti-user-plus"
+                                            style={{ fontSize: fontSize.lg }}
+                                        />
                                         {isSubmitting ? "Saving..." : "Register User"}
                                     </button>
                                 </div>
@@ -802,7 +815,7 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         minHeight: 0,
         background: "#EAF3FC",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         overflowX: "hidden",
     },
     rootMobile: {
@@ -812,7 +825,7 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 0,
         width: "100%",
         background: "#EAF3FC",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         position: "relative",
         overflowX: "hidden",
     },
@@ -834,11 +847,11 @@ const styles: Record<string, CSSProperties> = {
     hamburgerBtn: {
         border: "none",
         background: "transparent",
-        fontSize: "20px",
+        fontSize: fontSize["3xl"],
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#17181C" },
+    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
     overlay: {
         position: "fixed",
         inset: 0,
@@ -889,8 +902,13 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 48,
     },
     pageTitleBlock: { textAlign: "center" },
-    pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#17181C" },
-    pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
+    pageTitle: {
+        margin: 0,
+        fontSize: fontSize["5xl"],
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+    },
+    pageSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
 
     headerButtonGroup: {
         position: "absolute",
@@ -906,10 +924,10 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         color: "#2A2F8F",
         border: "1px solid #C7D9F0",
-        borderRadius: 24,
+        borderRadius: radius["2xl"],
         padding: "11px 20px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
     },
     bulkBtn: {
@@ -919,10 +937,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 24,
+        borderRadius: radius["2xl"],
         padding: "11px 22px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
     },
@@ -930,10 +948,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         padding: "6px 14px",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         whiteSpace: "nowrap",
     },
@@ -943,7 +961,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         background: "#fff",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         padding: 0,
         boxShadow: "0 10px 30px rgba(0,0,0,.06)",
         overflow: "hidden",
@@ -957,7 +975,11 @@ const styles: Record<string, CSSProperties> = {
         background: "#F4F8FD",
         borderBottom: "1px solid #E7F0FB",
     },
-    sectionHeaderText: { fontSize: 13, fontWeight: 700, color: "#2A2F8F" },
+    sectionHeaderText: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#2A2F8F",
+    },
     sectionBody: { padding: "16px 24px" },
 
     grid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px 24px" },
@@ -967,19 +989,25 @@ const styles: Record<string, CSSProperties> = {
         gap: "12px",
     },
 
-    label: { display: "block", marginBottom: 6, color: "#3D4459", fontSize: 12, fontWeight: 600 },
+    label: {
+        display: "block",
+        marginBottom: 6,
+        color: "#3D4459",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+    },
     input: {
         width: "100%",
         padding: "10px 12px",
         background: "#fafafa",
         border: "1px solid #ececf5",
         outline: "none",
-        fontSize: 13,
-        borderRadius: 8,
+        fontSize: fontSize.base,
+        borderRadius: radius.sm,
         boxSizing: "border-box",
         color: "#17181C",
     },
-    note: { color: "#f59e0b", marginTop: 6, fontWeight: 600, fontSize: 11 },
+    note: { color: "#f59e0b", marginTop: 6, fontWeight: fontWeight.medium, fontSize: fontSize.xs },
 
     passwordRegisterRow: {
         display: "flex",
@@ -1003,10 +1031,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 16px",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         whiteSpace: "nowrap",
     },
@@ -1017,15 +1045,20 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         color: "#2A2F8F",
         border: "1px solid #C7D9F0",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 16px",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         whiteSpace: "nowrap",
     },
 
-    error: { color: "#dc2626", margin: "16px 0 0", fontWeight: 600, fontSize: 13 },
+    error: {
+        color: "#dc2626",
+        margin: "16px 0 0",
+        fontWeight: fontWeight.medium,
+        fontSize: fontSize.base,
+    },
 
     registerButton: {
         display: "flex",
@@ -1034,10 +1067,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 24,
+        borderRadius: radius["2xl"],
         padding: "12px 26px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
         whiteSpace: "nowrap",
@@ -1046,7 +1079,7 @@ const styles: Record<string, CSSProperties> = {
 
     successModal: {
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         padding: 32,
         width: 360,
         maxWidth: "90vw",
@@ -1056,32 +1089,37 @@ const styles: Record<string, CSSProperties> = {
     successIcon: {
         width: 56,
         height: 56,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "#DCEAFB",
         color: "#2A2F8F",
-        fontSize: 28,
-        fontWeight: 700,
+        fontSize: fontSize["6xl"],
+        fontWeight: fontWeight.semibold,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         margin: "0 auto 16px",
     },
-    successTitle: { margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#17181C" },
-    successText: { margin: "0 0 24px", fontSize: 14, color: "#767F92" },
+    successTitle: {
+        margin: "0 0 8px",
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    successText: { margin: "0 0 24px", fontSize: fontSize.md, color: "#767F92" },
     successBtn: {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 32px",
-        fontSize: 14,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
     },
 
     bulkModal: {
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         width: 560,
         maxWidth: "92vw",
         maxHeight: "88vh",
@@ -1094,18 +1132,23 @@ const styles: Record<string, CSSProperties> = {
         padding: "24px 28px 16px",
         borderBottom: "1px solid #f0f0f0",
     },
-    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#2A2F8F" },
-    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
+    bulkModalTitle: {
+        margin: 0,
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#2A2F8F",
+    },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
     closeBtn: {
         position: "absolute",
         top: 20,
         right: 24,
         border: "none",
         background: "#f3f4f6",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         width: 28,
         height: 28,
-        fontSize: 14,
+        fontSize: fontSize.md,
         cursor: "pointer",
         color: "#6b7280",
         display: "flex",
@@ -1117,18 +1160,18 @@ const styles: Record<string, CSSProperties> = {
         padding: "14px 16px",
         background: "#EEF6FB",
         borderLeft: "3px solid #2BAADD",
-        borderRadius: 6,
+        borderRadius: radius.xs,
     },
     bulkInfoLabel: {
         display: "block",
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         color: "#2A2F8F",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
     },
-    bulkInfoText: { margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 },
+    bulkInfoText: { margin: 0, fontSize: fontSize.base, color: "#6b7280", lineHeight: 1.6 },
     bulkUploadRow: {
         display: "flex",
         flexWrap: "wrap",
@@ -1141,7 +1184,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 10,
         border: "1px solid #e5e7eb",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "8px 12px",
         cursor: "pointer",
         flex: 1,
@@ -1152,14 +1195,14 @@ const styles: Record<string, CSSProperties> = {
     fileInputButton: {
         background: "#2A2F8F",
         color: "#fff",
-        fontSize: 12,
-        fontWeight: 600,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
         padding: "6px 12px",
-        borderRadius: 6,
+        borderRadius: radius.xs,
         whiteSpace: "nowrap",
     },
     fileInputName: {
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#6b7280",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -1169,15 +1212,15 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 20px",
-        fontSize: 14,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         whiteSpace: "nowrap",
     },
     resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
     resultsSummary: { marginBottom: 12 },
-    resultsSummaryText: { fontSize: 14, color: "#17181C" },
+    resultsSummaryText: { fontSize: fontSize.md, color: "#17181C" },
     resultsList: {
         display: "flex",
         flexDirection: "column",
@@ -1187,7 +1230,7 @@ const styles: Record<string, CSSProperties> = {
     },
     resultRow: {
         border: "1px solid #f0f0f0",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 14px",
         background: "#fafafa",
     },
@@ -1198,24 +1241,24 @@ const styles: Record<string, CSSProperties> = {
         gap: 10,
     },
     resultEmail: {
-        fontSize: 13,
-        fontWeight: 600,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
         color: "#17181C",
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
     statusPill: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         padding: "3px 10px",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         whiteSpace: "nowrap",
         flexShrink: 0,
     },
     statusPillSuccess: { background: "#dcfce7", color: "#15803d" },
     statusPillFail: { background: "#fee2e2", color: "#dc2626" },
-    resultMessage: { margin: "4px 0 0", fontSize: 12, color: "#9ca3af" },
+    resultMessage: { margin: "4px 0 0", fontSize: fontSize.sm, color: "#9ca3af" },
     passwordRegisterRowMobile: {
         display: "flex",
         flexDirection: "column",
@@ -1238,10 +1281,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
         color: "#fff",
         border: "none",
-        borderRadius: 24,
+        borderRadius: radius["2xl"],
         padding: "12px 28px",
-        fontSize: 14,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
         whiteSpace: "nowrap",
@@ -1259,7 +1302,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         color: "#2A2F8F",
         border: "1px solid #C7D9F0",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         width: 30,
         height: 30,
         cursor: "pointer",

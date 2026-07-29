@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -836,7 +837,7 @@ export default function Clients() {
                                     >
                                         <i
                                             className="ti ti-file-spreadsheet"
-                                            style={{ fontSize: 14 }}
+                                            style={{ fontSize: fontSize.md }}
                                         />
                                         Sample Sheet
                                     </button>
@@ -855,7 +856,10 @@ export default function Clients() {
                                             style={styles.secondaryBtn}
                                             onClick={openBulkModal}
                                         >
-                                            <i className="ti ti-upload" style={{ fontSize: 14 }} />
+                                            <i
+                                                className="ti ti-upload"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
                                             Bulk Upload
                                         </button>
                                         <span className="cl-tooltip-bubble">
@@ -872,7 +876,10 @@ export default function Clients() {
                                         onClick={openAddModal}
                                         title={`Add a new ${tabLabel.toLowerCase()}`}
                                     >
-                                        <i className="ti ti-plus" style={{ fontSize: 14 }} />
+                                        <i
+                                            className="ti ti-plus"
+                                            style={{ fontSize: fontSize.md }}
+                                        />
                                         Add {tabLabel}
                                     </button>
                                 )}
@@ -885,7 +892,7 @@ export default function Clients() {
                         <div style={styles.searchWrap}>
                             <i
                                 className="ti ti-search"
-                                style={{ fontSize: 15, color: "#7c8aa3" }}
+                                style={{ fontSize: fontSize.lg, color: "#7c8aa3" }}
                                 aria-hidden="true"
                             />
                             <input
@@ -935,7 +942,10 @@ export default function Clients() {
                                     aria-label="Grid view"
                                     title="Grid view"
                                 >
-                                    <i className="ti ti-layout-grid" style={{ fontSize: 15 }} />
+                                    <i
+                                        className="ti ti-layout-grid"
+                                        style={{ fontSize: fontSize.lg }}
+                                    />
                                 </button>
                                 <button
                                     type="button"
@@ -947,7 +957,7 @@ export default function Clients() {
                                     aria-label="List view"
                                     title="List view"
                                 >
-                                    <i className="ti ti-list" style={{ fontSize: 15 }} />
+                                    <i className="ti ti-list" style={{ fontSize: fontSize.lg }} />
                                 </button>
                             </div>
                         )}
@@ -966,7 +976,7 @@ export default function Clients() {
                             <div style={styles.emptyState}>
                                 <i
                                     className="ti ti-alert-circle"
-                                    style={{ fontSize: 32, color: "#dc2626" }}
+                                    style={{ fontSize: fontSize["7xl"], color: "#dc2626" }}
                                 />
                                 <p style={{ ...styles.emptyText, color: "#dc2626" }}>{error}</p>
                             </div>
@@ -974,7 +984,7 @@ export default function Clients() {
                             <div style={styles.emptyState}>
                                 <i
                                     className="ti ti-users"
-                                    style={{ fontSize: 32, color: "#9fd6e6" }}
+                                    style={{ fontSize: fontSize["7xl"], color: "#9fd6e6" }}
                                 />
                                 <p style={styles.emptyText}>No {activeTab}s match your filters.</p>
                             </div>
@@ -1058,7 +1068,7 @@ export default function Clients() {
                                                             style={{
                                                                 ...styles.td,
                                                                 textAlign: "center",
-                                                                fontWeight: 700,
+                                                                fontWeight: fontWeight.semibold,
                                                                 color: "#16233c",
                                                             }}
                                                         >
@@ -1068,7 +1078,9 @@ export default function Clients() {
                                                             <span style={styles.tdContactLine}>
                                                                 <i
                                                                     className="ti ti-mail"
-                                                                    style={{ fontSize: 12 }}
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
                                                                 />
                                                                 {client.mainEmail || "—"}
                                                             </span>
@@ -1077,7 +1089,9 @@ export default function Clients() {
                                                             <span style={styles.tdContactLine}>
                                                                 <i
                                                                     className="ti ti-phone"
-                                                                    style={{ fontSize: 12 }}
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
                                                                 />
                                                                 {client.mainPhone || "—"}
                                                             </span>
@@ -1088,7 +1102,10 @@ export default function Clients() {
                                                                     <>
                                                                         <i
                                                                             className="ti ti-user"
-                                                                            style={{ fontSize: 12 }}
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.sm,
+                                                                            }}
                                                                         />
                                                                         {client.primaryContactName}
                                                                     </>
@@ -1130,7 +1147,9 @@ export default function Clients() {
                                                                 >
                                                                     <i
                                                                         className="ti ti-pencil"
-                                                                        style={{ fontSize: 13 }}
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
                                                                     />
                                                                 </button>
                                                                 <button
@@ -1149,7 +1168,9 @@ export default function Clients() {
                                                                 >
                                                                     <i
                                                                         className="ti ti-trash"
-                                                                        style={{ fontSize: 13 }}
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
                                                                     />
                                                                 </button>
                                                             </div>
@@ -1197,7 +1218,7 @@ export default function Clients() {
                                                             style={{
                                                                 ...styles.td,
                                                                 textAlign: "center",
-                                                                fontWeight: 700,
+                                                                fontWeight: fontWeight.semibold,
                                                                 color: "#16233c",
                                                             }}
                                                         >
@@ -1207,7 +1228,9 @@ export default function Clients() {
                                                             <span style={styles.tdContactLine}>
                                                                 <i
                                                                     className="ti ti-mail"
-                                                                    style={{ fontSize: 12 }}
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
                                                                 />
                                                                 {sub.mainEmail || "—"}
                                                             </span>
@@ -1216,7 +1239,9 @@ export default function Clients() {
                                                             <span style={styles.tdContactLine}>
                                                                 <i
                                                                     className="ti ti-phone"
-                                                                    style={{ fontSize: 12 }}
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
                                                                 />
                                                                 {sub.mainPhone || "—"}
                                                             </span>
@@ -1227,7 +1252,10 @@ export default function Clients() {
                                                                     <>
                                                                         <i
                                                                             className="ti ti-user"
-                                                                            style={{ fontSize: 12 }}
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.sm,
+                                                                            }}
                                                                         />
                                                                         {sub.primaryContactName}
                                                                     </>
@@ -1269,7 +1297,9 @@ export default function Clients() {
                                                                 >
                                                                     <i
                                                                         className="ti ti-pencil"
-                                                                        style={{ fontSize: 13 }}
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
                                                                     />
                                                                 </button>
                                                                 <button
@@ -1288,7 +1318,9 @@ export default function Clients() {
                                                                 >
                                                                     <i
                                                                         className="ti ti-trash"
-                                                                        style={{ fontSize: 13 }}
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
                                                                     />
                                                                 </button>
                                                             </div>
@@ -1389,7 +1421,7 @@ export default function Clients() {
                                                 >
                                                     <i
                                                         className="ti ti-eye"
-                                                        style={{ fontSize: 14 }}
+                                                        style={{ fontSize: fontSize.md }}
                                                     />
                                                     View Details
                                                 </button>
@@ -1485,7 +1517,7 @@ export default function Clients() {
                                                 >
                                                     <i
                                                         className="ti ti-eye"
-                                                        style={{ fontSize: 14 }}
+                                                        style={{ fontSize: fontSize.md }}
                                                     />
                                                     View Details
                                                 </button>
@@ -1640,7 +1672,10 @@ export default function Clients() {
                                         if (target) openEditModal(target);
                                     }}
                                 >
-                                    <i className="ti ti-pencil" style={{ fontSize: 13 }} />
+                                    <i
+                                        className="ti ti-pencil"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
                                     Edit
                                 </button>
                                 <button
@@ -1663,7 +1698,10 @@ export default function Clients() {
                                         }
                                     }}
                                 >
-                                    <i className="ti ti-trash" style={{ fontSize: 13 }} />
+                                    <i
+                                        className="ti ti-trash"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
                                     Delete
                                 </button>
                             </div>
@@ -1902,7 +1940,7 @@ export default function Clients() {
                         </div>
 
                         <div style={styles.detailsBody}>
-                            <p style={{ margin: 0, fontSize: 13, color: "#3b4a63" }}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
                                 This action can't be undone. Are you sure you want to delete this{" "}
                                 {deleteTarget.type}?
                             </p>
@@ -2087,7 +2125,7 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         minHeight: 0,
         background: "#f4f7fb",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         overflow: "hidden",
     },
     rootMobile: {
@@ -2098,7 +2136,7 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 0,
         width: "100%",
         background: "#f4f7fb",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
         position: "relative",
         overflow: "hidden",
     },
@@ -2120,11 +2158,11 @@ const styles: Record<string, CSSProperties> = {
     hamburgerBtn: {
         border: "none",
         background: "transparent",
-        fontSize: "20px",
+        fontSize: fontSize["3xl"],
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "16px", fontWeight: 700, color: "#16233c" },
+    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#16233c" },
     mobileActionGroup: { display: "flex", alignItems: "center", gap: 6 },
     addBtnMobile: {
         display: "flex",
@@ -2132,7 +2170,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 32,
         height: 32,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "none",
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
@@ -2144,7 +2182,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 32,
         height: 32,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         border: "1px solid #cfe0f5",
         background: "#fff",
         color: "#204297",
@@ -2197,10 +2235,10 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         color: "#3b4a63",
         border: "1px solid #e4e9f2",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "10px 18px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         transition: "border-color .15s ease, color .15s ease",
     },
@@ -2219,7 +2257,7 @@ const styles: Record<string, CSSProperties> = {
         flexWrap: "wrap",
         flexShrink: 0,
     },
-    headerSubtext: { margin: 0, fontSize: 13, color: "#7c8aa3" },
+    headerSubtext: { margin: 0, fontSize: fontSize.base, color: "#7c8aa3" },
     headerActions: {
         display: "flex",
         alignItems: "center",
@@ -2233,10 +2271,10 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         color: "#204297",
         border: "1px solid #cfe0f5",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "11px 16px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         whiteSpace: "nowrap",
     },
@@ -2247,10 +2285,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "11px 20px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         whiteSpace: "nowrap",
@@ -2261,7 +2299,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 12,
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
         flexShrink: 0,
@@ -2271,7 +2309,7 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         gap: 10,
         background: "#fff",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: "12px 14px",
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
         flexShrink: 0,
@@ -2284,23 +2322,23 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 180,
         background: "#fafbfc",
         border: "1px solid #e4e9f2",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "9px 12px",
     },
     searchInput: {
         border: "none",
         outline: "none",
         background: "transparent",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#16233c",
         width: "100%",
     },
     filterSelect: {
         border: "1px solid #e4e9f2",
         background: "#fafbfc",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "9px 12px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#3b4a63",
         outline: "none",
         cursor: "pointer",
@@ -2312,7 +2350,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 4,
         background: "#fafbfc",
         border: "1px solid #e4e9f2",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: 4,
         flexShrink: 0,
     },
@@ -2324,7 +2362,7 @@ const styles: Record<string, CSSProperties> = {
         height: 32,
         border: "none",
         background: "transparent",
-        borderRadius: 7,
+        borderRadius: radius.sm,
         color: "#7c8aa3",
         cursor: "pointer",
     },
@@ -2362,14 +2400,14 @@ const styles: Record<string, CSSProperties> = {
         gap: 10,
         padding: "60px 0",
     },
-    emptyText: { margin: 0, fontSize: 13, color: "#7c8aa3" },
+    emptyText: { margin: 0, fontSize: fontSize.base, color: "#7c8aa3" },
 
     card: {
         display: "flex",
         flexDirection: "column",
         background: "#fff",
         border: "1px solid #e5edf7",
-        borderRadius: 14,
+        borderRadius: radius.lg,
         padding: 13,
         boxShadow: "0 4px 14px rgba(0,0,0,.04)",
         gap: 9,
@@ -2396,10 +2434,10 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
     cardCountBadge: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         padding: "3px 10px",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         whiteSpace: "nowrap",
         width: "fit-content",
     },
@@ -2415,7 +2453,7 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
     cardSimpleInfoValue: {
-        fontSize: 12.5,
+        fontSize: fontSize.sm,
         color: "#3b4a63",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2427,9 +2465,9 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 34,
         height: 34,
-        borderRadius: "50%",
-        fontSize: 12,
-        fontWeight: 700,
+        borderRadius: radius.circle,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         flexShrink: 0,
     },
     cardNameBlock: {
@@ -2444,8 +2482,8 @@ const styles: Record<string, CSSProperties> = {
     },
     cardNameRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap", minWidth: 0 },
     cardName: {
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         color: "#16233c",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -2456,7 +2494,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 4,
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#7c8aa3",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -2467,9 +2505,9 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 4,
-        fontSize: 11,
+        fontSize: fontSize.xs,
         color: "#08A1CE",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2487,15 +2525,15 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "space-between",
         background: "#eef1fb",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "10px 14px",
     },
     subclientsBoxLeft: {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         color: "#3454ad",
     },
     cardContactRow: {
@@ -2509,7 +2547,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#3b4a63",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2529,27 +2567,27 @@ const styles: Record<string, CSSProperties> = {
         gap: 6,
         minWidth: 0,
     },
-    cardInfoIcon: { fontSize: 12, color: "#a7b3c8", flexShrink: 0 },
+    cardInfoIcon: { fontSize: fontSize.sm, color: "#a7b3c8", flexShrink: 0 },
     cardInfoLabel: {
-        fontSize: 11.5,
+        fontSize: fontSize.xs,
         color: "#8592a8",
-        fontWeight: 500,
+        fontWeight: fontWeight.regular,
         flexShrink: 0,
         whiteSpace: "nowrap",
     },
-    cardInfoColon: { fontSize: 11.5, color: "#8592a8", flexShrink: 0 },
+    cardInfoColon: { fontSize: fontSize.xs, color: "#8592a8", flexShrink: 0 },
     cardInfoValue: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#26314a",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
     cardInfoValueTruncate: {
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#26314a",
-        fontWeight: 600,
+        fontWeight: fontWeight.medium,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -2561,17 +2599,17 @@ const styles: Record<string, CSSProperties> = {
         display: "inline-flex",
         alignItems: "center",
         gap: 5,
-        fontSize: 10,
-        fontWeight: 700,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.semibold,
         padding: "3px 10px",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         whiteSpace: "nowrap",
         width: "fit-content",
     },
     statusDot: {
         width: 6,
         height: 6,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         background: "currentColor",
         flexShrink: 0,
     },
@@ -2587,8 +2625,8 @@ const styles: Record<string, CSSProperties> = {
     },
     statBlock: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
     statDivider: { width: 1, alignSelf: "stretch", background: "#eef2f9" },
-    statLabel: { fontSize: 11, color: "#7c8aa3" },
-    statValue: { fontSize: 15, fontWeight: 700, color: "#16233c" },
+    statLabel: { fontSize: fontSize.xs, color: "#7c8aa3" },
+    statValue: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, color: "#16233c" },
 
     cardFooter: {
         display: "flex",
@@ -2604,8 +2642,8 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         background: "transparent",
         color: "#204297",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         padding: 0,
     },
@@ -2618,9 +2656,9 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
-        fontSize: 12.5,
-        fontWeight: 700,
-        borderRadius: 10,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        borderRadius: radius.md,
         padding: "11px 16px",
         cursor: "pointer",
         boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
@@ -2632,7 +2670,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 30,
         height: 30,
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: "1px solid #d8e3fa",
         background: "#eef2fc",
         color: "#3454ad",
@@ -2645,7 +2683,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 22,
         height: 22,
-        borderRadius: 6,
+        borderRadius: radius.xs,
         border: "1px solid #e4e9f2",
         background: "#fafbfc",
         color: "#7c8aa3",
@@ -2658,7 +2696,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 30,
         height: 30,
-        borderRadius: 8,
+        borderRadius: radius.sm,
         border: "1px solid #fee2e2",
         background: "#fef2f2",
         color: "#dc2626",
@@ -2671,7 +2709,7 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 22,
         height: 22,
-        borderRadius: 6,
+        borderRadius: radius.xs,
         border: "1px solid #f8d7d7",
         background: "#fdf4f4",
         color: "#dc2626",
@@ -2683,7 +2721,7 @@ const styles: Record<string, CSSProperties> = {
     tableWrap: {
         background: "#fff",
         border: "1px solid #e5edf7",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         boxShadow: "0 6px 20px rgba(16,38,89,.06)",
         overflowX: "auto",
     },
@@ -2691,15 +2729,15 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         borderCollapse: "separate",
         borderSpacing: 0,
-        fontSize: 13,
+        fontSize: fontSize.base,
         tableLayout: "fixed",
     },
     th: {
         textAlign: "left",
         padding: "15px 18px",
         boxSizing: "border-box",
-        fontSize: 11,
-        fontWeight: 800,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.bold,
         color: "#204297",
         textTransform: "uppercase",
         letterSpacing: 0.3,
@@ -2737,23 +2775,23 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         width: 34,
         height: 34,
-        borderRadius: "50%",
-        fontSize: 11,
-        fontWeight: 700,
+        borderRadius: radius.circle,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         flexShrink: 0,
         border: "2px solid #fff",
         boxShadow: "0 0 0 1px #e5edf7",
     },
     tdNameText: {
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         color: "#16233c",
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
     tdMuted: {
-        fontSize: 12.5,
+        fontSize: fontSize.sm,
         color: "#5a6c85",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2765,7 +2803,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "flex-start",
         gap: 6,
-        fontSize: 12,
+        fontSize: fontSize.sm,
         color: "#3b4a63",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -2775,7 +2813,7 @@ const styles: Record<string, CSSProperties> = {
 
     detailsModal: {
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         width: 560,
         maxWidth: "94vw",
         maxHeight: "85vh",
@@ -2784,7 +2822,7 @@ const styles: Record<string, CSSProperties> = {
     },
     addModal: {
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         width: 640,
         maxWidth: "94vw",
         maxHeight: "85vh",
@@ -2800,17 +2838,22 @@ const styles: Record<string, CSSProperties> = {
         padding: "22px 28px 16px",
         borderBottom: "1px solid #f0f0f0",
     },
-    detailsTitle: { margin: 0, fontSize: 18, fontWeight: 700, color: "#16233c" },
+    detailsTitle: {
+        margin: 0,
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#16233c",
+    },
     closeBtn: {
         position: "absolute",
         top: 18,
         right: 20,
         border: "none",
         background: "#f3f4f6",
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         width: 28,
         height: 28,
-        fontSize: 14,
+        fontSize: fontSize.md,
         cursor: "pointer",
         color: "#6b7280",
         display: "flex",
@@ -2824,11 +2867,11 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "space-between",
         gap: 12,
     },
-    detailsLabel: { fontSize: 12, color: "#7c8aa3", fontWeight: 600 },
-    detailsValue: { fontSize: 13, color: "#16233c", fontWeight: 600 },
+    detailsLabel: { fontSize: fontSize.sm, color: "#7c8aa3", fontWeight: fontWeight.medium },
+    detailsValue: { fontSize: fontSize.base, color: "#16233c", fontWeight: fontWeight.medium },
     detailsSectionLabel: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         color: "#204297",
         textTransform: "uppercase",
         letterSpacing: 0.4,
@@ -2854,8 +2897,8 @@ const styles: Record<string, CSSProperties> = {
         display: "block",
         marginBottom: 6,
         color: "#3b4a63",
-        fontSize: 12,
-        fontWeight: 600,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
     },
     formInput: {
         width: "100%",
@@ -2863,15 +2906,21 @@ const styles: Record<string, CSSProperties> = {
         background: "#fafbfc",
         border: "1px solid #e4e9f2",
         outline: "none",
-        fontSize: 13,
-        borderRadius: 8,
+        fontSize: fontSize.base,
+        borderRadius: radius.sm,
         boxSizing: "border-box",
         color: "#16233c",
     },
-    formError: { color: "#dc2626", margin: 0, fontWeight: 600, fontSize: 12, gridColumn: "1 / -1" },
+    formError: {
+        color: "#dc2626",
+        margin: 0,
+        fontWeight: fontWeight.medium,
+        fontSize: fontSize.sm,
+        gridColumn: "1 / -1",
+    },
     formSectionLabel: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         color: "#204297",
         textTransform: "uppercase",
         letterSpacing: 0.4,
@@ -2888,10 +2937,10 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
-        borderRadius: 10,
+        borderRadius: radius.md,
         padding: "12px 20px",
-        fontSize: 13,
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         gridColumn: "1 / -1",
     },
@@ -2902,7 +2951,7 @@ const styles: Record<string, CSSProperties> = {
     // created/failed results list) ----
     bulkModal: {
         background: "#fff",
-        borderRadius: 16,
+        borderRadius: radius.lg,
         width: 560,
         maxWidth: "92vw",
         maxHeight: "88vh",
@@ -2915,25 +2964,30 @@ const styles: Record<string, CSSProperties> = {
         padding: "24px 28px 16px",
         borderBottom: "1px solid #f0f0f0",
     },
-    bulkModalTitle: { margin: 0, fontSize: 20, fontWeight: 700, color: "#5b21b6" },
-    bulkModalSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#7c8aa3" },
+    bulkModalTitle: {
+        margin: 0,
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#5b21b6",
+    },
+    bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#7c8aa3" },
     bulkInfoBox: {
         margin: "20px 28px",
         padding: "14px 16px",
         background: "#f3eefc",
         borderLeft: "3px solid #7c3aed",
-        borderRadius: 6,
+        borderRadius: radius.xs,
     },
     bulkInfoLabel: {
         display: "block",
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         color: "#5b21b6",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
     },
-    bulkInfoText: { margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 },
+    bulkInfoText: { margin: 0, fontSize: fontSize.base, color: "#6b7280", lineHeight: 1.6 },
     bulkUploadRow: {
         display: "flex",
         flexWrap: "wrap",
@@ -2946,7 +3000,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 10,
         border: "1px solid #e5e7eb",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "8px 12px",
         cursor: "pointer",
         flex: 1,
@@ -2957,14 +3011,14 @@ const styles: Record<string, CSSProperties> = {
     fileInputButton: {
         background: "#5b21b6",
         color: "#fff",
-        fontSize: 12,
-        fontWeight: 600,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
         padding: "6px 12px",
-        borderRadius: 6,
+        borderRadius: radius.xs,
         whiteSpace: "nowrap",
     },
     fileInputName: {
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#6b7280",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2974,15 +3028,15 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 20px",
-        fontSize: 14,
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         whiteSpace: "nowrap",
     },
     resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
     resultsSummary: { marginBottom: 14, textAlign: "center" },
-    resultsSummaryText: { fontSize: 14, color: "#16233c" },
+    resultsSummaryText: { fontSize: fontSize.md, color: "#16233c" },
     resultsList: {
         display: "flex",
         flexDirection: "column",
@@ -2997,7 +3051,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 12,
         background: "#fafafa",
         border: "1px solid #f0f0f0",
-        borderRadius: 8,
+        borderRadius: radius.sm,
         padding: "10px 14px",
     },
     resultRowLeft: {
@@ -3007,19 +3061,19 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
     resultRowIdentifier: {
-        fontSize: 13,
-        fontWeight: 600,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
         color: "#16233c",
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
-    resultRowSubtext: { fontSize: 12, color: "#9ca3af" },
+    resultRowSubtext: { fontSize: fontSize.sm, color: "#9ca3af" },
     resultPill: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         padding: "4px 10px",
-        borderRadius: 20,
+        borderRadius: radius.xl,
         whiteSpace: "nowrap",
         flexShrink: 0,
     },

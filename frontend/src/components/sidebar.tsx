@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 
 type MenuItem = {
     label: string;
@@ -245,7 +246,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     zIndex: 1100,
                     width: "38px",
                     height: "38px",
-                    borderRadius: "10px",
+                    borderRadius: radius.md,
                     border: "none",
                     background: COLORS.blue,
                     color: "#fff",
@@ -257,7 +258,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
             >
                 <i
                     className={isOpen ? "ti ti-x" : "ti ti-menu-2"}
-                    style={{ fontSize: "18px" }}
+                    style={{ fontSize: fontSize["2xl"] }}
                     aria-hidden="true"
                 />
             </button>
@@ -288,7 +289,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     borderRight: "1px solid #eee",
                     overflow: "hidden",
                     flexShrink: 0,
-                    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                    fontFamily: fontFamily.base,
                 }}
             >
                 {/* Logo */}
@@ -325,10 +326,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                           ? COLORS.blueTint
                                           : "transparent",
                                     color: isActive ? "#fff" : isHovered ? COLORS.blue : "#6b6280",
-                                    borderRadius: "20px",
+                                    borderRadius: radius.xl,
                                     padding: "10px 14px",
-                                    fontSize: "13px",
-                                    fontWeight: isActive ? 700 : 500,
+                                    fontSize: fontSize.base,
+                                    fontWeight: isActive ? fontWeight.semibold : fontWeight.regular,
                                     cursor: "pointer",
                                     boxShadow: isActive
                                         ? `0 4px 12px rgba(32,66,151,0.35)`
@@ -350,7 +351,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                                 style={{
                                                     width: "8px",
                                                     height: "8px",
-                                                    borderRadius: "50%",
+                                                    borderRadius: radius.circle,
                                                     background: isActive ? "#fff" : COLORS.green,
                                                     flexShrink: 0,
                                                 }}
@@ -360,7 +361,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                         <i
                                             className="ti ti-alert-triangle"
                                             style={{
-                                                fontSize: "15px",
+                                                fontSize: fontSize.lg,
                                                 color: isActive ? "#fff" : COLORS.lightBlue,
                                             }}
                                             aria-hidden="true"
@@ -371,7 +372,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                         <i
                                             className={item.icon}
                                             style={{
-                                                fontSize: "15px",
+                                                fontSize: fontSize.lg,
                                                 color: isActive
                                                     ? "#fff"
                                                     : isHovered
@@ -398,10 +399,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         gap: "10px",
                         background: "transparent",
                         color: "#6b6280",
-                        borderRadius: "20px",
+                        borderRadius: radius.xl,
                         padding: "10px 14px",
-                        fontSize: "13px",
-                        fontWeight: 500,
+                        fontSize: fontSize.base,
+                        fontWeight: fontWeight.regular,
                         cursor: "pointer",
                         marginTop: 6,
                         flexShrink: 0,
@@ -417,7 +418,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 >
                     <i
                         className="ti ti-logout-2"
-                        style={{ fontSize: "15px", color: "inherit" }}
+                        style={{ fontSize: fontSize.lg, color: "inherit" }}
                         aria-hidden="true"
                     />
                     Sign off

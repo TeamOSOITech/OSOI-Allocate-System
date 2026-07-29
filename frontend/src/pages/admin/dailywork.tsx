@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { authFetch } from "../../utils/authFetch";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
 const PAGE_SIZE = 5;
@@ -189,7 +190,10 @@ export default function DailyWork() {
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div style={styles.headerIcon}>
-                            <i className="ti ti-clipboard-plus" style={{ fontSize: 22 }} />
+                            <i
+                                className="ti ti-clipboard-plus"
+                                style={{ fontSize: fontSize["4xl"] }}
+                            />
                         </div>
                         <div>
                             <h1 style={styles.pageTitle}>Daily Work</h1>
@@ -203,7 +207,7 @@ export default function DailyWork() {
 
                     {!isMobile && (
                         <div style={styles.breadcrumb}>
-                            <i className="ti ti-home" style={{ fontSize: 14 }} />
+                            <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
                             <span style={styles.breadcrumbSep}>/</span>
                             <span style={styles.breadcrumbItem}>Dashboard</span>
                             <span style={styles.breadcrumbSep}>/</span>
@@ -252,7 +256,7 @@ export default function DailyWork() {
                     {/* Form panel */}
                     <div style={styles.formPanel}>
                         <div style={styles.formPanelHeader}>
-                            <i className="ti ti-edit" style={{ fontSize: 16 }} />
+                            <i className="ti ti-edit" style={{ fontSize: fontSize.xl }} />
                             <span>Log Production</span>
                         </div>
 
@@ -315,19 +319,28 @@ export default function DailyWork() {
 
                             {formError && (
                                 <div style={styles.formError}>
-                                    <i className="ti ti-alert-triangle" style={{ fontSize: 14 }} />
+                                    <i
+                                        className="ti ti-alert-triangle"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
                                     {formError}
                                 </div>
                             )}
                             {formSuccess && (
                                 <div style={styles.formSuccess}>
-                                    <i className="ti ti-circle-check" style={{ fontSize: 14 }} />
+                                    <i
+                                        className="ti ti-circle-check"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
                                     {formSuccess}
                                 </div>
                             )}
 
                             <button type="submit" style={styles.submitBtn} disabled={submitting}>
-                                <i className="ti ti-device-floppy" style={{ fontSize: 15 }} />
+                                <i
+                                    className="ti ti-device-floppy"
+                                    style={{ fontSize: fontSize.lg }}
+                                />
                                 {submitting ? "Saving..." : "Save Daily Work"}
                             </button>
                         </form>
@@ -337,11 +350,11 @@ export default function DailyWork() {
                     <div style={styles.listPanel}>
                         <div style={styles.listPanelHeader}>
                             <div style={styles.listPanelTitle}>
-                                <i className="ti ti-chart-bar" style={{ fontSize: 16 }} />
+                                <i className="ti ti-chart-bar" style={{ fontSize: fontSize.xl }} />
                                 <span>Today's Production</span>
                             </div>
                             <div style={styles.dateBadge}>
-                                <i className="ti ti-calendar" style={{ fontSize: 12 }} />
+                                <i className="ti ti-calendar" style={{ fontSize: fontSize.sm }} />
                                 {formatDisplayDate(todayStr())}
                             </div>
                         </div>
@@ -377,7 +390,7 @@ export default function DailyWork() {
                                             <span
                                                 style={{
                                                     flex: 1.6,
-                                                    fontWeight: 600,
+                                                    fontWeight: fontWeight.medium,
                                                     color: "#312e81",
                                                 }}
                                             >
@@ -403,7 +416,10 @@ export default function DailyWork() {
 
                         <div style={styles.tableFooter}>
                             <span style={styles.tableFooterText}>
-                                <i className="ti ti-info-circle" style={{ fontSize: 13 }} />
+                                <i
+                                    className="ti ti-info-circle"
+                                    style={{ fontSize: fontSize.base }}
+                                />
                                 {batches.length === 0
                                     ? "No entries yet"
                                     : `Showing ${(page - 1) * PAGE_SIZE + 1} to ${Math.min(
@@ -418,7 +434,10 @@ export default function DailyWork() {
                                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                                     disabled={page <= 1}
                                 >
-                                    <i className="ti ti-chevron-left" style={{ fontSize: 14 }} />
+                                    <i
+                                        className="ti ti-chevron-left"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
                                 </button>
                                 {Array.from({ length: totalPages }, (_, i) => i + 1)
                                     .slice(0, 4)
@@ -439,7 +458,10 @@ export default function DailyWork() {
                                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                                     disabled={page >= totalPages}
                                 >
-                                    <i className="ti ti-chevron-right" style={{ fontSize: 14 }} />
+                                    <i
+                                        className="ti ti-chevron-right"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
                                 </button>
                             </div>
                         </div>
@@ -469,7 +491,7 @@ function KpiCard({
         <div style={styles.kpiCard}>
             <div style={styles.kpiTop}>
                 <div style={{ ...styles.kpiIcon, background: iconBg }}>
-                    <i className={icon} style={{ fontSize: 20, color: "#fff" }} />
+                    <i className={icon} style={{ fontSize: fontSize["3xl"], color: "#fff" }} />
                 </div>
                 <div>
                     <div style={styles.kpiLabel}>{label}</div>
@@ -479,7 +501,10 @@ function KpiCard({
             <div style={styles.kpiFooter}>
                 <span>{footer}</span>
                 <span style={{ ...styles.kpiDot, background: dotColor }}>
-                    <i className="ti ti-arrow-right" style={{ fontSize: 10, color: "#fff" }} />
+                    <i
+                        className="ti ti-arrow-right"
+                        style={{ fontSize: fontSize.xxs, color: "#fff" }}
+                    />
                 </span>
             </div>
         </div>
@@ -503,11 +528,11 @@ function Pill({ value, tone }: { value: number; tone: keyof typeof PILL_TONES })
                 justifyContent: "center",
                 minWidth: 28,
                 padding: "3px 9px",
-                borderRadius: "999px",
+                borderRadius: radius.pill,
                 background: t.bg,
                 color: t.fg,
-                fontSize: "12px",
-                fontWeight: 700,
+                fontSize: fontSize.sm,
+                fontWeight: fontWeight.semibold,
             }}
         >
             {value}
@@ -520,13 +545,13 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         minHeight: "100%",
         background: "#f4f5fb",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
     },
     rootMobile: {
         width: "100%",
         minHeight: "100%",
         background: "#f0f0f5",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: fontFamily.base,
     },
     topBar: {
         height: "4px",
@@ -546,7 +571,7 @@ const styles: Record<string, CSSProperties> = {
     headerIcon: {
         width: 42,
         height: 42,
-        borderRadius: "10px",
+        borderRadius: radius.md,
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         display: "flex",
@@ -554,9 +579,15 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    pageTitle: { fontSize: 24, fontWeight: 800, color: "#17181C", margin: 0, textAlign: "left" },
+    pageTitle: {
+        fontSize: fontSize["5xl"],
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+        margin: 0,
+        textAlign: "left",
+    },
     pageSubtitle: {
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#767F92",
         margin: "4px 0 0",
         maxWidth: 520,
@@ -567,19 +598,19 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        fontSize: "12px",
+        fontSize: fontSize.sm,
         color: "#64748b",
         marginTop: "6px",
     },
     breadcrumbSep: { color: "#c7cbe0" },
     breadcrumbItem: { color: "#64748b" },
-    breadcrumbActive: { color: "#204297", fontWeight: 700 },
+    breadcrumbActive: { color: "#204297", fontWeight: fontWeight.semibold },
 
     kpiRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" },
     kpiRowMobile: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" },
     kpiCard: {
         background: "#fff",
-        borderRadius: "14px",
+        borderRadius: radius.lg,
         padding: "16px",
         boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
         display: "flex",
@@ -590,19 +621,19 @@ const styles: Record<string, CSSProperties> = {
     kpiIcon: {
         width: 44,
         height: 44,
-        borderRadius: "12px",
+        borderRadius: radius.md,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
     },
-    kpiLabel: { fontSize: "12px", fontWeight: 600, color: "#204297" },
-    kpiValue: { fontSize: "22px", fontWeight: 800, color: "#1e1b4b" },
+    kpiLabel: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: "#204297" },
+    kpiValue: { fontSize: fontSize["4xl"], fontWeight: fontWeight.bold, color: "#1e1b4b" },
     kpiFooter: {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        fontSize: "11px",
+        fontSize: fontSize.xs,
         color: "#94a3b8",
         borderTop: "1px solid #f1f1f7",
         paddingTop: "10px",
@@ -610,7 +641,7 @@ const styles: Record<string, CSSProperties> = {
     kpiDot: {
         width: 18,
         height: 18,
-        borderRadius: "50%",
+        borderRadius: radius.circle,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -626,7 +657,7 @@ const styles: Record<string, CSSProperties> = {
 
     formPanel: {
         background: "#fff",
-        borderRadius: "14px",
+        borderRadius: radius.lg,
         overflow: "hidden",
         boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
     },
@@ -637,8 +668,8 @@ const styles: Record<string, CSSProperties> = {
         padding: "14px 18px",
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
-        fontSize: "14px",
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
     },
     form: { display: "flex", flexDirection: "column", gap: "14px", padding: "18px" },
     label: { display: "flex", flexDirection: "column", gap: "6px" },
@@ -646,16 +677,16 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        fontSize: "12px",
-        fontWeight: 600,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
         color: "#374151",
     },
-    labelIcon: { fontSize: 13, color: "#204297" },
+    labelIcon: { fontSize: fontSize.base, color: "#204297" },
     input: {
         border: "1px solid #e2e4f0",
-        borderRadius: "8px",
+        borderRadius: radius.sm,
         padding: "9px 12px",
-        fontSize: "13px",
+        fontSize: fontSize.base,
         color: "#1e1b4b",
         outline: "none",
         fontFamily: "inherit",
@@ -668,9 +699,9 @@ const styles: Record<string, CSSProperties> = {
         background: "#fef3e2",
         border: "1px solid #fde3b0",
         color: "#b45309",
-        fontSize: "12px",
+        fontSize: fontSize.sm,
         padding: "9px 10px",
-        borderRadius: "8px",
+        borderRadius: radius.sm,
     },
     formSuccess: {
         display: "flex",
@@ -678,9 +709,9 @@ const styles: Record<string, CSSProperties> = {
         gap: "6px",
         background: "#eaf7ec",
         color: "#1f7a34",
-        fontSize: "12px",
+        fontSize: fontSize.sm,
         padding: "9px 10px",
-        borderRadius: "8px",
+        borderRadius: radius.sm,
     },
     submitBtn: {
         marginTop: "4px",
@@ -691,16 +722,16 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         border: "none",
-        borderRadius: "8px",
+        borderRadius: radius.sm,
         padding: "11px 14px",
-        fontSize: "13px",
-        fontWeight: 700,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
     },
 
     listPanel: {
         background: "#fff",
-        borderRadius: "14px",
+        borderRadius: radius.lg,
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -716,8 +747,8 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: "8px",
-        fontSize: "14px",
-        fontWeight: 700,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
         color: "#1e1b4b",
     },
     dateBadge: {
@@ -726,10 +757,10 @@ const styles: Record<string, CSSProperties> = {
         gap: "6px",
         background: "#eef2ff",
         color: "#204297",
-        fontSize: "11px",
-        fontWeight: 700,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
         padding: "5px 10px",
-        borderRadius: "999px",
+        borderRadius: radius.pill,
     },
     tableScroll: { maxHeight: 340, overflowY: "auto" },
     tableHead: {
@@ -738,18 +769,23 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         gap: "8px",
     },
-    tableHeadLabel: { flex: 1, fontSize: "11.5px", fontWeight: 700, color: "#e0e7ff" },
+    tableHeadLabel: {
+        flex: 1,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#e0e7ff",
+    },
     tableBody: { flex: 1 },
     tableRow: {
         display: "flex",
         alignItems: "center",
         padding: "10px 18px",
         borderBottom: "1px solid #f1f1f7",
-        fontSize: "13px",
+        fontSize: fontSize.base,
         color: "#374151",
         gap: "8px",
     },
-    emptyState: { padding: "24px", textAlign: "center", color: "#999", fontSize: "12px" },
+    emptyState: { padding: "24px", textAlign: "center", color: "#999", fontSize: fontSize.sm },
 
     tableFooter: {
         display: "flex",
@@ -764,19 +800,19 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: "6px",
-        fontSize: "11.5px",
+        fontSize: fontSize.xs,
         color: "#94a3b8",
     },
     pagination: { display: "flex", gap: "6px" },
     pageBtn: {
         width: 28,
         height: 28,
-        borderRadius: "7px",
+        borderRadius: radius.sm,
         border: "1px solid #e2e4f0",
         background: "#fff",
         color: "#204297",
-        fontSize: "12px",
-        fontWeight: 700,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
