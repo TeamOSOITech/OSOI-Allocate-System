@@ -7,6 +7,10 @@ const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
 const { authorize } = require("../../middlewares/rbac");
 
+// REVERSED MAPPING: a Subclient now picks which existing Products it uses,
+// linked via the subclient_products junction table.
+const productsService = require("../products/products.service");
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 // FIX: this entire router previously had ZERO authentication.
@@ -134,16 +138,35 @@ router.get("/", async (req, res) => {
       .select("*")
       .eq("organization_id", orgId);
 
-    const formatted = subclients.map((subclient) => ({
-      id: subclient.id,
-      name: subclient.name,
-      status: subclient.status,
-      clientId: subclient.client_id,
-      clientName: clients.find((c) => c.id === subclient.client_id)?.name || "",
-      branches: branches.filter((b) => b.subclient_id === subclient.id).length,
-      users: 0, // placeholder until a users table/relation exists
-      ...toApiContactFields(subclient),
-    }));
+    // One query for every subclient->product link in this org, then group
+    // in memory — avoids an N+1 query per subclient in the list view.
+    const { data: subclientProductLinks } = await supabase
+      .from("subclient_products")
+      .select("subclient_id, product_master(*)")
+      .eq("organization_id", orgId);
+
+    const formatted = subclients.map((subclient) => {
+      const products = (subclientProductLinks || [])
+        .filter((row) => row.subclient_id === subclient.id)
+        .map((row) => row.product_master)
+        .filter(Boolean);
+
+      return {
+        id: subclient.id,
+        name: subclient.name,
+        status: subclient.status,
+        clientId: subclient.client_id,
+        clientName:
+          clients.find((c) => c.id === subclient.client_id)?.name || "",
+        branches: branches.filter((b) => b.subclient_id === subclient.id)
+          .length,
+        users: 0, // placeholder until a users table/relation exists
+        // REVERSED MAPPING: products this subclient is linked to.
+        products,
+        productIds: products.map((p) => p.id),
+        ...toApiContactFields(subclient),
+      };
+    });
 
     res.json(formatted);
   } catch (err) {
@@ -195,9 +218,26 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
 
     if (error) throw error;
 
+    // REVERSED MAPPING: link whichever existing Products were picked in
+    // the Add Subclient form (req.body.productIds).
+    let products = [];
+    if (Array.isArray(req.body.productIds) && req.body.productIds.length) {
+      await productsService.syncSubclientProducts(
+        subclient.id,
+        req.body.productIds,
+        orgId,
+      );
+      products = await productsService.getProductsForSubclient(
+        subclient.id,
+        orgId,
+      );
+    }
+
     res.status(201).json({
       ...subclient,
       ...toApiContactFields(subclient),
+      products,
+      productIds: products.map((p) => p.id),
     });
   } catch (err) {
     console.error(err);
@@ -560,9 +600,22 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
     if (!subclient)
       return res.status(404).json({ message: "Subclient not found" });
 
+    // REVERSED MAPPING: only touch product links if productIds was
+    // actually sent, so other PUT callers can't accidentally wipe them.
+    if (req.body.productIds !== undefined) {
+      await productsService.syncSubclientProducts(
+        id,
+        req.body.productIds,
+        orgId,
+      );
+    }
+    const products = await productsService.getProductsForSubclient(id, orgId);
+
     res.json({
       ...subclient,
       ...toApiContactFields(subclient),
+      products,
+      productIds: products.map((p) => p.id),
     });
   } catch (err) {
     console.error(err);

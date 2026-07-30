@@ -33,9 +33,13 @@ const getProductById = async (req, res) => {
   }
 };
 
+// REVERSED MAPPING: a Product is now a standalone catalog entry — it no
+// longer takes `client` / `subclient` at creation time. Instead, Clients
+// and Subclients pick which existing Products they use (see
+// modules/clients/clients.routes.js and subclients.routes.js).
 const createProduct = async (req, res) => {
   try {
-    const { product_name, time_taken, time_unit, client, subclient } = req.body;
+    const { product_name, time_taken, time_unit } = req.body;
 
     if (!product_name) {
       return res
@@ -51,13 +55,7 @@ const createProduct = async (req, res) => {
     }
 
     const product = await productService.createProduct(
-      {
-        product_name,
-        time_taken,
-        time_unit,
-        client,
-        subclient,
-      },
+      { product_name, time_taken, time_unit },
       req.user.organizationId,
     );
 
@@ -91,6 +89,8 @@ const parseTimeTaken = (raw) => {
   return { value, unit: "minutes" };
 };
 
+// Bulk upload sheet no longer needs Client / Subclient columns — a product
+// is standalone. Only "Product Name" and "Time Taken" are read now.
 const bulkUploadProducts = async (req, res) => {
   try {
     if (!req.file) {
@@ -125,8 +125,6 @@ const bulkUploadProducts = async (req, res) => {
       const rowNumber = index + 2; // +2 accounts for header row + 1-indexing
 
       const product_name = row["Product Name"]?.toString().trim() || null;
-      const client = row["Client"]?.toString().trim() || null;
-      const subclient = row["Subclient"]?.toString().trim() || null;
       const { value: time_taken, unit: time_unit } = parseTimeTaken(
         row["Time Taken"],
       );
@@ -157,13 +155,7 @@ const bulkUploadProducts = async (req, res) => {
 
       try {
         await productService.createProduct(
-          {
-            product_name,
-            time_taken,
-            time_unit,
-            client,
-            subclient,
-          },
+          { product_name, time_taken, time_unit },
           orgId,
         );
         results.push({ identifier, row: rowNumber, success: true });
@@ -199,7 +191,7 @@ const bulkUploadProducts = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { product_name, time_taken, time_unit, client, subclient } = req.body;
+    const { product_name, time_taken, time_unit } = req.body;
 
     if (time_unit && !["minutes", "hours"].includes(time_unit)) {
       return res.status(400).json({
@@ -210,13 +202,7 @@ const updateProduct = async (req, res) => {
 
     const product = await productService.updateProduct(
       id,
-      {
-        product_name,
-        time_taken,
-        time_unit,
-        client,
-        subclient,
-      },
+      { product_name, time_taken, time_unit },
       req.user.organizationId,
     );
 

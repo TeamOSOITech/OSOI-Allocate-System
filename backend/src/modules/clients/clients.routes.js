@@ -11,6 +11,12 @@ const supabase = require("../../config/supabaseClient");
 // which every query below now filters on.
 const { authenticate } = require("../../middlewares/auth");
 
+// REVERSED MAPPING: Products no longer carry client/subclient on
+// themselves — a Client instead picks which existing Products it uses.
+// That link lives in the client_products junction table, managed here via
+// productsService.syncClientProducts / getProductsForClient.
+const productsService = require("../products/products.service");
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Require a valid session for every route in this file, and make
@@ -49,7 +55,7 @@ function styleHeaderCell(cell, colorHex) {
 
 // ---------- helpers: map between frontend (camelCase) <-> db (snake_case) ----------
 
-function toClientResponse(client, subclientsCount, branchesCount) {
+function toClientResponse(client, subclientsCount, branchesCount, products) {
   return {
     id: client.id,
     name: client.name,
@@ -58,6 +64,11 @@ function toClientResponse(client, subclientsCount, branchesCount) {
     subclients: subclientsCount,
     branches: branchesCount,
     users: 0, // placeholder until a users table/relation exists
+    // REVERSED MAPPING: products this client is linked to, via the
+    // client_products junction table. `productIds` is what the Add/Edit
+    // form sends back on submit; `products` is the full row for display.
+    products: products || [],
+    productIds: (products || []).map((p) => p.id),
     website: client.website,
     mainEmail: client.main_email,
     mainPhone: client.main_phone,
@@ -128,13 +139,26 @@ router.get("/", async (req, res) => {
       .select("*")
       .eq("organization_id", orgId);
 
-    const formatted = clients.map((client) =>
-      toClientResponse(
+    // One query for every client->product link in this org, then group
+    // in memory — avoids an N+1 query per client in the list view.
+    const { data: clientProductLinks } = await supabase
+      .from("client_products")
+      .select("client_id, product_master(*)")
+      .eq("organization_id", orgId);
+
+    const formatted = clients.map((client) => {
+      const products = (clientProductLinks || [])
+        .filter((row) => row.client_id === client.id)
+        .map((row) => row.product_master)
+        .filter(Boolean);
+
+      return toClientResponse(
         client,
         subclients.filter((s) => s.client_id === client.id).length,
         branches.filter((b) => b.client_id === client.id).length,
-      ),
-    );
+        products,
+      );
+    });
 
     res.json(formatted);
   } catch (err) {
@@ -162,7 +186,23 @@ router.post("/", async (req, res) => {
 
     if (error) throw error;
 
-    res.status(201).json(toClientResponse(client, 0, 0));
+    // REVERSED MAPPING: link whichever existing Products were picked in
+    // the Add Client form (req.body.productIds), instead of a Product
+    // pointing back at this client.
+    let products = [];
+    if (Array.isArray(req.body.productIds) && req.body.productIds.length) {
+      await productsService.syncClientProducts(
+        client.id,
+        req.body.productIds,
+        req.user.organizationId,
+      );
+      products = await productsService.getProductsForClient(
+        client.id,
+        req.user.organizationId,
+      );
+    }
+
+    res.status(201).json(toClientResponse(client, 0, 0, products));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to create client" });
@@ -590,11 +630,14 @@ router.get("/:id", async (req, res) => {
       .eq("organization_id", orgId)
       .eq("client_id", id);
 
+    const products = await productsService.getProductsForClient(id, orgId);
+
     res.json({
       ...toClientResponse(
         client,
         subclients?.length || 0,
         branches?.length || 0,
+        products,
       ),
       subclients,
       branches,
@@ -627,6 +670,14 @@ router.put("/:id", async (req, res) => {
     if (error) throw error;
     if (!client) return res.status(404).json({ message: "Client not found" });
 
+    // REVERSED MAPPING: only touch the product links if productIds was
+    // actually sent — this lets other PUT callers (e.g. a status-only
+    // toggle) update a client without accidentally wiping its products.
+    if (req.body.productIds !== undefined) {
+      await productsService.syncClientProducts(id, req.body.productIds, orgId);
+    }
+    const products = await productsService.getProductsForClient(id, orgId);
+
     const { data: subclients } = await supabase
       .from("subclients")
       .select("id")
@@ -639,7 +690,12 @@ router.put("/:id", async (req, res) => {
       .eq("client_id", id);
 
     res.json(
-      toClientResponse(client, subclients?.length || 0, branches?.length || 0),
+      toClientResponse(
+        client,
+        subclients?.length || 0,
+        branches?.length || 0,
+        products,
+      ),
     );
   } catch (err) {
     console.error(err);
