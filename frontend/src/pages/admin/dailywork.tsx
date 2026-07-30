@@ -4,7 +4,7 @@ import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 7;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -72,7 +72,7 @@ export default function DailyWork() {
     const [formSuccess, setFormSuccess] = useState("");
 
     const [page, setPage] = useState(1);
-
+    const [searchQuery, setSearchQuery] = useState("");
     const fetchProducts = async () => {
         setProductsLoading(true);
         try {
@@ -136,12 +136,36 @@ export default function DailyWork() {
         [batches]
     );
 
-    const totalPages = Math.max(1, Math.ceil(batches.length / PAGE_SIZE));
-    const pagedBatches = batches.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const filteredBatches = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return batches;
+        return batches.filter((b) => {
+            const dateDisplay = formatDisplayDate(b.workDate).toLowerCase();
+            const product = (b.productName || "").toLowerCase();
+            const total = String(b.totalQty ?? "");
+            const allocated = String(b.allocatedQty ?? "");
+            const pending = String(b.pendingQty ?? "");
+            return (
+                dateDisplay.includes(q) ||
+                b.workDate.toLowerCase().includes(q) ||
+                product.includes(q) ||
+                total.includes(q) ||
+                allocated.includes(q) ||
+                pending.includes(q)
+            );
+        });
+    }, [batches, searchQuery]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredBatches.length / PAGE_SIZE));
+    const pagedBatches = filteredBatches.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+    useEffect(() => {
+        setPage(1);
+    }, [searchQuery]);
 
     useEffect(() => {
         if (page > totalPages) setPage(totalPages);
-    }, [totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [totalPages]); // eslint-disable-line react-hooks/exhaustive-deps // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
@@ -197,7 +221,7 @@ export default function DailyWork() {
                         </div>
                         <div>
                             <h1 style={styles.pageTitle}>Daily Work</h1>
-                            <p style={styles.pageSubtitle}>
+                            <p style={styles.headerSubtext}>
                                 Log today's total quantity received per product — this is the pool
                                 that Smart Auto Allocation and Manual Allocation split across
                                 present employees.
@@ -353,9 +377,27 @@ export default function DailyWork() {
                                 <i className="ti ti-chart-bar" style={{ fontSize: fontSize.xl }} />
                                 <span>Today's Production</span>
                             </div>
-                            <div style={styles.dateBadge}>
-                                <i className="ti ti-calendar" style={{ fontSize: fontSize.sm }} />
-                                {formatDisplayDate(todayStr())}
+                            <div style={styles.listPanelHeaderRight}>
+                                <div style={styles.searchBox}>
+                                    <i
+                                        className="ti ti-search"
+                                        style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
+                                    />
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search product, date, qty..."
+                                        style={styles.searchInput}
+                                    />
+                                </div>
+                                <div style={styles.dateBadge}>
+                                    <i
+                                        className="ti ti-calendar"
+                                        style={{ fontSize: fontSize.sm }}
+                                    />
+                                    {formatDisplayDate(todayStr())}
+                                </div>
                             </div>
                         </div>
 
@@ -374,7 +416,11 @@ export default function DailyWork() {
                                 ) : batchesError ? (
                                     <div style={styles.emptyState}>{batchesError}</div>
                                 ) : pagedBatches.length === 0 ? (
-                                    <div style={styles.emptyState}>No daily work logged yet.</div>
+                                    <div style={styles.emptyState}>
+                                        {searchQuery
+                                            ? "No matching records found."
+                                            : "No daily work logged yet."}
+                                    </div>
                                 ) : (
                                     pagedBatches.map((b, idx) => (
                                         <div
@@ -420,12 +466,12 @@ export default function DailyWork() {
                                     className="ti ti-info-circle"
                                     style={{ fontSize: fontSize.base }}
                                 />
-                                {batches.length === 0
-                                    ? "No entries yet"
+                                {filteredBatches.length === 0
+                                    ? "No entries found"
                                     : `Showing ${(page - 1) * PAGE_SIZE + 1} to ${Math.min(
                                           page * PAGE_SIZE,
-                                          batches.length
-                                      )} of ${batches.length} entries`}
+                                          filteredBatches.length
+                                      )} of ${filteredBatches.length} entries`}
                             </span>
 
                             <div style={styles.pagination}>
@@ -580,20 +626,22 @@ const styles: Record<string, CSSProperties> = {
         flexShrink: 0,
     },
     pageTitle: {
+        margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
-        margin: 0,
         textAlign: "left",
     },
-    pageSubtitle: {
-        fontSize: fontSize.base,
-        color: "#767F92",
+    headerSubtext: {
         margin: "4px 0 0",
-        maxWidth: 520,
-        lineHeight: 1.5,
+
+        fontSize: fontSize.base,
+
+        color: "#767F92",
+
         textAlign: "left",
     },
+
     breadcrumb: {
         display: "flex",
         alignItems: "center",
@@ -762,7 +810,33 @@ const styles: Record<string, CSSProperties> = {
         padding: "5px 10px",
         borderRadius: radius.pill,
     },
-    tableScroll: { maxHeight: 340, overflowY: "auto" },
+
+    listPanelHeaderRight: {
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        flexWrap: "wrap",
+    },
+    searchBox: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        background: "#fafaff",
+        border: "1px solid #e2e4f0",
+        borderRadius: radius.pill,
+        padding: "6px 12px",
+        minWidth: 200,
+    },
+    searchInput: {
+        border: "none",
+        outline: "none",
+        background: "transparent",
+        fontSize: fontSize.sm,
+        color: "#1e1b4b",
+        width: "100%",
+        fontFamily: "inherit",
+    },
+    tableScroll: { overflowY: "visible" },
     tableHead: {
         display: "flex",
         padding: "10px 18px",

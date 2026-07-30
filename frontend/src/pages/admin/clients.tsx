@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
@@ -36,6 +36,10 @@ type Client = {
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
+    // REVERSED MAPPING: which Products this Client is linked to, via the
+    // client_products junction table on the backend.
+    productIds?: number[];
+    products?: { id: number; product_name: string }[];
 };
 
 // Subclients now carry the same Primary/Secondary contact fields as Clients
@@ -58,6 +62,17 @@ type SubclientRow = {
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
+    // REVERSED MAPPING: which Products this Subclient is linked to, via the
+    // subclient_products junction table on the backend.
+    productIds?: number[];
+    products?: { id: number; product_name: string }[];
+};
+
+// A Product is now a standalone catalog entry (see products.tsx) — Clients
+// and Subclients each pick which ones they use.
+type ProductOption = {
+    id: number;
+    product_name: string;
 };
 
 const AVATAR_PALETTE = [
@@ -247,10 +262,32 @@ export default function Clients() {
 
     const [clients, setClients] = useState<Client[]>([]);
     const [subclients, setSubclients] = useState<SubclientRow[]>([]);
+    const [products, setProducts] = useState<ProductOption[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
     const [viewDetails, setViewDetails] = useState<ViewDetailsTarget | null>(null);
+
+    // REVERSED MAPPING: is the "Select Product" dropdown panel open right
+    // now? Add and Edit modals are never mounted at the same time (both are
+    // conditionally rendered with `&&`), so one shared flag is enough.
+    const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+    const productDropdownRef = useRef<HTMLDivElement | null>(null);
+
+    // Close the dropdown when clicking anywhere outside it.
+    useEffect(() => {
+        if (!productDropdownOpen) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                productDropdownRef.current &&
+                !productDropdownRef.current.contains(e.target as Node)
+            ) {
+                setProductDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [productDropdownOpen]);
 
     // Shared shape for both Client and Subclient Add/Edit forms so both
     // entities can carry Country / Website / Main Email / Main Phone /
@@ -269,6 +306,8 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
+        // REVERSED MAPPING: ids of the Products this Client/Subclient uses.
+        productIds: [] as number[],
     };
 
     const [showAddModal, setShowAddModal] = useState(false);
@@ -305,9 +344,10 @@ export default function Clients() {
         setLoading(true);
         setError("");
         try {
-            const [clientsRes, subclientsRes] = await Promise.all([
+            const [clientsRes, subclientsRes, productsRes] = await Promise.all([
                 authFetch(`${apiBase}/api/clients`, { cache: "no-store" }),
                 authFetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/products`, { cache: "no-store" }),
             ]);
 
             if (!clientsRes.ok) throw new Error("Failed to load clients");
@@ -315,6 +355,14 @@ export default function Clients() {
 
             setClients(await clientsRes.json());
             setSubclients(await subclientsRes.json());
+
+            // Products endpoint isn't critical to render this page, so a
+            // failure here shouldn't block Clients/Subclients from showing —
+            // it would just mean the "Products" picker in Add/Edit is empty.
+            if (productsRes.ok) {
+                const productsJson = await productsRes.json();
+                setProducts(productsJson?.data || []);
+            }
         } catch (err: any) {
             setError(err?.message || "Something went wrong loading data.");
         } finally {
@@ -422,6 +470,9 @@ export default function Clients() {
                 secondaryContactName: addForm.secondaryContactName || null,
                 secondaryContactEmail: addForm.secondaryContactEmail || null,
                 secondaryContactPhone: addForm.secondaryContactPhone || null,
+                // REVERSED MAPPING: this Client/Subclient links to these
+                // existing Products (picked in the form below).
+                productIds: addForm.productIds,
             };
 
             if (activeTab === "client") {
@@ -470,6 +521,7 @@ export default function Clients() {
                 secondaryContactName: target.data.secondaryContactName || "",
                 secondaryContactEmail: target.data.secondaryContactEmail || "",
                 secondaryContactPhone: target.data.secondaryContactPhone || "",
+                productIds: target.data.productIds || [],
             });
         } else {
             setEditForm({
@@ -486,6 +538,7 @@ export default function Clients() {
                 secondaryContactName: target.data.secondaryContactName || "",
                 secondaryContactEmail: target.data.secondaryContactEmail || "",
                 secondaryContactPhone: target.data.secondaryContactPhone || "",
+                productIds: target.data.productIds || [],
             });
         }
         setEditTarget(target);
@@ -527,6 +580,7 @@ export default function Clients() {
                 secondaryContactName: editForm.secondaryContactName || null,
                 secondaryContactEmail: editForm.secondaryContactEmail || null,
                 secondaryContactPhone: editForm.secondaryContactPhone || null,
+                productIds: editForm.productIds,
             };
 
             if (editTarget.type === "client") {
@@ -672,6 +726,156 @@ export default function Clients() {
         } finally {
             setBulkUploading(false);
         }
+    };
+
+    // REVERSED MAPPING: shared "which Products does this Client/Subclient
+    // use" checkbox picker, used by both Add and Edit forms, for both tabs.
+    const toggleProductId = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
+        productId: number
+    ) => {
+        setFormState((prev) => {
+            const has = prev.productIds.includes(productId);
+            return {
+                ...prev,
+                productIds: has
+                    ? prev.productIds.filter((id) => id !== productId)
+                    : [...prev.productIds, productId],
+            };
+        });
+    };
+
+    // REVERSED MAPPING: collapsed by default, showing "Select Product" (or
+    // the picked product names as chips). Clicking the box opens a checkbox
+    // panel below it — same multi-select behavior as before, just collapsed
+    // into a dropdown instead of an always-open list, so a long product
+    // catalog doesn't push the rest of the form down.
+    const renderProductPicker = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
+    ) => {
+        const selectedProducts = products.filter((p) => formState.productIds.includes(p.id));
+
+        return (
+            <div style={{ gridColumn: "1 / -1", position: "relative" }} ref={productDropdownRef}>
+                <label style={styles.formLabel}>Products</label>
+
+                {products.length === 0 ? (
+                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                        No products yet — add one from the Products page first.
+                    </p>
+                ) : (
+                    <>
+                        {/* Collapsed control — click to open/close the panel */}
+                        <div
+                            onClick={() => setProductDropdownOpen((prev) => !prev)}
+                            style={{
+                                ...styles.formInput,
+                                display: "flex",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: 6,
+                                cursor: "pointer",
+                                minHeight: 20,
+                            }}
+                        >
+                            {selectedProducts.length === 0 ? (
+                                <span style={{ color: "#8b96a8" }}>Select Product</span>
+                            ) : (
+                                selectedProducts.map((p) => (
+                                    <span
+                                        key={p.id}
+                                        style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 4,
+                                            background: "#eef2ff",
+                                            color: "#3b4bcc",
+                                            fontSize: fontSize.xs,
+                                            fontWeight: fontWeight.medium,
+                                            padding: "2px 8px",
+                                            borderRadius: 999,
+                                        }}
+                                    >
+                                        {p.product_name}
+                                        <span
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleProductId(formState, setFormState, p.id);
+                                            }}
+                                            style={{
+                                                cursor: "pointer",
+                                                fontWeight: fontWeight.bold,
+                                            }}
+                                        >
+                                            ×
+                                        </span>
+                                    </span>
+                                ))
+                            )}
+                            <span
+                                style={{
+                                    marginLeft: "auto",
+                                    color: "#8b96a8",
+                                    fontSize: fontSize.xs,
+                                }}
+                            >
+                                {productDropdownOpen ? "▲" : "▼"}
+                            </span>
+                        </div>
+
+                        {/* Expanded checkbox panel */}
+                        {productDropdownOpen && (
+                            <div
+                                className="cl-scroll-area"
+                                style={{
+                                    position: "absolute",
+                                    zIndex: 20,
+                                    top: "100%",
+                                    left: 0,
+                                    right: 0,
+                                    marginTop: 4,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 6,
+                                    maxHeight: 200,
+                                    overflowY: "auto",
+                                    border: "1px solid #e4e9f2",
+                                    borderRadius: radius.sm,
+                                    padding: "10px 12px",
+                                    background: "#fff",
+                                    boxShadow: "0 8px 24px rgba(16, 24, 40, 0.12)",
+                                }}
+                            >
+                                {products.map((p) => (
+                                    <label
+                                        key={p.id}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            fontSize: fontSize.sm,
+                                            color: "#16233c",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={formState.productIds.includes(p.id)}
+                                            onChange={() =>
+                                                toggleProductId(formState, setFormState, p.id)
+                                            }
+                                        />
+                                        {p.product_name}
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        );
     };
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
@@ -1595,6 +1799,18 @@ export default function Clients() {
                                 </>
                             )}
 
+                            {/* REVERSED MAPPING: Products linked to this Client/Subclient */}
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Products</span>
+                                <span style={{ ...styles.detailsValue, textAlign: "right" }}>
+                                    {viewDetails.data.products && viewDetails.data.products.length
+                                        ? viewDetails.data.products
+                                              .map((p) => p.product_name)
+                                              .join(", ")
+                                        : "—"}
+                                </span>
+                            </div>
+
                             {/* Company Info + Primary/Secondary Contact are identical for
                                 both Client and Subclient view modals. */}
                             <div style={styles.detailsSectionLabel}>Company Information</div>
@@ -1796,6 +2012,10 @@ export default function Clients() {
                                 </select>
                             </div>
 
+                            {/* REVERSED MAPPING: pick which existing Products this
+                                Client/Subclient uses */}
+                            {renderProductPicker(addForm, setAddForm)}
+
                             {/* Same fieldset for both Client and Subclient */}
                             {renderContactFieldset(addForm, setAddForm)}
 
@@ -1899,6 +2119,10 @@ export default function Clients() {
                                     <option value="Inactive">Inactive</option>
                                 </select>
                             </div>
+
+                            {/* REVERSED MAPPING: pick which existing Products this
+                                Client/Subclient uses */}
+                            {renderProductPicker(editForm, setEditForm)}
 
                             {/* Same fieldset for both Client and Subclient */}
                             {renderContactFieldset(editForm, setEditForm)}

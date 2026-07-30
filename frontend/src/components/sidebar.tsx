@@ -37,10 +37,22 @@ const menuItems: MenuItem[] = [
         roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
     },
     {
-        label: "Today's Task",
-        icon: "ti ti-clipboard-list",
-        path: "/tasks",
+        label: "Products",
+        icon: "ti ti-package",
+        path: "/products",
         roles: EVERYONE,
+    },
+    {
+        label: "Clients Preview",
+        icon: "ti ti-users",
+        path: "/clients",
+        roles: ADMIN_AND_VERTICAL_HEAD,
+    },
+    {
+        label: "Employee Preview",
+        icon: "ti ti-eye",
+        path: "/employees",
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "Daily Work",
@@ -58,30 +70,6 @@ const menuItems: MenuItem[] = [
         roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
-        label: "Clients Preview",
-        icon: "ti ti-users",
-        path: "/clients",
-        roles: ADMIN_AND_VERTICAL_HEAD,
-    },
-    {
-        label: "Employee Preview",
-        icon: "ti ti-eye",
-        path: "/employees",
-        roles: ADMIN_AND_VERTICAL_HEAD,
-    },
-    {
-        label: "Products",
-        icon: "ti ti-package",
-        path: "/products",
-        roles: EVERYONE,
-    },
-    {
-        label: "Report",
-        icon: "ti ti-chart-line",
-        path: "/report",
-        roles: EVERYONE,
-    },
-    {
         label: "Production Reports",
         icon: "ti ti-file-analytics",
         path: "/production-reports",
@@ -93,7 +81,6 @@ const menuItems: MenuItem[] = [
         path: "/history",
         roles: EVERYONE,
     },
-    { label: "Admin", icon: "ti ti-user", path: "/admin", roles: ADMIN_TIER },
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ADMIN_TIER },
     {
         label: "Quality Scores",
@@ -111,18 +98,14 @@ const menuItems: MenuItem[] = [
 
 const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
-    "/tasks": "Today's Task",
     "/products": "Products",
     "/daily-work": "Daily Work",
-    "/report": "Report",
-    "/reportdashboard": "Report",
     "/production-reports": "Production Reports",
     "/today's-allocation": "Today's Allocation",
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",
     "/history": "History",
-    "/admin": "Admin",
     "/billing": "Billing",
     "/quality-scores": "Quality Scores",
     "/profile": "Profile",

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 // Public marketing/landing page — this is now what "/" shows before
@@ -104,6 +104,15 @@ const Landing = () => {
     const [orgSignupLoading, setOrgSignupLoading] = useState(false);
     const [orgSignupError, setOrgSignupError] = useState("");
     const [orgSignupSuccess, setOrgSignupSuccess] = useState("");
+
+    // If this page was opened via the "Sign Up" nav button (new tab with
+    // ?signup=1), auto-open the org signup modal on load.
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("signup") === "1") {
+            setOrgSignupOpen(true);
+        }
+    }, []);
 
     const handleOrgSignup = async () => {
         setOrgSignupError("");
@@ -418,6 +427,20 @@ const Landing = () => {
                     flex-shrink: 0;
                 }
                 .lp-nav-login-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+                .lp-nav-signup-btn {
+                    background: transparent;
+                    color: #fff;
+                    border: 1px solid #33415F;
+                    border-radius: 8px;
+                    padding: 9px 22px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-family: inherit;
+                    transition: border-color 0.15s ease, background 0.15s ease;
+                    flex-shrink: 0;
+                }
+                .lp-nav-signup-btn:hover { border-color: #08A1CE; background: rgba(8,161,206,0.08); }
                 .lp-burger {
                     display: none;
                     background: none;
@@ -943,6 +966,12 @@ const Landing = () => {
                 </nav>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <button
+                        className="lp-nav-signup-btn"
+                        onClick={() => window.open("/?signup=1", "_blank", "noopener,noreferrer")}
+                    >
+                        Sign Up
+                    </button>
+                    <button
                         className="lp-nav-login-btn"
                         onClick={() => window.open("/login", "_blank", "noopener,noreferrer")}
                     >
@@ -1296,6 +1325,7 @@ const Landing = () => {
                                 <p className="lp-login-subtitle">{orgSignupSuccess}</p>
                                 <button
                                     className="lp-login-submit"
+                                    style={{ width: "100%", boxSizing: "border-box" }}
                                     onClick={() => {
                                         closeOrgSignup();
                                         navigate("/login");

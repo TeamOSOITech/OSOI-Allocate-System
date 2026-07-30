@@ -10,6 +10,29 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
 
+// Domains that are NOT allowed for the Email field — personal/free email
+// providers. Only company/professional domains (e.g. abc@infosys.com) pass.
+const BLOCKED_EMAIL_DOMAINS = [
+    "gmail.com",
+    "yahoo.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "rediffmail.com",
+    "icloud.com",
+    "aol.com",
+    "protonmail.com",
+    "msn.com",
+];
+
+const isProfessionalEmail = (email: string) => {
+    const trimmed = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) return false;
+    const domain = trimmed.split("@")[1];
+    return !BLOCKED_EMAIL_DOMAINS.includes(domain);
+};
+
 // Styled tooltip (matches the gradient tooltip used on the Clients page) —
 // inline style objects can't express :hover, so this small bit of CSS is
 // injected once via a <style> tag instead of scattered onMouseEnter handlers.
@@ -62,6 +85,82 @@ function useIsMobile() {
     return isMobile;
 }
 
+// Small reusable "+ add new option" control used under Department,
+// Designation, Role, Reporting Manager and Teams. Clicking the + reveals
+// an inline text box; submitting calls onAdd(value), which the parent
+// uses to (a) push the value into that field's dropdown list and (b)
+// persist it to the backend.
+function InlineAddOption({
+    onAdd,
+    placeholder,
+}: {
+    onAdd: (value: string) => Promise<void> | void;
+    placeholder?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const [value, setValue] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    const submit = async () => {
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        setSaving(true);
+        try {
+            await onAdd(trimmed);
+            setValue("");
+            setOpen(false);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (!open) {
+        return (
+            <button
+                type="button"
+                onClick={() => setOpen(true)}
+                style={styles.addOptionToggle}
+                aria-label="Add new option"
+            >
+                <i className="ti ti-plus" style={{ fontSize: fontSize.xs }} />
+            </button>
+        );
+    }
+
+    return (
+        <div style={styles.addOptionRow}>
+            <input
+                autoFocus
+                style={styles.addOptionInput}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={placeholder || "Type new value"}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") submit();
+                    if (e.key === "Escape") {
+                        setOpen(false);
+                        setValue("");
+                    }
+                }}
+            />
+            <button type="button" style={styles.addOptionSubmit} onClick={submit} disabled={saving}>
+                {saving ? "..." : "Add"}
+            </button>
+            <button
+                type="button"
+                style={styles.addOptionCancel}
+                onClick={() => {
+                    setOpen(false);
+                    setValue("");
+                }}
+                aria-label="Cancel"
+            >
+                ✕
+            </button>
+        </div>
+    );
+}
+
 export default function AddUser() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
@@ -69,6 +168,7 @@ export default function AddUser() {
     const [formData, setFormData] = useState({
         fullName: "",
         email: "",
+        contactNumber: "",
         employeeId: "",
         designation: "",
         department: "",
@@ -80,6 +180,25 @@ export default function AddUser() {
         role: "",
     });
 
+    // Fields that must be filled before submit. DOB, Contact Number and
+    // Password are intentionally excluded per requirement.
+    const REQUIRED_FIELDS: (keyof typeof formData)[] = [
+        "fullName",
+        "email",
+        "employeeId",
+        "designation",
+        "department",
+        "doj",
+        "reportingManager",
+        "Teams",
+        "role",
+    ];
+    const isRequired = (field: keyof typeof formData) => REQUIRED_FIELDS.includes(field);
+    const labelStyle = (field: keyof typeof formData) => ({
+        ...styles.label,
+        ...(isRequired(field) ? styles.labelRequired : {}),
+    });
+
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [showSuccess, setShowSuccess] = useState(false);
@@ -89,10 +208,39 @@ export default function AddUser() {
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState("");
 
+    // Dropdown option lists for the fields that support "add new" inline.
+    // Seeded with sensible defaults; anything added via the + control gets
+    // appended here so it shows up immediately in the dropdown.
+    const [departmentOptions, setDepartmentOptions] = useState<string[]>([
+        "Tech",
+        "Legal",
+        "SD",
+        "HR & Admin",
+    ]);
+    const [designationOptions, setDesignationOptions] = useState<string[]>([]);
+    const [teamsOptions, setTeamsOptions] = useState<string[]>([
+        "Tech",
+        "Legal",
+        "SD",
+        "HR & Admin",
+    ]);
+    // NOTE: Roles are tied to permission gating elsewhere (App.jsx role
+    // lists, backend src/config/permissions.js). Adding a role name here
+    // that doesn't exist in those places will let it be selected, but that
+    // user won't actually get any matching permissions. Keeping this
+    // addable because it was requested — worth revisiting.
+    const [roleOptions, setRoleOptions] = useState<{ value: string; label: string }[]>([
+        { value: "TEAM_MEMBER", label: "Team Member" },
+        { value: "VERTICAL_HEAD", label: "Vertical Head" },
+        { value: "PROCESS_LEAD", label: "Process Lead" },
+        { value: "OPS_MANAGER", label: "Ops Manager" },
+        { value: "AUDIT_MANAGER", label: "Audit Manager" },
+        { value: "SUPER_ADMIN", label: "Super Admin" },
+    ]);
+
     // Reporting Manager dropdown = every current Process Lead, fetched
-    // live from /api/employees and filtered by role. Previously this was
-    // two hardcoded fake names ("Joyce", "SPRAINT") — now it reflects
-    // whoever actually holds the PROCESS_LEAD role today.
+    // live from /api/employees and filtered by role, plus anything added
+    // manually via the + control below.
     const [processLeads, setProcessLeads] = useState<{ id: string; name: string; email: string }[]>(
         []
     );
@@ -118,13 +266,35 @@ export default function AddUser() {
         fetchProcessLeads();
     }, []);
 
+    // Generic "save this new dropdown option to the backend" call. Adjust
+    // the URL/body shape to match your actual backend route — this is a
+    // placeholder endpoint (`POST /api/options`) since none was specified.
+    const saveCustomOption = async (field: string, value: string) => {
+        try {
+            await authFetch(`${import.meta.env.VITE_API_URL}/api/options`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ field, value }),
+            });
+        } catch (err) {
+            // Non-fatal: value still shows in the dropdown locally (added
+            // by the caller before this runs), it just won't be persisted
+            // for other sessions/users until this endpoint exists/succeeds.
+            console.error(`Failed to persist new "${field}" option:`, err);
+        }
+    };
+
     const generatePassword = () => {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
         let pass = "";
         for (let i = 0; i < 10; i++) {
             pass += chars.charAt(Math.floor(Math.random() * chars.length));
         }
-        setFormData({ ...formData, password: pass });
+        return pass;
+    };
+
+    const handleGeneratePasswordClick = () => {
+        setFormData((prev) => ({ ...prev, password: generatePassword() }));
     };
 
     const copyPassword = () => {
@@ -136,15 +306,16 @@ export default function AddUser() {
         const templateData = [
             {
                 "Full Name": "John Doe",
-                Email: "john.doe@example.com",
+                Email: "john.doe@infosys.com",
+                "Contact Number": "9876543210",
                 "Employee ID": "EMP12345",
                 Designation: "Senior Developer",
                 Department: "Tech",
                 "Date of Birth": "1995-05-10",
                 "Date of Joining": "2023-01-15",
-                "Reporting Manager": "manager@example.com",
+                "Reporting Manager": "manager@infosys.com",
                 Teams: "Tech",
-                Password: "Sample@123",
+                Password: "",
                 Role: "TEAM_MEMBER",
             },
         ];
@@ -182,6 +353,7 @@ export default function AddUser() {
                 firstName: row["First Name"] || row["Full Name"] || "",
                 lastName: row["Last Name"] || "",
                 email: row["Email"] || "",
+                contactNumber: row["Contact Number"] || "",
                 employeeId: row["Employee ID"] || "",
                 designation: row["Designation"] || "",
                 department: row["Department"] || "",
@@ -219,9 +391,22 @@ export default function AddUser() {
         setBulkError("");
     };
 
+    const validateRequired = () => {
+        const missing = REQUIRED_FIELDS.filter((field) => !formData[field]);
+        return missing;
+    };
+
     const handleRegister = async () => {
-        if (!formData.fullName || !formData.email || !formData.role || !formData.password) {
-            setError("Full name, email, role and password are required.");
+        const missing = validateRequired();
+        if (missing.length > 0) {
+            setError("Please fill all required fields.");
+            return;
+        }
+
+        if (!isProfessionalEmail(formData.email)) {
+            setError(
+                "Please enter a professional company email (e.g. abc@infosys.com). Gmail, Yahoo, Outlook etc. are not allowed."
+            );
             return;
         }
 
@@ -235,11 +420,24 @@ export default function AddUser() {
         const lastName =
             firstSpaceIndex === -1 ? "" : trimmedName.slice(firstSpaceIndex + 1).trim();
 
+        // Password is optional in the form, but the backend still needs
+        // something to create the login — auto-generate one if left blank
+        // rather than blocking submit.
+        const passwordToSend = formData.password || generatePassword();
+        if (!formData.password) {
+            setFormData((prev) => ({ ...prev, password: passwordToSend }));
+        }
+
         try {
             const response = await authFetch(`${import.meta.env.VITE_API_URL}/api/users/add-user`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...formData, firstName, lastName }),
+                body: JSON.stringify({
+                    ...formData,
+                    password: passwordToSend,
+                    firstName,
+                    lastName,
+                }),
             });
 
             if (!response.ok) {
@@ -268,6 +466,7 @@ export default function AddUser() {
             ...prev,
             fullName: combinedFullName || prev.fullName,
             email: data.email || prev.email,
+            contactNumber: data.contactNumber || prev.contactNumber,
             role: data.role || prev.role,
             password: data.password || prev.password,
             employeeId: data.employeeId || prev.employeeId,
@@ -303,7 +502,7 @@ export default function AddUser() {
     // submit/navigate if the form isn't actually ready, so a stray voice
     // match can no longer blow past your review step.
     const handleVoiceRequestSubmit = () => {
-        if (!formData.fullName || !formData.email || !formData.role || !formData.password) {
+        if (validateRequired().length > 0) {
             speak("Some required fields are still missing. Please review before submitting.");
             return;
         }
@@ -356,7 +555,7 @@ export default function AddUser() {
                             <div style={styles.pageHeaderRow}>
                                 <div style={styles.pageTitleBlock}>
                                     <h2 style={styles.pageTitle}>Add New User</h2>
-                                    <p style={styles.pageSubtitle}>
+                                    <p style={styles.headerSubtext}>
                                         Create a new employee account and assign role & permissions
                                     </p>
                                 </div>
@@ -409,13 +608,7 @@ export default function AddUser() {
                             <div style={styles.sectionBody}>
                                 <div style={isMobile ? styles.gridMobile : styles.grid}>
                                     <div>
-                                        <label style={styles.label}>Select User Name</label>
-                                        <select style={styles.input}>
-                                            <option>Search User Name</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label style={styles.label}>Full Name</label>
+                                        <label style={labelStyle("fullName")}>Full Name *</label>
                                         <input
                                             style={styles.input}
                                             value={formData.fullName}
@@ -429,7 +622,7 @@ export default function AddUser() {
                                         />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Email</label>
+                                        <label style={labelStyle("email")}>Email *</label>
                                         <input
                                             type="email"
                                             style={styles.input}
@@ -437,11 +630,34 @@ export default function AddUser() {
                                             onChange={(e) =>
                                                 setFormData({ ...formData, email: e.target.value })
                                             }
-                                            placeholder="e.g. john.doe@email.com"
+                                            placeholder="e.g. john.doe@infosys.com"
+                                        />
+                                        <p style={styles.note}>
+                                            Use your official company email (not Gmail / Yahoo /
+                                            Outlook)
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <label style={labelStyle("contactNumber")}>
+                                            Contact Number
+                                        </label>
+                                        <input
+                                            type="tel"
+                                            style={styles.input}
+                                            value={formData.contactNumber}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    contactNumber: e.target.value,
+                                                })
+                                            }
+                                            placeholder="e.g. 9876543210"
                                         />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Employee ID</label>
+                                        <label style={labelStyle("employeeId")}>
+                                            Employee ID *
+                                        </label>
                                         <input
                                             style={styles.input}
                                             value={formData.employeeId}
@@ -455,8 +671,10 @@ export default function AddUser() {
                                         />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Designation</label>
-                                        <input
+                                        <label style={labelStyle("designation")}>
+                                            Designation *
+                                        </label>
+                                        <select
                                             style={styles.input}
                                             value={formData.designation}
                                             onChange={(e) =>
@@ -465,11 +683,30 @@ export default function AddUser() {
                                                     designation: e.target.value,
                                                 })
                                             }
+                                        >
+                                            <option value="">Select Designation</option>
+                                            {designationOptions.map((d) => (
+                                                <option key={d} value={d}>
+                                                    {d}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <InlineAddOption
                                             placeholder="e.g. Senior Developer"
+                                            onAdd={async (val) => {
+                                                setDesignationOptions((prev) =>
+                                                    prev.includes(val) ? prev : [...prev, val]
+                                                );
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    designation: val,
+                                                }));
+                                                await saveCustomOption("designation", val);
+                                            }}
                                         />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Department</label>
+                                        <label style={labelStyle("department")}>Department *</label>
                                         <select
                                             style={styles.input}
                                             value={formData.department}
@@ -481,7 +718,25 @@ export default function AddUser() {
                                             }
                                         >
                                             <option value="">Select Department</option>
+                                            {departmentOptions.map((d) => (
+                                                <option key={d} value={d}>
+                                                    {d}
+                                                </option>
+                                            ))}
                                         </select>
+                                        <InlineAddOption
+                                            placeholder="e.g. Finance"
+                                            onAdd={async (val) => {
+                                                setDepartmentOptions((prev) =>
+                                                    prev.includes(val) ? prev : [...prev, val]
+                                                );
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    department: val,
+                                                }));
+                                                await saveCustomOption("department", val);
+                                            }}
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -497,7 +752,7 @@ export default function AddUser() {
                             <div style={styles.sectionBody}>
                                 <div style={isMobile ? styles.gridMobile : styles.grid}>
                                     <div>
-                                        <label style={styles.label}>Role</label>
+                                        <label style={labelStyle("role")}>Role *</label>
                                         <select
                                             style={styles.input}
                                             value={formData.role}
@@ -506,16 +761,29 @@ export default function AddUser() {
                                             }
                                         >
                                             <option value="">Select Role</option>
-                                            <option value="TEAM_MEMBER">Team Member</option>
-                                            <option value="VERTICAL_HEAD">Vertical Head</option>
-                                            <option value="PROCESS_LEAD">Process Lead</option>
-                                            <option value="OPS_MANAGER">Ops Manager</option>
-                                            <option value="AUDIT_MANAGER">Audit Manager</option>
-                                            <option value="SUPER_ADMIN">Super Admin</option>
+                                            {roleOptions.map((r) => (
+                                                <option key={r.value} value={r.value}>
+                                                    {r.label}
+                                                </option>
+                                            ))}
                                         </select>
+                                        <InlineAddOption
+                                            placeholder="e.g. QA_LEAD"
+                                            onAdd={async (val) => {
+                                                setRoleOptions((prev) =>
+                                                    prev.some((r) => r.value === val)
+                                                        ? prev
+                                                        : [...prev, { value: val, label: val }]
+                                                );
+                                                setFormData((prev) => ({ ...prev, role: val }));
+                                                await saveCustomOption("role", val);
+                                            }}
+                                        />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Reporting Manager</label>
+                                        <label style={labelStyle("reportingManager")}>
+                                            Reporting Manager *
+                                        </label>
                                         <select
                                             style={styles.input}
                                             value={formData.reportingManager}
@@ -537,18 +805,32 @@ export default function AddUser() {
                                                 </option>
                                             ))}
                                         </select>
-                                        {processLeadsError ? (
-                                            <p style={{ ...styles.note, color: "#dc2626" }}>
-                                                {processLeadsError}
-                                            </p>
-                                        ) : (
-                                            <p style={styles.note}>
-                                                * Lists everyone currently set as Process Lead
-                                            </p>
-                                        )}
+
+                                        <InlineAddOption
+                                            placeholder="Manager name"
+                                            onAdd={async (val) => {
+                                                setProcessLeads((prev) =>
+                                                    prev.some((pl) => pl.email === val)
+                                                        ? prev
+                                                        : [
+                                                              ...prev,
+                                                              {
+                                                                  id: `custom-${Date.now()}`,
+                                                                  name: val,
+                                                                  email: val,
+                                                              },
+                                                          ]
+                                                );
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    reportingManager: val,
+                                                }));
+                                                await saveCustomOption("reportingManager", val);
+                                            }}
+                                        />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Teams</label>
+                                        <label style={labelStyle("Teams")}>Teams *</label>
                                         <select
                                             style={styles.input}
                                             value={formData.Teams}
@@ -559,15 +841,26 @@ export default function AddUser() {
                                                 })
                                             }
                                         >
-                                            <option value="">Search User Name</option>
-                                            <option value="Tech">Tech</option>
-                                            <option value="Legal">Legal</option>
-                                            <option value="SD">SD</option>
-                                            <option value="HR & Admin">HR & Admin</option>
+                                            <option value="">Select Team</option>
+                                            {teamsOptions.map((t) => (
+                                                <option key={t} value={t}>
+                                                    {t}
+                                                </option>
+                                            ))}
                                         </select>
+                                        <InlineAddOption
+                                            placeholder="e.g. Support"
+                                            onAdd={async (val) => {
+                                                setTeamsOptions((prev) =>
+                                                    prev.includes(val) ? prev : [...prev, val]
+                                                );
+                                                setFormData((prev) => ({ ...prev, Teams: val }));
+                                                await saveCustomOption("teams", val);
+                                            }}
+                                        />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Date of Birth</label>
+                                        <label style={labelStyle("dob")}>Date of Birth</label>
                                         <input
                                             type="date"
                                             style={styles.input}
@@ -578,7 +871,7 @@ export default function AddUser() {
                                         />
                                     </div>
                                     <div>
-                                        <label style={styles.label}>Date of Joining</label>
+                                        <label style={labelStyle("doj")}>Date of Joining *</label>
                                         <input
                                             type="date"
                                             style={styles.input}
@@ -600,7 +893,7 @@ export default function AddUser() {
                                 <span style={styles.sectionHeaderText}>Security</span>
                             </div>
                             <div style={styles.sectionBody}>
-                                <label style={styles.label}>Password</label>
+                                <label style={labelStyle("password")}>Password</label>
                                 <div
                                     style={
                                         isMobile
@@ -623,11 +916,11 @@ export default function AddUser() {
                                                     password: e.target.value,
                                                 })
                                             }
-                                            placeholder="Enter password or generate"
+                                            placeholder="Optional — auto-generated if left blank"
                                         />
                                         <button
                                             style={styles.generateBtn}
-                                            onClick={generatePassword}
+                                            onClick={handleGeneratePasswordClick}
                                             type="button"
                                         >
                                             <i
@@ -710,9 +1003,9 @@ export default function AddUser() {
                             <div style={styles.bulkInfoBox}>
                                 <span style={styles.bulkInfoLabel}>Required columns</span>
                                 <p style={styles.bulkInfoText}>
-                                    Full Name, Email, Employee ID, Designation, Department, Date of
-                                    Birth, Date of Joining, Reporting Manager, Teams, Password, Role
-                                    (ADMIN / MANAGER / EMPLOYEE)
+                                    Full Name, Email, Contact Number, Employee ID, Designation,
+                                    Department, Date of Birth, Date of Joining, Reporting Manager,
+                                    Teams, Password, Role (ADMIN / MANAGER / EMPLOYEE)
                                 </p>
                             </div>
 
@@ -908,7 +1201,16 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.bold,
         color: "#17181C",
     },
-    pageSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
+
+    headerSubtext: {
+        margin: "4px 0 0",
+
+        fontSize: fontSize.base,
+
+        color: "#767F92",
+
+        textAlign: "left",
+    },
 
     headerButtonGroup: {
         position: "absolute",
@@ -996,6 +1298,11 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
     },
+    labelRequired: {
+        // Changed: no longer red — required labels now match the
+        // regular label color (same as Contact Number's label).
+        color: "#3D4459",
+    },
     input: {
         width: "100%",
         padding: "10px 12px",
@@ -1008,6 +1315,57 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
     },
     note: { color: "#f59e0b", marginTop: 6, fontWeight: fontWeight.medium, fontSize: fontSize.xs },
+
+    addOptionToggle: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        marginTop: 6,
+        border: "1px dashed #C7D9F0",
+        borderRadius: radius.circle,
+        background: "#fff",
+        color: "#2A2F8F",
+        cursor: "pointer",
+        padding: 0,
+    },
+    addOptionRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        marginTop: 6,
+    },
+    addOptionInput: {
+        flex: 1,
+        minWidth: 0,
+        padding: "6px 8px",
+        fontSize: fontSize.sm,
+        border: "1px solid #ececf5",
+        borderRadius: radius.xs,
+        outline: "none",
+        background: "#fafafa",
+        color: "#17181C",
+    },
+    addOptionSubmit: {
+        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.xs,
+        padding: "6px 10px",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+    },
+    addOptionCancel: {
+        border: "none",
+        background: "transparent",
+        color: "#9ca3af",
+        cursor: "pointer",
+        fontSize: fontSize.sm,
+        padding: "0 4px",
+    },
 
     passwordRegisterRow: {
         display: "flex",

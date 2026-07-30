@@ -31,13 +31,14 @@ function useIsMobile() {
 const API_BASE = import.meta.env.VITE_API_URL;
 const ENDPOINT = `${API_BASE}/api/products`;
 
+// REVERSED MAPPING: a Product is now a standalone catalog entry. It no
+// longer carries a client/subclient on itself — Clients and Subclients
+// each pick which Products they use (see the Clients page instead).
 type Product = {
     id: string;
     product_name: string;
     time_taken: string;
     time_unit: string;
-    client: string;
-    subclient: string;
     created_at?: string;
     updated_at?: string;
 };
@@ -46,16 +47,12 @@ type ProductForm = {
     product_name: string;
     time_taken: string;
     time_unit: string;
-    client: string;
-    subclient: string;
 };
 
 const emptyForm: ProductForm = {
     product_name: "",
     time_taken: "",
     time_unit: "",
-    client: "",
-    subclient: "",
 };
 
 type DeleteTarget = { id: string; name: string };
@@ -169,7 +166,7 @@ const GLOBAL_CSS = `
 
 // Columns required in the bulk-upload sheet, shown in the modal's info
 // callout and used to build the downloadable sample sheet client-side.
-const BULK_REQUIRED_COLUMNS_TEXT = "Product Name, Time Taken, Client, Subclient";
+const BULK_REQUIRED_COLUMNS_TEXT = "Product Name, Time Taken";
 
 const Products = () => {
     // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
@@ -192,8 +189,6 @@ const Products = () => {
     const [error, setError] = useState("");
 
     const [search, setSearch] = useState("");
-    const [clientFilter, setClientFilter] = useState("All");
-    const [subclientFilter, setSubclientFilter] = useState("All");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
     const [viewDetails, setViewDetails] = useState<Product | null>(null);
@@ -247,28 +242,12 @@ const Products = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const clientOptions = useMemo(
-        () => Array.from(new Set(products.map((p) => p.client).filter(Boolean))).sort(),
-        [products]
-    );
-
-    const subclientOptions = useMemo(
-        () => Array.from(new Set(products.map((p) => p.subclient).filter(Boolean))).sort(),
-        [products]
-    );
-
     const filteredProducts = useMemo(
         () =>
-            products.filter((p) => {
-                const matchesSearch = (p.product_name || "")
-                    .toLowerCase()
-                    .includes(search.trim().toLowerCase());
-                const matchesClient = clientFilter === "All" || p.client === clientFilter;
-                const matchesSubclient =
-                    subclientFilter === "All" || p.subclient === subclientFilter;
-                return matchesSearch && matchesClient && matchesSubclient;
-            }),
-        [products, search, clientFilter, subclientFilter]
+            products.filter((p) =>
+                (p.product_name || "").toLowerCase().includes(search.trim().toLowerCase())
+            ),
+        [products, search]
     );
 
     // ---- Add handlers ----
@@ -323,8 +302,6 @@ const Products = () => {
             product_name: product.product_name || "",
             time_taken: product.time_taken || "",
             time_unit: product.time_unit || "",
-            client: product.client || "",
-            subclient: product.subclient || "",
         });
         setEditTarget(product);
     };
@@ -413,8 +390,6 @@ const Products = () => {
             {
                 "Product Name": "Inventory Sync",
                 "Time Taken": "2 hours",
-                Client: "Acme Corp",
-                Subclient: "Barret and Co",
             },
         ];
 
@@ -529,26 +504,6 @@ const Products = () => {
                         <option value="hours">Hours</option>
                     </select>
                 </div>
-            </div>
-            <div>
-                <label style={styles.formLabel}>Client</label>
-                <input
-                    style={styles.formInput}
-                    value={formState.client}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, client: e.target.value }))}
-                    placeholder="e.g. Acme Corp"
-                />
-            </div>
-            <div>
-                <label style={styles.formLabel}>Subclient</label>
-                <input
-                    style={styles.formInput}
-                    value={formState.subclient}
-                    onChange={(e) =>
-                        setFormState((prev) => ({ ...prev, subclient: e.target.value }))
-                    }
-                    placeholder="e.g. Barret and Co"
-                />
             </div>
         </>
     );
@@ -667,34 +622,6 @@ const Products = () => {
                             />
                         </div>
 
-                        <select
-                            style={styles.filterSelect}
-                            value={clientFilter}
-                            onChange={(e) => setClientFilter(e.target.value)}
-                            aria-label="Client"
-                        >
-                            <option value="All">Client: All</option>
-                            {clientOptions.map((c) => (
-                                <option key={c} value={c}>
-                                    {c}
-                                </option>
-                            ))}
-                        </select>
-
-                        <select
-                            style={styles.filterSelect}
-                            value={subclientFilter}
-                            onChange={(e) => setSubclientFilter(e.target.value)}
-                            aria-label="Subclient"
-                        >
-                            <option value="All">Subclient: All</option>
-                            {subclientOptions.map((s) => (
-                                <option key={s} value={s}>
-                                    {s}
-                                </option>
-                            ))}
-                        </select>
-
                         {!isMobile && (
                             <div style={styles.viewToggle}>
                                 <button
@@ -749,18 +676,14 @@ const Products = () => {
                             <div style={styles.tableWrap}>
                                 <table className="pr-table" style={styles.table}>
                                     <colgroup>
-                                        <col style={{ width: "26%" }} />
-                                        <col style={{ width: "16%" }} />
-                                        <col style={{ width: "22%" }} />
-                                        <col style={{ width: "20%" }} />
-                                        <col style={{ width: "16%" }} />
+                                        <col style={{ width: "40%" }} />
+                                        <col style={{ width: "30%" }} />
+                                        <col style={{ width: "30%" }} />
                                     </colgroup>
                                     <thead>
                                         <tr>
                                             <th style={styles.th}>Product</th>
                                             <th style={styles.th}>Time Taken</th>
-                                            <th style={styles.th}>Client</th>
-                                            <th style={styles.th}>Subclient</th>
                                             <th style={{ ...styles.th, textAlign: "left" }}>
                                                 Actions
                                             </th>
@@ -793,16 +716,6 @@ const Products = () => {
                                                                 p.time_taken,
                                                                 p.time_unit
                                                             )}
-                                                        </span>
-                                                    </td>
-                                                    <td style={styles.td}>
-                                                        <span style={styles.tdMuted}>
-                                                            {p.client || "—"}
-                                                        </span>
-                                                    </td>
-                                                    <td style={styles.td}>
-                                                        <span style={styles.tdMuted}>
-                                                            {p.subclient || "—"}
                                                         </span>
                                                     </td>
                                                     <td style={styles.td}>
@@ -894,7 +807,9 @@ const Products = () => {
                                                             color: avatar.solid,
                                                         }}
                                                     >
-                                                        {p.client || "No client"}
+                                                        {p.time_unit === "hours"
+                                                            ? "Hourly"
+                                                            : "Per minute"}
                                                     </span>
                                                 </div>
                                             </div>
@@ -907,24 +822,6 @@ const Products = () => {
                                                     />
                                                     <span style={styles.cardSimpleInfoValue}>
                                                         {formatTimeTaken(p.time_taken, p.time_unit)}
-                                                    </span>
-                                                </div>
-                                                <div style={styles.cardSimpleInfoRow}>
-                                                    <i
-                                                        className="ti ti-building"
-                                                        style={styles.cardInfoIcon}
-                                                    />
-                                                    <span style={styles.cardSimpleInfoValue}>
-                                                        {p.client || "—"}
-                                                    </span>
-                                                </div>
-                                                <div style={styles.cardSimpleInfoRow}>
-                                                    <i
-                                                        className="ti ti-sitemap"
-                                                        style={styles.cardInfoIcon}
-                                                    />
-                                                    <span style={styles.cardSimpleInfoValue}>
-                                                        {p.subclient || "—"}
                                                     </span>
                                                 </div>
                                             </div>
@@ -977,16 +874,6 @@ const Products = () => {
                                 <span style={styles.detailsLabel}>Time Taken</span>
                                 <span style={styles.detailsValue}>
                                     {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
-                                </span>
-                            </div>
-                            <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Client</span>
-                                <span style={styles.detailsValue}>{viewDetails.client || "—"}</span>
-                            </div>
-                            <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Subclient</span>
-                                <span style={styles.detailsValue}>
-                                    {viewDetails.subclient || "—"}
                                 </span>
                             </div>
 

@@ -592,7 +592,7 @@ export default function ManualAllocation() {
                         </div>
                         <div>
                             <h1 style={styles.title}>Today's Allocation</h1>
-                            <p style={styles.subtitle}>
+                            <p style={styles.headerSubtext}>
                                 Pick a date and product, then Smart Allocate or hand out quantities
                                 by hand — Present/Half/Leave decides who gets a share.
                             </p>
@@ -1190,12 +1190,13 @@ const styles: Record<string, CSSProperties> = {
         margin: 0,
         textAlign: "left",
     },
-    subtitle: {
-        fontSize: fontSize.base,
-        color: "#767F92",
-        maxWidth: 480,
+    headerSubtext: {
         margin: "4px 0 0",
-        lineHeight: 1.6,
+
+        fontSize: fontSize.base,
+
+        color: "#767F92",
+
         textAlign: "left",
     },
     headerIllustration: { flexShrink: 0, marginLeft: 20 },

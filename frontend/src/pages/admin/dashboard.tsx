@@ -202,7 +202,7 @@ export default function Dashboard({ user }: DashboardProps) {
                         </div>
                         <div>
                             <h1 style={styles.pageTitle}>Dashboard</h1>
-                            <p style={styles.pageSubtitle}>
+                            <p style={styles.headerSubtext}>
                                 Welcome, <strong>{user?.name || user?.role}</strong> — here's
                                 today's snapshot.
                             </p>
@@ -267,7 +267,7 @@ export default function Dashboard({ user }: DashboardProps) {
                             <div style={styles.emptyIconCircle}>
                                 <i
                                     className="ti ti-chart-bar"
-                                    style={{ fontSize: fontSize["6xl"], color: BRAND.lightBlue }}
+                                    style={{ fontSize: fontSize["5xl"], color: BRAND.lightBlue }}
                                 />
                             </div>
                             <div style={styles.emptyText}>No daily work logged for today yet.</div>
@@ -452,19 +452,24 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
+
     pageTitle: {
-        fontSize: fontSize["3xl"],
-        fontWeight: fontWeight.bold,
-        color: "#1e1b4b",
         margin: 0,
+        fontSize: fontSize["5xl"],
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+        textAlign: "left",
     },
-    pageSubtitle: {
-        fontSize: fontSize.sm,
-        color: "#64748b",
+    headerSubtext: {
         margin: "4px 0 0",
-        maxWidth: 520,
-        lineHeight: 1.5,
+
+        fontSize: fontSize.base,
+
+        color: "#767F92",
+
+        textAlign: "left",
     },
+
     dateBadge: {
         display: "flex",
         alignItems: "center",
@@ -540,6 +545,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: radius.lg,
         padding: "20px",
+        height: 240,
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
     },
     panelTitleRow: { marginBottom: 16 },
