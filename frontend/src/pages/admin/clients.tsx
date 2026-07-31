@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
@@ -19,6 +19,17 @@ function useIsMobile() {
 
 type EntityStatus = "Active" | "Inactive";
 
+// REVERSED MAPPING: the rate for a linked product is per Client/Subclient,
+// not fixed on the product itself — same product can cost differently for
+// a different client.
+type ProductRate = {
+    productId: number;
+    amount: number | string | null;
+    currency: string;
+};
+
+const CURRENCY_OPTIONS = ["USD", "GBP", "INR", "EUR", "AUD", "CAD"];
+
 type Client = {
     id: number;
     name: string;
@@ -37,8 +48,8 @@ type Client = {
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
     // REVERSED MAPPING: which Products this Client is linked to, via the
-    // client_products junction table on the backend.
-    productIds?: number[];
+    // client_products junction table — each with its own amount/currency.
+    productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
 };
 
@@ -63,8 +74,8 @@ type SubclientRow = {
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
     // REVERSED MAPPING: which Products this Subclient is linked to, via the
-    // subclient_products junction table on the backend.
-    productIds?: number[];
+    // subclient_products junction table — each with its own amount/currency.
+    productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
 };
 
@@ -268,27 +279,6 @@ export default function Clients() {
 
     const [viewDetails, setViewDetails] = useState<ViewDetailsTarget | null>(null);
 
-    // REVERSED MAPPING: is the "Select Product" dropdown panel open right
-    // now? Add and Edit modals are never mounted at the same time (both are
-    // conditionally rendered with `&&`), so one shared flag is enough.
-    const [productDropdownOpen, setProductDropdownOpen] = useState(false);
-    const productDropdownRef = useRef<HTMLDivElement | null>(null);
-
-    // Close the dropdown when clicking anywhere outside it.
-    useEffect(() => {
-        if (!productDropdownOpen) return;
-        const handleClickOutside = (e: MouseEvent) => {
-            if (
-                productDropdownRef.current &&
-                !productDropdownRef.current.contains(e.target as Node)
-            ) {
-                setProductDropdownOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [productDropdownOpen]);
-
     // Shared shape for both Client and Subclient Add/Edit forms so both
     // entities can carry Country / Website / Main Email / Main Phone /
     // Primary Contact / Secondary Contact fields identically.
@@ -306,8 +296,10 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
-        // REVERSED MAPPING: ids of the Products this Client/Subclient uses.
-        productIds: [] as number[],
+        // REVERSED MAPPING: [{ productId, amount, currency }] for each
+        // Product this Client/Subclient uses, at this client/subclient's
+        // own rate.
+        productRates: [] as ProductRate[],
     };
 
     const [showAddModal, setShowAddModal] = useState(false);
@@ -472,7 +464,7 @@ export default function Clients() {
                 secondaryContactPhone: addForm.secondaryContactPhone || null,
                 // REVERSED MAPPING: this Client/Subclient links to these
                 // existing Products (picked in the form below).
-                productIds: addForm.productIds,
+                productRates: addForm.productRates,
             };
 
             if (activeTab === "client") {
@@ -490,7 +482,8 @@ export default function Clients() {
 
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
-                throw new Error(data?.message || `Failed to create ${tabLabel.toLowerCase()}`);
+                const base = data?.message || `Failed to create ${tabLabel.toLowerCase()}`;
+                throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
             await fetchAll();
@@ -504,44 +497,53 @@ export default function Clients() {
 
     // ---- Edit handlers ----
 
-    const openEditModal = (target: ViewDetailsTarget) => {
+    // FIX: this used to populate the Edit form straight from `target.data`
+    // — whatever was already sitting in the `clients`/`subclients` list
+    // state. If that list snapshot was even slightly stale (e.g. taken
+    // right after a product was linked elsewhere, or before this page's
+    // last fetchAll landed), the Products picker would render with
+    // nothing checked even though the link genuinely exists in the DB.
+    // Now it re-fetches that single record fresh from the backend first,
+    // so the Edit form — including productRates — always reflects exactly
+    // what's in the database at the moment you open it. Falls back to the
+    // list data only if that fetch fails, so Edit still opens.
+    const buildEditForm = (data: Client | SubclientRow, type: "client" | "subclient") => ({
+        name: data.name,
+        country: data.country || "",
+        status: data.status,
+        clientId: type === "client" ? "" : String((data as SubclientRow).clientId),
+        website: data.website || "",
+        mainEmail: data.mainEmail || "",
+        mainPhone: data.mainPhone || "",
+        primaryContactName: data.primaryContactName || "",
+        primaryContactEmail: data.primaryContactEmail || "",
+        primaryContactPhone: data.primaryContactPhone || "",
+        secondaryContactName: data.secondaryContactName || "",
+        secondaryContactEmail: data.secondaryContactEmail || "",
+        secondaryContactPhone: data.secondaryContactPhone || "",
+        productRates: data.productRates || [],
+    });
+
+    const openEditModal = async (target: ViewDetailsTarget) => {
         setEditError("");
-        if (target.type === "client") {
-            setEditForm({
-                name: target.data.name,
-                country: target.data.country || "",
-                status: target.data.status,
-                clientId: "",
-                website: target.data.website || "",
-                mainEmail: target.data.mainEmail || "",
-                mainPhone: target.data.mainPhone || "",
-                primaryContactName: target.data.primaryContactName || "",
-                primaryContactEmail: target.data.primaryContactEmail || "",
-                primaryContactPhone: target.data.primaryContactPhone || "",
-                secondaryContactName: target.data.secondaryContactName || "",
-                secondaryContactEmail: target.data.secondaryContactEmail || "",
-                secondaryContactPhone: target.data.secondaryContactPhone || "",
-                productIds: target.data.productIds || [],
-            });
-        } else {
-            setEditForm({
-                name: target.data.name,
-                country: target.data.country || "",
-                status: target.data.status,
-                clientId: String(target.data.clientId),
-                website: target.data.website || "",
-                mainEmail: target.data.mainEmail || "",
-                mainPhone: target.data.mainPhone || "",
-                primaryContactName: target.data.primaryContactName || "",
-                primaryContactEmail: target.data.primaryContactEmail || "",
-                primaryContactPhone: target.data.primaryContactPhone || "",
-                secondaryContactName: target.data.secondaryContactName || "",
-                secondaryContactEmail: target.data.secondaryContactEmail || "",
-                secondaryContactPhone: target.data.secondaryContactPhone || "",
-                productIds: target.data.productIds || [],
-            });
-        }
+        // Open immediately with whatever we already have, so the modal
+        // doesn't sit blank while the fresh fetch is in flight...
+        setEditForm(buildEditForm(target.data, target.type));
         setEditTarget(target);
+
+        // ...then swap in the freshly-fetched record as soon as it lands.
+        try {
+            const endpoint =
+                target.type === "client"
+                    ? `${apiBase}/api/clients/${target.data.id}`
+                    : `${apiBase}/api/subclients/${target.data.id}`;
+            const res = await authFetch(endpoint, { cache: "no-store" });
+            if (!res.ok) return; // keep the fallback data already set above
+            const fresh = await res.json();
+            setEditForm(buildEditForm(fresh, target.type));
+        } catch {
+            // Network hiccup — the fallback data set above is still valid.
+        }
     };
 
     const closeEditModal = () => {
@@ -580,7 +582,7 @@ export default function Clients() {
                 secondaryContactName: editForm.secondaryContactName || null,
                 secondaryContactEmail: editForm.secondaryContactEmail || null,
                 secondaryContactPhone: editForm.secondaryContactPhone || null,
-                productIds: editForm.productIds,
+                productRates: editForm.productRates,
             };
 
             if (editTarget.type === "client") {
@@ -598,7 +600,8 @@ export default function Clients() {
 
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
-                throw new Error(data?.message || `Failed to update ${editTabLabel.toLowerCase()}`);
+                const base = data?.message || `Failed to update ${editTabLabel.toLowerCase()}`;
+                throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
             await fetchAll();
@@ -729,154 +732,164 @@ export default function Clients() {
     };
 
     // REVERSED MAPPING: shared "which Products does this Client/Subclient
-    // use" checkbox picker, used by both Add and Edit forms, for both tabs.
+    // use, and at what rate" picker, used by both Add and Edit forms, for
+    // both tabs. The rate (amount + currency) lives on the link, not on
+    // the product, since the same product can cost differently per client.
+    //
+    // FIX: Supabase/PostgREST doesn't always return a bigint id as the
+    // same JS type in every response (e.g. plain `number` from
+    // /api/products vs a value that round-tripped through JSON as a
+    // `string` from the client/subclient detail endpoint). A strict `===`
+    // then silently never matches, so a previously-saved product shows as
+    // unchecked even though the link genuinely exists in the DB. Comparing
+    // via Number(...) on both sides makes the match type-independent.
     const toggleProductId = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
         productId: number
     ) => {
         setFormState((prev) => {
-            const has = prev.productIds.includes(productId);
+            const has = prev.productRates.some((r) => Number(r.productId) === Number(productId));
             return {
                 ...prev,
-                productIds: has
-                    ? prev.productIds.filter((id) => id !== productId)
-                    : [...prev.productIds, productId],
+                productRates: has
+                    ? prev.productRates.filter((r) => Number(r.productId) !== Number(productId))
+                    : [...prev.productRates, { productId, amount: "", currency: "USD" }],
             };
         });
     };
 
-    // REVERSED MAPPING: collapsed by default, showing "Select Product" (or
-    // the picked product names as chips). Clicking the box opens a checkbox
-    // panel below it — same multi-select behavior as before, just collapsed
-    // into a dropdown instead of an always-open list, so a long product
-    // catalog doesn't push the rest of the form down.
+    const updateProductRate = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
+        productId: number,
+        field: "amount" | "currency",
+        value: string
+    ) => {
+        setFormState((prev) => ({
+            ...prev,
+            productRates: prev.productRates.map((r) =>
+                Number(r.productId) === Number(productId) ? { ...r, [field]: value } : r
+            ),
+        }));
+    };
+
     const renderProductPicker = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
-    ) => {
-        const selectedProducts = products.filter((p) => formState.productIds.includes(p.id));
-
-        return (
-            <div style={{ gridColumn: "1 / -1", position: "relative" }} ref={productDropdownRef}>
-                <label style={styles.formLabel}>Products</label>
-
-                {products.length === 0 ? (
-                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                        No products yet — add one from the Products page first.
-                    </p>
-                ) : (
-                    <>
-                        {/* Collapsed control — click to open/close the panel */}
-                        <div
-                            onClick={() => setProductDropdownOpen((prev) => !prev)}
-                            style={{
-                                ...styles.formInput,
-                                display: "flex",
-                                alignItems: "center",
-                                flexWrap: "wrap",
-                                gap: 6,
-                                cursor: "pointer",
-                                minHeight: 20,
-                            }}
-                        >
-                            {selectedProducts.length === 0 ? (
-                                <span style={{ color: "#8b96a8" }}>Select Product</span>
-                            ) : (
-                                selectedProducts.map((p) => (
-                                    <span
-                                        key={p.id}
-                                        style={{
-                                            display: "inline-flex",
-                                            alignItems: "center",
-                                            gap: 4,
-                                            background: "#eef2ff",
-                                            color: "#3b4bcc",
-                                            fontSize: fontSize.xs,
-                                            fontWeight: fontWeight.medium,
-                                            padding: "2px 8px",
-                                            borderRadius: 999,
-                                        }}
-                                    >
-                                        {p.product_name}
-                                        <span
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                toggleProductId(formState, setFormState, p.id);
-                                            }}
+    ) => (
+        <div style={{ gridColumn: "1 / -1" }}>
+            <label style={styles.formLabel}>Products</label>
+            {products.length === 0 ? (
+                <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                    No products yet — add one from the Products page first.
+                </p>
+            ) : (
+                <div
+                    className="cl-scroll-area"
+                    style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        border: "1px solid #e4e9f2",
+                        borderRadius: radius.sm,
+                        padding: "10px 12px",
+                        background: "#fafbfc",
+                    }}
+                >
+                    {products.map((p) => {
+                        const rate = formState.productRates.find(
+                            (r) => Number(r.productId) === Number(p.id)
+                        );
+                        const checked = !!rate;
+                        return (
+                            <div
+                                key={p.id}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    flexWrap: "wrap",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        fontSize: fontSize.sm,
+                                        color: "#16233c",
+                                        cursor: "pointer",
+                                        minWidth: 160,
+                                        flex: "1 1 160px",
+                                    }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() =>
+                                            toggleProductId(formState, setFormState, p.id)
+                                        }
+                                    />
+                                    {p.product_name}
+                                </label>
+                                {checked && (
+                                    <>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="Amount"
+                                            value={rate?.amount ?? ""}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "amount",
+                                                    e.target.value
+                                                )
+                                            }
                                             style={{
-                                                cursor: "pointer",
-                                                fontWeight: fontWeight.bold,
+                                                ...styles.formInput,
+                                                width: 110,
+                                                padding: "6px 8px",
+                                            }}
+                                        />
+                                        <select
+                                            value={rate?.currency || "USD"}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "currency",
+                                                    e.target.value
+                                                )
+                                            }
+                                            style={{
+                                                ...styles.formInput,
+                                                width: 90,
+                                                padding: "6px 8px",
                                             }}
                                         >
-                                            ×
-                                        </span>
-                                    </span>
-                                ))
-                            )}
-                            <span
-                                style={{
-                                    marginLeft: "auto",
-                                    color: "#8b96a8",
-                                    fontSize: fontSize.xs,
-                                }}
-                            >
-                                {productDropdownOpen ? "▲" : "▼"}
-                            </span>
-                        </div>
-
-                        {/* Expanded checkbox panel */}
-                        {productDropdownOpen && (
-                            <div
-                                className="cl-scroll-area"
-                                style={{
-                                    position: "absolute",
-                                    zIndex: 20,
-                                    top: "100%",
-                                    left: 0,
-                                    right: 0,
-                                    marginTop: 4,
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 6,
-                                    maxHeight: 200,
-                                    overflowY: "auto",
-                                    border: "1px solid #e4e9f2",
-                                    borderRadius: radius.sm,
-                                    padding: "10px 12px",
-                                    background: "#fff",
-                                    boxShadow: "0 8px 24px rgba(16, 24, 40, 0.12)",
-                                }}
-                            >
-                                {products.map((p) => (
-                                    <label
-                                        key={p.id}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            fontSize: fontSize.sm,
-                                            color: "#16233c",
-                                            cursor: "pointer",
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={formState.productIds.includes(p.id)}
-                                            onChange={() =>
-                                                toggleProductId(formState, setFormState, p.id)
-                                            }
-                                        />
-                                        {p.product_name}
-                                    </label>
-                                ))}
+                                            {CURRENCY_OPTIONS.map((c) => (
+                                                <option key={c} value={c}>
+                                                    {c}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </>
+                                )}
                             </div>
-                        )}
-                    </>
-                )}
-            </div>
-        );
-    };
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 

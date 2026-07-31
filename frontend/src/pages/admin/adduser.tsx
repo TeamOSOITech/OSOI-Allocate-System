@@ -161,6 +161,39 @@ function InlineAddOption({
     );
 }
 
+// Shape of one bulk-upload row after mapping from the Excel sheet.
+function mapBulkRow(row: any) {
+    return {
+        firstName: row["First Name"] || row["Full Name"] || "",
+        lastName: row["Last Name"] || "",
+        email: row["Email"] || "",
+        contactNumber: row["Contact Number"] || "",
+        employeeId: row["Employee ID"] || "",
+        designation: row["Designation"] || "",
+        department: row["Department"] || "",
+        dob: row["Date of Birth"] || "",
+        doj: row["Date of Joining"] || "",
+        reportingManager: row["Reporting Manager"] || "",
+        Teams: row["Teams"] || "",
+        password: row["Password"] || "",
+        role: (row["Role"] || "").toString().toUpperCase().trim(),
+    };
+}
+
+// Required for bulk rows too — same rule as the single Add User form:
+// everything except Date of Birth and Contact Number.
+const BULK_REQUIRED_FIELDS: (keyof ReturnType<typeof mapBulkRow>)[] = [
+    "firstName",
+    "email",
+    "employeeId",
+    "designation",
+    "department",
+    "doj",
+    "reportingManager",
+    "Teams",
+    "role",
+];
+
 export default function AddUser() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
@@ -349,34 +382,55 @@ export default function AddUser() {
                 return;
             }
 
-            const mappedUsers = rows.map((row) => ({
-                firstName: row["First Name"] || row["Full Name"] || "",
-                lastName: row["Last Name"] || "",
-                email: row["Email"] || "",
-                contactNumber: row["Contact Number"] || "",
-                employeeId: row["Employee ID"] || "",
-                designation: row["Designation"] || "",
-                department: row["Department"] || "",
-                dob: row["Date of Birth"] || "",
-                doj: row["Date of Joining"] || "",
-                reportingManager: row["Reporting Manager"] || "",
-                Teams: row["Teams"] || "",
-                password: row["Password"] || "",
-                role: (row["Role"] || "").toString().toUpperCase().trim(),
-            }));
+            const mappedUsers = rows.map(mapBulkRow);
 
-            const response = await authFetch(
-                `${import.meta.env.VITE_API_URL}/api/users/bulk-add-user`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ users: mappedUsers }),
+            // ---- client-side validation pass, mirrors handleRegister ----
+            // Required fields (DOB & Contact Number excluded) + professional
+            // email domain check, same rules as the single Add User form.
+            const validUsers: ReturnType<typeof mapBulkRow>[] = [];
+            const preFailedResults: any[] = [];
+
+            mappedUsers.forEach((u) => {
+                const missing = BULK_REQUIRED_FIELDS.filter((f) => !u[f]);
+                if (missing.length > 0) {
+                    preFailedResults.push({
+                        email: u.email || "(no email)",
+                        success: false,
+                        message: `Missing required field(s): ${missing.join(", ")}`,
+                    });
+                    return;
                 }
-            );
+                if (!isProfessionalEmail(u.email)) {
+                    preFailedResults.push({
+                        email: u.email,
+                        success: false,
+                        message:
+                            "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
+                    });
+                    return;
+                }
+                validUsers.push(u);
+            });
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data?.message || "Bulk upload failed");
-            setBulkResults(data.results);
+            let backendResults: any[] = [];
+            if (validUsers.length > 0) {
+                const response = await authFetch(
+                    `${import.meta.env.VITE_API_URL}/api/users/bulk-add-user`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ users: validUsers }),
+                    }
+                );
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data?.message || "Bulk upload failed");
+                backendResults = data.results || [];
+            }
+
+            // Combine so the results list shows every row from the sheet —
+            // locally-rejected rows plus whatever the backend returned.
+            setBulkResults([...preFailedResults, ...backendResults]);
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong reading the file.");
         } finally {
@@ -1003,9 +1057,9 @@ export default function AddUser() {
                             <div style={styles.bulkInfoBox}>
                                 <span style={styles.bulkInfoLabel}>Required columns</span>
                                 <p style={styles.bulkInfoText}>
-                                    Full Name, Email, Contact Number, Employee ID, Designation,
-                                    Department, Date of Birth, Date of Joining, Reporting Manager,
-                                    Teams, Password, Role (ADMIN / MANAGER / EMPLOYEE)
+                                    Full Name, Email (company domain only), Employee ID,
+                                    Designation, Department, Date of Joining, Reporting Manager,
+                                    Teams, Role. Contact Number and Date of Birth are optional.
                                 </p>
                             </div>
 
