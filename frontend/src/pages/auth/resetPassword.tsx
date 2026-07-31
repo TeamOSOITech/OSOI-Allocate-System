@@ -9,16 +9,71 @@ const ResetPassword = () => {
     const [error, setError] = useState("");
     const [success, setSuccess] = useState(false);
     const [ready, setReady] = useState(false);
+    const [verifyError, setVerifyError] = useState("");
 
     useEffect(() => {
-        // Supabase automatically parses the recovery token from the URL
-        // and fires this event once the recovery session is established.
-        const { data: listener } = supabase.auth.onAuthStateChange((event) => {
-            if (event === "PASSWORD_RECOVERY") {
+        let settled = false;
+
+        const markReady = () => {
+            if (!settled) {
+                settled = true;
                 setReady(true);
             }
+        };
+
+        // Case 1: implicit flow — Supabase parses #access_token=...&type=recovery
+        // from the URL automatically and fires this event.
+        const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+            if (event === "PASSWORD_RECOVERY") {
+                markReady();
+            }
         });
-        return () => listener.subscription.unsubscribe();
+
+        // Case 2: PKCE flow — the link redirects with ?code=... instead of a
+        // hash, and there's no automatic PASSWORD_RECOVERY event. We have to
+        // manually exchange the code for a session.
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+
+        if (code) {
+            supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+                if (error) {
+                    console.error("exchangeCodeForSession failed:", error);
+                    if (!settled) {
+                        settled = true;
+                        setVerifyError(
+                            "This reset link is invalid or has expired. Please request a new one."
+                        );
+                    }
+                } else {
+                    markReady();
+                }
+            });
+        }
+
+        // Case 3: session might already exist by the time this effect runs
+        // (detectSessionInUrl can resolve before the listener attaches).
+        supabase.auth.getSession().then(({ data }) => {
+            if (data?.session) {
+                markReady();
+            }
+        });
+
+        // Fallback: if nothing happened within 8s, stop showing an infinite
+        // "Verifying..." state and tell the user instead of hanging forever.
+        const timeout = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                setVerifyError(
+                    "This reset link is invalid or has expired. Please request a new one."
+                );
+            }
+        }, 8000);
+
+        return () => {
+            listener.subscription.unsubscribe();
+            clearTimeout(timeout);
+        };
     }, []);
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -92,6 +147,19 @@ const ResetPassword = () => {
                         }}
                     >
                         ✓ Password updated! Redirecting to login...
+                    </div>
+                ) : verifyError ? (
+                    <div
+                        style={{
+                            background: "#fef2f2",
+                            border: "1px solid #fecaca",
+                            color: "#dc2626",
+                            padding: 14,
+                            borderRadius: 8,
+                            fontSize: 13,
+                        }}
+                    >
+                        ⚠️ {verifyError}
                     </div>
                 ) : !ready ? (
                     <p style={{ color: "#8a93a8", fontSize: 13 }}>Verifying your reset link...</p>

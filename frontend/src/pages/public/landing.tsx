@@ -1328,7 +1328,7 @@ const Landing = () => {
                                     style={{ width: "100%", boxSizing: "border-box" }}
                                     onClick={() => {
                                         closeOrgSignup();
-                                        navigate("/login");
+                                        window.open("/login", "_blank", "noopener,noreferrer");
                                     }}
                                 >
                                     Go to Login
