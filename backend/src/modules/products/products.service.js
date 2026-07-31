@@ -125,27 +125,40 @@ const deleteProduct = async (id, organizationId) => {
 // Client <-> Product linking (used by modules/clients/clients.routes.js)
 // ---------------------------------------------------------------------
 
-// Returns [{ id, product_name, ... }] for every product currently linked
-// to this client, via the client_products junction table.
+// Returns [{ id, product_name, ..., amount, currency }] for every product
+// currently linked to this client — amount/currency come from the
+// client_products link itself (the rate is per client, not per product).
 const getProductsForClient = async (clientId, organizationId) => {
   const { data, error } = await supabase
     .from(CLIENT_LINK_TABLE)
-    .select("product_id, product_master(*)")
+    .select("product_id, amount, currency, product_master(*)")
     .eq("client_id", clientId)
     .eq("organization_id", organizationId);
 
   if (error) throw error;
-  return (data || []).map((row) => row.product_master).filter(Boolean);
+  return (data || [])
+    .filter((row) => row.product_master)
+    .map((row) => ({
+      ...row.product_master,
+      amount: row.amount,
+      currency: row.currency,
+    }));
 };
 
-// Replaces the full set of products linked to a client with `productIds`
-// (an array of product_master ids). Pass an empty array / undefined to
-// clear all links. Diffs against the current links so we only insert/
-// delete what actually changed.
-const syncClientProducts = async (clientId, productIds, organizationId) => {
-  const desired = Array.from(new Set((productIds || []).map(Number))).filter(
-    (n) => !Number.isNaN(n),
-  );
+// Replaces the full set of products linked to a client with `productRates`
+// — an array of { productId, amount, currency }. Pass an empty array /
+// undefined to clear all links. Diffs against the current links: removes
+// what's no longer selected, inserts what's new, and updates the
+// amount/currency for links that stayed but whose rate changed.
+const syncClientProducts = async (clientId, productRates, organizationId) => {
+  const desired = (productRates || [])
+    .map((r) => ({
+      productId: Number(r.productId),
+      amount:
+        r.amount === "" || r.amount === undefined ? null : Number(r.amount),
+      currency: r.currency || "USD",
+    }))
+    .filter((r) => !Number.isNaN(r.productId));
 
   const { data: existing, error: existingErr } = await supabase
     .from(CLIENT_LINK_TABLE)
@@ -156,8 +169,8 @@ const syncClientProducts = async (clientId, productIds, organizationId) => {
   if (existingErr) throw existingErr;
 
   const existingIds = (existing || []).map((r) => r.product_id);
-  const toAdd = desired.filter((id) => !existingIds.includes(id));
-  const toRemove = existingIds.filter((id) => !desired.includes(id));
+  const desiredIds = desired.map((r) => r.productId);
+  const toRemove = existingIds.filter((id) => !desiredIds.includes(id));
 
   if (toRemove.length) {
     const { error } = await supabase
@@ -169,13 +182,16 @@ const syncClientProducts = async (clientId, productIds, organizationId) => {
     if (error) throw error;
   }
 
-  if (toAdd.length) {
-    const { error } = await supabase.from(CLIENT_LINK_TABLE).insert(
-      toAdd.map((productId) => ({
+  if (desired.length) {
+    const { error } = await supabase.from(CLIENT_LINK_TABLE).upsert(
+      desired.map((r) => ({
         client_id: clientId,
-        product_id: productId,
+        product_id: r.productId,
         organization_id: organizationId,
+        amount: r.amount,
+        currency: r.currency,
       })),
+      { onConflict: "client_id,product_id" },
     );
     if (error) throw error;
   }
@@ -188,22 +204,33 @@ const syncClientProducts = async (clientId, productIds, organizationId) => {
 const getProductsForSubclient = async (subclientId, organizationId) => {
   const { data, error } = await supabase
     .from(SUBCLIENT_LINK_TABLE)
-    .select("product_id, product_master(*)")
+    .select("product_id, amount, currency, product_master(*)")
     .eq("subclient_id", subclientId)
     .eq("organization_id", organizationId);
 
   if (error) throw error;
-  return (data || []).map((row) => row.product_master).filter(Boolean);
+  return (data || [])
+    .filter((row) => row.product_master)
+    .map((row) => ({
+      ...row.product_master,
+      amount: row.amount,
+      currency: row.currency,
+    }));
 };
 
 const syncSubclientProducts = async (
   subclientId,
-  productIds,
+  productRates,
   organizationId,
 ) => {
-  const desired = Array.from(new Set((productIds || []).map(Number))).filter(
-    (n) => !Number.isNaN(n),
-  );
+  const desired = (productRates || [])
+    .map((r) => ({
+      productId: Number(r.productId),
+      amount:
+        r.amount === "" || r.amount === undefined ? null : Number(r.amount),
+      currency: r.currency || "USD",
+    }))
+    .filter((r) => !Number.isNaN(r.productId));
 
   const { data: existing, error: existingErr } = await supabase
     .from(SUBCLIENT_LINK_TABLE)
@@ -214,8 +241,8 @@ const syncSubclientProducts = async (
   if (existingErr) throw existingErr;
 
   const existingIds = (existing || []).map((r) => r.product_id);
-  const toAdd = desired.filter((id) => !existingIds.includes(id));
-  const toRemove = existingIds.filter((id) => !desired.includes(id));
+  const desiredIds = desired.map((r) => r.productId);
+  const toRemove = existingIds.filter((id) => !desiredIds.includes(id));
 
   if (toRemove.length) {
     const { error } = await supabase
@@ -227,13 +254,16 @@ const syncSubclientProducts = async (
     if (error) throw error;
   }
 
-  if (toAdd.length) {
-    const { error } = await supabase.from(SUBCLIENT_LINK_TABLE).insert(
-      toAdd.map((productId) => ({
+  if (desired.length) {
+    const { error } = await supabase.from(SUBCLIENT_LINK_TABLE).upsert(
+      desired.map((r) => ({
         subclient_id: subclientId,
-        product_id: productId,
+        product_id: r.productId,
         organization_id: organizationId,
+        amount: r.amount,
+        currency: r.currency,
       })),
+      { onConflict: "subclient_id,product_id" },
     );
     if (error) throw error;
   }

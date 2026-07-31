@@ -142,14 +142,19 @@ router.get("/", async (req, res) => {
     // in memory — avoids an N+1 query per subclient in the list view.
     const { data: subclientProductLinks } = await supabase
       .from("subclient_products")
-      .select("subclient_id, product_master(*)")
+      .select("subclient_id, amount, currency, product_master(*)")
       .eq("organization_id", orgId);
 
     const formatted = subclients.map((subclient) => {
       const products = (subclientProductLinks || [])
-        .filter((row) => row.subclient_id === subclient.id)
-        .map((row) => row.product_master)
-        .filter(Boolean);
+        .filter(
+          (row) => row.subclient_id === subclient.id && row.product_master,
+        )
+        .map((row) => ({
+          ...row.product_master,
+          amount: row.amount,
+          currency: row.currency,
+        }));
 
       return {
         id: subclient.id,
@@ -161,9 +166,14 @@ router.get("/", async (req, res) => {
         branches: branches.filter((b) => b.subclient_id === subclient.id)
           .length,
         users: 0, // placeholder until a users table/relation exists
-        // REVERSED MAPPING: products this subclient is linked to.
+        // REVERSED MAPPING: products this subclient is linked to, with the
+        // per-subclient rate for each.
         products,
-        productIds: products.map((p) => p.id),
+        productRates: products.map((p) => ({
+          productId: p.id,
+          amount: p.amount,
+          currency: p.currency,
+        })),
         ...toApiContactFields(subclient),
       };
     });
@@ -219,12 +229,13 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
     if (error) throw error;
 
     // REVERSED MAPPING: link whichever existing Products were picked in
-    // the Add Subclient form (req.body.productIds).
+    // the Add Subclient form — req.body.productRates is
+    // [{ productId, amount, currency }].
     let products = [];
-    if (Array.isArray(req.body.productIds) && req.body.productIds.length) {
+    if (Array.isArray(req.body.productRates) && req.body.productRates.length) {
       await productsService.syncSubclientProducts(
         subclient.id,
-        req.body.productIds,
+        req.body.productRates,
         orgId,
       );
       products = await productsService.getProductsForSubclient(
@@ -237,11 +248,17 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
       ...subclient,
       ...toApiContactFields(subclient),
       products,
-      productIds: products.map((p) => p.id),
+      productRates: products.map((p) => ({
+        productId: p.id,
+        amount: p.amount,
+        currency: p.currency,
+      })),
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to create subclient" });
+    res
+      .status(500)
+      .json({ message: "Failed to create subclient", detail: err.message });
   }
 });
 
@@ -554,6 +571,63 @@ router.post(
   },
 );
 
+// ---------- GET /api/subclients/:id ----------
+// Single-record fetch, always current — used by the Edit modal so it
+// never edits against stale list-state (e.g. right after a product link
+// was just added/changed elsewhere).
+router.get("/:id", async (req, res) => {
+  try {
+    const orgId = req.user.organizationId;
+    const id = Number(req.params.id);
+
+    const { data: subclient, error } = await supabase
+      .from("subclients")
+      .select("*")
+      .eq("id", id)
+      .eq("organization_id", orgId)
+      .single();
+
+    if (error || !subclient) {
+      return res.status(404).json({ message: "Subclient not found" });
+    }
+
+    const { data: client } = await supabase
+      .from("clients")
+      .select("id,name")
+      .eq("id", subclient.client_id)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+
+    const { data: branches } = await supabase
+      .from("branches")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("subclient_id", id);
+
+    const products = await productsService.getProductsForSubclient(id, orgId);
+
+    res.json({
+      id: subclient.id,
+      name: subclient.name,
+      status: subclient.status,
+      clientId: subclient.client_id,
+      clientName: client?.name || "",
+      branches: branches?.length || 0,
+      users: 0,
+      products,
+      productRates: products.map((p) => ({
+        productId: p.id,
+        amount: p.amount,
+        currency: p.currency,
+      })),
+      ...toApiContactFields(subclient),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch subclient" });
+  }
+});
+
 // ---------- PUT /api/subclients/:id ----------
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
@@ -600,12 +674,12 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
     if (!subclient)
       return res.status(404).json({ message: "Subclient not found" });
 
-    // REVERSED MAPPING: only touch product links if productIds was
+    // REVERSED MAPPING: only touch product links if productRates was
     // actually sent, so other PUT callers can't accidentally wipe them.
-    if (req.body.productIds !== undefined) {
+    if (req.body.productRates !== undefined) {
       await productsService.syncSubclientProducts(
         id,
-        req.body.productIds,
+        req.body.productRates,
         orgId,
       );
     }
@@ -615,11 +689,17 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
       ...subclient,
       ...toApiContactFields(subclient),
       products,
-      productIds: products.map((p) => p.id),
+      productRates: products.map((p) => ({
+        productId: p.id,
+        amount: p.amount,
+        currency: p.currency,
+      })),
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to update subclient" });
+    res
+      .status(500)
+      .json({ message: "Failed to update subclient", detail: err.message });
   }
 });
 

@@ -65,10 +65,15 @@ function toClientResponse(client, subclientsCount, branchesCount, products) {
     branches: branchesCount,
     users: 0, // placeholder until a users table/relation exists
     // REVERSED MAPPING: products this client is linked to, via the
-    // client_products junction table. `productIds` is what the Add/Edit
-    // form sends back on submit; `products` is the full row for display.
+    // client_products junction table. `productRates` is what the Add/Edit
+    // form reads back to prefill (productId + per-client amount/currency);
+    // `products` is the full row for display.
     products: products || [],
-    productIds: (products || []).map((p) => p.id),
+    productRates: (products || []).map((p) => ({
+      productId: p.id,
+      amount: p.amount,
+      currency: p.currency,
+    })),
     website: client.website,
     mainEmail: client.main_email,
     mainPhone: client.main_phone,
@@ -143,14 +148,17 @@ router.get("/", async (req, res) => {
     // in memory — avoids an N+1 query per client in the list view.
     const { data: clientProductLinks } = await supabase
       .from("client_products")
-      .select("client_id, product_master(*)")
+      .select("client_id, amount, currency, product_master(*)")
       .eq("organization_id", orgId);
 
     const formatted = clients.map((client) => {
       const products = (clientProductLinks || [])
-        .filter((row) => row.client_id === client.id)
-        .map((row) => row.product_master)
-        .filter(Boolean);
+        .filter((row) => row.client_id === client.id && row.product_master)
+        .map((row) => ({
+          ...row.product_master,
+          amount: row.amount,
+          currency: row.currency,
+        }));
 
       return toClientResponse(
         client,
@@ -187,13 +195,14 @@ router.post("/", async (req, res) => {
     if (error) throw error;
 
     // REVERSED MAPPING: link whichever existing Products were picked in
-    // the Add Client form (req.body.productIds), instead of a Product
-    // pointing back at this client.
+    // the Add Client form — req.body.productRates is
+    // [{ productId, amount, currency }], since the rate is per client, not
+    // fixed on the product itself.
     let products = [];
-    if (Array.isArray(req.body.productIds) && req.body.productIds.length) {
+    if (Array.isArray(req.body.productRates) && req.body.productRates.length) {
       await productsService.syncClientProducts(
         client.id,
-        req.body.productIds,
+        req.body.productRates,
         req.user.organizationId,
       );
       products = await productsService.getProductsForClient(
@@ -205,7 +214,9 @@ router.post("/", async (req, res) => {
     res.status(201).json(toClientResponse(client, 0, 0, products));
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to create client" });
+    res
+      .status(500)
+      .json({ message: "Failed to create client", detail: err.message });
   }
 });
 
@@ -670,11 +681,15 @@ router.put("/:id", async (req, res) => {
     if (error) throw error;
     if (!client) return res.status(404).json({ message: "Client not found" });
 
-    // REVERSED MAPPING: only touch the product links if productIds was
+    // REVERSED MAPPING: only touch the product links if productRates was
     // actually sent — this lets other PUT callers (e.g. a status-only
     // toggle) update a client without accidentally wiping its products.
-    if (req.body.productIds !== undefined) {
-      await productsService.syncClientProducts(id, req.body.productIds, orgId);
+    if (req.body.productRates !== undefined) {
+      await productsService.syncClientProducts(
+        id,
+        req.body.productRates,
+        orgId,
+      );
     }
     const products = await productsService.getProductsForClient(id, orgId);
 
@@ -699,7 +714,9 @@ router.put("/:id", async (req, res) => {
     );
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to update client" });
+    res
+      .status(500)
+      .json({ message: "Failed to update client", detail: err.message });
   }
 });
 
