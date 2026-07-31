@@ -202,6 +202,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         transition: transform 0.22s ease;
                         z-index: 1000;
                         box-shadow: 2px 0 16px rgba(0,0,0,0.18);
+                        padding-top: 64px !important;
                     }
                     .app-sidebar.open {
                         transform: translateX(0);

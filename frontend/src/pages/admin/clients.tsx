@@ -2369,7 +2369,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         flex: 1,
-        height: "100vh",
+        height: "100dvh",
         minHeight: 0,
         width: "100%",
         background: "#f4f7fb",
@@ -2453,7 +2453,7 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         minHeight: 0,
     },
-    contentColMobile: { flex: 1, display: "flex", flexDirection: "column" },
+    contentColMobile: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 },
     contentBody: {
         display: "flex",
         flexDirection: "column",

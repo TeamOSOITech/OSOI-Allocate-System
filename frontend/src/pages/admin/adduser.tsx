@@ -339,14 +339,14 @@ export default function AddUser() {
         const templateData = [
             {
                 "Full Name": "John Doe",
-                Email: "john.doe@infosys.com",
+                Email: "john.doe@company.com",
                 "Contact Number": "9876543210",
                 "Employee ID": "EMP12345",
                 Designation: "Senior Developer",
                 Department: "Tech",
                 "Date of Birth": "1995-05-10",
                 "Date of Joining": "2023-01-15",
-                "Reporting Manager": "manager@infosys.com",
+                "Reporting Manager": "manager@company.com",
                 Teams: "Tech",
                 Password: "",
                 Role: "TEAM_MEMBER",
