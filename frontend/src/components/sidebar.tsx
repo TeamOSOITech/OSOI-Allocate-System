@@ -37,7 +37,7 @@ const menuItems: MenuItem[] = [
         roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
     },
     {
-        label: "Products",
+        label: "Services",
         icon: "ti ti-package",
         path: "/products",
         roles: EVERYONE,
@@ -98,7 +98,7 @@ const menuItems: MenuItem[] = [
 
 const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
-    "/products": "Products",
+    "/products": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
     "/today's-allocation": "Today's Allocation",
@@ -202,7 +202,6 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         transition: transform 0.22s ease;
                         z-index: 1000;
                         box-shadow: 2px 0 16px rgba(0,0,0,0.18);
-                        padding-top: 64px !important;
                     }
                     .app-sidebar.open {
                         transform: translateX(0);

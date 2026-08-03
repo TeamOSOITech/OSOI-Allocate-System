@@ -96,6 +96,13 @@ const Landing = () => {
     const [checkoutEmail, setCheckoutEmail] = useState("");
     const [checkoutLoading, setCheckoutLoading] = useState(false);
     const [checkoutError, setCheckoutError] = useState("");
+    // Demo/dummy card fields — no real Razorpay keys are configured for
+    // this project, so payment is a mock step (see /api/billing/mock-checkout).
+    // Prefilled with a standard test-card number; nothing here is charged
+    // or stored anywhere.
+    const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
+    const [cardExpiry, setCardExpiry] = useState("12/29");
+    const [cardCvv, setCardCvv] = useState("123");
 
     // ---------- "Sign up your organization" popup (org name + email only) ----------
     const [orgSignupOpen, setOrgSignupOpen] = useState(false);
@@ -153,16 +160,6 @@ const Landing = () => {
         setOrgSignupSuccess("");
     };
 
-    const loadRazorpayScript = () =>
-        new Promise<boolean>((resolve) => {
-            if ((window as any).Razorpay) return resolve(true);
-            const script = document.createElement("script");
-            script.src = "https://checkout.razorpay.com/v1/checkout.js";
-            script.onload = () => resolve(true);
-            script.onerror = () => resolve(false);
-            document.body.appendChild(script);
-        });
-
     // Free -> straight to login/signup. Enterprise -> Contact Sales.
     // Basic / Professional -> open the email-collection modal, which
     // then kicks off Razorpay Checkout.
@@ -183,75 +180,45 @@ const Landing = () => {
         setCheckoutPlan({ key: planName.toLowerCase(), name: planName, price: plan.price });
     };
 
+    // Demo/dummy payment — this project has no live Razorpay keys
+    // configured, so instead of opening real Razorpay Checkout, we send
+    // the (dummy) card details straight to /api/billing/mock-checkout,
+    // which marks the signup as paid the same way verify-payment would
+    // and hands back a signupToken. Swap this back to real create-order +
+    // Razorpay Checkout + verify-payment (see billing.controller.js) to
+    // go live.
     const handleConfirmCheckout = async () => {
         if (!checkoutPlan) return;
         if (!checkoutEmail || !/\S+@\S+\.\S+/.test(checkoutEmail)) {
             setCheckoutError("Enter a valid email address.");
             return;
         }
+        if (!/^\d{4}\s?\d{4}\s?\d{4}\s?\d{4}$/.test(cardNumber.trim())) {
+            setCheckoutError("Enter a valid 16-digit card number.");
+            return;
+        }
         setCheckoutError("");
         setCheckoutLoading(true);
 
         try {
-            const scriptLoaded = await loadRazorpayScript();
-            if (!scriptLoaded) {
-                throw new Error("Could not load Razorpay. Check your connection and try again.");
-            }
-
-            const orderRes = await fetch(`${API_URL}/api/billing/create-order`, {
+            const res = await fetch(`${API_URL}/api/billing/mock-checkout`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ plan: checkoutPlan.key }),
+                body: JSON.stringify({
+                    plan: checkoutPlan.key,
+                    email: checkoutEmail,
+                    cardNumber,
+                }),
             });
-            const orderData = await orderRes.json();
-            if (!orderRes.ok || !orderData.success) {
-                throw new Error(orderData.message || "Could not start checkout.");
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || "Payment failed. Please try again.");
             }
-
-            const { orderId, amount, currency, keyId } = orderData.data;
-
-            const razorpay = new (window as any).Razorpay({
-                key: keyId,
-                order_id: orderId,
-                amount,
-                currency,
-                name: "Workforce Alookate",
-                description: `${checkoutPlan.name} Plan Subscription`,
-                prefill: { email: checkoutEmail },
-                theme: { color: "#08A1CE" },
-                handler: async (response: any) => {
-                    try {
-                        const verifyRes = await fetch(`${API_URL}/api/billing/verify-payment`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                razorpay_order_id: response.razorpay_order_id,
-                                razorpay_payment_id: response.razorpay_payment_id,
-                                razorpay_signature: response.razorpay_signature,
-                                plan: checkoutPlan.key,
-                                email: checkoutEmail,
-                            }),
-                        });
-                        const verifyData = await verifyRes.json();
-                        if (!verifyRes.ok || !verifyData.success) {
-                            throw new Error(verifyData.message || "Payment verification failed.");
-                        }
-                        setCheckoutPlan(null);
-                        navigate(`/register?token=${verifyData.data.signupToken}`);
-                    } catch (err: any) {
-                        setCheckoutError(err.message || "Payment verification failed.");
-                    } finally {
-                        setCheckoutLoading(false);
-                    }
-                },
-                modal: {
-                    ondismiss: () => setCheckoutLoading(false),
-                },
-            });
-
-            razorpay.open();
+            setCheckoutPlan(null);
+            navigate(`/register?token=${data.data.signupToken}`);
         } catch (err: any) {
             setCheckoutError(err.message || "Something went wrong.");
+        } finally {
             setCheckoutLoading(false);
         }
     };
@@ -1280,8 +1247,8 @@ const Landing = () => {
                         </button>
                         <h3 className="lp-login-title">{checkoutPlan.name} Plan</h3>
                         <p className="lp-login-subtitle">
-                            {checkoutPlan.price} / user / month — enter your email to continue to
-                            secure payment via Razorpay.
+                            {checkoutPlan.price} / user / month — this is a demo checkout, no real
+                            card is charged.
                         </p>
                         {checkoutError && <div className="lp-login-error">{checkoutError}</div>}
                         <input
@@ -1290,14 +1257,40 @@ const Landing = () => {
                             value={checkoutEmail}
                             onChange={(e) => setCheckoutEmail(e.target.value)}
                             className="lp-login-input"
-                            style={{ marginBottom: 14 }}
+                            style={{ marginBottom: 10 }}
                         />
+                        <input
+                            type="text"
+                            placeholder="Card number"
+                            value={cardNumber}
+                            onChange={(e) => setCardNumber(e.target.value)}
+                            className="lp-login-input"
+                            style={{ marginBottom: 10 }}
+                        />
+                        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                            <input
+                                type="text"
+                                placeholder="MM/YY"
+                                value={cardExpiry}
+                                onChange={(e) => setCardExpiry(e.target.value)}
+                                className="lp-login-input"
+                                style={{ marginBottom: 0 }}
+                            />
+                            <input
+                                type="text"
+                                placeholder="CVV"
+                                value={cardCvv}
+                                onChange={(e) => setCardCvv(e.target.value)}
+                                className="lp-login-input"
+                                style={{ marginBottom: 0 }}
+                            />
+                        </div>
                         <button
                             className="lp-login-submit"
                             onClick={handleConfirmCheckout}
                             disabled={checkoutLoading}
                         >
-                            {checkoutLoading ? "Opening secure checkout…" : "Continue to Payment"}
+                            {checkoutLoading ? "Processing payment…" : "Pay & Continue"}
                         </button>
                     </div>
                 </div>

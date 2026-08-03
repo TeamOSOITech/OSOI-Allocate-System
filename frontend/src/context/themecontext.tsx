@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 /* ---------------------------------------------------------------------- */
 
 export type ThemeName =
-    "default" | "purple" | "brown" | "red" | "yellow" | "pink" | "green" | "orange";
+    "default" | "purple" | "brown" | "red" | "yellow" | "pink" | "green" | "orange" | "white";
 
 export type DisplayMode = "light" | "dark" | "system";
 
@@ -30,6 +30,7 @@ export const THEMES: Record<ThemeName, ThemePalette> = {
     pink: { label: "Pink", blue: "#BE185D", lightBlue: "#EC4899", green: "#F472B6" },
     green: { label: "Green", blue: "#15803D", lightBlue: "#22C55E", green: "#86EFAC" },
     orange: { label: "Orange", blue: "#C2410C", lightBlue: "#F97316", green: "#FDBA74" },
+    white: { label: "White", blue: "#E5E7EB", lightBlue: "#F3F4F6", green: "#FFFFFF" },
 };
 
 const STORAGE_KEY_THEME = "app_theme_color";

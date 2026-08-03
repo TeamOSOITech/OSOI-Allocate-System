@@ -779,10 +779,10 @@ export default function Clients() {
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
     ) => (
         <div style={{ gridColumn: "1 / -1" }}>
-            <label style={styles.formLabel}>Products</label>
+            <label style={styles.formLabel}>Services</label>
             {products.length === 0 ? (
                 <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                    No products yet — add one from the Products page first.
+                    No services yet — add one from the Services page first.
                 </p>
             ) : (
                 <div
@@ -1814,7 +1814,7 @@ export default function Clients() {
 
                             {/* REVERSED MAPPING: Products linked to this Client/Subclient */}
                             <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Products</span>
+                                <span style={styles.detailsLabel}>Services</span>
                                 <span style={{ ...styles.detailsValue, textAlign: "right" }}>
                                     {viewDetails.data.products && viewDetails.data.products.length
                                         ? viewDetails.data.products

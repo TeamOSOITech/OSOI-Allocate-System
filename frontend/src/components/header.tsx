@@ -92,10 +92,6 @@ export default function Header({
 
     return (
         <header style={isMobile ? styles.headerMobile : styles.header}>
-            {/* Signature: a thin three-color brand rail along the bottom edge —
-                the one deliberate accent, everything else stays quiet. */}
-            <div style={styles.brandRail} />
-
             {/* LEFT */}
             <div style={isMobile ? styles.leftMobile : styles.left}>
                 <div style={styles.logoBlock}>
@@ -345,37 +341,26 @@ function getStyles(BRAND: {
     return {
         header: {
             position: "relative",
-            background: "#fff",
+            background: `linear-gradient(90deg, ${BRAND.blue} 0%, ${BRAND.lightBlue} 55%, ${BRAND.green} 100%)`,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 28px",
             height: "64px",
             flexShrink: 0,
-            borderBottom: "1px solid #eef1f7",
             fontFamily: fontFamily.base,
             gap: 16,
         },
         headerMobile: {
             position: "relative",
-            background: "#fff",
+            background: `linear-gradient(90deg, ${BRAND.blue} 0%, ${BRAND.lightBlue} 55%, ${BRAND.green} 100%)`,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             padding: "8px 12px 8px 60px",
             minHeight: "56px",
-            borderBottom: "1px solid #eef1f7",
             fontFamily: fontFamily.base,
             gap: "8px",
-        },
-
-        brandRail: {
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 3,
-            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
         },
 
         left: { display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: 1 },
@@ -390,19 +375,19 @@ function getStyles(BRAND: {
             minWidth: 0,
             overflow: "hidden",
             paddingLeft: 20,
-            borderLeft: "1px solid #eef1f7",
+            borderLeft: "1px solid rgba(255,255,255,0.3)",
         },
         welcome: {
             fontSize: fontSize.md,
-            color: "#5a6c85",
+            color: "rgba(255,255,255,0.85)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
         },
-        welcomeName: { color: "#16233c" },
+        welcomeName: { color: "#ffffff" },
         welcomeMobile: {
             fontSize: fontSize.sm,
-            color: "#5a6c85",
+            color: "rgba(255,255,255,0.9)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -412,7 +397,7 @@ function getStyles(BRAND: {
             width: 6,
             height: 6,
             borderRadius: radius.circle,
-            background: BRAND.green,
+            background: "#ffffff",
             flexShrink: 0,
         },
 
@@ -424,12 +409,12 @@ function getStyles(BRAND: {
             width: "34px",
             height: "34px",
             borderRadius: radius.md,
-            border: `1px solid ${BRAND.lightBlue}33`,
+            border: "1px solid rgba(255,255,255,0.35)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: BRAND.lightBlue,
-            background: `${BRAND.lightBlue}0F`,
+            color: "#ffffff",
+            background: "rgba(255,255,255,0.14)",
             cursor: "pointer",
             padding: 0,
             flexShrink: 0,
@@ -441,12 +426,12 @@ function getStyles(BRAND: {
             width: "28px",
             height: "28px",
             borderRadius: radius.sm,
-            border: `1px solid ${BRAND.lightBlue}33`,
+            border: "1px solid rgba(255,255,255,0.35)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: BRAND.lightBlue,
-            background: `${BRAND.lightBlue}0F`,
+            color: "#ffffff",
+            background: "rgba(255,255,255,0.14)",
             cursor: "pointer",
             padding: 0,
             flexShrink: 0,
@@ -488,7 +473,7 @@ function getStyles(BRAND: {
             width: 34,
             height: 34,
             borderRadius: radius.circle,
-            border: "none",
+            border: "2px solid rgba(255,255,255,0.6)",
             background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
             color: "#fff",
             fontSize: fontSize.sm,
@@ -503,7 +488,7 @@ function getStyles(BRAND: {
             width: 28,
             height: 28,
             borderRadius: radius.circle,
-            border: "none",
+            border: "2px solid rgba(255,255,255,0.6)",
             background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
             color: "#fff",
             fontSize: fontSize.xxs,

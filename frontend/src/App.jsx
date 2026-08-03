@@ -13,6 +13,7 @@ import { ThemeProvider } from "./context/themecontext";
 // available without touching the backend or the tech stack at all.
 const Login = lazy(() => import("./pages/auth/login"));
 const Landing = lazy(() => import("./pages/public/landing"));
+const Register = lazy(() => import("./pages/auth/register"));
 const ForgotPassword = lazy(() => import("./pages/auth/forgotPassword"));
 const ResetPassword = lazy(() => import("./pages/auth/resetPassword"));
 const ReportDashboard = lazy(() => import("./pages/admin/reportdashboard"));
@@ -354,6 +355,8 @@ backend anyway (Vertical Head = own team, others = org-wide). */}
                                 </PrivateRoute>
                             }
                         />
+
+                        <Route path="/register" element={<Register />} />
 
                         <Route path="/" element={<Landing />} />
                     </Routes>
