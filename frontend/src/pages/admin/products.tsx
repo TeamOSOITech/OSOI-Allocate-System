@@ -1235,7 +1235,6 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
-        flexShrink: 0,
         textAlign: "left",
     },
 

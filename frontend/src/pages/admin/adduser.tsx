@@ -244,19 +244,30 @@ export default function AddUser() {
     // Dropdown option lists for the fields that support "add new" inline.
     // Seeded with sensible defaults; anything added via the + control gets
     // appended here so it shows up immediately in the dropdown.
-    const [departmentOptions, setDepartmentOptions] = useState<string[]>([
-        "Tech",
-        "Legal",
-        "SD",
-        "HR & Admin",
-    ]);
+    const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
     const [designationOptions, setDesignationOptions] = useState<string[]>([]);
-    const [teamsOptions, setTeamsOptions] = useState<string[]>([
-        "Tech",
-        "Legal",
-        "SD",
-        "HR & Admin",
-    ]);
+    const [teamsOptions, setTeamsOptions] = useState<string[]>([]);
+    const [optionsLoading, setOptionsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchOptions = async () => {
+            try {
+                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/options`, {
+                    cache: "no-store",
+                });
+                if (!res.ok) throw new Error("Failed to load options");
+                const data = await res.json();
+                setDepartmentOptions(data.departments || []);
+                setDesignationOptions(data.designations || []);
+                setTeamsOptions(data.teams || []);
+            } catch (err) {
+                console.error("Failed to load dropdown options:", err);
+            } finally {
+                setOptionsLoading(false);
+            }
+        };
+        fetchOptions();
+    }, []);
     // NOTE: Roles are tied to permission gating elsewhere (App.jsx role
     // lists, backend src/config/permissions.js). Adding a role name here
     // that doesn't exist in those places will let it be selected, but that

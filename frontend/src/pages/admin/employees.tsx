@@ -26,6 +26,8 @@ type Employee = {
     email: string;
     designation: string;
     department: string;
+    // NEW: shown on the card in place of Location, and included in search.
+    team?: string | null;
     status: EntityStatus;
     reportingManager: string | null;
     joiningDate: string; // ISO date
@@ -258,12 +260,27 @@ export default function Employees() {
             });
             if (!res.ok) throw new Error("Update failed");
 
-            const updated: Employee = await res.json().catch(() => editForm);
-
-            setEmployees((prev) =>
-                prev.map((e) => (e.id === updated.id ? { ...e, ...updated } : e))
+            // FIX: backend response might be sparse, differently-cased, or
+            // return null/"" for fields it doesn't actually persist (e.g. a
+            // column that doesn't exist yet). Blindly spreading that response
+            // over the previous record was wiping out fields the user just
+            // typed. editForm (what the user submitted) is now the source of
+            // truth; only non-empty values from the response get merged on
+            // top of it.
+            let updated: Record<string, any> = {};
+            try {
+                updated = await res.json();
+            } catch {
+                updated = {};
+            }
+            const cleanUpdated = Object.fromEntries(
+                Object.entries(updated).filter(([, v]) => v !== null && v !== undefined && v !== "")
             );
-            setSelectedEmployee((prev) => (prev ? { ...prev, ...updated } : prev));
+
+            const merged: Employee = { ...editForm, ...cleanUpdated };
+
+            setEmployees((prev) => prev.map((e) => (e.id === merged.id ? merged : e)));
+            setSelectedEmployee(merged);
             setIsEditingDrawer(false);
             setEditForm(null);
         } catch (err) {
@@ -315,23 +332,34 @@ export default function Employees() {
     };
 
     const departments = useMemo(
-        () => Array.from(new Set(employees.map((e) => e.department))).sort(),
+        () => Array.from(new Set(employees.map((e) => e.department).filter(Boolean))).sort(),
         [employees]
     );
 
-    const filteredEmployees = useMemo(
-        () =>
-            employees.filter((e) => {
-                const matchesSearch =
-                    e.name.toLowerCase().includes(search.trim().toLowerCase()) ||
-                    e.designation.toLowerCase().includes(search.trim().toLowerCase()) ||
-                    e.employeeCode.toLowerCase().includes(search.trim().toLowerCase());
-                const matchesDepartment =
-                    departmentFilter === "All" || e.department === departmentFilter;
-                return matchesSearch && matchesDepartment;
-            }),
-        [employees, search, departmentFilter]
-    );
+    // FIX: previously called `.toLowerCase()` directly on `e.name`,
+    // `e.designation`, `e.employeeCode` without guarding against
+    // null/undefined values coming back from the API. A single record
+    // missing one of those fields threw a TypeError inside this useMemo
+    // (which runs on every render, including the very first one right
+    // after navigating to this page) — an uncaught error during render
+    // with no Error Boundary above it unmounts the whole tree, which is
+    // why the page went white on navigation.
+    //
+    // Search now matches on Name, Team, and Department (Location has been
+    // dropped from both the card display and the search, per the Team
+    // field replacing it below).
+    const filteredEmployees = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return employees.filter((e) => {
+            const matchesSearch =
+                (e.name || "").toLowerCase().includes(q) ||
+                (e.team || "").toLowerCase().includes(q) ||
+                (e.department || "").toLowerCase().includes(q);
+            const matchesDepartment =
+                departmentFilter === "All" || e.department === departmentFilter;
+            return matchesSearch && matchesDepartment;
+        });
+    }, [employees, search, departmentFilter]);
 
     // What the drawer should display: live edits while editing, otherwise
     // the selected employee as-is.
@@ -351,7 +379,7 @@ export default function Employees() {
                                     <span style={styles.pageTitleCount}>({employees.length})</span>
                                 </h2>
                                 <p style={styles.headerSubtext}>
-                                    Browse your organization by department and location.
+                                    Browse your organization by department and team.
                                 </p>
                             </div>
                         </div>
@@ -368,7 +396,7 @@ export default function Employees() {
                             <input
                                 className="emp-search-input"
                                 style={styles.searchInput}
-                                placeholder="Search by name, title, or ID..."
+                                placeholder="Search by name, team, or department..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
@@ -468,7 +496,7 @@ export default function Employees() {
                                 </div>
                                 <p style={styles.emptyTitle}>No employees match your filters</p>
                                 <p style={styles.emptyText}>
-                                    Try a different name, title, or department.
+                                    Try a different name, team, or department.
                                 </p>
                             </div>
                         ) : (
@@ -587,18 +615,17 @@ export default function Employees() {
                                                         {emp.department || "—"}
                                                     </span>
                                                 </div>
+                                                {/* Team replaces Location here per new requirement */}
                                                 <div style={styles.cardInfoLine}>
                                                     <i
-                                                        className="ti ti-map-pin"
+                                                        className="ti ti-users-group"
                                                         style={styles.cardInfoIcon}
                                                         aria-hidden="true"
                                                     />
-                                                    <span style={styles.cardInfoLabel}>
-                                                        Location
-                                                    </span>
+                                                    <span style={styles.cardInfoLabel}>Team</span>
                                                     <span style={styles.cardInfoColon}>:</span>
                                                     <span style={styles.cardInfoValue}>
-                                                        {emp.location || "—"}
+                                                        {emp.team || "—"}
                                                     </span>
                                                 </div>
                                                 <div style={styles.cardInfoLine}>
@@ -801,20 +828,21 @@ export default function Employees() {
                                     )}
                                 </div>
 
+                                {/* Team replaces Location in the drawer details too */}
                                 <div style={styles.detailsRow}>
-                                    <span style={styles.detailsLabel}>Location</span>
+                                    <span style={styles.detailsLabel}>Team</span>
                                     {isEditingDrawer ? (
                                         <input
                                             className="emp-drawer-input"
                                             style={styles.detailsInput}
-                                            value={drawerData.location || ""}
+                                            value={drawerData.team || ""}
                                             onChange={(e) =>
-                                                updateEditField("location", e.target.value)
+                                                updateEditField("team", e.target.value)
                                             }
                                         />
                                     ) : (
                                         <span style={styles.detailsValue}>
-                                            {drawerData.location || "—"}
+                                            {drawerData.team || "—"}
                                         </span>
                                     )}
                                 </div>

@@ -658,9 +658,28 @@ export default function Clients() {
     // Client lookup column. That parity lives in the backend template
     // generator for /api/subclients/bulk/template — not in this file.
 
-    const handleDownloadTemplate = () => {
-        const endpoint = BULK_ENDPOINT_MAP[activeTab];
-        window.open(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`, "_blank");
+    const handleDownloadTemplate = async () => {
+        try {
+            const endpoint = BULK_ENDPOINT_MAP[activeTab];
+            const res = await authFetch(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`);
+            if (!res.ok) throw new Error("Failed to download template");
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download =
+                endpoint === "clients"
+                    ? "client_bulk_upload_template.xlsx"
+                    : "subclient_bulk_upload_template.xlsx";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error(err);
+            // optionally: setBulkError("Failed to download template") ya koi toast dikha do
+        }
     };
 
     // Required-columns copy shown inside the Bulk Upload modal, mirroring
