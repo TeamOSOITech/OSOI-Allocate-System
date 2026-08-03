@@ -4,6 +4,7 @@ const router = express.Router();
 const {
   getPlansHandler,
   createOrderHandler,
+  mockCheckoutHandler,
   verifyPaymentHandler,
   webhookHandler,
   getSignupStatusHandler,
@@ -11,6 +12,9 @@ const {
 
 router.get("/plans", getPlansHandler);
 router.post("/create-order", createOrderHandler);
+// Dummy/demo payment path — no real Razorpay keys configured, see
+// mockCheckoutHandler for details. Frontend's checkout modal calls this.
+router.post("/mock-checkout", mockCheckoutHandler);
 router.post("/verify-payment", verifyPaymentHandler);
 router.get("/signup-status", getSignupStatusHandler);
 

@@ -51,6 +51,59 @@ const createOrderHandler = async (req, res) => {
   }
 };
 
+// POST /api/billing/mock-checkout
+// DEMO/DUMMY PAYMENT PATH — no live Razorpay keys are configured in this
+// project, so this stands in for create-order + Razorpay Checkout +
+// verify-payment. It never talks to Razorpay and never charges anything;
+// the card number is only checked for shape (looks like a card number)
+// and is NEVER stored. Produces the same result as verifyPaymentHandler
+// below — a paid payment_signups row + signupToken.
+const mockCheckoutHandler = async (req, res) => {
+  try {
+    const { plan, email, cardNumber } = req.body;
+
+    if (!plan || !email) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Plan and email are required" });
+    }
+
+    const normalizedPlan = String(plan).toLowerCase();
+    if (!PLAN_CONFIG[normalizedPlan]) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid plan selected" });
+    }
+
+    const digitsOnly = String(cardNumber || "").replace(/\s+/g, "");
+    if (!/^\d{13,19}$/.test(digitsOnly)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Enter a valid card number" });
+    }
+
+    const record = generateSignupRecord({
+      email,
+      plan: normalizedPlan,
+      orderId: `mock_order_${crypto.randomBytes(8).toString("hex")}`,
+      paymentId: `mock_pay_${crypto.randomBytes(12).toString("hex")}`,
+    });
+
+    const { error } = await supabase
+      .from("payment_signups")
+      .upsert(record, { onConflict: "razorpay_payment_id" });
+
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      data: { signupToken: record.signup_token },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // POST /api/billing/verify-payment
 // Called by the frontend immediately after Razorpay Checkout's success
 // handler fires. This is what actually unlocks account creation.
@@ -179,6 +232,7 @@ const getSignupStatusHandler = async (req, res) => {
 module.exports = {
   getPlansHandler,
   createOrderHandler,
+  mockCheckoutHandler,
   verifyPaymentHandler,
   webhookHandler,
   getSignupStatusHandler,

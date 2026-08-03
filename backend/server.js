@@ -19,6 +19,11 @@ app.use(compression());
 // ========================
 // 🧠 Body parser
 // ========================
+// IMPORTANT: the Razorpay webhook needs the RAW request body to verify
+// its signature — this has to be mounted BEFORE express.json(), or by
+// the time it reaches billing.routes.js the body is already parsed and
+// signature verification always fails. See billing.routes.js.
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // ========================
@@ -66,6 +71,10 @@ app.use(
   loadRoute("products", "./src/modules/products/products.routes"),
 );
 app.use("/api/users", loadRoute("users", "./src/modules/users/user.routes"));
+app.use(
+  "/api/billing",
+  loadRoute("billing", "./src/modules/billings/billing.routes"),
+);
 app.use(
   "/api/clients",
   loadRoute("clients", "./src/modules/clients/clients.routes"),

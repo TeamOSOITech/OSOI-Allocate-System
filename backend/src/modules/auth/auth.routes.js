@@ -5,6 +5,9 @@ const { forgotPasswordHandler } = require("./auth.controller");
 const {
   registerOrganizationHandler,
 } = require("./registerOrganization.controller");
+const {
+  registerWithPaymentHandler,
+} = require("./registerWithPayment.controller");
 
 // SECURITY FIX: these endpoints had NO rate limiting at all — an
 // attacker could try unlimited passwords per second against any known
@@ -53,6 +56,16 @@ router.post(
   "/register-organization",
   registerOrgLimiter,
   registerOrganizationHandler,
+);
+
+// Same abuse protection as register-organization — completes the paid
+// signup flow started by /api/billing/create-order (or /mock-checkout)
+// + /api/billing/verify-payment. Was previously written but never
+// mounted here, so the paid-signup page had nothing to call.
+router.post(
+  "/register-with-payment",
+  registerOrgLimiter,
+  registerWithPaymentHandler,
 );
 
 module.exports = router;

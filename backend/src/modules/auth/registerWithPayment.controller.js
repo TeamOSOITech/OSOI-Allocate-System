@@ -36,12 +36,10 @@ const registerWithPaymentHandler = async (req, res) => {
         .json({ success: false, message: "Missing required fields" });
     }
     if (password.length < 8) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Password must be at least 8 characters",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters",
+      });
     }
 
     // 1. Validate the paid signup token
@@ -77,26 +75,25 @@ const registerWithPaymentHandler = async (req, res) => {
       .maybeSingle();
 
     if (existingProfile) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "An account with this email already exists",
-        });
+      return res.status(409).json({
+        success: false,
+        message: "An account with this email already exists",
+      });
     }
 
     // 3. Create the new organization (this signup = a brand new tenant)
-    const orgSlug =
-      signup.email
-        .split("@")[0]
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "-") +
-      "-" +
-      Date.now().toString(36);
-
+    //
+    // FIX: this used to also insert `slug` and status: "trialing" — but
+    // per registerOrganization.controller.js's notes (the other org-
+    // creation flow, already working), the real `organizations` table
+    // only has id, name, created_at, status, plan. There is no `slug`
+    // column, so this insert was failing with "Could not find the
+    // 'slug' column of 'organizations' in the schema cache" every time.
+    // Matching the other flow's status value ("ACTIVE") too, for
+    // consistency between the two signup paths.
     const { data: organization, error: orgError } = await supabase
       .from("organizations")
-      .insert({ name: name.trim(), slug: orgSlug, status: "trialing" })
+      .insert({ name: name.trim(), status: "ACTIVE" })
       .select()
       .single();
 

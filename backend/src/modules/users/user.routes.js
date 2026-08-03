@@ -29,6 +29,7 @@ const { createClient } = require("@supabase/supabase-js");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
+const { PLAN_USER_LIMITS } = require("../billings/billing.service");
 
 const router = express.Router();
 
@@ -48,6 +49,43 @@ const supabaseAdmin = createClient(
 
 function normalizeEmail(email) {
   return (email || "").toString().trim().toLowerCase();
+}
+
+/**
+ * How many users this organization's plan is allowed to have — based on
+ * their active row in `subscriptions` (joined to `plans` for the name).
+ * Orgs with no active subscription row (the free /register-organization
+ * signup path, or a lapsed subscription) fall back to the Free limit.
+ */
+async function getOrgUserLimit(organizationId) {
+  const { data: sub, error } = await supabaseAdmin
+    .from("subscriptions")
+    .select("status, plans ( name )")
+    .eq("organization_id", organizationId)
+    .eq("status", "active")
+    .order("current_period_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getOrgUserLimit: subscription lookup failed:", error);
+  }
+
+  const planName = (sub?.plans?.name || "free").toString().toLowerCase();
+  return PLAN_USER_LIMITS[planName] ?? PLAN_USER_LIMITS.free;
+}
+
+/**
+ * Current user count for this organization — one row per email in
+ * user_master, so this is a straight per-email count.
+ */
+async function getOrgUserCount(organizationId) {
+  const { count, error } = await supabaseAdmin
+    .from("user_master")
+    .select("Email", { count: "exact", head: true })
+    .eq("organization_id", organizationId);
+  if (error) throw error;
+  return count || 0;
 }
 
 /**
@@ -246,6 +284,17 @@ router.post(
           .json({ message: `A user with email ${email} already exists.` });
       }
 
+      // Plan seat limit — count is by email in user_master for this org.
+      const [limit, currentCount] = await Promise.all([
+        getOrgUserLimit(req.user.organizationId),
+        getOrgUserCount(req.user.organizationId),
+      ]);
+      if (currentCount >= limit) {
+        return res.status(403).json({
+          message: `Your plan allows up to ${limit} users and you've reached that limit. Upgrade your subscription to add more users.`,
+        });
+      }
+
       // Password is optional from the frontend now — if somehow missing,
       // generate one here too as a safety net.
       const tempPassword = body.password || generateFallbackPassword();
@@ -319,6 +368,16 @@ router.post(
       const results = [];
       const seenEmails = new Set();
 
+      // Plan seat limit — figure out how many more users this org can
+      // add before touching anything, then stop handing out slots once
+      // it's used up (still runs duplicate/validation checks on the rest
+      // so the response reports why each row was skipped).
+      const [limit, currentCount] = await Promise.all([
+        getOrgUserLimit(req.user.organizationId),
+        getOrgUserCount(req.user.organizationId),
+      ]);
+      let remainingSlots = Math.max(limit - currentCount, 0);
+
       for (const rawUser of users) {
         const email = normalizeEmail(rawUser.email);
 
@@ -341,6 +400,15 @@ router.post(
           continue;
         }
         seenEmails.add(email);
+
+        if (remainingSlots <= 0) {
+          results.push({
+            email,
+            success: false,
+            message: `Your plan allows up to ${limit} users — skipped, upgrade your subscription to add more.`,
+          });
+          continue;
+        }
 
         try {
           // Duplicate check against existing DB/auth users — email only
@@ -384,6 +452,8 @@ router.post(
               role: (rawUser.role || "").toString().toUpperCase().trim(),
             },
           });
+
+          remainingSlots -= 1;
 
           // Account creation always counts as success here — email delivery
           // is reported separately so a failed send doesn't look like a
