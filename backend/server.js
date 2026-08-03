@@ -83,6 +83,11 @@ app.use(
   "/api/subclients",
   loadRoute("subclients", "./src/modules/clients/subclients.routes"),
 );
+
+app.use(
+  "/api/options",
+  loadRoute("options", "./src/modules/options/options.routes"),
+);
 app.use(
   "/api/employees",
   loadRoute("employees", "./src/modules/employees/employees.routes"),

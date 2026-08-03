@@ -31,7 +31,7 @@ async function getProductNameMap(productIds) {
   if (uniqueIds.length === 0) return {};
 
   const { data, error } = await supabase
-    .from("product_master")
+    .from("service_master")
     .select("id, product_name")
     .in("id", uniqueIds);
 

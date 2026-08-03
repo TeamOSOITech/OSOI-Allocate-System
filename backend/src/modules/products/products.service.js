@@ -1,6 +1,6 @@
 const supabase = require("../../config/supabaseClient");
 
-const TABLE = "product_master";
+const TABLE = "service_master";
 const CLIENT_LINK_TABLE = "client_products";
 const SUBCLIENT_LINK_TABLE = "subclient_products";
 
@@ -131,15 +131,15 @@ const deleteProduct = async (id, organizationId) => {
 const getProductsForClient = async (clientId, organizationId) => {
   const { data, error } = await supabase
     .from(CLIENT_LINK_TABLE)
-    .select("product_id, amount, currency, product_master(*)")
+    .select("product_id, amount, currency, service_master(*)")
     .eq("client_id", clientId)
     .eq("organization_id", organizationId);
 
   if (error) throw error;
   return (data || [])
-    .filter((row) => row.product_master)
+    .filter((row) => row.service_master)
     .map((row) => ({
-      ...row.product_master,
+      ...row.service_master,
       amount: row.amount,
       currency: row.currency,
     }));
@@ -204,15 +204,15 @@ const syncClientProducts = async (clientId, productRates, organizationId) => {
 const getProductsForSubclient = async (subclientId, organizationId) => {
   const { data, error } = await supabase
     .from(SUBCLIENT_LINK_TABLE)
-    .select("product_id, amount, currency, product_master(*)")
+    .select("product_id, amount, currency, ser_master(*)")
     .eq("subclient_id", subclientId)
     .eq("organization_id", organizationId);
 
   if (error) throw error;
   return (data || [])
-    .filter((row) => row.product_master)
+    .filter((row) => row.service_master)
     .map((row) => ({
-      ...row.product_master,
+      ...row.service_master,
       amount: row.amount,
       currency: row.currency,
     }));

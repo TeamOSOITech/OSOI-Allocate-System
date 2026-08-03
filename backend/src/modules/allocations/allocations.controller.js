@@ -54,7 +54,7 @@ async function getDailyWorkMap(dailyWorkIds) {
   let productNames = {};
   if (productIds.length > 0) {
     const { data: products } = await supabase
-      .from("product_master")
+      .from("service_master")
       .select("id, product_name")
       .in("id", productIds);
     productNames = (products || []).reduce((acc, p) => {

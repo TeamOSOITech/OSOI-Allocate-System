@@ -195,7 +195,7 @@ async function applyApprovedAction(request) {
       // silently swallowed — HIDE_TASK approvals looked successful but
       // never actually hid anything.
       const { error: hideError } = await supabase
-        .from("product_master")
+        .from("service_master")
         .update({ hidden: true })
         .eq("id", request.payload?.taskId)
         .eq("organization_id", request.organization_id);

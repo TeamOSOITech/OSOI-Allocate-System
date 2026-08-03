@@ -142,16 +142,16 @@ router.get("/", async (req, res) => {
     // in memory — avoids an N+1 query per subclient in the list view.
     const { data: subclientProductLinks } = await supabase
       .from("subclient_products")
-      .select("subclient_id, amount, currency, product_master(*)")
+      .select("subclient_id, amount, currency, service_master(*)")
       .eq("organization_id", orgId);
 
     const formatted = subclients.map((subclient) => {
       const products = (subclientProductLinks || [])
         .filter(
-          (row) => row.subclient_id === subclient.id && row.product_master,
+          (row) => row.subclient_id === subclient.id && row.service_master,
         )
         .map((row) => ({
-          ...row.product_master,
+          ...row.service_master,
           amount: row.amount,
           currency: row.currency,
         }));
