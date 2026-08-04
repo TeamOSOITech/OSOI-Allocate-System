@@ -47,8 +47,12 @@ const getProductById = async (id, organizationId) => {
 // Products no longer accept `client` / `subclient` on create — that link
 // now lives on the Client/Subclient side (see syncClientProducts /
 // syncSubclientProducts below).
+//
+// `teams` is a plain jsonb array of team names (e.g. ["Tech", "SD"]) — a
+// tag on the service, not a relational link, so it's just passed straight
+// through. Defaults to [] when omitted so the column never ends up NULL.
 const createProduct = async (payload, organizationId) => {
-  const { product_name, time_taken, time_unit } = payload;
+  const { product_name, time_taken, time_unit, teams } = payload;
 
   const { data, error } = await supabase
     .from(TABLE)
@@ -57,6 +61,7 @@ const createProduct = async (payload, organizationId) => {
         product_name,
         time_taken,
         time_unit,
+        teams: teams || [],
         organization_id: organizationId,
         hidden: false,
       },
@@ -75,6 +80,7 @@ const bulkCreateProducts = async (productsArray, organizationId) => {
     product_name: p.product_name,
     time_taken: p.time_taken,
     time_unit: p.time_unit,
+    teams: p.teams || [],
     organization_id: organizationId,
     hidden: p.hidden ?? false,
   }));
@@ -88,17 +94,28 @@ const bulkCreateProducts = async (productsArray, organizationId) => {
   return data;
 };
 
+// `teams` is only overwritten when the caller actually sends the key —
+// letting it stay `undefined` here would otherwise wipe existing teams to
+// NULL on every plain field-only update (Supabase's `.update()` only
+// touches keys present in the object, so we build the patch conditionally
+// rather than always including `teams: teams || []`).
 const updateProduct = async (id, payload, organizationId) => {
-  const { product_name, time_taken, time_unit } = payload;
+  const { product_name, time_taken, time_unit, teams } = payload;
+
+  const patch = {
+    product_name,
+    time_taken,
+    time_unit,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (teams !== undefined) {
+    patch.teams = teams || [];
+  }
 
   const { data, error } = await supabase
     .from(TABLE)
-    .update({
-      product_name,
-      time_taken,
-      time_unit,
-      updated_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq("id", id)
     .eq("organization_id", organizationId)
     .select()

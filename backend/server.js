@@ -70,6 +70,10 @@ app.use(
   "/api/products",
   loadRoute("products", "./src/modules/products/products.routes"),
 );
+// Teams master list — powers the Teams dropdown on the Add/Edit Service
+// modal (Products page). Mounted right alongside /api/products since a
+// Product's `teams` field references these by name.
+app.use("/api/teams", loadRoute("teams", "./src/modules/teams/teams.routes"));
 app.use("/api/users", loadRoute("users", "./src/modules/users/user.routes"));
 app.use(
   "/api/billing",

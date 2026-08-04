@@ -37,9 +37,14 @@ const getProductById = async (req, res) => {
 // longer takes `client` / `subclient` at creation time. Instead, Clients
 // and Subclients pick which existing Products they use (see
 // modules/clients/clients.routes.js and subclients.routes.js).
+//
+// `teams` (array of team names, e.g. ["Tech", "SD"]) is optional and just
+// tags the service — no validation beyond making sure it's an array if
+// present, since the dropdown on the frontend already constrains values
+// to real team names.
 const createProduct = async (req, res) => {
   try {
-    const { product_name, time_taken, time_unit } = req.body;
+    const { product_name, time_taken, time_unit, teams } = req.body;
 
     if (!product_name) {
       return res
@@ -54,8 +59,14 @@ const createProduct = async (req, res) => {
       });
     }
 
+    if (teams !== undefined && !Array.isArray(teams)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "teams must be an array" });
+    }
+
     const product = await productService.createProduct(
-      { product_name, time_taken, time_unit },
+      { product_name, time_taken, time_unit, teams },
       req.user.organizationId,
     );
 
@@ -91,6 +102,8 @@ const parseTimeTaken = (raw) => {
 
 // Bulk upload sheet no longer needs Client / Subclient columns — a product
 // is standalone. Only "Product Name" and "Time Taken" are read now.
+// (Teams aren't part of the bulk sheet yet — bulk-created products start
+// with an empty teams list and can be tagged afterwards from Edit.)
 const bulkUploadProducts = async (req, res) => {
   try {
     if (!req.file) {
@@ -191,7 +204,7 @@ const bulkUploadProducts = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { product_name, time_taken, time_unit } = req.body;
+    const { product_name, time_taken, time_unit, teams } = req.body;
 
     if (time_unit && !["minutes", "hours"].includes(time_unit)) {
       return res.status(400).json({
@@ -200,9 +213,15 @@ const updateProduct = async (req, res) => {
       });
     }
 
+    if (teams !== undefined && !Array.isArray(teams)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "teams must be an array" });
+    }
+
     const product = await productService.updateProduct(
       id,
-      { product_name, time_taken, time_unit },
+      { product_name, time_taken, time_unit, teams },
       req.user.organizationId,
     );
 
