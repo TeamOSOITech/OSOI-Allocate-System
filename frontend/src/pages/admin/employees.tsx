@@ -39,6 +39,10 @@ type Employee = {
     photoUrl?: string | null;
 };
 
+// Shape returned by GET /api/teams — same shape used on the Products page's
+// Teams dropdown.
+type Team = { id: string; name: string };
+
 // Each entry pairs an avatar tint with a matching accent used for the card's
 // top border, so the two read as one deliberate color per person rather than
 // two unrelated random picks.
@@ -158,6 +162,10 @@ export default function Employees() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
+    // Teams for the drawer's Team dropdown (edit mode). Same source as the
+    // Products page's Teams dropdown — GET /api/teams.
+    const [teamsList, setTeamsList] = useState<Team[]>([]);
+
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
     // ---- Drawer edit mode ----
@@ -194,8 +202,26 @@ export default function Employees() {
         }
     };
 
+    // Non-critical: if this fails, the Team field in edit mode just falls
+    // back to a plain text input further down (see drawer body).
+    const fetchTeams = async () => {
+        try {
+            const token = localStorage.getItem("accessToken");
+            const res = await fetch(`${apiBase}/api/teams`, {
+                cache: "no-store",
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            });
+            if (!res.ok) return;
+            const json = await res.json();
+            setTeamsList(json?.data || []);
+        } catch {
+            // silent — non-critical
+        }
+    };
+
     useEffect(() => {
         fetchEmployees();
+        fetchTeams();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiBase]);
 
@@ -280,7 +306,9 @@ export default function Employees() {
             const merged: Employee = { ...editForm, ...cleanUpdated };
 
             setEmployees((prev) => prev.map((e) => (e.id === merged.id ? merged : e)));
-            setSelectedEmployee(merged);
+            // Close the drawer entirely on save — takes the user back to the
+            // main list instead of leaving it open in read-only view.
+            setSelectedEmployee(null);
             setIsEditingDrawer(false);
             setEditForm(null);
         } catch (err) {
@@ -828,18 +856,41 @@ export default function Employees() {
                                     )}
                                 </div>
 
-                                {/* Team replaces Location in the drawer details too */}
+                                {/* Team replaces Location in the drawer details too.
+                                    Edit mode is now a dropdown sourced from GET
+                                    /api/teams (same list used on the Products page),
+                                    instead of a free-text input — falls back to a
+                                    plain text input if the teams list couldn't be
+                                    loaded, so editing never gets blocked. */}
                                 <div style={styles.detailsRow}>
                                     <span style={styles.detailsLabel}>Team</span>
                                     {isEditingDrawer ? (
-                                        <input
-                                            className="emp-drawer-input"
-                                            style={styles.detailsInput}
-                                            value={drawerData.team || ""}
-                                            onChange={(e) =>
-                                                updateEditField("team", e.target.value)
-                                            }
-                                        />
+                                        teamsList.length > 0 ? (
+                                            <select
+                                                className="emp-drawer-select"
+                                                style={styles.detailsInput}
+                                                value={drawerData.team || ""}
+                                                onChange={(e) =>
+                                                    updateEditField("team", e.target.value || null)
+                                                }
+                                            >
+                                                <option value="">Select team</option>
+                                                {teamsList.map((t) => (
+                                                    <option key={t.id} value={t.name}>
+                                                        {t.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                className="emp-drawer-input"
+                                                style={styles.detailsInput}
+                                                value={drawerData.team || ""}
+                                                onChange={(e) =>
+                                                    updateEditField("team", e.target.value)
+                                                }
+                                            />
+                                        )
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {drawerData.team || "—"}
