@@ -516,6 +516,8 @@ const Products = () => {
 
     // Shared form fieldset used by both Add and Edit modals so the two
     // never drift out of parity.
+    // Shared form fieldset used by both Add and Edit modals so the two
+    // never drift out of parity.
     const renderProductFieldset = (
         formState: ProductForm,
         setFormState: (updater: (prev: ProductForm) => ProductForm) => void
@@ -563,7 +565,13 @@ const Products = () => {
             </div>
 
             {/* Teams — multi-select dropdown. Spans the full width of the
-                2-column form grid so the checkbox panel has room. */}
+                2-column form grid so the checkbox panel has room. This
+                wrapper stays un-padded so the dropdown panel's
+                `top: calc(100% + 4px)` anchors right below the button —
+                extra space for the open panel is reserved separately
+                below (see spacer div), not on this element, otherwise
+                the panel's anchor point shifts down with it and leaves
+                a visible gap. */}
             <div style={{ gridColumn: "1 / -1", position: "relative" }}>
                 <label style={styles.formLabel}>Teams</label>
                 <button
@@ -624,6 +632,19 @@ const Products = () => {
                     </div>
                 )}
             </div>
+
+            {/* Spacer — reserves layout space equal to the open dropdown
+                panel's height so the "Add/Save" submit button below never
+                sits underneath it. Kept as a separate element (not padding
+                on the wrapper above) so the panel's own anchor position
+                doesn't shift when this grows. */}
+            <div
+                style={{
+                    gridColumn: "1 / -1",
+                    height: teamsDropdownOpen ? 232 : 0,
+                    transition: "height .15s ease",
+                }}
+            />
         </>
     );
 
@@ -1809,7 +1830,7 @@ const styles: Record<string, CSSProperties> = {
     detailsModal: {
         background: "#fff",
         borderRadius: radius.lg,
-        width: 480,
+        width: 560,
         maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
@@ -1835,9 +1856,9 @@ const styles: Record<string, CSSProperties> = {
     },
     detailsTitle: {
         margin: 0,
-        fontSize: fontSize["2xl"],
+        fontSize: fontSize["3xl"],
         fontWeight: fontWeight.semibold,
-        color: "#16233c",
+        color: "#204297",
     },
     closeBtn: {
         position: "absolute",
