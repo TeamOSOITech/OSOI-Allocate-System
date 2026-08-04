@@ -30,6 +30,7 @@ function useIsMobile() {
 // never got updated to match.
 const API_BASE = import.meta.env.VITE_API_URL;
 const ENDPOINT = `${API_BASE}/api/products`;
+const TEAMS_ENDPOINT = `${API_BASE}/api/teams`;
 
 // REVERSED MAPPING: a Product is now a standalone catalog entry. It no
 // longer carries a client/subclient on itself — Clients and Subclients
@@ -39,6 +40,7 @@ type Product = {
     product_name: string;
     time_taken: string;
     time_unit: string;
+    teams?: string[];
     created_at?: string;
     updated_at?: string;
 };
@@ -47,13 +49,19 @@ type ProductForm = {
     product_name: string;
     time_taken: string;
     time_unit: string;
+    teams: string[];
 };
 
 const emptyForm: ProductForm = {
     product_name: "",
     time_taken: "",
     time_unit: "",
+    teams: [],
 };
+
+// Shape returned by GET /api/teams — assumed to match the id/name pattern
+// used elsewhere in the app (e.g. Clients page selects).
+type Team = { id: string; name: string };
 
 type DeleteTarget = { id: string; name: string };
 
@@ -162,6 +170,9 @@ const GLOBAL_CSS = `
 .pr-scroll-area::-webkit-scrollbar-track { background: transparent; }
 .pr-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .pr-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+
+/* Teams multi-select dropdown (Add / Edit Service modals) */
+.pr-teams-check-row:hover { background: #f0f6fd; }
 `;
 
 // Columns required in the bulk-upload sheet, shown in the modal's info
@@ -187,6 +198,11 @@ const Products = () => {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+
+    // Teams available for the dropdown (Add / Edit Service). Fetched once
+    // on mount from the existing Teams API.
+    const [teamsList, setTeamsList] = useState<Team[]>([]);
+    const [teamsDropdownOpen, setTeamsDropdownOpen] = useState(false);
 
     const [search, setSearch] = useState("");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -237,8 +253,26 @@ const Products = () => {
         }
     };
 
+    // Teams for the dropdown. Kept separate from `error` state above so a
+    // failed teams fetch doesn't block the whole page — the dropdown just
+    // shows empty and the rest of the page works as before.
+    const fetchTeams = async () => {
+        try {
+            const res = await authFetch(TEAMS_ENDPOINT, {
+                headers: { "Content-Type": "application/json" },
+            });
+            const json = await res.json();
+            if (res.ok && json.success !== false) {
+                setTeamsList(json.data || []);
+            }
+        } catch {
+            // silent — non-critical for the page to function
+        }
+    };
+
     useEffect(() => {
         fetchProducts();
+        fetchTeams();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -255,12 +289,14 @@ const Products = () => {
     const openAddModal = () => {
         setAddForm({ ...emptyForm });
         setAddError("");
+        setTeamsDropdownOpen(false);
         setShowAddModal(true);
     };
 
     const closeAddModal = () => {
         setShowAddModal(false);
         setAddError("");
+        setTeamsDropdownOpen(false);
     };
 
     const handleAddSubmit = async () => {
@@ -302,13 +338,16 @@ const Products = () => {
             product_name: product.product_name || "",
             time_taken: product.time_taken || "",
             time_unit: product.time_unit || "",
+            teams: product.teams || [],
         });
+        setTeamsDropdownOpen(false);
         setEditTarget(product);
     };
 
     const closeEditModal = () => {
         setEditTarget(null);
         setEditError("");
+        setTeamsDropdownOpen(false);
     };
 
     const handleEditSubmit = async () => {
@@ -458,6 +497,23 @@ const Products = () => {
         }
     };
 
+    // Toggles a team name in/out of a form's `teams` array. Shared by both
+    // the Add and Edit modals via renderProductFieldset below.
+    const toggleTeamSelection = (
+        teamName: string,
+        setFormState: (updater: (prev: ProductForm) => ProductForm) => void
+    ) => {
+        setFormState((prev) => {
+            const alreadySelected = prev.teams.includes(teamName);
+            return {
+                ...prev,
+                teams: alreadySelected
+                    ? prev.teams.filter((t) => t !== teamName)
+                    : [...prev.teams, teamName],
+            };
+        });
+    };
+
     // Shared form fieldset used by both Add and Edit modals so the two
     // never drift out of parity.
     const renderProductFieldset = (
@@ -504,6 +560,69 @@ const Products = () => {
                         <option value="hours">Hours</option>
                     </select>
                 </div>
+            </div>
+
+            {/* Teams — multi-select dropdown. Spans the full width of the
+                2-column form grid so the checkbox panel has room. */}
+            <div style={{ gridColumn: "1 / -1", position: "relative" }}>
+                <label style={styles.formLabel}>Teams</label>
+                <button
+                    type="button"
+                    style={styles.teamsDropdownButton}
+                    onClick={() => setTeamsDropdownOpen((prev) => !prev)}
+                >
+                    <span style={styles.teamsDropdownButtonText}>
+                        {formState.teams.length > 0
+                            ? `${formState.teams.length} team${
+                                  formState.teams.length > 1 ? "s" : ""
+                              } selected`
+                            : "Select teams"}
+                    </span>
+                    <i
+                        className={`ti ${teamsDropdownOpen ? "ti-chevron-up" : "ti-chevron-down"}`}
+                        style={{ fontSize: fontSize.sm, color: "#7c8aa3" }}
+                    />
+                </button>
+
+                {formState.teams.length > 0 && (
+                    <div style={styles.teamChipsWrap}>
+                        {formState.teams.map((t) => (
+                            <span key={t} style={styles.teamChip}>
+                                {t}
+                                <i
+                                    className="ti ti-x"
+                                    style={styles.teamChipRemove}
+                                    onClick={() => toggleTeamSelection(t, setFormState)}
+                                />
+                            </span>
+                        ))}
+                    </div>
+                )}
+
+                {teamsDropdownOpen && (
+                    <div style={styles.teamsDropdownPanel}>
+                        {teamsList.length === 0 ? (
+                            <div style={styles.teamsDropdownEmpty}>No teams found</div>
+                        ) : (
+                            teamsList.map((team) => (
+                                <label
+                                    key={team.id}
+                                    className="pr-teams-check-row"
+                                    style={styles.teamCheckboxRow}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={formState.teams.includes(team.name)}
+                                        onChange={() =>
+                                            toggleTeamSelection(team.name, setFormState)
+                                        }
+                                    />
+                                    {team.name}
+                                </label>
+                            ))
+                        )}
+                    </div>
+                )}
             </div>
         </>
     );
@@ -676,14 +795,16 @@ const Products = () => {
                             <div style={styles.tableWrap}>
                                 <table className="pr-table" style={styles.table}>
                                     <colgroup>
-                                        <col style={{ width: "40%" }} />
-                                        <col style={{ width: "30%" }} />
-                                        <col style={{ width: "30%" }} />
+                                        <col style={{ width: "28%" }} />
+                                        <col style={{ width: "18%" }} />
+                                        <col style={{ width: "29%" }} />
+                                        <col style={{ width: "25%" }} />
                                     </colgroup>
                                     <thead>
                                         <tr>
                                             <th style={styles.th}>Service</th>
                                             <th style={styles.th}>Time Taken</th>
+                                            <th style={styles.th}>Teams</th>
                                             <th style={{ ...styles.th, textAlign: "left" }}>
                                                 Actions
                                             </th>
@@ -717,6 +838,22 @@ const Products = () => {
                                                                 p.time_unit
                                                             )}
                                                         </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        {p.teams && p.teams.length > 0 ? (
+                                                            <div style={styles.tdTeamsWrap}>
+                                                                {p.teams.map((t) => (
+                                                                    <span
+                                                                        key={t}
+                                                                        style={styles.tdTeamChip}
+                                                                    >
+                                                                        {t}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <span style={styles.tdMuted}>—</span>
+                                                        )}
                                                     </td>
                                                     <td style={styles.td}>
                                                         <div style={styles.tdActions}>
@@ -800,17 +937,21 @@ const Products = () => {
                                                     <span style={styles.cardName}>
                                                         {p.product_name}
                                                     </span>
-                                                    <span
-                                                        style={{
-                                                            ...styles.cardCountBadge,
-                                                            background: `${avatar.solid}1A`,
-                                                            color: avatar.solid,
-                                                        }}
-                                                    >
-                                                        {p.time_unit === "hours"
-                                                            ? "Hourly"
-                                                            : "Per minute"}
-                                                    </span>
+                                                    {/* Team badge replaces the old Per minute/Hourly
+                                                        indicator. Renders nothing when no team is
+                                                        tagged yet, instead of falling back to the
+                                                        old billing-frequency text. */}
+                                                    {p.teams && p.teams.length > 0 && (
+                                                        <span
+                                                            style={{
+                                                                ...styles.cardCountBadge,
+                                                                background: `${avatar.solid}1A`,
+                                                                color: avatar.solid,
+                                                            }}
+                                                        >
+                                                            {p.teams.join(", ")}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -876,6 +1017,19 @@ const Products = () => {
                                     {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
                                 </span>
                             </div>
+
+                            {viewDetails.teams && viewDetails.teams.length > 0 && (
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Teams</span>
+                                    <div style={styles.tdTeamsWrap}>
+                                        {viewDetails.teams.map((t) => (
+                                            <span key={t} style={styles.tdTeamChip}>
+                                                {t}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             <div style={styles.detailsModalFooter}>
                                 <button
@@ -1483,6 +1637,23 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
 
+    // Teams chips shown on the grid card, between the info rows and the
+    // "View Details" button.
+    cardTeamsWrap: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+    },
+    cardTeamChip: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#204297",
+        background: "#e7ecf8",
+        padding: "3px 9px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+    },
+
     viewDetailsBtn: {
         display: "flex",
         alignItems: "center",
@@ -1500,14 +1671,22 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        flex: 1,
+        // FIX: was `flex: 1`, which let the button stretch to fill
+        // whatever leftover vertical space the grid's row-stretching left
+        // in shorter cards (e.g. ones with no team badge) — that's why
+        // some "View Details" buttons were taller than others. A fixed
+        // height + marginTop: auto keeps every button the same size while
+        // still sitting flush at the bottom of its card.
+        height: 44,
+        flexShrink: 0,
+        marginTop: "auto",
         border: "none",
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         borderRadius: radius.md,
-        padding: "11px 16px",
+        padding: "0 16px",
         cursor: "pointer",
         boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
     },
@@ -1610,6 +1789,22 @@ const styles: Record<string, CSSProperties> = {
         textOverflow: "ellipsis",
     },
     tdActions: { display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8 },
+
+    // Teams chips shown in the list/table view and the View Details modal.
+    tdTeamsWrap: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+    },
+    tdTeamChip: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#204297",
+        background: "#e7ecf8",
+        padding: "2px 8px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+    },
 
     detailsModal: {
         background: "#fff",
@@ -1722,6 +1917,78 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         gridColumn: "1 / -1",
+    },
+
+    // ---- Teams multi-select dropdown (Add / Edit Service modals) ----
+    teamsDropdownButton: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        width: "100%",
+        padding: "10px 12px",
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
+        outline: "none",
+        fontSize: fontSize.base,
+        borderRadius: radius.sm,
+        boxSizing: "border-box",
+        color: "#16233c",
+        cursor: "pointer",
+    },
+    teamsDropdownButtonText: {
+        color: "#7c8aa3",
+    },
+    teamsDropdownPanel: {
+        position: "absolute",
+        top: "calc(100% + 4px)",
+        left: 0,
+        right: 0,
+        zIndex: 30,
+        background: "#fff",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.sm,
+        boxShadow: "0 12px 28px rgba(16,38,89,.16)",
+        maxHeight: 220,
+        overflowY: "auto",
+        padding: 6,
+    },
+    teamsDropdownEmpty: {
+        padding: "10px 12px",
+        fontSize: fontSize.sm,
+        color: "#9aa5b8",
+    },
+    teamCheckboxRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        fontSize: fontSize.base,
+        color: "#16233c",
+        borderRadius: radius.xs,
+        cursor: "pointer",
+    },
+    teamChipsWrap: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        marginTop: 8,
+    },
+    teamChip: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#204297",
+        background: "#e7ecf8",
+        padding: "4px 8px 4px 10px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+    },
+    teamChipRemove: {
+        fontSize: 10,
+        cursor: "pointer",
+        color: "#5a6c85",
     },
 
     // ---- Bulk Upload modal (matches Add User's "Bulk Add Users" modal,
