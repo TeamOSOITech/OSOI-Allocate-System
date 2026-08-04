@@ -21,7 +21,10 @@ function mapRow(row) {
     reportingManager: row["Reporting Manager"] ?? null,
     joiningDate: row["Date of Joining"] ?? null,
     dateOfBirth: row["Date of Birth"] ?? null,
-    workedInTeams: row["Worked In Teams"] ?? null,
+    // FIX: frontend (employees.tsx) sends/reads this field as "team", not
+    // "workedInTeams" — that name mismatch is why Team silently failed to
+    // save and always came back empty after refresh.
+    team: row["Worked In Teams"] ?? null,
     photoUrl: row.photo_url ?? null,
     status: "Active",
   };
@@ -88,8 +91,14 @@ async function updateEmployee(req, res) {
     updatePayload["Date of Birth"] = body.dateOfBirth;
   if (body.employeeCode !== undefined)
     updatePayload["Employee ID"] = body.employeeCode;
-  if (body.workedInTeams !== undefined)
-    updatePayload["Worked In Teams"] = body.workedInTeams;
+  // FIX: frontend sends this field as "team" (see employees.tsx —
+  // updateEditField("team", ...) / drawerData.team), not "workedInTeams".
+  // The old check (`body.workedInTeams !== undefined`) never matched
+  // anything the frontend actually sends, so the "Worked In Teams" column
+  // was silently never included in the update — Team appeared to save in
+  // the UI (optimistic local state) but nothing was ever written to the
+  // database, so it came back empty on every refresh.
+  if (body.team !== undefined) updatePayload["Worked In Teams"] = body.team;
 
   if (Object.keys(updatePayload).length === 0) {
     return res.status(400).json({ error: "No valid fields to update" });
