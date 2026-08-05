@@ -23,6 +23,7 @@
 const API_BASE = import.meta.env.VITE_API_URL;
 const REFRESH_ENDPOINT = `${API_BASE}/api/auth/refresh`;
 const LOGOUT_ENDPOINT = `${API_BASE}/api/auth/logout`;
+const CSRF_STORAGE_KEY = "csrfToken";
 
 const COLD_START_RETRY_DELAYS_MS = [2000, 5000, 10000, 15000]; // ~32s total budget
 
@@ -32,11 +33,40 @@ function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// csrfToken is deliberately NOT httpOnly (see authCookies.js), so this is
-// the one cookie the frontend is allowed — and needs — to read directly.
-function getCsrfTokenFromCookie(): string | null {
-    const match = document.cookie.match(/(?:^|; )csrfToken=([^;]*)/);
-    return match ? decodeURIComponent(match[1]) : null;
+// CROSS-DOMAIN FIX: this used to read the csrfToken cookie directly via
+// document.cookie (the textbook "double-submit cookie" pattern). That only
+// works when frontend and backend share a registrable domain (e.g.
+// app.example.com + api.example.com). Here they're on entirely different
+// domains (vercel.app vs onrender.com) — a browser will NEVER expose a
+// cookie set by one site's Set-Cookie header to JS running on a different
+// site, regardless of the cookie's httpOnly flag. That's exactly why
+// every non-GET request was failing with "CSRF check failed" in
+// production despite working fine anywhere frontend/backend share a
+// domain (or in local dev, where both can be localhost).
+//
+// Fix: the backend already returns the SAME csrfToken value in the login
+// and refresh response BODIES (see auth.controller.js), not just as a
+// cookie. A same-origin fetch() response body is always readable by our
+// own JS no matter what domain the server is on — so we capture it there
+// instead, keep it in memory, and mirror it to localStorage purely so a
+// page refresh doesn't lose it (a browser refresh clears JS memory but
+// not localStorage). It's safe to store like this: a CSRF token isn't a
+// secret credential — its only job is proving "this request came from JS
+// running on our own frontend," which localStorage already guarantees
+// just as well as a cookie would (a malicious cross-site page can't read
+// either one).
+let csrfToken: string | null =
+    typeof window !== "undefined" ? localStorage.getItem(CSRF_STORAGE_KEY) : null;
+
+export function setCsrfToken(token: string | null) {
+    csrfToken = token;
+    if (typeof window === "undefined") return;
+    if (token) localStorage.setItem(CSRF_STORAGE_KEY, token);
+    else localStorage.removeItem(CSRF_STORAGE_KEY);
+}
+
+function getCsrfToken(): string | null {
+    return csrfToken;
 }
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -50,13 +80,28 @@ async function refreshSession(): Promise<boolean> {
 
     refreshInFlight = (async () => {
         try {
-            const csrfToken = getCsrfTokenFromCookie();
+            const csrf = getCsrfToken();
             const res = await fetch(REFRESH_ENDPOINT, {
                 method: "POST",
                 credentials: "include",
-                headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+                headers: csrf ? { "X-CSRF-Token": csrf } : {},
             });
-            return res.ok;
+            if (!res.ok) return false;
+
+            // The refreshed csrfToken cookie is a NEW value (see
+            // authCookies.js — generateCsrfToken() runs again on every
+            // setAuthCookies call) — capture it from the body so our next
+            // header send matches what the browser will now attach as the
+            // cookie, instead of sending the stale pre-refresh value.
+            try {
+                const data = await res.json();
+                if (data?.data?.csrfToken) setCsrfToken(data.data.csrfToken);
+            } catch {
+                // Non-fatal — worst case the next request's CSRF check
+                // fails and triggers another refresh cycle.
+            }
+
+            return true;
         } catch (err) {
             console.error("authFetch: session refresh failed:", err);
             return false;
@@ -81,6 +126,7 @@ function goToLogin() {
     // never a credential — safe to keep in localStorage, but stale on
     // logout so it should still be cleared.
     localStorage.removeItem("user");
+    setCsrfToken(null);
     window.location.href = "/login";
 }
 
@@ -127,8 +173,8 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
         // CSRF header only needed (and only checked by the backend) on
         // state-changing requests — GET/HEAD/OPTIONS are exempt.
         if (!SAFE_METHODS.has(method)) {
-            const csrfToken = getCsrfTokenFromCookie();
-            if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+            const csrf = getCsrfToken();
+            if (csrf) headers["X-CSRF-Token"] = csrf;
         }
 
         return {

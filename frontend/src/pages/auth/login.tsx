@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { setCsrfToken } from "../../utils/authFetch";
 
 const MOBILE_BREAKPOINT = 860;
 const COMPACT_BREAKPOINT = 640;
@@ -73,6 +74,16 @@ const Login = () => {
             // kept client-side, for displaying name/role in the UI and as
             // the PrivateRoute "am I logged in" signal in App.jsx.
             localStorage.setItem("user", JSON.stringify(data.data.user));
+
+            // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
+            // (onrender.com) are different domains, so our JS can never
+            // read the csrfToken cookie the backend also sets — the
+            // browser only exposes a cookie to JS running on the SAME
+            // domain that set it. The backend anticipates this and also
+            // returns the same value in this response body, which (unlike
+            // the cookie) our own same-origin fetch() call CAN read. Every
+            // authFetch() call after this attaches it as X-CSRF-Token.
+            if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
 
             const userRole = data.data.user.role;
 
