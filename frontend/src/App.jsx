@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Header from "./components/header";
 import Sidebar from "./components/sidebar";
 import { ThemeProvider } from "./context/themecontext";
@@ -35,6 +35,22 @@ const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 // Backend base URL, same source every other page uses for API calls.
 const API_URL = import.meta.env.VITE_API_URL;
 
+// ---------------------------------------------------------------------
+// ROLE-BASED ACCESS — Phase 1
+// ---------------------------------------------------------------------
+// Two roles are explicitly managed at this stage:
+//   - Tenant / Super Admin ("SUPER_ADMIN"): full access, unrestricted —
+//     already true today, since SUPER_ADMIN is included in every
+//     ADMIN_TIER_ROLES / ADMIN_AND_VERTICAL_HEAD_ROLES gate below.
+//   - Normal User ("TEAM_MEMBER"): capped to exactly these pages,
+//     regardless of what requiredRole an individual route also declares.
+// Every other existing role (OPS_MANAGER, AUDIT_MANAGER, PROCESS_LEAD,
+// VERTICAL_HEAD) keeps whatever access it already had — this phase only
+// tightens TEAM_MEMBER. Add more paths here as Normal User's access
+// expands later; nothing else about the routing needs to change.
+const NORMAL_USER_ALLOWED_PATHS = ["/report", "/history", "/daily-work", "/profile"];
+const NORMAL_USER_HOME = "/report";
+
 // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly cookies the
 // browser attaches automatically — this component's JS can no longer read
 // them (that's the whole point of httpOnly), so "am I logged in?" can't be
@@ -52,8 +68,18 @@ const API_URL = import.meta.env.VITE_API_URL;
 // right back out — no protected data or action is actually reachable
 // without a valid cookie.
 const PrivateRoute = ({ children, requiredRole = null }) => {
+    const location = useLocation();
     const user = JSON.parse(localStorage.getItem("user") || "null");
     if (!user) return <Navigate to="/login" replace />;
+
+    // Role-based access, Phase 1: Normal User can only ever reach the
+    // allow-listed paths above, full stop — checked first, before the
+    // per-route requiredRole below, so a stray/incomplete requiredRole
+    // list on some route can never accidentally leave a gap for this
+    // role. Typing any other URL directly bounces them back to /report.
+    if (user?.role === "TEAM_MEMBER" && !NORMAL_USER_ALLOWED_PATHS.includes(location.pathname)) {
+        return <Navigate to={NORMAL_USER_HOME} replace />;
+    }
 
     // FIX: requiredRole can now be a single role (string) or a list of
     // allowed roles (array) — needed since Quality Scores allows both    // ADMIN and MANAGER, not just one role.
@@ -63,7 +89,7 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
             // FIX: was checking for "EMPLOYEE"/"MANAGER" — those roles no
             // longer exist after migrating to the 6-tier system, so these
             // fallbacks never matched and everyone got bounced to /login.
-            if (user?.role === "TEAM_MEMBER") return <Navigate to="/report" replace />;
+            if (user?.role === "TEAM_MEMBER") return <Navigate to={NORMAL_USER_HOME} replace />;
             if (user?.role === "VERTICAL_HEAD") return <Navigate to="/workinprogress" replace />;
             return <Navigate to="/login" replace />;
         }
@@ -228,11 +254,15 @@ function App() {
                         {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
 Gated the same as Clients Preview: admin-tier + Vertical Head,
 since creating a batch requires tasks.allocate.team/org on the
-backend anyway (Vertical Head = own team, others = org-wide). */}
+backend anyway (Vertical Head = own team, others = org-wide).
+TEAM_MEMBER (Normal User) is also allowed in as of role-based
+access Phase 1 — this is their "Daily Assigned Work" page. */}
                         <Route
                             path="/daily-work"
                             element={
-                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                <PrivateRoute
+                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
+                                >
                                     <AppLayout onLogout={handleLogout}>
                                         <DailyWork />
                                     </AppLayout>

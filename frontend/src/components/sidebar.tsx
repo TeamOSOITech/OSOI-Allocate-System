@@ -26,6 +26,17 @@ const menuItems: MenuItem[] = [
         path: "/dashboard",
         roles: ADMIN_TIER,
     },
+    // Role-based access Phase 1: Normal User's own landing page. Points
+    // at /report (open to any logged-in user, no requiredRole in
+    // App.jsx) rather than /dashboard, which is the admin-tier metrics
+    // dashboard. Shown only to TEAM_MEMBER — admin-tier roles already
+    // have "Dashboard" above.
+    {
+        label: "User Dashboard",
+        icon: "ti ti-smart-home",
+        path: "/report",
+        roles: ["TEAM_MEMBER"],
+    },
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
@@ -40,7 +51,10 @@ const menuItems: MenuItem[] = [
         label: "Services",
         icon: "ti ti-package",
         path: "/products",
-        roles: EVERYONE,
+        // Role-based access Phase 1: Normal User no longer sees this —
+        // was EVERYONE (included TEAM_MEMBER), narrowed to admin-tier +
+        // Vertical Head only.
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "Clients Preview",
@@ -58,7 +72,11 @@ const menuItems: MenuItem[] = [
         label: "Daily Work",
         icon: "ti ti-clipboard-plus",
         path: "/daily-work",
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        // Role-based access Phase 1: this is Normal User's "Daily
+        // Assigned Work" page — TEAM_MEMBER added alongside the existing
+        // admin-tier + Vertical Head access. Matches the requiredRole
+        // update on the /daily-work route in App.jsx.
+        roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
     // REMOVED: standalone Attendance nav link — leave-marking now lives
     // inline inside Manual/Smart Allocation instead of a separate page.
@@ -73,7 +91,10 @@ const menuItems: MenuItem[] = [
         label: "Production Reports",
         icon: "ti ti-file-analytics",
         path: "/production-reports",
-        roles: EVERYONE,
+        // Role-based access Phase 1: Normal User no longer sees this —
+        // was EVERYONE (included TEAM_MEMBER), narrowed to admin-tier +
+        // Vertical Head only.
+        roles: ADMIN_AND_VERTICAL_HEAD,
     },
     {
         label: "History",
@@ -98,6 +119,7 @@ const menuItems: MenuItem[] = [
 
 const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
+    "/report": "User Dashboard",
     "/products": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
