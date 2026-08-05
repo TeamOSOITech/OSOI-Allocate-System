@@ -51,6 +51,13 @@ const Login = () => {
                     email: username,
                     password,
                 }),
+                // COOKIE-AUTH: required so the browser actually stores the
+                // Set-Cookie headers the backend sends back (accessToken/
+                // refreshToken/csrfToken). Without this, a cross-origin
+                // response's cookies are silently dropped — login would
+                // "succeed" (200 + user data) but no session would ever
+                // actually be established.
+                credentials: "include",
             });
 
             const data = await res.json();
@@ -59,8 +66,12 @@ const Login = () => {
                 throw new Error(data.message || "Login failed");
             }
 
-            localStorage.setItem("accessToken", data.data.accessToken);
-            localStorage.setItem("refreshToken", data.data.refreshToken);
+            // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
+            // cookies set by the server above — storing them in
+            // localStorage too would just be dead, readable-by-XSS weight
+            // with no purpose. Only the (non-sensitive) user profile is
+            // kept client-side, for displaying name/role in the UI and as
+            // the PrivateRoute "am I logged in" signal in App.jsx.
             localStorage.setItem("user", JSON.stringify(data.data.user));
 
             const userRole = data.data.user.role;

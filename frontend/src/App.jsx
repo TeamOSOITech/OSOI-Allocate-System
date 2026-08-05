@@ -32,10 +32,28 @@ const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
+// Backend base URL, same source every other page uses for API calls.
+const API_URL = import.meta.env.VITE_API_URL;
+
+// COOKIE-AUTH: accessToken/refreshToken now live in httpOnly cookies the
+// browser attaches automatically — this component's JS can no longer read
+// them (that's the whole point of httpOnly), so "am I logged in?" can't be
+// answered by checking localStorage.getItem("accessToken") anymore; that
+// key is never written now and this would ALWAYS bounce straight back to
+// /login even with a perfectly valid session.
+//
+// Instead we treat the presence of the (non-sensitive) cached `user`
+// profile as the "looks logged in" signal for routing purposes only. This
+// is a UX gate, not a security boundary — the real enforcement is still
+// the backend rejecting requests with an invalid/missing/expired cookie
+// (401), which authFetch.ts catches and redirects to /login for. A user
+// who tampers with localStorage to fake a `user` object just lands on a
+// page that immediately 401s on its first data fetch and gets bounced
+// right back out — no protected data or action is actually reachable
+// without a valid cookie.
 const PrivateRoute = ({ children, requiredRole = null }) => {
-    const token = localStorage.getItem("accessToken");
     const user = JSON.parse(localStorage.getItem("user") || "null");
-    if (!token) return <Navigate to="/login" replace />;
+    if (!user) return <Navigate to="/login" replace />;
 
     // FIX: requiredRole can now be a single role (string) or a list of
     // allowed roles (array) — needed since Quality Scores allows both    // ADMIN and MANAGER, not just one role.
@@ -131,8 +149,24 @@ const AppLayout = ({ children, onLogout }) => {
 function App() {
     const user = JSON.parse(localStorage.getItem("user") || "null");
 
-    const handleLogout = () => {
-        localStorage.removeItem("accessToken");
+    // COOKIE-AUTH: logging out now has to tell the SERVER to clear the
+    // httpOnly accessToken/refreshToken/csrfToken cookies — clearing only
+    // localStorage (as before) left those cookies alive, so the very next
+    // request would still authenticate successfully against the "logged
+    // out" account. Fire the backend call first (with credentials so the
+    // cookies actually go along with it), then clear local state and
+    // redirect regardless of whether that call succeeds — we don't want a
+    // flaky network request to trap someone on a "logged in" screen they
+    // explicitly asked to leave.
+    const handleLogout = async () => {
+        try {
+            await fetch(`${API_URL}/api/auth/logout`, {
+                method: "POST",
+                credentials: "include",
+            });
+        } catch {
+            // Ignore — we're logging out locally either way below.
+        }
         localStorage.removeItem("user");
         window.location.href = "/login";
     };

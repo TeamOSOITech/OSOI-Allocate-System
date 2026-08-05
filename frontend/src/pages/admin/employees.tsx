@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { authFetch } from "../../utils/authFetch";
 //import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
@@ -182,17 +183,19 @@ export default function Employees() {
 
     const apiBase = import.meta.env.VITE_API_URL;
 
+    // COOKIE-AUTH: this page used to build its own Authorization header
+    // from localStorage.getItem("accessToken") on every call below. That
+    // key is never written anymore (tokens live in httpOnly cookies now —
+    // see authFetch.ts), so every request here was silently going out
+    // with NO credentials at all and 401ing. Switched every fetch() call
+    // in this file to authFetch(), which attaches the auth cookie + CSRF
+    // header automatically and handles token refresh, exactly like every
+    // other page (Clients, Products, etc.) already does.
     const fetchEmployees = async () => {
         setLoading(true);
         setError("");
         try {
-            // FIX: /api/employees now requires authentication (was
-            // previously wide open) — this fetch was sending no token.
-            const token = localStorage.getItem("accessToken");
-            const res = await fetch(`${apiBase}/api/employees`, {
-                cache: "no-store",
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            });
+            const res = await authFetch(`${apiBase}/api/employees`, { cache: "no-store" });
             if (!res.ok) throw new Error("Failed to load employees");
             setEmployees(await res.json());
         } catch (err: any) {
@@ -206,11 +209,7 @@ export default function Employees() {
     // back to a plain text input further down (see drawer body).
     const fetchTeams = async () => {
         try {
-            const token = localStorage.getItem("accessToken");
-            const res = await fetch(`${apiBase}/api/teams`, {
-                cache: "no-store",
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            });
+            const res = await authFetch(`${apiBase}/api/teams`, { cache: "no-store" });
             if (!res.ok) return;
             const json = await res.json();
             setTeamsList(json?.data || []);
@@ -275,13 +274,9 @@ export default function Employees() {
         if (!editForm) return;
         setSaving(true);
         try {
-            const token = localStorage.getItem("accessToken");
-            const res = await fetch(`${apiBase}/api/employees/${editForm.id}`, {
+            const res = await authFetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(editForm),
             });
             if (!res.ok) throw new Error("Update failed");
@@ -336,10 +331,8 @@ export default function Employees() {
         setDeleting(true);
 
         try {
-            const token = localStorage.getItem("accessToken");
-            const response = await fetch(`${apiBase}/api/employees/${employeeToDelete.id}`, {
+            const response = await authFetch(`${apiBase}/api/employees/${employeeToDelete.id}`, {
                 method: "DELETE",
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             });
 
             if (!response.ok) throw new Error("Delete failed");
