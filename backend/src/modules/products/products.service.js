@@ -218,10 +218,20 @@ const syncClientProducts = async (clientId, productRates, organizationId) => {
 // Subclient <-> Product linking (used by modules/clients/subclients.routes.js)
 // ---------------------------------------------------------------------
 
+// FIX: this select had a typo — "ser_master(*)" instead of
+// "service_master(*)". Supabase's PostgREST resolves that embedded-select
+// syntax against actual foreign-key relationship names in the schema
+// cache; since no relationship named "ser_master" exists (the real table/
+// FK target is "service_master", same as getProductsForClient above), every
+// call failed with "Could not find a relationship between
+// 'subclient_products' and 'ser_master' in the schema cache" — which is
+// exactly the error that was surfacing on Subclient Save. The filter below
+// was already correctly checking `row.service_master`, so this was purely
+// a mismatched string in the select, not a logic bug.
 const getProductsForSubclient = async (subclientId, organizationId) => {
   const { data, error } = await supabase
     .from(SUBCLIENT_LINK_TABLE)
-    .select("product_id, amount, currency, ser_master(*)")
+    .select("product_id, amount, currency, service_master(*)")
     .eq("subclient_id", subclientId)
     .eq("organization_id", organizationId);
 
