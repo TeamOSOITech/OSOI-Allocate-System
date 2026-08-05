@@ -37,14 +37,19 @@ app.use(express.json());
 // API from a victim's browser and read the JSON response. That defeats
 // most of the point of httpOnly cookies. Restricted to an explicit
 // whitelist instead; add every real frontend origin (prod + local dev) to
-// FRONTEND_URLS in your .env as a comma-separated list, e.g.:
-//   FRONTEND_URLS=https://your-app.vercel.app,http://localhost:5173
-const allowedOrigins = (process.env.FRONTEND_URLS || "http://localhost:5173")
+// FRONTEND_URL in your .env as a comma-separated list (singular name —
+// matches the env var already set on Render), e.g.:
+//   FRONTEND_URL=https://your-app.vercel.app,http://localhost:5173
+const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-console.log("CORS allowedOrigins:", allowedOrigins); // 👈 YE LINE ADD KARO
+// TEMP DEBUG: remove once CORS is confirmed working in production. Prints
+// exactly what the server resolved FRONTEND_URLS to at boot, so a typo,
+// missing env var, or stray whitespace/quotes is visible in the Render logs
+// instead of having to guess from the CORS error alone.
+console.log("CORS allowedOrigins:", allowedOrigins);
 
 app.use(
   cors({
