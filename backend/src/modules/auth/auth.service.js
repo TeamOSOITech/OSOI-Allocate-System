@@ -158,7 +158,31 @@ const forgotPassword = async (email) => {
   return { message: "If an account exists, a reset link has been sent." };
 };
 
+// Called by POST /api/auth/refresh. Runs server-side using the
+// refreshToken httpOnly cookie (the frontend can no longer read this
+// value directly, so it can't call supabase.auth.refreshSession()
+// itself anymore — that logic moves here).
+const refreshSession = async (refreshToken) => {
+  if (!refreshToken) {
+    throw new Error("No refresh token provided.");
+  }
+
+  const { data, error } = await supabase.auth.refreshSession({
+    refresh_token: refreshToken,
+  });
+
+  if (error || !data?.session) {
+    throw new Error(error?.message || "Session refresh failed.");
+  }
+
+  return {
+    accessToken: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+  };
+};
+
 module.exports = {
   login,
   forgotPassword,
+  refreshSession,
 };

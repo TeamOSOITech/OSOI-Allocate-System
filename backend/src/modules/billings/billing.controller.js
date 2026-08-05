@@ -60,6 +60,29 @@ const createOrderHandler = async (req, res) => {
 // below — a paid payment_signups row + signupToken.
 const mockCheckoutHandler = async (req, res) => {
   try {
+    // SECURITY: this path never talks to Razorpay — it only checks the
+    // card number's *shape* and then hands out a "paid" signup token.
+    // It exists purely for local dev/demo so you don't need real
+    // Razorpay keys to test the signup flow. It must NEVER be reachable
+    // in production, or anyone can create a paid account for free by
+    // POSTing any 13-19 digit number here.
+    //
+    // Guarded by NODE_ENV, with an explicit opt-in escape hatch
+    // (ALLOW_MOCK_CHECKOUT=true) for a staging/demo box that isn't
+    // technically "production" but still shouldn't default to this
+    // being open.
+    const mockCheckoutBlocked =
+      process.env.NODE_ENV === "production" &&
+      process.env.ALLOW_MOCK_CHECKOUT !== "true";
+
+    if (mockCheckoutBlocked) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Mock checkout is disabled in production. Use /create-order + /verify-payment (real Razorpay flow) instead.",
+      });
+    }
+
     const { plan, email, cardNumber } = req.body;
 
     if (!plan || !email) {

@@ -1,6 +1,10 @@
 const router = require("express").Router();
 const rateLimit = require("express-rate-limit");
-const { loginHandler } = require("./auth.controller");
+const {
+  loginHandler,
+  logoutHandler,
+  refreshHandler,
+} = require("./auth.controller");
 const { forgotPasswordHandler } = require("./auth.controller");
 const {
   registerOrganizationHandler,
@@ -49,6 +53,27 @@ const registerOrgLimiter = rateLimit({
 
 // Login using Supabase Authentication
 router.post("/login", loginLimiter, loginHandler);
+
+// Clears the auth cookies. No rate limit needed — it only ever hurts
+// the caller's own session, nothing to abuse.
+router.post("/logout", logoutHandler);
+
+// Called by the frontend's authFetch wrapper on a 401 — uses the
+// refreshToken httpOnly cookie to mint a new access token without the
+// user having to log in again. Rate-limited a bit looser than login
+// since legitimate traffic can hit this fairly often (every ~1hr per
+// active user, plus retries).
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many session refresh attempts. Please log in again.",
+  },
+});
+router.post("/refresh", refreshLimiter, refreshHandler);
 
 router.post("/forgot-password", forgotPasswordLimiter, forgotPasswordHandler);
 

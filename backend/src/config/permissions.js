@@ -114,6 +114,31 @@ const APPROVAL_RULES = {
   },
 };
 
+// SECURITY: which roles a given role is allowed to CREATE via
+// users.onboard (add-user / bulk-add-user). Without this, any role
+// holding "users.onboard" (currently PROCESS_LEAD) could set
+// `role: "SUPER_ADMIN"` in the request body and hand themselves —
+// or anyone — full admin access. This must be enforced server-side
+// on every user-creation path, never inferred from the permission
+// check alone.
+const ASSIGNABLE_ROLES = {
+  [ROLES.PROCESS_LEAD]: [ROLES.TEAM_MEMBER, ROLES.VERTICAL_HEAD],
+  [ROLES.SUPER_ADMIN]: [
+    ROLES.TEAM_MEMBER,
+    ROLES.VERTICAL_HEAD,
+    ROLES.PROCESS_LEAD,
+    ROLES.OPS_MANAGER,
+    ROLES.AUDIT_MANAGER,
+    ROLES.SUPER_ADMIN,
+  ],
+};
+
+function canAssignRole(creatorRole, targetRole) {
+  if (!ROLES[targetRole]) return false; // reject unknown/garbage role strings
+  const allowed = ASSIGNABLE_ROLES[creatorRole];
+  return Array.isArray(allowed) && allowed.includes(targetRole);
+}
+
 function hasPermission(role, permissionCode) {
   const perms = ROLE_PERMISSIONS[role];
   if (!perms) return false;
@@ -128,7 +153,9 @@ module.exports = {
   ROLES,
   ROLE_RANK,
   ROLE_PERMISSIONS,
+  ASSIGNABLE_ROLES,
   APPROVAL_RULES,
   hasPermission,
   isAtLeast,
+  canAssignRole,
 };

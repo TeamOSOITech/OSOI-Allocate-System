@@ -29,6 +29,7 @@ const { createClient } = require("@supabase/supabase-js");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
+const { canAssignRole } = require("../../config/permissions");
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
 
 const router = express.Router();
@@ -277,6 +278,17 @@ router.post(
           .json({ message: "Full name, email and role are required." });
       }
 
+      // SECURITY: never trust body.role blindly — check it against what
+      // THIS caller's role is allowed to hand out. See ASSIGNABLE_ROLES
+      // in config/permissions.js. Without this, any role holding
+      // "users.onboard" could set role: "SUPER_ADMIN" and self-escalate.
+      const requestedRole = String(body.role).toUpperCase().trim();
+      if (!canAssignRole(req.user.role, requestedRole)) {
+        return res.status(403).json({
+          message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole}.`,
+        });
+      }
+
       const alreadyExists = await emailExists(email);
       if (alreadyExists) {
         return res
@@ -323,7 +335,7 @@ router.post(
           doj: body.doj,
           reportingManager: body.reportingManager,
           workedInTeams: body.workedInTeams,
-          role: (body.role || "").toString().toUpperCase().trim(),
+          role: requestedRole,
         },
       });
 
@@ -390,6 +402,21 @@ router.post(
           continue;
         }
 
+        // SECURITY: same check as add-user — reject any row asking for a
+        // role this caller isn't allowed to hand out, instead of trusting
+        // whatever the Excel file says. See ASSIGNABLE_ROLES.
+        const requestedRole = String(rawUser.role || "")
+          .toUpperCase()
+          .trim();
+        if (!canAssignRole(req.user.role, requestedRole)) {
+          results.push({
+            email,
+            success: false,
+            message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole || "(missing)"}.`,
+          });
+          continue;
+        }
+
         // Duplicate check within THIS upload batch — email only, role/password ignored
         if (seenEmails.has(email)) {
           results.push({
@@ -449,7 +476,7 @@ router.post(
               doj: rawUser.doj,
               reportingManager: rawUser.reportingManager,
               workedInTeams: rawUser.workedInTeams,
-              role: (rawUser.role || "").toString().toUpperCase().trim(),
+              role: requestedRole,
             },
           });
 

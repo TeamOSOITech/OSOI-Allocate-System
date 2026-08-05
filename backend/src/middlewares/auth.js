@@ -1,7 +1,22 @@
 const supabase = require("../config/supabaseClient");
 
 const authenticate = async (req, res, next) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
+  // COOKIE-AUTH: authFetch.ts no longer sends an Authorization header at
+  // all — it relies entirely on the httpOnly accessToken cookie the
+  // browser attaches automatically (see authCookies.js / login flow).
+  // This was still ONLY checking the header, so every request from the
+  // frontend hit the `!token` branch below and 401'd immediately, even
+  // with a perfectly valid cookie-based session — that's the exact
+  // "products/teams keep 401ing even right after a successful /refresh"
+  // symptom.
+  //
+  // Header is checked first (kept for any non-browser callers — Postman,
+  // a future mobile app, server-to-server calls — that still send
+  // `Authorization: Bearer <token>` and never touch cookies), falling
+  // back to the cookie for normal browser traffic.
+  const headerToken = req.headers.authorization?.replace("Bearer ", "");
+  const cookieToken = req.cookies?.accessToken;
+  const token = headerToken || cookieToken;
 
   if (!token) {
     return res

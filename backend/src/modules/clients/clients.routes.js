@@ -11,6 +11,13 @@ const supabase = require("../../config/supabaseClient");
 // which every query below now filters on.
 const { authenticate } = require("../../middlewares/auth");
 
+// SECURITY: unlike subclients.routes.js (which correctly gates writes
+// with authorize("SUPER_ADMIN")), this file had NO role check at all on
+// create/update/delete/bulk-upload — any authenticated user, including
+// TEAM_MEMBER, could create/edit/delete client master data. Matching
+// subclients.routes.js's pattern here.
+const { authorize } = require("../../middlewares/rbac");
+
 // REVERSED MAPPING: Products no longer carry client/subclient on
 // themselves — a Client instead picks which existing Products it uses.
 // That link lives in the client_products junction table, managed here via
@@ -177,7 +184,7 @@ router.get("/", async (req, res) => {
 
 // ---------- POST /api/clients ----------
 
-router.post("/", async (req, res) => {
+router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
@@ -392,224 +399,233 @@ router.get("/bulk/template", async (req, res) => {
 // ---------- Excel bulk upload ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
 
-router.post("/bulk/upload", upload.single("file"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
+router.post(
+  "/bulk/upload",
+  authorize("SUPER_ADMIN"),
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
 
-    if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded" });
-    }
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: "",
-    });
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+        defval: "",
+      });
 
-    if (!rows.length) {
-      return res
-        .status(400)
-        .json({ message: "Uploaded file has no data rows" });
-    }
+      if (!rows.length) {
+        return res
+          .status(400)
+          .json({ message: "Uploaded file has no data rows" });
+      }
 
-    const clientCache = new Map();
-    const subclientCache = new Map();
-    const branchCache = new Map();
+      const clientCache = new Map();
+      const subclientCache = new Map();
+      const branchCache = new Map();
 
-    const results = [];
-    let createdCount = 0;
-    let failedCount = 0;
+      const results = [];
+      let createdCount = 0;
+      let failedCount = 0;
 
-    const norm = (v) => (v || "").toString().trim();
+      const norm = (v) => (v || "").toString().trim();
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowNum = i + 2;
-      const clientNameRaw = norm(row["Client Name"]);
-      const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        const clientNameRaw = norm(row["Client Name"]);
+        const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
 
-      try {
-        const clientName = clientNameRaw;
-        const clientCountry = norm(row["Client Country"]) || null;
-        const clientStatus =
-          norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
+        try {
+          const clientName = clientNameRaw;
+          const clientCountry = norm(row["Client Country"]) || null;
+          const clientStatus =
+            norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
 
-        const website = norm(row["Website"]) || null;
-        const companyEmail = norm(row["Company Email"]) || null;
-        const companyPhone = norm(row["Company Phone"]) || null;
+          const website = norm(row["Website"]) || null;
+          const companyEmail = norm(row["Company Email"]) || null;
+          const companyPhone = norm(row["Company Phone"]) || null;
 
-        const primaryContactName = norm(row["Primary Contact Name"]) || null;
-        const primaryContactEmail = norm(row["Primary Contact Email"]) || null;
-        const primaryContactPhone = norm(row["Primary Contact Phone"]) || null;
+          const primaryContactName = norm(row["Primary Contact Name"]) || null;
+          const primaryContactEmail =
+            norm(row["Primary Contact Email"]) || null;
+          const primaryContactPhone =
+            norm(row["Primary Contact Phone"]) || null;
 
-        const secondaryContactName =
-          norm(row["Secondary Contact Name"]) || null;
-        const secondaryContactEmail =
-          norm(row["Secondary Contact Email"]) || null;
-        const secondaryContactPhone =
-          norm(row["Secondary Contact Phone"]) || null;
+          const secondaryContactName =
+            norm(row["Secondary Contact Name"]) || null;
+          const secondaryContactEmail =
+            norm(row["Secondary Contact Email"]) || null;
+          const secondaryContactPhone =
+            norm(row["Secondary Contact Phone"]) || null;
 
-        const subName = norm(row["Subclient Name"]);
-        const subStatus =
-          norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
+          const subName = norm(row["Subclient Name"]);
+          const subStatus =
+            norm(row["Subclient Status"]) === "Inactive"
+              ? "Inactive"
+              : "Active";
 
-        const branchName = norm(row["Branch Name"]);
-        const branchStatus =
-          norm(row["Branch Status"]) === "Inactive" ? "Inactive" : "Active";
+          const branchName = norm(row["Branch Name"]);
+          const branchStatus =
+            norm(row["Branch Status"]) === "Inactive" ? "Inactive" : "Active";
 
-        if (!clientName) {
+          if (!clientName) {
+            failedCount++;
+            results.push({
+              row: rowNum,
+              identifier: rowIdentifier,
+              status: "failed",
+              message: "Client Name is required",
+            });
+            continue;
+          }
+
+          // ---- resolve client (scoped to this org — a same-named client
+          // in another org must NOT be matched or reused here) ----
+          const clientKey = clientName.toLowerCase();
+          let client = clientCache.get(clientKey);
+
+          if (!client) {
+            const { data: existing } = await supabase
+              .from("clients")
+              .select("*")
+              .eq("organization_id", orgId)
+              .ilike("name", clientName)
+              .maybeSingle();
+
+            if (existing) {
+              client = existing;
+            } else {
+              const { data: newClient, error: clientErr } = await supabase
+                .from("clients")
+                .insert({
+                  name: clientName,
+                  country: clientCountry,
+                  status: clientStatus,
+                  website,
+                  main_email: companyEmail,
+                  main_phone: companyPhone,
+                  primary_contact_name: primaryContactName,
+                  primary_contact_email: primaryContactEmail,
+                  primary_contact_phone: primaryContactPhone,
+                  secondary_contact_name: secondaryContactName,
+                  secondary_contact_email: secondaryContactEmail,
+                  secondary_contact_phone: secondaryContactPhone,
+                  organization_id: orgId,
+                })
+                .select()
+                .single();
+
+              if (clientErr) throw clientErr;
+              client = newClient;
+            }
+            clientCache.set(clientKey, client);
+          }
+
+          // ---- resolve subclient (optional), scoped to org + client ----
+          if (subName) {
+            const subKey = `${client.id}::${subName.toLowerCase()}`;
+            let subclient = subclientCache.get(subKey);
+
+            if (!subclient) {
+              const { data: existingSub } = await supabase
+                .from("subclients")
+                .select("*")
+                .eq("organization_id", orgId)
+                .eq("client_id", client.id)
+                .ilike("name", subName)
+                .maybeSingle();
+
+              if (existingSub) {
+                subclient = existingSub;
+              } else {
+                const { data: newSub, error: subErr } = await supabase
+                  .from("subclients")
+                  .insert({
+                    name: subName,
+                    client_id: client.id,
+                    status: subStatus,
+                    organization_id: orgId,
+                  })
+                  .select()
+                  .single();
+
+                if (subErr) throw subErr;
+                subclient = newSub;
+              }
+              subclientCache.set(subKey, subclient);
+            }
+          }
+
+          // ---- resolve branch (optional), scoped to org + client ----
+          if (branchName) {
+            const branchKey = `${client.id}::${branchName.toLowerCase()}`;
+            let branch = branchCache.get(branchKey);
+
+            if (!branch) {
+              const { data: existingBranch } = await supabase
+                .from("branches")
+                .select("*")
+                .eq("organization_id", orgId)
+                .eq("client_id", client.id)
+                .ilike("name", branchName)
+                .maybeSingle();
+
+              if (existingBranch) {
+                branch = existingBranch;
+              } else {
+                const { data: newBranch, error: branchErr } = await supabase
+                  .from("branches")
+                  .insert({
+                    name: branchName,
+                    client_id: client.id,
+                    status: branchStatus,
+                    organization_id: orgId,
+                  })
+                  .select()
+                  .single();
+
+                if (branchErr) throw branchErr;
+                branch = newBranch;
+              }
+              branchCache.set(branchKey, branch);
+            }
+          }
+
+          createdCount++;
+          results.push({
+            row: rowNum,
+            identifier: rowIdentifier,
+            status: "created",
+          });
+        } catch (rowErr) {
+          console.error(`Row ${rowNum} error:`, rowErr);
           failedCount++;
           results.push({
             row: rowNum,
             identifier: rowIdentifier,
             status: "failed",
-            message: "Client Name is required",
+            message: rowErr.message || "Unknown error",
           });
-          continue;
         }
-
-        // ---- resolve client (scoped to this org — a same-named client
-        // in another org must NOT be matched or reused here) ----
-        const clientKey = clientName.toLowerCase();
-        let client = clientCache.get(clientKey);
-
-        if (!client) {
-          const { data: existing } = await supabase
-            .from("clients")
-            .select("*")
-            .eq("organization_id", orgId)
-            .ilike("name", clientName)
-            .maybeSingle();
-
-          if (existing) {
-            client = existing;
-          } else {
-            const { data: newClient, error: clientErr } = await supabase
-              .from("clients")
-              .insert({
-                name: clientName,
-                country: clientCountry,
-                status: clientStatus,
-                website,
-                main_email: companyEmail,
-                main_phone: companyPhone,
-                primary_contact_name: primaryContactName,
-                primary_contact_email: primaryContactEmail,
-                primary_contact_phone: primaryContactPhone,
-                secondary_contact_name: secondaryContactName,
-                secondary_contact_email: secondaryContactEmail,
-                secondary_contact_phone: secondaryContactPhone,
-                organization_id: orgId,
-              })
-              .select()
-              .single();
-
-            if (clientErr) throw clientErr;
-            client = newClient;
-          }
-          clientCache.set(clientKey, client);
-        }
-
-        // ---- resolve subclient (optional), scoped to org + client ----
-        if (subName) {
-          const subKey = `${client.id}::${subName.toLowerCase()}`;
-          let subclient = subclientCache.get(subKey);
-
-          if (!subclient) {
-            const { data: existingSub } = await supabase
-              .from("subclients")
-              .select("*")
-              .eq("organization_id", orgId)
-              .eq("client_id", client.id)
-              .ilike("name", subName)
-              .maybeSingle();
-
-            if (existingSub) {
-              subclient = existingSub;
-            } else {
-              const { data: newSub, error: subErr } = await supabase
-                .from("subclients")
-                .insert({
-                  name: subName,
-                  client_id: client.id,
-                  status: subStatus,
-                  organization_id: orgId,
-                })
-                .select()
-                .single();
-
-              if (subErr) throw subErr;
-              subclient = newSub;
-            }
-            subclientCache.set(subKey, subclient);
-          }
-        }
-
-        // ---- resolve branch (optional), scoped to org + client ----
-        if (branchName) {
-          const branchKey = `${client.id}::${branchName.toLowerCase()}`;
-          let branch = branchCache.get(branchKey);
-
-          if (!branch) {
-            const { data: existingBranch } = await supabase
-              .from("branches")
-              .select("*")
-              .eq("organization_id", orgId)
-              .eq("client_id", client.id)
-              .ilike("name", branchName)
-              .maybeSingle();
-
-            if (existingBranch) {
-              branch = existingBranch;
-            } else {
-              const { data: newBranch, error: branchErr } = await supabase
-                .from("branches")
-                .insert({
-                  name: branchName,
-                  client_id: client.id,
-                  status: branchStatus,
-                  organization_id: orgId,
-                })
-                .select()
-                .single();
-
-              if (branchErr) throw branchErr;
-              branch = newBranch;
-            }
-            branchCache.set(branchKey, branch);
-          }
-        }
-
-        createdCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "created",
-        });
-      } catch (rowErr) {
-        console.error(`Row ${rowNum} error:`, rowErr);
-        failedCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "failed",
-          message: rowErr.message || "Unknown error",
-        });
       }
-    }
 
-    res.status(200).json({
-      message: "Bulk upload processed",
-      totalRows: rows.length,
-      createdCount,
-      failedCount,
-      results,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to process bulk upload" });
-  }
-});
+      res.status(200).json({
+        message: "Bulk upload processed",
+        totalRows: rows.length,
+        createdCount,
+        failedCount,
+        results,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to process bulk upload" });
+    }
+  },
+);
 
 // ---------- GET /api/clients/:id ----------
 // Declared below the /bulk/* routes since this is a param route.
@@ -661,7 +677,7 @@ router.get("/:id", async (req, res) => {
 
 // ---------- PUT /api/clients/:id ----------
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const id = Number(req.params.id);
@@ -722,7 +738,7 @@ router.put("/:id", async (req, res) => {
 
 // ---------- DELETE /api/clients/:id ----------
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const id = Number(req.params.id);
