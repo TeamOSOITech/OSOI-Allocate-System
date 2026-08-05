@@ -44,6 +44,8 @@ const allowedOrigins = (process.env.FRONTEND_URLS || "http://localhost:5173")
   .map((s) => s.trim())
   .filter(Boolean);
 
+console.log("CORS allowedOrigins:", allowedOrigins); // 👈 YE LINE ADD KARO
+
 app.use(
   cors({
     origin: (origin, callback) => {
