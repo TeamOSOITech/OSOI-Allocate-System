@@ -993,8 +993,8 @@ export default function Employees() {
                             Delete {employeeToDelete.name}?
                         </h3>
                         <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
-                            This action cannot be undone. This will permanently remove the employee
-                            record.
+                            Are you sure you want to remove this employee? Once deleted, their
+                            record can't be recovered.
                         </p>
                         <div style={styles.modalButtons}>
                             <button

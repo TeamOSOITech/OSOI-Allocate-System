@@ -131,7 +131,7 @@ function WebsiteLink({ website, style }: { website: string | null; style?: CSSPr
             href={toSafeHref(website)}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ ...style, color: "#08A1CE", textDecoration: "none" }}
+            style={{ ...style, color: "var(--brand-light-blue)", textDecoration: "none" }}
             onClick={(e) => e.stopPropagation()}
             title={website}
         >
@@ -178,35 +178,43 @@ const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
 // Injected once — inline style objects can't express :hover/:focus, so the
 // handful of interactive/motion rules live here instead of duplicating them
 // as onMouseEnter/onMouseLeave handlers everywhere.
+//
+// All brand colors below reference the CSS custom properties set on
+// <html> by ThemeProvider (--brand-blue / --brand-light-blue / --brand-green
+// / their *-rgb counterparts for rgba() shadows), so this entire page — the
+// tabs, table hover state, tooltips, and the Sample Sheet / Bulk Upload
+// affordances — automatically follows whichever theme color is selected
+// from the header's "Theme color" picker, instead of being pinned to one
+// fixed palette.
 const GLOBAL_CSS = `
 .cl-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .cl-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(32,66,151,.12);
+  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb), .12);
   border-color: #cfe0f5;
 }
 .cl-row:nth-child(even) { background: #fbfcfe; }
 .cl-row { box-shadow: inset 3px 0 0 0 transparent; }
-.cl-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 #08A1CE; }
+.cl-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 var(--brand-light-blue); }
 .cl-view-btn:hover { text-decoration: underline; }
 .cl-view-btn-filled:hover { filter: brightness(1.06); transform: translateY(-1px); }
-.cl-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: #204297; transform: translateY(-1px); }
+.cl-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: var(--brand-blue); transform: translateY(-1px); }
 .cl-icon-btn-danger:hover { background: #fee2e2; border-color: #fecaca; transform: translateY(-1px); }
-.cl-tab-btn:hover { border-color: #cfe0f5; color: #204297; }
+.cl-tab-btn:hover { border-color: #cfe0f5; color: var(--brand-blue); }
 .cl-table thead th:first-child { border-top-left-radius: 16px; }
 .cl-table thead th:last-child { border-top-right-radius: 16px; }
 
 /* Tooltip used on the Sample Sheet button so hover clearly communicates
    that the download is an Excel (.xlsx) template for bulk upload. Colors
-   match this page's blue brand gradient (used on tabs, Add button, and
-   the filled View Details button). */
+   follow the active theme gradient (same one used on tabs, Add button, and
+   the filled View Details button), rather than a fixed palette. */
 .cl-tooltip-wrap { position: relative; display: inline-flex; }
 .cl-tooltip-wrap .cl-tooltip-bubble {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%) translateY(-4px);
-  background: linear-gradient(135deg, #08A1CE, #204297);
+  background: linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue));
   color: #fff;
   font-size: 11.5px;
   font-weight: 600;
@@ -218,7 +226,7 @@ const GLOBAL_CSS = `
   pointer-events: none;
   transition: opacity .15s ease, transform .15s ease;
   z-index: 20;
-  box-shadow: 0 8px 20px rgba(32,66,151,.35);
+  box-shadow: 0 8px 20px rgba(var(--brand-blue-rgb), .35);
 }
 .cl-tooltip-wrap .cl-tooltip-bubble::after {
   content: "";
@@ -227,7 +235,7 @@ const GLOBAL_CSS = `
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: #08A1CE;
+  border-bottom-color: var(--brand-light-blue);
 }
 .cl-tooltip-wrap:hover .cl-tooltip-bubble {
   opacity: 1;
@@ -247,6 +255,13 @@ const GLOBAL_CSS = `
 .cl-results-list::-webkit-scrollbar-track { background: transparent; }
 .cl-results-list::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .cl-results-list::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+
+/* Tabs wrap onto a second line instead of getting clipped by the page's
+   overflow:hidden shell on narrow phone widths — this is what was hiding
+   the "Subclient" tab on mobile before. */
+@media (max-width: 480px) {
+  .cl-tab-btn { padding: 9px 14px !important; font-size: 13px !important; }
+}
 `;
 
 export default function Clients() {
@@ -658,27 +673,31 @@ export default function Clients() {
     // Client lookup column. That parity lives in the backend template
     // generator for /api/subclients/bulk/template — not in this file.
 
+    // FIX: window.open() was hitting this endpoint as a bare, unauthenticated
+    // browser navigation, so the backend saw no Authorization header and
+    // rejected it with "No token provided" — even though every other call on
+    // this page correctly goes through authFetch. Downloading via authFetch
+    // (blob response) attaches the same auth token as everything else, then
+    // we trigger the save manually via a temporary <a download> link.
     const handleDownloadTemplate = async () => {
+        const endpoint = BULK_ENDPOINT_MAP[activeTab];
         try {
-            const endpoint = BULK_ENDPOINT_MAP[activeTab];
-            const res = await authFetch(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`);
+            const res = await authFetch(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`, {
+                method: "GET",
+            });
             if (!res.ok) throw new Error("Failed to download template");
 
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download =
-                endpoint === "clients"
-                    ? "client_bulk_upload_template.xlsx"
-                    : "subclient_bulk_upload_template.xlsx";
+            a.download = `${tabLabel}_bulk_upload_template.xlsx`;
             document.body.appendChild(a);
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
         } catch (err) {
-            console.error(err);
-            // optionally: setBulkError("Failed to download template") ya koi toast dikha do
+            alert("Could not download the sample sheet. Please try again.");
         }
     };
 
@@ -798,10 +817,10 @@ export default function Clients() {
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
     ) => (
         <div style={{ gridColumn: "1 / -1" }}>
-            <label style={styles.formLabel}>Services</label>
+            <label style={styles.formLabel}>Products</label>
             {products.length === 0 ? (
                 <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                    No services yet — add one from the Services page first.
+                    No products yet — add one from the Products page first.
                 </p>
             ) : (
                 <div
@@ -1028,8 +1047,10 @@ export default function Clients() {
 
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
-                    {/* Tabs */}
-                    <div style={styles.tabRow}>
+                    {/* Tabs — flexWrap so on very narrow phones "Subclient" wraps to
+                        its own line instead of being clipped by the mobile shell's
+                        overflow:hidden, and stays reachable/tappable either way. */}
+                    <div style={isMobile ? styles.tabRowMobile : styles.tabRow}>
                         <button
                             type="button"
                             className="cl-tab-btn"
@@ -1833,7 +1854,7 @@ export default function Clients() {
 
                             {/* REVERSED MAPPING: Products linked to this Client/Subclient */}
                             <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Services</span>
+                                <span style={styles.detailsLabel}>Products</span>
                                 <span style={{ ...styles.detailsValue, textAlign: "right" }}>
                                     {viewDetails.data.products && viewDetails.data.products.length
                                         ? viewDetails.data.products
@@ -2197,8 +2218,8 @@ export default function Clients() {
 
                         <div style={styles.detailsBody}>
                             <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
-                                This action can't be undone. Are you sure you want to delete this{" "}
-                                {deleteTarget.type}?
+                                Are you sure you want to remove this {deleteTarget.type}? Once
+                                deleted, it can't be recovered.
                             </p>
 
                             {deleteError && <p style={styles.formError}>{deleteError}</p>}
@@ -2237,12 +2258,14 @@ export default function Clients() {
                 </div>
             )}
 
-            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal exactly:
-                title/subtitle, required-columns callout, Choose File row with
+            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal layout
+                (title/subtitle, required-columns callout, Choose File row with
                 an explicit Upload button, then a "X created · Y failed"
-                summary followed by a full scrollable list of EVERY row
-                (created and failed) with a status pill on the right, and
-                the failure reason shown under the row when it failed. */}
+                summary followed by a full scrollable list of EVERY row) but
+                now themed with the app's brand palette (var(--brand-blue) /
+                var(--brand-light-blue)) instead of the old fixed purple, so it
+                matches whichever theme color is selected. Sample Sheet's
+                tooltip (in the header actions above) uses the same variables. */}
             {showBulkModal && (
                 <div style={styles.overlay} onClick={closeBulkModal}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
@@ -2428,7 +2451,7 @@ const styles: Record<string, CSSProperties> = {
         height: 32,
         borderRadius: radius.circle,
         border: "none",
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         cursor: "pointer",
     },
@@ -2441,7 +2464,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.circle,
         border: "1px solid #cfe0f5",
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         cursor: "pointer",
     },
     overlay: {
@@ -2485,6 +2508,10 @@ const styles: Record<string, CSSProperties> = {
     },
 
     tabRow: { display: "flex", gap: 8, flexShrink: 0 },
+    // Mobile: wraps to a second line and tightens padding on very narrow
+    // screens (see the @media rule in GLOBAL_CSS) instead of overflowing
+    // past the right edge, which is what was hiding the Subclient tab.
+    tabRowMobile: { display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" },
     tabBtn: {
         display: "flex",
         alignItems: "center",
@@ -2499,10 +2526,10 @@ const styles: Record<string, CSSProperties> = {
         transition: "border-color .15s ease, color .15s ease",
     },
     tabBtnActive: {
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "1px solid transparent",
-        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
     },
 
     headerRow: {
@@ -2525,7 +2552,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         border: "1px solid #cfe0f5",
         borderRadius: radius.md,
         padding: "11px 16px",
@@ -2538,7 +2565,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
@@ -2546,7 +2573,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
         whiteSpace: "nowrap",
     },
 
@@ -2624,7 +2651,7 @@ const styles: Record<string, CSSProperties> = {
     },
     viewToggleBtnActive: {
         background: "#e7ecf8",
-        color: "#204297",
+        color: "var(--brand-blue)",
     },
 
     // Scrollable: fills remaining vertical space in contentBody and only
@@ -2762,7 +2789,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 4,
         fontSize: fontSize.xs,
-        color: "#08A1CE",
+        color: "var(--brand-light-blue)",
         fontWeight: fontWeight.medium,
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -2897,7 +2924,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 4,
         border: "none",
         background: "transparent",
-        color: "#204297",
+        color: "var(--brand-blue)",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
@@ -2910,14 +2937,14 @@ const styles: Record<string, CSSProperties> = {
         gap: 6,
         flex: 1,
         border: "none",
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         borderRadius: radius.md,
         padding: "11px 16px",
         cursor: "pointer",
-        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
+        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb), 0.25)",
     },
     cardActions: { display: "flex", alignItems: "center", gap: 8 },
     iconBtn: {
@@ -2994,7 +3021,7 @@ const styles: Record<string, CSSProperties> = {
         boxSizing: "border-box",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.bold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: 0.3,
         whiteSpace: "nowrap",
@@ -3079,7 +3106,7 @@ const styles: Record<string, CSSProperties> = {
     addModal: {
         background: "#fff",
         borderRadius: radius.lg,
-        width: 560,
+        width: 640,
         maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
@@ -3096,9 +3123,9 @@ const styles: Record<string, CSSProperties> = {
     },
     detailsTitle: {
         margin: 0,
-        fontSize: fontSize["3xl"],
+        fontSize: fontSize["2xl"],
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "#16233c",
     },
     closeBtn: {
         position: "absolute",
@@ -3128,7 +3155,7 @@ const styles: Record<string, CSSProperties> = {
     detailsSectionLabel: {
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: 0.4,
         marginTop: 6,
@@ -3177,7 +3204,7 @@ const styles: Record<string, CSSProperties> = {
     formSectionLabel: {
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: 0.4,
         marginTop: 4,
@@ -3190,21 +3217,20 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
         padding: "12px 20px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
         gridColumn: "1 / -1",
     },
 
-    // ---- Bulk Upload modal (matches "Bulk Add Users": purple title, purple
-    // required-columns callout, purple Choose File button, blue Upload
-    // button consistent with the rest of the page, and a scrollable
-    // created/failed results list) ----
+    // ---- Bulk Upload modal — now themed to match the rest of the page
+    // (brand blue/teal) instead of a fixed purple, so it follows whichever
+    // color the person picks from the header's theme switcher. ----
     bulkModal: {
         background: "#fff",
         borderRadius: radius.lg,
@@ -3224,21 +3250,21 @@ const styles: Record<string, CSSProperties> = {
         margin: 0,
         fontSize: fontSize["3xl"],
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
     },
     bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#7c8aa3" },
     bulkInfoBox: {
         margin: "20px 28px",
         padding: "14px 16px",
-        background: "#eaf6fb",
-        borderLeft: "3px solid #08A1CE",
+        background: "color-mix(in srgb, var(--brand-light-blue) 10%, white)",
+        borderLeft: "3px solid var(--brand-light-blue)",
         borderRadius: radius.xs,
     },
     bulkInfoLabel: {
         display: "block",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
@@ -3265,7 +3291,7 @@ const styles: Record<string, CSSProperties> = {
     },
     fileInputHidden: { display: "none" },
     fileInputButton: {
-        background: "#204297",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
@@ -3281,7 +3307,7 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     bulkUploadBtn: {
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.sm,

@@ -798,6 +798,16 @@ const Login = () => {
                                         border: "1px solid #C7D9F0",
                                         borderRadius: 12,
                                         background: "#F4F8FD",
+                                        // FIX: no explicit color was set, so in dark-mode
+                                        // browsers/OS the input fell back to the native
+                                        // dark-mode text color (white) against this
+                                        // hardcoded light background — invisible text.
+                                        // colorScheme: "light" pins the input to always
+                                        // render with light-mode native styling (text,
+                                        // caret, autofill highlight) regardless of the
+                                        // system theme.
+                                        color: "#17181C",
+                                        colorScheme: "light",
                                         outline: "none",
                                         fontSize: isMobile ? 16 : 13,
                                         marginBottom: 10,
@@ -832,6 +842,12 @@ const Login = () => {
                                             border: "1px solid #C7D9F0",
                                             borderRadius: 12,
                                             background: "#F4F8FD",
+                                            // FIX: same dark-mode issue as the email input
+                                            // above — no explicit color meant the browser's
+                                            // dark-mode default (white) text rendered
+                                            // invisible against this light background.
+                                            color: "#17181C",
+                                            colorScheme: "light",
                                             outline: "none",
                                             fontSize: isMobile ? 16 : 13,
                                             boxSizing: "border-box",

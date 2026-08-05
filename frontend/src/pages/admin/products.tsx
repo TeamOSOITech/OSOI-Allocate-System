@@ -30,7 +30,6 @@ function useIsMobile() {
 // never got updated to match.
 const API_BASE = import.meta.env.VITE_API_URL;
 const ENDPOINT = `${API_BASE}/api/products`;
-const TEAMS_ENDPOINT = `${API_BASE}/api/teams`;
 
 // REVERSED MAPPING: a Product is now a standalone catalog entry. It no
 // longer carries a client/subclient on itself — Clients and Subclients
@@ -40,7 +39,6 @@ type Product = {
     product_name: string;
     time_taken: string;
     time_unit: string;
-    teams?: string[];
     created_at?: string;
     updated_at?: string;
 };
@@ -49,19 +47,13 @@ type ProductForm = {
     product_name: string;
     time_taken: string;
     time_unit: string;
-    teams: string[];
 };
 
 const emptyForm: ProductForm = {
     product_name: "",
     time_taken: "",
     time_unit: "",
-    teams: [],
 };
-
-// Shape returned by GET /api/teams — assumed to match the id/name pattern
-// used elsewhere in the app (e.g. Clients page selects).
-type Team = { id: string; name: string };
 
 type DeleteTarget = { id: string; name: string };
 
@@ -170,9 +162,6 @@ const GLOBAL_CSS = `
 .pr-scroll-area::-webkit-scrollbar-track { background: transparent; }
 .pr-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .pr-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
-
-/* Teams multi-select dropdown (Add / Edit Service modals) */
-.pr-teams-check-row:hover { background: #f0f6fd; }
 `;
 
 // Columns required in the bulk-upload sheet, shown in the modal's info
@@ -198,11 +187,6 @@ const Products = () => {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-
-    // Teams available for the dropdown (Add / Edit Service). Fetched once
-    // on mount from the existing Teams API.
-    const [teamsList, setTeamsList] = useState<Team[]>([]);
-    const [teamsDropdownOpen, setTeamsDropdownOpen] = useState(false);
 
     const [search, setSearch] = useState("");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -243,7 +227,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to load services");
+                throw new Error(json.message || "Failed to load products");
             }
             setProducts(json.data || []);
         } catch (err: any) {
@@ -253,26 +237,8 @@ const Products = () => {
         }
     };
 
-    // Teams for the dropdown. Kept separate from `error` state above so a
-    // failed teams fetch doesn't block the whole page — the dropdown just
-    // shows empty and the rest of the page works as before.
-    const fetchTeams = async () => {
-        try {
-            const res = await authFetch(TEAMS_ENDPOINT, {
-                headers: { "Content-Type": "application/json" },
-            });
-            const json = await res.json();
-            if (res.ok && json.success !== false) {
-                setTeamsList(json.data || []);
-            }
-        } catch {
-            // silent — non-critical for the page to function
-        }
-    };
-
     useEffect(() => {
         fetchProducts();
-        fetchTeams();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -289,20 +255,18 @@ const Products = () => {
     const openAddModal = () => {
         setAddForm({ ...emptyForm });
         setAddError("");
-        setTeamsDropdownOpen(false);
         setShowAddModal(true);
     };
 
     const closeAddModal = () => {
         setShowAddModal(false);
         setAddError("");
-        setTeamsDropdownOpen(false);
     };
 
     const handleAddSubmit = async () => {
         setAddError("");
         if (!addForm.product_name.trim()) {
-            setAddError("Service name is required.");
+            setAddError("Product name is required.");
             return;
         }
         if (!addForm.time_unit) {
@@ -319,7 +283,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to create service");
+                throw new Error(json.message || "Failed to create product");
             }
             await fetchProducts();
             setShowAddModal(false);
@@ -338,23 +302,20 @@ const Products = () => {
             product_name: product.product_name || "",
             time_taken: product.time_taken || "",
             time_unit: product.time_unit || "",
-            teams: product.teams || [],
         });
-        setTeamsDropdownOpen(false);
         setEditTarget(product);
     };
 
     const closeEditModal = () => {
         setEditTarget(null);
         setEditError("");
-        setTeamsDropdownOpen(false);
     };
 
     const handleEditSubmit = async () => {
         if (!editTarget) return;
         setEditError("");
         if (!editForm.product_name.trim()) {
-            setEditError("Service name is required.");
+            setEditError("Product name is required.");
             return;
         }
         if (!editForm.time_unit) {
@@ -371,7 +332,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to update service");
+                throw new Error(json.message || "Failed to update product");
             }
             await fetchProducts();
             setEditTarget(null);
@@ -404,7 +365,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to delete service");
+                throw new Error(json.message || "Failed to delete product");
             }
             setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id));
             setDeleteTarget(null);
@@ -497,25 +458,6 @@ const Products = () => {
         }
     };
 
-    // Toggles a team name in/out of a form's `teams` array. Shared by both
-    // the Add and Edit modals via renderProductFieldset below.
-    const toggleTeamSelection = (
-        teamName: string,
-        setFormState: (updater: (prev: ProductForm) => ProductForm) => void
-    ) => {
-        setFormState((prev) => {
-            const alreadySelected = prev.teams.includes(teamName);
-            return {
-                ...prev,
-                teams: alreadySelected
-                    ? prev.teams.filter((t) => t !== teamName)
-                    : [...prev.teams, teamName],
-            };
-        });
-    };
-
-    // Shared form fieldset used by both Add and Edit modals so the two
-    // never drift out of parity.
     // Shared form fieldset used by both Add and Edit modals so the two
     // never drift out of parity.
     const renderProductFieldset = (
@@ -524,7 +466,7 @@ const Products = () => {
     ) => (
         <>
             <div>
-                <label style={styles.formLabel}>Service Name</label>
+                <label style={styles.formLabel}>Product Name</label>
                 <input
                     style={styles.formInput}
                     value={formState.product_name}
@@ -563,88 +505,6 @@ const Products = () => {
                     </select>
                 </div>
             </div>
-
-            {/* Teams — multi-select dropdown. Spans the full width of the
-                2-column form grid so the checkbox panel has room. This
-                wrapper stays un-padded so the dropdown panel's
-                `top: calc(100% + 4px)` anchors right below the button —
-                extra space for the open panel is reserved separately
-                below (see spacer div), not on this element, otherwise
-                the panel's anchor point shifts down with it and leaves
-                a visible gap. */}
-            <div style={{ gridColumn: "1 / -1", position: "relative" }}>
-                <label style={styles.formLabel}>Teams</label>
-                <button
-                    type="button"
-                    style={styles.teamsDropdownButton}
-                    onClick={() => setTeamsDropdownOpen((prev) => !prev)}
-                >
-                    <span style={styles.teamsDropdownButtonText}>
-                        {formState.teams.length > 0
-                            ? `${formState.teams.length} team${
-                                  formState.teams.length > 1 ? "s" : ""
-                              } selected`
-                            : "Select teams"}
-                    </span>
-                    <i
-                        className={`ti ${teamsDropdownOpen ? "ti-chevron-up" : "ti-chevron-down"}`}
-                        style={{ fontSize: fontSize.sm, color: "#7c8aa3" }}
-                    />
-                </button>
-
-                {formState.teams.length > 0 && (
-                    <div style={styles.teamChipsWrap}>
-                        {formState.teams.map((t) => (
-                            <span key={t} style={styles.teamChip}>
-                                {t}
-                                <i
-                                    className="ti ti-x"
-                                    style={styles.teamChipRemove}
-                                    onClick={() => toggleTeamSelection(t, setFormState)}
-                                />
-                            </span>
-                        ))}
-                    </div>
-                )}
-
-                {teamsDropdownOpen && (
-                    <div style={styles.teamsDropdownPanel}>
-                        {teamsList.length === 0 ? (
-                            <div style={styles.teamsDropdownEmpty}>No teams found</div>
-                        ) : (
-                            teamsList.map((team) => (
-                                <label
-                                    key={team.id}
-                                    className="pr-teams-check-row"
-                                    style={styles.teamCheckboxRow}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={formState.teams.includes(team.name)}
-                                        onChange={() =>
-                                            toggleTeamSelection(team.name, setFormState)
-                                        }
-                                    />
-                                    {team.name}
-                                </label>
-                            ))
-                        )}
-                    </div>
-                )}
-            </div>
-
-            {/* Spacer — reserves layout space equal to the open dropdown
-                panel's height so the "Add/Save" submit button below never
-                sits underneath it. Kept as a separate element (not padding
-                on the wrapper above) so the panel's own anchor position
-                doesn't shift when this grows. */}
-            <div
-                style={{
-                    gridColumn: "1 / -1",
-                    height: teamsDropdownOpen ? 232 : 0,
-                    transition: "height .15s ease",
-                }}
-            />
         </>
     );
 
@@ -655,13 +515,13 @@ const Products = () => {
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
                     {/* Page title */}
-                    {!isMobile && <h2 style={styles.pageTitle}>Services</h2>}
+                    {!isMobile && <h2 style={styles.pageTitle}>Products</h2>}
 
                     {/* Header row */}
                     {!isMobile && (
                         <div style={styles.headerRow}>
                             <p style={styles.headerSubtext}>
-                                View, add, edit or remove Services from the system.
+                                View, add, edit or remove Products from the system.
                             </p>
 
                             <div style={styles.headerActions}>
@@ -699,7 +559,7 @@ const Products = () => {
                                             Bulk Upload
                                         </button>
                                         <span className="pr-tooltip-bubble">
-                                            Upload services from an Excel (.xlsx) file
+                                            Upload products from an Excel (.xlsx) file
                                         </span>
                                     </span>
                                 )}
@@ -709,13 +569,13 @@ const Products = () => {
                                         style={styles.addBtn}
                                         type="button"
                                         onClick={openAddModal}
-                                        title="Add a new service"
+                                        title="Add a new product"
                                     >
                                         <i
                                             className="ti ti-plus"
                                             style={{ fontSize: fontSize.md }}
                                         />
-                                        Add Service
+                                        Add Product
                                     </button>
                                 )}
                             </div>
@@ -724,13 +584,13 @@ const Products = () => {
 
                     {isMobile && (
                         <div style={styles.headerRowMobile}>
-                            <h2 style={styles.pageTitle}>Services</h2>
+                            <h2 style={styles.pageTitle}>Products</h2>
                             {canManage && (
                                 <button
                                     style={styles.addBtn}
                                     type="button"
                                     onClick={openAddModal}
-                                    title="Add a new service"
+                                    title="Add a new product"
                                 >
                                     <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
                                     Add
@@ -756,7 +616,7 @@ const Products = () => {
                             />
                             <input
                                 style={styles.searchInput}
-                                placeholder="Search services..."
+                                placeholder="Search products..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
@@ -810,22 +670,20 @@ const Products = () => {
                                     className="ti ti-package"
                                     style={{ fontSize: fontSize["7xl"], color: "#9fd6e6" }}
                                 />
-                                <p style={styles.emptyText}>No services match your filters.</p>
+                                <p style={styles.emptyText}>No products match your filters.</p>
                             </div>
                         ) : viewMode === "list" ? (
                             <div style={styles.tableWrap}>
                                 <table className="pr-table" style={styles.table}>
                                     <colgroup>
-                                        <col style={{ width: "28%" }} />
-                                        <col style={{ width: "18%" }} />
-                                        <col style={{ width: "29%" }} />
-                                        <col style={{ width: "25%" }} />
+                                        <col style={{ width: "40%" }} />
+                                        <col style={{ width: "30%" }} />
+                                        <col style={{ width: "30%" }} />
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            <th style={styles.th}>Service</th>
+                                            <th style={styles.th}>Product</th>
                                             <th style={styles.th}>Time Taken</th>
-                                            <th style={styles.th}>Teams</th>
                                             <th style={{ ...styles.th, textAlign: "left" }}>
                                                 Actions
                                             </th>
@@ -861,22 +719,6 @@ const Products = () => {
                                                         </span>
                                                     </td>
                                                     <td style={styles.td}>
-                                                        {p.teams && p.teams.length > 0 ? (
-                                                            <div style={styles.tdTeamsWrap}>
-                                                                {p.teams.map((t) => (
-                                                                    <span
-                                                                        key={t}
-                                                                        style={styles.tdTeamChip}
-                                                                    >
-                                                                        {t}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        ) : (
-                                                            <span style={styles.tdMuted}>—</span>
-                                                        )}
-                                                    </td>
-                                                    <td style={styles.td}>
                                                         <div style={styles.tdActions}>
                                                             <button
                                                                 type="button"
@@ -892,7 +734,7 @@ const Products = () => {
                                                                 className="pr-icon-btn"
                                                                 style={styles.iconBtn}
                                                                 aria-label="Edit"
-                                                                title="Edit service"
+                                                                title="Edit product"
                                                                 onClick={() => openEditModal(p)}
                                                             >
                                                                 <i
@@ -907,7 +749,7 @@ const Products = () => {
                                                                 className="pr-icon-btn-danger"
                                                                 style={styles.iconBtnDanger}
                                                                 aria-label="Delete"
-                                                                title="Delete service"
+                                                                title="Delete product"
                                                                 onClick={() =>
                                                                     openDeleteConfirm(
                                                                         p.id,
@@ -958,21 +800,17 @@ const Products = () => {
                                                     <span style={styles.cardName}>
                                                         {p.product_name}
                                                     </span>
-                                                    {/* Team badge replaces the old Per minute/Hourly
-                                                        indicator. Renders nothing when no team is
-                                                        tagged yet, instead of falling back to the
-                                                        old billing-frequency text. */}
-                                                    {p.teams && p.teams.length > 0 && (
-                                                        <span
-                                                            style={{
-                                                                ...styles.cardCountBadge,
-                                                                background: `${avatar.solid}1A`,
-                                                                color: avatar.solid,
-                                                            }}
-                                                        >
-                                                            {p.teams.join(", ")}
-                                                        </span>
-                                                    )}
+                                                    <span
+                                                        style={{
+                                                            ...styles.cardCountBadge,
+                                                            background: `${avatar.solid}1A`,
+                                                            color: avatar.solid,
+                                                        }}
+                                                    >
+                                                        {p.time_unit === "hours"
+                                                            ? "Hourly"
+                                                            : "Per minute"}
+                                                    </span>
                                                 </div>
                                             </div>
 
@@ -1039,19 +877,6 @@ const Products = () => {
                                 </span>
                             </div>
 
-                            {viewDetails.teams && viewDetails.teams.length > 0 && (
-                                <div style={styles.detailsRow}>
-                                    <span style={styles.detailsLabel}>Teams</span>
-                                    <div style={styles.tdTeamsWrap}>
-                                        {viewDetails.teams.map((t) => (
-                                            <span key={t} style={styles.tdTeamChip}>
-                                                {t}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
                             <div style={styles.detailsModalFooter}>
                                 <button
                                     type="button"
@@ -1105,7 +930,7 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeAddModal}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Add Service</h3>
+                            <h3 style={styles.detailsTitle}>Add Product</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeAddModal}
@@ -1132,7 +957,7 @@ const Products = () => {
                                 onClick={handleAddSubmit}
                                 disabled={addSubmitting}
                             >
-                                {addSubmitting ? "Saving..." : "Add Service"}
+                                {addSubmitting ? "Saving..." : "Add Product"}
                             </button>
                         </div>
                     </div>
@@ -1144,7 +969,7 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeEditModal}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Edit Service</h3>
+                            <h3 style={styles.detailsTitle}>Edit Product</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeEditModal}
@@ -1197,8 +1022,8 @@ const Products = () => {
 
                         <div style={styles.detailsBody}>
                             <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
-                                This action can't be undone. Are you sure you want to delete this
-                                service?
+                                Are you sure you want to remove this service? Once deleted, it can't
+                                be recovered.
                             </p>
 
                             {deleteError && <p style={styles.formError}>{deleteError}</p>}
@@ -1246,9 +1071,9 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeBulkModal}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Bulk Add Services</h3>
+                            <h3 style={styles.bulkModalTitle}>Bulk Add Products</h3>
                             <p style={styles.bulkModalSubtitle}>
-                                Upload an Excel file to create multiple services at once
+                                Upload an Excel file to create multiple products at once
                             </p>
                             <button
                                 style={styles.closeBtn}
@@ -1289,7 +1114,7 @@ const Products = () => {
                                     cursor: bulkUploading ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {bulkUploading ? "Uploading…" : "Upload & Create Services"}
+                                {bulkUploading ? "Uploading…" : "Upload & Create Products"}
                             </button>
                         </div>
 
@@ -1410,6 +1235,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        flexShrink: 0,
         textAlign: "left",
     },
 
@@ -1658,23 +1484,6 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 0,
     },
 
-    // Teams chips shown on the grid card, between the info rows and the
-    // "View Details" button.
-    cardTeamsWrap: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-    },
-    cardTeamChip: {
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.medium,
-        color: "#204297",
-        background: "#e7ecf8",
-        padding: "3px 9px",
-        borderRadius: radius.xl,
-        whiteSpace: "nowrap",
-    },
-
     viewDetailsBtn: {
         display: "flex",
         alignItems: "center",
@@ -1692,22 +1501,14 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        // FIX: was `flex: 1`, which let the button stretch to fill
-        // whatever leftover vertical space the grid's row-stretching left
-        // in shorter cards (e.g. ones with no team badge) — that's why
-        // some "View Details" buttons were taller than others. A fixed
-        // height + marginTop: auto keeps every button the same size while
-        // still sitting flush at the bottom of its card.
-        height: 44,
-        flexShrink: 0,
-        marginTop: "auto",
+        flex: 1,
         border: "none",
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         borderRadius: radius.md,
-        padding: "0 16px",
+        padding: "11px 16px",
         cursor: "pointer",
         boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
     },
@@ -1811,26 +1612,10 @@ const styles: Record<string, CSSProperties> = {
     },
     tdActions: { display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8 },
 
-    // Teams chips shown in the list/table view and the View Details modal.
-    tdTeamsWrap: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-    },
-    tdTeamChip: {
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.medium,
-        color: "#204297",
-        background: "#e7ecf8",
-        padding: "2px 8px",
-        borderRadius: radius.xl,
-        whiteSpace: "nowrap",
-    },
-
     detailsModal: {
         background: "#fff",
         borderRadius: radius.lg,
-        width: 560,
+        width: 480,
         maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
@@ -1856,9 +1641,9 @@ const styles: Record<string, CSSProperties> = {
     },
     detailsTitle: {
         margin: 0,
-        fontSize: fontSize["3xl"],
+        fontSize: fontSize["2xl"],
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "#16233c",
     },
     closeBtn: {
         position: "absolute",
@@ -1938,78 +1723,6 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
         gridColumn: "1 / -1",
-    },
-
-    // ---- Teams multi-select dropdown (Add / Edit Service modals) ----
-    teamsDropdownButton: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        width: "100%",
-        padding: "10px 12px",
-        background: "#fafbfc",
-        border: "1px solid #e4e9f2",
-        outline: "none",
-        fontSize: fontSize.base,
-        borderRadius: radius.sm,
-        boxSizing: "border-box",
-        color: "#16233c",
-        cursor: "pointer",
-    },
-    teamsDropdownButtonText: {
-        color: "#7c8aa3",
-    },
-    teamsDropdownPanel: {
-        position: "absolute",
-        top: "calc(100% + 4px)",
-        left: 0,
-        right: 0,
-        zIndex: 30,
-        background: "#fff",
-        border: "1px solid #e4e9f2",
-        borderRadius: radius.sm,
-        boxShadow: "0 12px 28px rgba(16,38,89,.16)",
-        maxHeight: 220,
-        overflowY: "auto",
-        padding: 6,
-    },
-    teamsDropdownEmpty: {
-        padding: "10px 12px",
-        fontSize: fontSize.sm,
-        color: "#9aa5b8",
-    },
-    teamCheckboxRow: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "8px 10px",
-        fontSize: fontSize.base,
-        color: "#16233c",
-        borderRadius: radius.xs,
-        cursor: "pointer",
-    },
-    teamChipsWrap: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-        marginTop: 8,
-    },
-    teamChip: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.medium,
-        color: "#204297",
-        background: "#e7ecf8",
-        padding: "4px 8px 4px 10px",
-        borderRadius: radius.xl,
-        whiteSpace: "nowrap",
-    },
-    teamChipRemove: {
-        fontSize: 10,
-        cursor: "pointer",
-        color: "#5a6c85",
     },
 
     // ---- Bulk Upload modal (matches Add User's "Bulk Add Users" modal,
