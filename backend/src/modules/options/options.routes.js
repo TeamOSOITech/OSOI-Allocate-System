@@ -32,24 +32,27 @@ router.get("/", async (req, res) => {
   try {
     const orgId = req.user.organizationId;
 
-    const [{ data: departments, error: deptErr }, { data: designations, error: desErr }, { data: teams, error: teamErr }] =
-      await Promise.all([
-        supabase
-          .from("departments")
-          .select("id,name")
-          .eq("organization_id", orgId)
-          .order("name", { ascending: true }),
-        supabase
-          .from("designations")
-          .select("id,name")
-          .eq("organization_id", orgId)
-          .order("name", { ascending: true }),
-        supabase
-          .from("teams")
-          .select("id,name")
-          .eq("organization_id", orgId)
-          .order("name", { ascending: true }),
-      ]);
+    const [
+      { data: departments, error: deptErr },
+      { data: designations, error: desErr },
+      { data: teams, error: teamErr },
+    ] = await Promise.all([
+      supabase
+        .from("departments")
+        .select("id,name")
+        .eq("organization_id", orgId)
+        .order("name", { ascending: true }),
+      supabase
+        .from("designations")
+        .select("id,name")
+        .eq("organization_id", orgId)
+        .order("name", { ascending: true }),
+      supabase
+        .from("teams")
+        .select("id,name")
+        .eq("organization_id", orgId)
+        .order("name", { ascending: true }),
+    ]);
 
     if (deptErr) throw deptErr;
     if (desErr) throw desErr;
@@ -78,7 +81,9 @@ router.post("/", async (req, res) => {
 
     const table = OPTION_TABLES[(field || "").toString().toLowerCase()];
     if (!table) {
-      return res.status(400).json({ message: `Unknown option field "${field}"` });
+      return res
+        .status(400)
+        .json({ message: `Unknown option field "${field}"` });
     }
 
     const trimmed = (value || "").toString().trim();
@@ -102,7 +107,9 @@ router.post("/", async (req, res) => {
           .eq("organization_id", orgId)
           .eq("name", trimmed)
           .maybeSingle();
-        return res.status(200).json({ id: existing?.id, name: trimmed, alreadyExisted: true });
+        return res
+          .status(200)
+          .json({ id: existing?.id, name: trimmed, alreadyExisted: true });
       }
       throw error;
     }
@@ -110,7 +117,9 @@ router.post("/", async (req, res) => {
     res.status(201).json({ id: data.id, name: data.name });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to add option", detail: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to add option", detail: err.message });
   }
 });
 
