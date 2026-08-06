@@ -1065,7 +1065,7 @@ const Landing = () => {
                         <span>Better Allocation.</span>
                     </h1>
                     <p className="lp-hero-subtitle">
-                        ALLOOKATE is a custom business solution designed to simplify the daily
+                        ALOOKATE is a custom business solution designed to simplify the daily
                         allocation and tracking of tasks for handlers. This application allows
                         Admins, Vertical Heads, and Process Heads to assign tasks based on dynamic
                         criteria, such as the time of day and the vertical (department or process)
