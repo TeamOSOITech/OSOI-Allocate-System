@@ -457,7 +457,17 @@ const Landing = () => {
                 .lp-hero-glow.g1 { width: 440px; height: 440px; background: #08A1CE; opacity: 0.30; top: -160px; right: -100px; }
                 .lp-hero-glow.g2 { width: 380px; height: 380px; background: #2EBBA8; opacity: 0.22; bottom: -160px; left: -120px; }
                 .lp-hero-glow.g3 { width: 320px; height: 320px; background: #204297; opacity: 0.35; top: 35%; left: 38%; }
-                .lp-hero-left { flex: 1 1 420px; min-width: 280px; position: relative; z-index: 1; animation: lp-fade-up 0.7s ease both; }
+                .lp-hero-left {
+                    flex: 1 1 420px;
+                    min-width: 280px;
+                    position: relative;
+                    z-index: 1;
+                    animation: lp-fade-up 0.7s ease both;
+                    /* FIX: badge/heading/paragraph weren't guaranteed to share
+                       the same left edge — this makes it explicit rather than
+                       relying on each child's default block alignment. */
+                    text-align: left;
+                }
                 .lp-hero-icon-badge {
                     width: 38px;
                     height: 38px;
@@ -847,8 +857,22 @@ const Landing = () => {
                 .lp-checkout-close:hover { color: var(--lp-text); }
 
                 /* ---------- Responsive ---------- */
+                /* FIX: Sign Up + Login buttons were always visible, even
+                   alongside the burger menu — on narrow phones the three
+                   together (brand + 2 buttons + burger) were wider than
+                   the viewport, so Login got pushed off-screen and the
+                   page's overflow-x:hidden clipped it instead of wrapping.
+                   Same clipping was cutting off the last hero pill below.
+                   Standard fix: below 900px, hide the header buttons and
+                   rely on the burger's mobile panel instead (Login/Sign Up
+                   are added there — see the JSX). */
+                html, body, #root {
+                    max-width: 100%;
+                    overflow-x: hidden;
+                }
                 @media (max-width: 900px) {
                     .lp-nav-links { display: none; }
+                    .lp-nav-signup-btn, .lp-nav-login-btn { display: none; }
                     .lp-burger { display: flex; }
                     .lp-mobile-panel.open { display: flex; }
                 }
@@ -999,6 +1023,22 @@ const Landing = () => {
                 >
                     Contact
                 </a>
+                <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                    <button
+                        className="lp-nav-signup-btn"
+                        style={{ display: "flex", flex: 1, justifyContent: "center" }}
+                        onClick={() => window.open("/?signup=1", "_blank", "noopener,noreferrer")}
+                    >
+                        Sign Up
+                    </button>
+                    <button
+                        className="lp-nav-login-btn"
+                        style={{ display: "flex", flex: 1, justifyContent: "center" }}
+                        onClick={() => window.open("/login", "_blank", "noopener,noreferrer")}
+                    >
+                        Login
+                    </button>
+                </div>
             </div>
 
             {/* ---------- Hero ---------- */}

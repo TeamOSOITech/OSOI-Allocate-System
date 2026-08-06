@@ -27,8 +27,11 @@ type Employee = {
     email: string;
     designation: string;
     department: string;
-    // NEW: shown on the card in place of Location, and included in search.
+    // Shown on the card in place of Location, and included in search.
     team?: string | null;
+    // NEW: role code from user_master (e.g. "SUPER_ADMIN", "TEAM_MEMBER").
+    // Editable only by a Super Admin — see Role field in the drawer below.
+    role?: string | null;
     status: EntityStatus;
     reportingManager: string | null;
     joiningDate: string; // ISO date
@@ -43,6 +46,23 @@ type Employee = {
 // Shape returned by GET /api/teams — same shape used on the Products page's
 // Teams dropdown.
 type Team = { id: string; name: string };
+
+// The app's fixed 6-tier role codes — see backend src/config/permissions.js.
+// Only a Super Admin can change this field (enforced both here and on the
+// backend), so unlike Department/Team this list is NOT fetched dynamically.
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+    { value: "SUPER_ADMIN", label: "Super Admin" },
+    { value: "OPS_MANAGER", label: "Ops Manager" },
+    { value: "AUDIT_MANAGER", label: "Audit Manager" },
+    { value: "PROCESS_LEAD", label: "Process Lead" },
+    { value: "VERTICAL_HEAD", label: "Vertical Head" },
+    { value: "TEAM_MEMBER", label: "Team Member" },
+];
+
+function formatRoleLabel(roleCode?: string | null) {
+    if (!roleCode) return "—";
+    return ROLE_OPTIONS.find((r) => r.value === roleCode)?.label || roleCode;
+}
 
 // Each entry pairs an avatar tint with a matching accent used for the card's
 // top border, so the two read as one deliberate color per person rather than
@@ -155,6 +175,12 @@ export default function Employees() {
     }
     const role = (currentUser?.role || "TEAM_MEMBER").toUpperCase();
     const canManage = role === "SUPER_ADMIN" || role === "OPS_MANAGER";
+    // NEW: Role field is special — Ops Manager can edit everything else
+    // about an employee, but only a Super Admin can change someone's
+    // role (prevents a lower admin tier from granting/removing Super
+    // Admin access). Everyone else always sees Role read-only, even in
+    // edit mode.
+    const canEditRole = role === "SUPER_ADMIN";
 
     const [search, setSearch] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("All");
@@ -166,6 +192,14 @@ export default function Employees() {
     // Teams for the drawer's Team dropdown (edit mode). Same source as the
     // Products page's Teams dropdown — GET /api/teams.
     const [teamsList, setTeamsList] = useState<Team[]>([]);
+
+    // NEW: Departments for the drawer's Department dropdown (edit mode).
+    // Same authoritative list used on the Add User page's Department
+    // field — GET /api/options. This is the org's configured department
+    // list, not just whatever departments happen to already be assigned
+    // to an employee (that's the separate, narrower `departments` list
+    // below, used only for this page's filter dropdown).
+    const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
 
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
@@ -218,9 +252,23 @@ export default function Employees() {
         }
     };
 
+    // NEW: Non-critical, same reasoning as fetchTeams — if this fails, the
+    // Department field in edit mode falls back to a plain text input.
+    const fetchDepartmentOptions = async () => {
+        try {
+            const res = await authFetch(`${apiBase}/api/options`, { cache: "no-store" });
+            if (!res.ok) return;
+            const json = await res.json();
+            setDepartmentOptions(json?.departments || []);
+        } catch {
+            // silent — non-critical
+        }
+    };
+
     useEffect(() => {
         fetchEmployees();
         fetchTeams();
+        fetchDepartmentOptions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiBase]);
 
@@ -274,12 +322,25 @@ export default function Employees() {
         if (!editForm) return;
         setSaving(true);
         try {
+            // Guard on the frontend too: even though the Role <select> is
+            // hidden from non-Super-Admins in the UI, editForm still
+            // carries whatever role the originally-selected employee had.
+            // Explicitly stripping it here (rather than trusting the UI
+            // never having changed it) means a non-Super-Admin's save
+            // request never includes a role field at all — the backend
+            // enforces this too, but this avoids relying on that alone.
+            const payload: Record<string, any> = { ...editForm };
+            if (!canEditRole) delete payload.role;
+
             const res = await authFetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editForm),
+                body: JSON.stringify(payload),
             });
-            if (!res.ok) throw new Error("Update failed");
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => null);
+                throw new Error(errBody?.error || "Update failed");
+            }
 
             // FIX: backend response might be sparse, differently-cased, or
             // return null/"" for fields it doesn't actually persist (e.g. a
@@ -306,9 +367,9 @@ export default function Employees() {
             setSelectedEmployee(null);
             setIsEditingDrawer(false);
             setEditForm(null);
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
-            alert("Unable to save changes.");
+            alert(err?.message || "Unable to save changes.");
         } finally {
             setSaving(false);
         }
@@ -831,17 +892,71 @@ export default function Employees() {
                                     </span>
                                 </div>
 
+                                {/* NEW: Role — always visible, but only editable when
+                                    the logged-in user is themselves a Super Admin. Ops
+                                    Manager (or anyone else who reaches edit mode) sees
+                                    it read-only even though they can edit every other
+                                    field on this card. */}
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Role</span>
+                                    {isEditingDrawer && canEditRole ? (
+                                        <select
+                                            className="emp-drawer-select"
+                                            style={styles.detailsInput}
+                                            value={drawerData.role || ""}
+                                            onChange={(e) =>
+                                                updateEditField("role", e.target.value)
+                                            }
+                                        >
+                                            <option value="">Select role</option>
+                                            {ROLE_OPTIONS.map((r) => (
+                                                <option key={r.value} value={r.value}>
+                                                    {r.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <span style={styles.detailsValue}>
+                                            {formatRoleLabel(drawerData.role)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* NEW: Department — now a dropdown sourced from GET
+                                    /api/options (same authoritative list used on the
+                                    Add User page), instead of a free-text input.
+                                    Falls back to plain text if the list couldn't be
+                                    loaded, so editing never gets blocked — same
+                                    pattern as Team just below. */}
                                 <div style={styles.detailsRow}>
                                     <span style={styles.detailsLabel}>Department</span>
                                     {isEditingDrawer ? (
-                                        <input
-                                            className="emp-drawer-input"
-                                            style={styles.detailsInput}
-                                            value={drawerData.department}
-                                            onChange={(e) =>
-                                                updateEditField("department", e.target.value)
-                                            }
-                                        />
+                                        departmentOptions.length > 0 ? (
+                                            <select
+                                                className="emp-drawer-select"
+                                                style={styles.detailsInput}
+                                                value={drawerData.department || ""}
+                                                onChange={(e) =>
+                                                    updateEditField("department", e.target.value)
+                                                }
+                                            >
+                                                <option value="">Select department</option>
+                                                {departmentOptions.map((d) => (
+                                                    <option key={d} value={d}>
+                                                        {d}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                className="emp-drawer-input"
+                                                style={styles.detailsInput}
+                                                value={drawerData.department}
+                                                onChange={(e) =>
+                                                    updateEditField("department", e.target.value)
+                                                }
+                                            />
+                                        )
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {drawerData.department || "—"}

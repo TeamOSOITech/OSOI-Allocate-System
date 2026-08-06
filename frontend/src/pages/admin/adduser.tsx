@@ -470,7 +470,7 @@ export default function AddUser() {
 
         if (!isProfessionalEmail(formData.email)) {
             setError(
-                "Please enter a professional company email (e.g. abc@infosys.com). Gmail, Yahoo, Outlook etc. are not allowed."
+                "Please enter a professional company email (e.g. abc@osoitech.com). Gmail, Yahoo, Outlook etc. are not allowed."
             );
             return;
         }
