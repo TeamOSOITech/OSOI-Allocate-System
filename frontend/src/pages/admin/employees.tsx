@@ -174,7 +174,7 @@ export default function Employees() {
         currentUser = null;
     }
     const role = (currentUser?.role || "TEAM_MEMBER").toUpperCase();
-    const canManage = role === "SUPER_ADMIN" || role === "OPS_MANAGER";
+    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"].includes(role);
     // NEW: Role field is special — Ops Manager can edit everything else
     // about an employee, but only a Super Admin can change someone's
     // role (prevents a lower admin tier from granting/removing Super

@@ -3,8 +3,8 @@ import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
-import VoiceAssistant from "../../components/voiceAssistant";
-import { speak } from "../../utils/speak";
+//import VoiceAssistant from "../../components/voiceAssistant";
+//import { speak } from "../../utils/speak";
 import FormErrorBoundary from "../../components/formErrorBoundary";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
@@ -511,7 +511,7 @@ export default function AddUser() {
             }
 
             setShowSuccess(true);
-            speak("User submitted successfully.");
+            //speak("User submitted successfully.");
         } catch (err: any) {
             setError(err?.message || "Something went wrong");
         } finally {
@@ -524,7 +524,7 @@ export default function AddUser() {
         navigate("/clients");
     };
 
-    const handleVoiceFillForm = (data: any) => {
+    /*const handleVoiceFillForm = (data: any) => {
         const combinedFullName = `${data.firstName || ""} ${data.lastName || ""}`.trim();
 
         setFormData((prev) => ({
@@ -542,7 +542,7 @@ export default function AddUser() {
             reportingManager: data.reportingManager || prev.reportingManager,
             Teams: data.Teams || prev.Teams,
         }));
-    };
+    };*/
 
     // FIX: this is the actual cause of the blank-screen bug.
     //
@@ -566,13 +566,13 @@ export default function AddUser() {
     // This wrapper re-validates required fields and refuses to silently
     // submit/navigate if the form isn't actually ready, so a stray voice
     // match can no longer blow past your review step.
-    const handleVoiceRequestSubmit = () => {
+    /*   const handleVoiceRequestSubmit = () => {
         if (validateRequired().length > 0) {
             speak("Some required fields are still missing. Please review before submitting.");
             return;
         }
         handleRegister();
-    };
+    };*/
 
     return (
         <FormErrorBoundary>
@@ -1157,10 +1157,10 @@ export default function AddUser() {
                 {/* FIX: was onRequestSubmit={handleRegister} — now goes through
                 the guarded wrapper above instead of calling the real
                 registration handler directly. */}
-                <VoiceAssistant
+                {/*}  <VoiceAssistant
                     onFillForm={handleVoiceFillForm}
                     onRequestSubmit={handleVoiceRequestSubmit}
-                />
+                />*/}
             </div>
         </FormErrorBoundary>
     );

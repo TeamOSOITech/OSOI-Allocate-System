@@ -180,7 +180,9 @@ const Products = () => {
     } catch {
         currentUser = null;
     }
-    const canManage = (currentUser?.role || "").toUpperCase() === "SUPER_ADMIN";
+    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
+        (currentUser?.role || "").toUpperCase()
+    );
 
     const isMobile = useIsMobile();
 

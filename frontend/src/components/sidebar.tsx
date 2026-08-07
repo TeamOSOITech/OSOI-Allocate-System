@@ -15,6 +15,11 @@ type MenuItem = {
 const ADMIN_TIER = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
 const ADMIN_AND_VERTICAL_HEAD = [...ADMIN_TIER, "VERTICAL_HEAD"];
 const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
+// NEW: Super-Admin-only tabs — Dashboard, Daily Work, Today's Allocation,
+// Production Reports, History, Billing, Quality Scores, and Profile are
+// now restricted to SUPER_ADMIN alone (previously visible to some mix of
+// ADMIN_TIER / ADMIN_AND_VERTICAL_HEAD / EVERYONE).
+const SUPER_ADMIN_ONLY = ["SUPER_ADMIN"];
 
 const menuItems: MenuItem[] = [
     // /dashboard route is gated to ADMIN_TIER_ROLES in App.jsx, so this
@@ -24,7 +29,7 @@ const menuItems: MenuItem[] = [
         label: "Dashboard",
         icon: "ti ti-layout-dashboard",
         path: "/dashboard",
-        roles: ADMIN_TIER,
+        roles: SUPER_ADMIN_ONLY,
     },
     // Role-based access Phase 1: Normal User's own landing page. Points
     // at /report (open to any logged-in user, no requiredRole in
@@ -72,11 +77,7 @@ const menuItems: MenuItem[] = [
         label: "Daily Work",
         icon: "ti ti-clipboard-plus",
         path: "/daily-work",
-        // Role-based access Phase 1: this is Normal User's "Daily
-        // Assigned Work" page — TEAM_MEMBER added alongside the existing
-        // admin-tier + Vertical Head access. Matches the requiredRole
-        // update on the /daily-work route in App.jsx.
-        roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
+        roles: SUPER_ADMIN_ONLY,
     },
     // REMOVED: standalone Attendance nav link — leave-marking now lives
     // inline inside Manual/Smart Allocation instead of a separate page.
@@ -85,35 +86,32 @@ const menuItems: MenuItem[] = [
         label: "Today's Allocation",
         icon: "ti ti-hand-stop",
         path: "/today's-allocation",
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        roles: SUPER_ADMIN_ONLY,
     },
     {
         label: "Production Reports",
         icon: "ti ti-file-analytics",
         path: "/production-reports",
-        // Role-based access Phase 1: Normal User no longer sees this —
-        // was EVERYONE (included TEAM_MEMBER), narrowed to admin-tier +
-        // Vertical Head only.
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        roles: SUPER_ADMIN_ONLY,
     },
     {
         label: "History",
         icon: "ti ti-history",
         path: "/history",
-        roles: EVERYONE,
+        roles: SUPER_ADMIN_ONLY,
     },
-    { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: ADMIN_TIER },
+    { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
     {
         label: "Quality Scores",
         icon: "ti ti-star",
         path: "/quality-scores",
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        roles: SUPER_ADMIN_ONLY,
     },
     {
         label: "Profile",
         icon: "ti ti-settings",
         path: "/profile",
-        roles: EVERYONE,
+        roles: SUPER_ADMIN_ONLY,
     },
 ];
 
