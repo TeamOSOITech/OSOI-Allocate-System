@@ -296,7 +296,12 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
             >
                 {/* Logo */}
 
-                {/* Nav items wrapper: clips instead of scrolling if content overflows */}
+                {/* Nav items wrapper: clips instead of scrolling if content
+                    overflows. flex: 1 makes it grow to fill available space
+                    so "Sign off" + the logo below always sit pinned to the
+                    bottom of the sidebar — regardless of how many tabs a
+                    role sees (e.g. TEAM_MEMBER's short list vs
+                    SUPER_ADMIN's full list). */}
                 <div
                     style={{
                         display: "flex",
@@ -304,6 +309,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         gap: "6px",
                         overflow: "hidden",
                         minHeight: 0,
+                        flex: 1,
                     }}
                 >
                     {visibleItems.map((item) => {
