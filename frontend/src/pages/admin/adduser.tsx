@@ -33,6 +33,14 @@ const isProfessionalEmail = (email: string) => {
     return !BLOCKED_EMAIL_DOMAINS.includes(domain);
 };
 
+// Password policy: at least 8 characters, containing at least one
+// uppercase letter (A-Z). Shared by the single Add User form and the
+// bulk-upload path so both enforce the exact same rule.
+const PASSWORD_MIN_LENGTH = 8;
+const isValidPassword = (pw: string) =>
+    pw.length >= PASSWORD_MIN_LENGTH && /[A-Z]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+const PASSWORD_REQUIREMENT_TEXT = `At least ${PASSWORD_MIN_LENGTH} characters, including one uppercase letter (A-Z) and one special character (!@#$ etc.)`;
+
 // Styled tooltip (matches the gradient tooltip used on the Clients page) —
 // inline style objects can't express :hover, so this small bit of CSS is
 // injected once via a <style> tag instead of scattered onMouseEnter handlers.
@@ -328,13 +336,36 @@ export default function AddUser() {
         }
     };
 
+    // FIX: previously picked purely random characters from a pool that
+    // included uppercase letters — but nothing guaranteed one actually got
+    // picked, so an auto-generated password could (rarely) fail the new
+    // "at least one uppercase letter" policy. Now builds the password from
+    // guaranteed-included character classes, then shuffles, so it always
+    // satisfies isValidPassword().
     const generatePassword = () => {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
-        let pass = "";
-        for (let i = 0; i < 10; i++) {
-            pass += chars.charAt(Math.floor(Math.random() * chars.length));
+        const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const lower = "abcdefghijklmnopqrstuvwxyz";
+        const digits = "0123456789";
+        const symbols = "@#$%";
+        const all = upper + lower + digits + symbols;
+
+        const pick = (pool: string) => pool.charAt(Math.floor(Math.random() * pool.length));
+
+        // Guarantee at least one uppercase (policy requirement) plus a
+        // lowercase and digit for reasonable strength, then fill the rest
+        // randomly from the full pool.
+        const guaranteed = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+        const remainingLength = Math.max(PASSWORD_MIN_LENGTH, 10) - guaranteed.length;
+        const rest = Array.from({ length: remainingLength }, () => pick(all));
+
+        // Shuffle so the guaranteed characters aren't always in the same
+        // first-three positions.
+        const chars = [...guaranteed, ...rest];
+        for (let i = chars.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [chars[i], chars[j]] = [chars[j], chars[i]];
         }
-        return pass;
+        return chars.join("");
     };
 
     const handleGeneratePasswordClick = () => {
@@ -397,7 +428,9 @@ export default function AddUser() {
 
             // ---- client-side validation pass, mirrors handleRegister ----
             // Required fields (DOB & Contact Number excluded) + professional
-            // email domain check, same rules as the single Add User form.
+            // email domain check + password policy (only when a password
+            // was actually supplied in the sheet — blank cells still
+            // auto-generate on the backend/below).
             const validUsers: ReturnType<typeof mapBulkRow>[] = [];
             const preFailedResults: any[] = [];
 
@@ -420,7 +453,18 @@ export default function AddUser() {
                     });
                     return;
                 }
-                validUsers.push(u);
+                if (u.password && !isValidPassword(u.password)) {
+                    preFailedResults.push({
+                        email: u.email,
+                        success: false,
+                        message: `Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`,
+                    });
+                    return;
+                }
+                // Blank password in the sheet -> auto-generate one here so
+                // every row sent to the backend already satisfies policy,
+                // same as the single-user form below.
+                validUsers.push(u.password ? u : { ...u, password: generatePassword() });
             });
 
             let backendResults: any[] = [];
@@ -472,6 +516,15 @@ export default function AddUser() {
             setError(
                 "Please enter a professional company email (e.g. abc@osoitech.com). Gmail, Yahoo, Outlook etc. are not allowed."
             );
+            return;
+        }
+
+        // Password is optional in the form, but if the admin typed one in
+        // manually it must meet the policy — an auto-generated one always
+        // will (see generatePassword above), so this only ever blocks a
+        // manually-typed weak password.
+        if (formData.password && !isValidPassword(formData.password)) {
+            setError(`Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`);
             return;
         }
 
@@ -967,44 +1020,65 @@ export default function AddUser() {
                                     }
                                 >
                                     <div
-                                        style={
-                                            isMobile ? styles.passwordRowMobile : styles.passwordRow
-                                        }
+                                        style={{ width: isMobile ? "100%" : "58%", minWidth: 280 }}
                                     >
-                                        <input
-                                            type="text"
-                                            style={{ ...styles.input, flex: 1, minWidth: 0 }}
-                                            value={formData.password}
-                                            onChange={(e) =>
-                                                setFormData({
-                                                    ...formData,
-                                                    password: e.target.value,
-                                                })
+                                        <div
+                                            style={
+                                                isMobile
+                                                    ? styles.passwordRowMobile
+                                                    : { ...styles.passwordRow, width: "100%" }
                                             }
-                                            placeholder="Optional — auto-generated if left blank"
-                                        />
-                                        <button
-                                            style={styles.generateBtn}
-                                            onClick={handleGeneratePasswordClick}
-                                            type="button"
                                         >
-                                            <i
-                                                className="ti ti-refresh"
-                                                style={{ fontSize: fontSize.base }}
+                                            <input
+                                                type="text"
+                                                style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                                value={formData.password}
+                                                onChange={(e) =>
+                                                    setFormData({
+                                                        ...formData,
+                                                        password: e.target.value,
+                                                    })
+                                                }
+                                                placeholder="Optional — auto-generated if left blank"
                                             />
-                                            Generate
-                                        </button>
-                                        <button
-                                            style={styles.copyBtn}
-                                            onClick={copyPassword}
-                                            type="button"
+                                            <button
+                                                style={styles.generateBtn}
+                                                onClick={handleGeneratePasswordClick}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="ti ti-refresh"
+                                                    style={{ fontSize: fontSize.base }}
+                                                />
+                                                Generate
+                                            </button>
+                                            <button
+                                                style={styles.copyBtn}
+                                                onClick={copyPassword}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="ti ti-copy"
+                                                    style={{ fontSize: fontSize.base }}
+                                                />
+                                                Copy
+                                            </button>
+                                        </div>
+                                        {/* Policy hint — only flags red once the admin has
+                                            typed something invalid; blank/auto-generated
+                                            passwords always satisfy the rule already. */}
+                                        <p
+                                            style={{
+                                                ...styles.note,
+                                                color:
+                                                    formData.password &&
+                                                    !isValidPassword(formData.password)
+                                                        ? "#dc2626"
+                                                        : "#767F92",
+                                            }}
                                         >
-                                            <i
-                                                className="ti ti-copy"
-                                                style={{ fontSize: fontSize.base }}
-                                            />
-                                            Copy
-                                        </button>
+                                            {PASSWORD_REQUIREMENT_TEXT}
+                                        </p>
                                     </div>
 
                                     <button
@@ -1070,7 +1144,10 @@ export default function AddUser() {
                                 <p style={styles.bulkInfoText}>
                                     Full Name, Email (company domain only), Employee ID,
                                     Designation, Department, Date of Joining, Reporting Manager,
-                                    Teams, Role. Contact Number and Date of Birth are optional.
+                                    Teams, Role. Contact Number and Date of Birth are optional. If
+                                    Password is filled in, it must be{" "}
+                                    {PASSWORD_REQUIREMENT_TEXT.toLowerCase()}; leave it blank to
+                                    auto-generate one.
                                 </p>
                             </div>
 

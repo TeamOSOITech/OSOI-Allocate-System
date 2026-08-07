@@ -7,6 +7,7 @@ import type { ThemeName } from "../context/themecontext";
 
 interface HeaderProps {
     userName?: string;
+    photoUrl?: string | null;
     logoSrc?: string;
     onRefresh?: () => void;
     onHelp?: () => void;
@@ -41,6 +42,7 @@ function getInitials(name: string) {
 
 export default function Header({
     userName,
+    photoUrl,
     onRefresh,
     onHelp,
     onNotificationsClick,
@@ -176,7 +178,11 @@ export default function Header({
                         title={displayName}
                         type="button"
                     >
-                        {getInitials(displayName)}
+                        {photoUrl ? (
+                            <img src={photoUrl} alt={displayName} style={styles.avatarImg} />
+                        ) : (
+                            getInitials(displayName)
+                        )}
                     </button>
 
                     {menuOpen && (
@@ -480,6 +486,14 @@ function getStyles(BRAND: {
             fontWeight: fontWeight.bold,
             cursor: "pointer",
             flexShrink: 0,
+            padding: 0,
+            overflow: "hidden",
+        },
+        avatarImg: {
+            width: "100%",
+            height: "100%",
+            borderRadius: radius.circle,
+            objectFit: "cover",
         },
         avatarMobile: {
             display: "flex",
@@ -495,6 +509,8 @@ function getStyles(BRAND: {
             fontWeight: fontWeight.bold,
             cursor: "pointer",
             flexShrink: 0,
+            padding: 0,
+            overflow: "hidden",
         },
 
         /* ---- Dropdown menu ---- */

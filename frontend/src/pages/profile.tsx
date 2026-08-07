@@ -552,15 +552,6 @@ export default function Profile({ onLogout }: ProfileProps) {
 
             <style>{HOVER_CSS}</style>
 
-            <div style={styles.pageHeaderRow}>
-                <div style={styles.pageTitleBlock}>
-                    <h2 style={styles.pageTitle}>My Profile</h2>
-                    <p style={styles.pageSubtitle}>
-                        View your profile details, today's & past allocations
-                    </p>
-                </div>
-            </div>
-
             {error && <div style={styles.noteWarning}>{error}</div>}
 
             {/* ---- Identity card ---- */}
@@ -606,17 +597,30 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                     </div>
 
-                    <button
-                        type="button"
-                        style={styles.editProfileBtn}
-                        className="pf-btn pf-btn-outline"
-                        disabled={savingProfile}
-                        onClick={() =>
-                            editingProfile ? handleSaveProfile() : setEditingProfile(true)
-                        }
-                    >
-                        {editingProfile ? (savingProfile ? "Saving…" : "Save") : "Edit Profile"}
-                    </button>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {editingProfile && (
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.cancelEditBtn}
+                                disabled={savingProfile}
+                                onClick={cancelEditProfile}
+                            >
+                                Cancel
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            style={styles.editProfileBtn}
+                            className="pf-btn pf-btn-outline"
+                            disabled={savingProfile}
+                            onClick={() =>
+                                editingProfile ? handleSaveProfile() : setEditingProfile(true)
+                            }
+                        >
+                            {editingProfile ? (savingProfile ? "Saving…" : "Save") : "Edit Profile"}
+                        </button>
+                    </div>
                 </div>
 
                 <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
@@ -674,27 +678,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
 
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
-
-                {editingProfile && (
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-outline"
-                        style={styles.cancelEditBtn}
-                        onClick={cancelEditProfile}
-                    >
-                        Cancel
-                    </button>
-                )}
-
-                <div style={styles.logoutRow}>
-                    <button
-                        className="pf-btn pf-btn-danger"
-                        style={styles.logoutButton}
-                        onClick={onLogout}
-                    >
-                        Logout
-                    </button>
-                </div>
             </div>
 
             {/* ---- Stats ---- */}
@@ -769,13 +752,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                     />
                 </div>
                 <div style={styles.filterField}>
-                    <label style={styles.smallLabel}>Product</label>
+                    <label style={styles.smallLabel}>Service</label>
                     <select
                         style={styles.textInput}
                         value={productFilter}
                         onChange={(e) => setProductFilter(e.target.value)}
                     >
-                        <option value="all">All Products</option>
+                        <option value="all">All Services</option>
                         {products.map((p) => (
                             <option key={p} value={p}>
                                 {p}
@@ -804,7 +787,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         style={styles.textInput}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search by product, team or status…"
+                        placeholder="Search by service, team or status…"
                     />
                 </div>
             </div>
@@ -837,7 +820,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <thead>
                             <tr>
                                 <th style={styles.th}>#</th>
-                                <th style={styles.th}>Task / Product</th>
+                                <th style={styles.th}>Task / Service</th>
                                 <th style={styles.th}>Description</th>
                                 <th style={styles.th}>Team</th>
                                 <th style={styles.th}>Allocated By</th>
@@ -1004,7 +987,7 @@ function InfoIconRow({
         <div style={styles.infoIconRow}>
             <span style={styles.contactIcon}>{icon}</span>
             <div style={styles.infoTextWrap}>
-                <span style={styles.infoLabel}>{label}</span>
+                <span style={styles.infoLabel}>{label}:</span>
                 <span style={styles.infoValue}>{value}</span>
             </div>
         </div>
@@ -1206,11 +1189,9 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         fontWeight: 600,
         fontSize: 12.5,
-        padding: "7px 14px",
+        padding: "9px 16px",
         borderRadius: 8,
         cursor: "pointer",
-        marginTop: 8,
-        marginRight: 10,
     },
 
     identityGrid: {
@@ -1231,8 +1212,8 @@ const styles: Record<string, CSSProperties> = {
     contactRow: { display: "flex", alignItems: "center", gap: 10 },
     contactIcon: { color: BRAND.lightBlue, flexShrink: 0, display: "flex" },
     contactValue: { fontSize: 13.5, color: "#3D4459", fontWeight: 500 },
-    infoIconRow: { display: "flex", alignItems: "flex-start", gap: 10 },
-    infoTextWrap: { display: "flex", flexDirection: "column", gap: 2 },
+    infoIconRow: { display: "flex", alignItems: "center", gap: 10 },
+    infoTextWrap: { display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 },
     infoLabel: { fontSize: 11, color: "#9099AC" },
     infoValue: { fontSize: 13.5, color: "#17181C", fontWeight: 600 },
     aboutBox: {

@@ -327,6 +327,15 @@ export default function ManualAllocation() {
     const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
+    // ---- Tab 1 "Allocate" (pick a service, see its case, auto/manual
+    // allocate) vs Tab 2 "Employees" (everyone for the selected service,
+    // their currently assigned qty, editable). Both tabs share the same
+    // date/product/team/search filters and the same `rows` state — the
+    // Employees tab is just a different view onto it, so edits there are
+    // saved through the exact same bulk-upsert call as Tab 1's button.
+    const [activeTab, setActiveTab] = useState<"allocate" | "employees">("allocate");
+    const [seedingCases, setSeedingCases] = useState(false);
+
     const showToast = (msg: string) => {
         setToast(msg);
         setTimeout(() => setToast(""), 3000);
@@ -579,6 +588,70 @@ export default function ManualAllocation() {
 
     const productSelected = !!productId;
 
+    // ---- SAVE (shared by Tab 1's "Allocate & Save" button and Tab 2's
+    // "Save Changes" button — both write the whole visible table for the
+    // selected case via bulk-upsert, replacing whatever was saved before). ----
+    const handleSaveAllocations = async () => {
+        if (!selectedBatch) {
+            setError('Select a specific product (not "All") before saving.');
+            return;
+        }
+        const rowsPayload = filteredEmployees.map((emp) => {
+            const r = rows[emp.id] || { status: "PRESENT" as RowStatus, qty: 0 };
+            return { employeeId: emp.id, status: r.status, allocatedQty: r.qty };
+        });
+        if (rowsPayload.length === 0) {
+            setError("No employees to allocate — check your search.");
+            return;
+        }
+        setSubmitting(true);
+        setError("");
+        try {
+            const res = await authFetch(`${API_BASE}/api/allocations/bulk-upsert`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    dailyWorkId: selectedBatch.id,
+                    rows: rowsPayload,
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json.message || "Failed to save allocation");
+            showToast("Allocation Saved");
+            loadBatches();
+        } catch (err: any) {
+            setError(err.message || "Failed to save allocation");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    // ---- "Load Test Cases" button: asks the backend to create one dummy
+    // daily_work case per service for the current date (skipping services
+    // that already have one), so the allocate flow has something to test
+    // against without typing Daily Work batches in by hand. ----
+    const handleSeedDummyCases = async () => {
+        setSeedingCases(true);
+        setError("");
+        try {
+            const res = await authFetch(`${API_BASE}/api/daily-work/seed-dummy`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ date }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json.message || "Failed to load test cases");
+            showToast(json.message || "Test cases loaded");
+            loadBatches();
+        } catch (err: any) {
+            setError(err.message || "Failed to load test cases");
+        } finally {
+            setSeedingCases(false);
+        }
+    };
+
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
             <div style={styles.topBar} />
@@ -603,6 +676,51 @@ export default function ManualAllocation() {
                             <HeaderIllustration />
                         </div>
                     )}
+                </div>
+
+                {/* ---- TABS + LOAD TEST CASES ----
+                    Tab switch and the seed button both operate on the
+                    shared date/product state above, so they sit outside
+                    either tab's own content and stay visible on both. */}
+                <div style={isMobile ? styles.tabBarRowMobile : styles.tabBarRow}>
+                    <div style={styles.tabBar}>
+                        <button
+                            style={{
+                                ...styles.tabBtn,
+                                ...(activeTab === "allocate" ? styles.tabBtnActive : {}),
+                            }}
+                            onClick={() => setActiveTab("allocate")}
+                            type="button"
+                        >
+                            <Box size={14} />
+                            Allocate
+                        </button>
+                        <button
+                            style={{
+                                ...styles.tabBtn,
+                                ...(activeTab === "employees" ? styles.tabBtnActive : {}),
+                            }}
+                            onClick={() => setActiveTab("employees")}
+                            type="button"
+                        >
+                            <Users size={14} />
+                            Employees
+                        </button>
+                    </div>
+                    <button
+                        style={{
+                            ...styles.loadTestCasesBtn,
+                            opacity: seedingCases ? 0.7 : 1,
+                            cursor: seedingCases ? "not-allowed" : "pointer",
+                        }}
+                        onClick={handleSeedDummyCases}
+                        disabled={seedingCases}
+                        type="button"
+                        title="Create one dummy case per service for the selected date, to test the allocation flow"
+                    >
+                        <Zap size={14} />
+                        {seedingCases ? "Loading..." : "Load Test Cases"}
+                    </button>
                 </div>
 
                 {error && (
@@ -685,417 +803,626 @@ export default function ManualAllocation() {
                     </div>
                 )}
 
-                {/* ---- KPI CARDS ---- */}
-                <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
-                    <KpiCard
-                        icon={Box}
-                        label="Total Qty"
-                        subLabel="Total quantity to allocate"
-                        value={totalQty}
-                        color={BRAND.blue}
-                    />
-                    <KpiCard
-                        icon={Users}
-                        label="Present Employees"
-                        subLabel="Currently present"
-                        value={presentCount}
-                        color={BRAND.green}
-                    />
-                    <KpiCard
-                        icon={CheckCircle2}
-                        label="Allocated"
-                        subLabel="Already allocated"
-                        value={allocatedQty}
-                        color={BRAND.lightBlue}
-                    />
-                    <KpiCard
-                        icon={AlertTriangle}
-                        label="Remaining"
-                        subLabel="Yet to allocate"
-                        value={remainingQty}
-                        color={remainingQty > 0 ? BRAND.amber : BRAND.green}
-                    />
-                </div>
-
-                {/* ---- 2. ACTION BUTTONS ---- */}
-                <div style={styles.actionBar}>
-                    <div style={styles.actionBarLeft}>
-                        <button
-                            style={{
-                                ...styles.smartBtn,
-                                opacity: productSelected ? 1 : 0.5,
-                                cursor: productSelected ? "pointer" : "not-allowed",
-                            }}
-                            disabled={!productSelected}
-                            onClick={handleSmartAllocation}
-                        >
-                            <Zap size={14} />
-                            Smart Allocation
-                        </button>
-                        <button
-                            style={{
-                                ...styles.manualBtn,
-                                ...(manualEdit ? styles.manualBtnActive : {}),
-                                opacity: productSelected ? 1 : 0.5,
-                                cursor: productSelected ? "pointer" : "not-allowed",
-                            }}
-                            disabled={!productSelected}
-                            onClick={() => setManualEdit((v) => !v)}
-                        >
-                            <Edit3 size={14} />
-                            Manual Edit: {manualEdit ? "ON" : "OFF"}
-                        </button>
-                    </div>
-                    {!isMobile && (
-                        <div style={styles.actionBarRight}>
-                            <button
-                                style={styles.iconTextBtn}
-                                onClick={handleExport}
-                                disabled={!productSelected}
-                                title="Export current table to CSV"
-                            >
-                                <Download size={14} />
-                                Export
-                            </button>
-                            <button
-                                style={styles.iconOnlyBtn}
-                                onClick={() => setFiltersOpen((v) => !v)}
-                                title={filtersOpen ? "Hide filters" : "Show filters"}
-                            >
-                                <Filter size={15} />
-                            </button>
+                {activeTab === "allocate" && (
+                    <>
+                        {/* ---- KPI CARDS ---- */}
+                        <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
+                            <KpiCard
+                                icon={Box}
+                                label="Total Qty"
+                                subLabel="Total quantity to allocate"
+                                value={totalQty}
+                                color={BRAND.blue}
+                            />
+                            <KpiCard
+                                icon={Users}
+                                label="Present Employees"
+                                subLabel="Currently present"
+                                value={presentCount}
+                                color={BRAND.green}
+                            />
+                            <KpiCard
+                                icon={CheckCircle2}
+                                label="Allocated"
+                                subLabel="Already allocated"
+                                value={allocatedQty}
+                                color={BRAND.lightBlue}
+                            />
+                            <KpiCard
+                                icon={AlertTriangle}
+                                label="Remaining"
+                                subLabel="Yet to allocate"
+                                value={remainingQty}
+                                color={remainingQty > 0 ? BRAND.amber : BRAND.green}
+                            />
                         </div>
-                    )}
-                </div>
 
-                {/* ---- 3. MAIN TABLE ----
+                        {/* ---- 2. ACTION BUTTONS ---- */}
+                        <div style={styles.actionBar}>
+                            <div style={styles.actionBarLeft}>
+                                <button
+                                    style={{
+                                        ...styles.smartBtn,
+                                        opacity: productSelected ? 1 : 0.5,
+                                        cursor: productSelected ? "pointer" : "not-allowed",
+                                    }}
+                                    disabled={!productSelected}
+                                    onClick={handleSmartAllocation}
+                                >
+                                    <Zap size={14} />
+                                    Smart Allocation
+                                </button>
+                                <button
+                                    style={{
+                                        ...styles.manualBtn,
+                                        ...(manualEdit ? styles.manualBtnActive : {}),
+                                        opacity: productSelected ? 1 : 0.5,
+                                        cursor: productSelected ? "pointer" : "not-allowed",
+                                    }}
+                                    disabled={!productSelected}
+                                    onClick={() => setManualEdit((v) => !v)}
+                                >
+                                    <Edit3 size={14} />
+                                    Manual Edit: {manualEdit ? "ON" : "OFF"}
+                                </button>
+                            </div>
+                            {!isMobile && (
+                                <div style={styles.actionBarRight}>
+                                    <button
+                                        style={styles.iconTextBtn}
+                                        onClick={handleExport}
+                                        disabled={!productSelected}
+                                        title="Export current table to CSV"
+                                    >
+                                        <Download size={14} />
+                                        Export
+                                    </button>
+                                    <button
+                                        style={styles.iconOnlyBtn}
+                                        onClick={() => setFiltersOpen((v) => !v)}
+                                        title={filtersOpen ? "Hide filters" : "Show filters"}
+                                    >
+                                        <Filter size={15} />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ---- 3. MAIN TABLE ----
                     A real <table> is used (not stacked CSS-grid divs) so the
                     header and every row are guaranteed to share the exact
                     same column widths — the browser's table layout engine
                     enforces this across <thead> and <tbody> automatically,
                     which independent grid containers per row cannot. */}
-                <div style={styles.tableCard}>
-                    <table style={styles.table}>
-                        <colgroup>
-                            <col style={{ width: isMobile ? 28 : 40 }} />
-                            <col />
-                            {!isMobile && <col style={{ width: "13%" }} />}
-                            {!isMobile && <col style={{ width: "13%" }} />}
-                            {!isMobile && <col style={{ width: "15%" }} />}
-                            <col style={{ width: isMobile ? "34%" : "24%" }} />
-                            <col style={{ width: isMobile ? 84 : 120 }} />
-                            <col style={{ width: 28 }} />
-                        </colgroup>
-                        <thead>
-                            <tr style={styles.theadRow}>
-                                <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
-                                <th style={styles.th}>Employee Name</th>
-                                {!isMobile && <th style={styles.th}>Dept</th>}
-                                {!isMobile && <th style={styles.th}>Team</th>}
-                                {!isMobile && <th style={styles.th}>Product</th>}
-                                <th style={styles.th}>Status</th>
-                                <th style={{ ...styles.th, textAlign: "right" }}>Allocated Qty</th>
-                                <th style={{ ...styles.th, paddingRight: 18 }} />
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <tr>
-                                    <td style={styles.emptyNote} colSpan={isMobile ? 5 : 8}>
-                                        Loading...
-                                    </td>
-                                </tr>
-                            ) : !productSelected ? (
-                                <tr>
-                                    <td colSpan={isMobile ? 5 : 8}>
-                                        <div style={styles.emptyState}>
-                                            <EmptyStateIcon />
-                                            <span style={styles.emptyStateText}>
-                                                Select a product above to see the employee list.
-                                            </span>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : filteredEmployees.length === 0 ? (
-                                <tr>
-                                    <td colSpan={isMobile ? 5 : 8}>
-                                        <div style={styles.emptyState}>
-                                            <EmptyStateIcon />
-                                            <span style={styles.emptyStateText}>
-                                                No employees match your search.
-                                            </span>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : (
-                                filteredEmployees.map((emp, idx) => {
-                                    const r = rows[emp.id] || {
-                                        status: "PRESENT" as RowStatus,
-                                        qty: 0,
-                                    };
-                                    const { bg, fg } = avatarColors(emp.name);
-                                    const isLeave = r.status === "LEAVE";
-                                    return (
-                                        <tr
-                                            key={emp.id}
-                                            style={{
-                                                background: isLeave
-                                                    ? "#f3f4f6"
-                                                    : idx % 2 === 0
-                                                      ? "#fff"
-                                                      : "#fafaff",
-                                                opacity: isLeave ? 0.65 : 1,
-                                            }}
-                                        >
-                                            <td
-                                                style={{
-                                                    ...styles.td,
-                                                    paddingLeft: 18,
-                                                    fontSize: fontSize.sm,
-                                                    color: "#9ca3af",
-                                                }}
-                                            >
-                                                {idx + 1}
+                        <div style={styles.tableCard}>
+                            <table style={styles.table}>
+                                <colgroup>
+                                    <col style={{ width: isMobile ? 28 : 40 }} />
+                                    <col />
+                                    {!isMobile && <col style={{ width: "13%" }} />}
+                                    {!isMobile && <col style={{ width: "13%" }} />}
+                                    {!isMobile && <col style={{ width: "15%" }} />}
+                                    <col style={{ width: isMobile ? "34%" : "24%" }} />
+                                    <col style={{ width: isMobile ? 84 : 120 }} />
+                                    <col style={{ width: 28 }} />
+                                </colgroup>
+                                <thead>
+                                    <tr style={styles.theadRow}>
+                                        <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
+                                        <th style={styles.th}>Employee Name</th>
+                                        {!isMobile && <th style={styles.th}>Dept</th>}
+                                        {!isMobile && <th style={styles.th}>Team</th>}
+                                        {!isMobile && <th style={styles.th}>Product</th>}
+                                        <th style={styles.th}>Status</th>
+                                        <th style={{ ...styles.th, textAlign: "right" }}>
+                                            Allocated Qty
+                                        </th>
+                                        <th style={{ ...styles.th, paddingRight: 18 }} />
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {loading ? (
+                                        <tr>
+                                            <td style={styles.emptyNote} colSpan={isMobile ? 5 : 8}>
+                                                Loading...
                                             </td>
-                                            <td style={styles.td}>
-                                                <div
+                                        </tr>
+                                    ) : !productSelected ? (
+                                        <tr>
+                                            <td colSpan={isMobile ? 5 : 8}>
+                                                <div style={styles.emptyState}>
+                                                    <EmptyStateIcon />
+                                                    <span style={styles.emptyStateText}>
+                                                        Select a product above to see the employee
+                                                        list.
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ) : filteredEmployees.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={isMobile ? 5 : 8}>
+                                                <div style={styles.emptyState}>
+                                                    <EmptyStateIcon />
+                                                    <span style={styles.emptyStateText}>
+                                                        No employees match your search.
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        filteredEmployees.map((emp, idx) => {
+                                            const r = rows[emp.id] || {
+                                                status: "PRESENT" as RowStatus,
+                                                qty: 0,
+                                            };
+                                            const { bg, fg } = avatarColors(emp.name);
+                                            const isLeave = r.status === "LEAVE";
+                                            return (
+                                                <tr
+                                                    key={emp.id}
                                                     style={{
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 10,
-                                                        minWidth: 0,
+                                                        background: isLeave
+                                                            ? "#f3f4f6"
+                                                            : idx % 2 === 0
+                                                              ? "#fff"
+                                                              : "#fafaff",
+                                                        opacity: isLeave ? 0.65 : 1,
                                                     }}
                                                 >
-                                                    <div
+                                                    <td
                                                         style={{
-                                                            ...styles.avatar,
-                                                            background: bg,
-                                                            color: fg,
+                                                            ...styles.td,
+                                                            paddingLeft: 18,
+                                                            fontSize: fontSize.sm,
+                                                            color: "#9ca3af",
                                                         }}
                                                     >
-                                                        {initials(emp.name)}
-                                                    </div>
-                                                    <div style={{ minWidth: 0 }}>
-                                                        <div style={styles.empName}>{emp.name}</div>
-                                                        {emp.employeeCode && (
-                                                            <div style={styles.empCode}>
-                                                                {emp.employeeCode}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            {!isMobile && (
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontSize: fontSize.base,
-                                                        color: "#374151",
-                                                    }}
-                                                >
-                                                    {emp.department || "-"}
-                                                </td>
-                                            )}
-                                            {!isMobile && (
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontSize: fontSize.base,
-                                                        color: "#374151",
-                                                    }}
-                                                >
-                                                    {emp.workedInTeams || "-"}
-                                                </td>
-                                            )}
-                                            {!isMobile && (
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontSize: fontSize.base,
-                                                        fontWeight: fontWeight.medium,
-                                                        color: BRAND.blue,
-                                                    }}
-                                                >
-                                                    {selectedBatch?.productName || "-"}
-                                                </td>
-                                            )}
-                                            <td style={styles.td}>
-                                                <div
-                                                    style={{
-                                                        display: "flex",
-                                                        gap: 6,
-                                                        flexWrap: "wrap",
-                                                    }}
-                                                >
-                                                    {(
-                                                        ["PRESENT", "HALF", "LEAVE"] as RowStatus[]
-                                                    ).map((s) => {
-                                                        const active = r.status === s;
-                                                        const meta = STATUS_META[s];
-                                                        const StatusIcon = meta.icon;
-                                                        return (
-                                                            <button
-                                                                key={s}
-                                                                onClick={() => setStatus(emp.id, s)}
+                                                        {idx + 1}
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: 10,
+                                                                minWidth: 0,
+                                                            }}
+                                                        >
+                                                            <div
                                                                 style={{
-                                                                    ...styles.statusBtn,
-                                                                    background: active
-                                                                        ? meta.color
-                                                                        : withAlpha(
-                                                                              meta.color,
-                                                                              0.06
-                                                                          ),
-                                                                    color: active
-                                                                        ? "#fff"
-                                                                        : meta.color,
-                                                                    border: `1px solid ${
-                                                                        active
-                                                                            ? meta.color
-                                                                            : withAlpha(
-                                                                                  meta.color,
-                                                                                  0.35
-                                                                              )
-                                                                    }`,
+                                                                    ...styles.avatar,
+                                                                    background: bg,
+                                                                    color: fg,
                                                                 }}
                                                             >
-                                                                <StatusIcon
-                                                                    size={12}
-                                                                    color={
-                                                                        active ? "#fff" : meta.color
+                                                                {initials(emp.name)}
+                                                            </div>
+                                                            <div style={{ minWidth: 0 }}>
+                                                                <div style={styles.empName}>
+                                                                    {emp.name}
+                                                                </div>
+                                                                {emp.employeeCode && (
+                                                                    <div style={styles.empCode}>
+                                                                        {emp.employeeCode}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    {!isMobile && (
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontSize: fontSize.base,
+                                                                color: "#374151",
+                                                            }}
+                                                        >
+                                                            {emp.department || "-"}
+                                                        </td>
+                                                    )}
+                                                    {!isMobile && (
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontSize: fontSize.base,
+                                                                color: "#374151",
+                                                            }}
+                                                        >
+                                                            {emp.workedInTeams || "-"}
+                                                        </td>
+                                                    )}
+                                                    {!isMobile && (
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontSize: fontSize.base,
+                                                                fontWeight: fontWeight.medium,
+                                                                color: BRAND.blue,
+                                                            }}
+                                                        >
+                                                            {selectedBatch?.productName || "-"}
+                                                        </td>
+                                                    )}
+                                                    <td style={styles.td}>
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                gap: 6,
+                                                                flexWrap: "wrap",
+                                                            }}
+                                                        >
+                                                            {(
+                                                                [
+                                                                    "PRESENT",
+                                                                    "HALF",
+                                                                    "LEAVE",
+                                                                ] as RowStatus[]
+                                                            ).map((s) => {
+                                                                const active = r.status === s;
+                                                                const meta = STATUS_META[s];
+                                                                const StatusIcon = meta.icon;
+                                                                return (
+                                                                    <button
+                                                                        key={s}
+                                                                        onClick={() =>
+                                                                            setStatus(emp.id, s)
+                                                                        }
+                                                                        style={{
+                                                                            ...styles.statusBtn,
+                                                                            background: active
+                                                                                ? meta.color
+                                                                                : withAlpha(
+                                                                                      meta.color,
+                                                                                      0.06
+                                                                                  ),
+                                                                            color: active
+                                                                                ? "#fff"
+                                                                                : meta.color,
+                                                                            border: `1px solid ${
+                                                                                active
+                                                                                    ? meta.color
+                                                                                    : withAlpha(
+                                                                                          meta.color,
+                                                                                          0.35
+                                                                                      )
+                                                                            }`,
+                                                                        }}
+                                                                    >
+                                                                        <StatusIcon
+                                                                            size={12}
+                                                                            color={
+                                                                                active
+                                                                                    ? "#fff"
+                                                                                    : meta.color
+                                                                            }
+                                                                        />
+                                                                        {meta.label}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                justifyContent: "flex-end",
+                                                            }}
+                                                        >
+                                                            {manualEdit ? (
+                                                                <input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    value={r.qty}
+                                                                    disabled={isLeave}
+                                                                    onChange={(e) =>
+                                                                        setQty(
+                                                                            emp.id,
+                                                                            Number(
+                                                                                e.target.value
+                                                                            ) || 0
+                                                                        )
                                                                     }
+                                                                    style={styles.qtyInput}
                                                                 />
-                                                                {meta.label}
-                                                            </button>
-                                                        );
-                                                    })}
+                                                            ) : (
+                                                                <span
+                                                                    style={{
+                                                                        ...styles.qtyPill,
+                                                                        background: withAlpha(
+                                                                            BRAND.lightBlue,
+                                                                            0.12
+                                                                        ),
+                                                                        color: BRAND.blue,
+                                                                    }}
+                                                                >
+                                                                    {r.qty}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            paddingRight: 18,
+                                                            position: "relative",
+                                                        }}
+                                                    >
+                                                        <button
+                                                            style={styles.dotsBtn}
+                                                            onClick={() =>
+                                                                setOpenMenuFor(
+                                                                    openMenuFor === emp.id
+                                                                        ? null
+                                                                        : emp.id
+                                                                )
+                                                            }
+                                                        >
+                                                            <MoreVertical
+                                                                size={15}
+                                                                color="#9ca3af"
+                                                            />
+                                                        </button>
+                                                        {openMenuFor === emp.id && (
+                                                            <div
+                                                                ref={menuRef}
+                                                                style={styles.rowMenu}
+                                                            >
+                                                                <button
+                                                                    style={styles.rowMenuItem}
+                                                                    onClick={() =>
+                                                                        markPresentRow(emp.id)
+                                                                    }
+                                                                >
+                                                                    Mark Present
+                                                                </button>
+                                                                <button
+                                                                    style={styles.rowMenuItem}
+                                                                    onClick={() => resetRow(emp.id)}
+                                                                >
+                                                                    Reset to 0
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* ---- 6. BOTTOM BUTTON ---- */}
+                        <button
+                            style={{
+                                ...styles.saveBtn,
+                                opacity: submitting || !productSelected ? 0.6 : 1,
+                                cursor: submitting || !productSelected ? "not-allowed" : "pointer",
+                            }}
+                            disabled={submitting || !productSelected}
+                            onClick={handleSaveAllocations}
+                        >
+                            <Save size={16} />
+                            {submitting ? "Saving..." : "Allocate & Save"}
+                        </button>
+                    </>
+                )}
+
+                {activeTab === "employees" && (
+                    <>
+                        {/* ---- EMPLOYEES TAB: everyone for the selected service,
+                    with their currently assigned qty for this case —
+                    editable here, saved through the same bulk-upsert call
+                    the Allocate tab's button uses. ---- */}
+                        <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
+                            <KpiCard
+                                icon={Users}
+                                label="Employees"
+                                subLabel={
+                                    selectedBatch?.productName
+                                        ? `For ${selectedBatch.productName}`
+                                        : "Select a service in Allocate tab"
+                                }
+                                value={filteredEmployees.length}
+                                color={BRAND.blue}
+                            />
+                            <KpiCard
+                                icon={CheckCircle2}
+                                label="Assigned"
+                                subLabel="Already allocated"
+                                value={allocatedQty}
+                                color={BRAND.lightBlue}
+                            />
+                            <KpiCard
+                                icon={AlertTriangle}
+                                label="Remaining"
+                                subLabel="Yet to allocate"
+                                value={remainingQty}
+                                color={remainingQty > 0 ? BRAND.amber : BRAND.green}
+                            />
+                        </div>
+
+                        <div style={styles.tableCard}>
+                            <table style={styles.table}>
+                                <colgroup>
+                                    <col style={{ width: isMobile ? 28 : 40 }} />
+                                    <col />
+                                    {!isMobile && <col style={{ width: "18%" }} />}
+                                    {!isMobile && <col style={{ width: "18%" }} />}
+                                    <col style={{ width: isMobile ? 90 : 150 }} />
+                                </colgroup>
+                                <thead>
+                                    <tr style={styles.theadRow}>
+                                        <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
+                                        <th style={styles.th}>Employee Name</th>
+                                        {!isMobile && <th style={styles.th}>Dept</th>}
+                                        {!isMobile && <th style={styles.th}>Team</th>}
+                                        <th
+                                            style={{
+                                                ...styles.th,
+                                                textAlign: "right",
+                                                paddingRight: 18,
+                                            }}
+                                        >
+                                            Assigned Qty
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {loading ? (
+                                        <tr>
+                                            <td style={styles.emptyNote} colSpan={isMobile ? 3 : 5}>
+                                                Loading...
+                                            </td>
+                                        </tr>
+                                    ) : !productSelected ? (
+                                        <tr>
+                                            <td colSpan={isMobile ? 3 : 5}>
+                                                <div style={styles.emptyState}>
+                                                    <EmptyStateIcon />
+                                                    <span style={styles.emptyStateText}>
+                                                        Select a service in the Allocate tab to see
+                                                        its employees.
+                                                    </span>
                                                 </div>
                                             </td>
-                                            <td style={styles.td}>
-                                                <div
+                                        </tr>
+                                    ) : filteredEmployees.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={isMobile ? 3 : 5}>
+                                                <div style={styles.emptyState}>
+                                                    <EmptyStateIcon />
+                                                    <span style={styles.emptyStateText}>
+                                                        No employees match your search.
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        filteredEmployees.map((emp, idx) => {
+                                            const r = rows[emp.id] || {
+                                                status: "PRESENT" as RowStatus,
+                                                qty: 0,
+                                            };
+                                            const { bg, fg } = avatarColors(emp.name);
+                                            return (
+                                                <tr
+                                                    key={emp.id}
                                                     style={{
-                                                        display: "flex",
-                                                        justifyContent: "flex-end",
+                                                        background:
+                                                            idx % 2 === 0 ? "#fff" : "#fafaff",
                                                     }}
                                                 >
-                                                    {manualEdit ? (
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            paddingLeft: 18,
+                                                            fontSize: fontSize.sm,
+                                                            color: "#9ca3af",
+                                                        }}
+                                                    >
+                                                        {idx + 1}
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: 10,
+                                                                minWidth: 0,
+                                                            }}
+                                                        >
+                                                            <div
+                                                                style={{
+                                                                    ...styles.avatar,
+                                                                    background: bg,
+                                                                    color: fg,
+                                                                }}
+                                                            >
+                                                                {initials(emp.name)}
+                                                            </div>
+                                                            <div style={{ minWidth: 0 }}>
+                                                                <div style={styles.empName}>
+                                                                    {emp.name}
+                                                                </div>
+                                                                {emp.employeeCode && (
+                                                                    <div style={styles.empCode}>
+                                                                        {emp.employeeCode}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    {!isMobile && (
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontSize: fontSize.base,
+                                                                color: "#374151",
+                                                            }}
+                                                        >
+                                                            {emp.department || "-"}
+                                                        </td>
+                                                    )}
+                                                    {!isMobile && (
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontSize: fontSize.base,
+                                                                color: "#374151",
+                                                            }}
+                                                        >
+                                                            {emp.workedInTeams || "-"}
+                                                        </td>
+                                                    )}
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            textAlign: "right",
+                                                            paddingRight: 18,
+                                                        }}
+                                                    >
                                                         <input
                                                             type="number"
                                                             min={0}
                                                             value={r.qty}
-                                                            disabled={isLeave}
                                                             onChange={(e) =>
                                                                 setQty(
                                                                     emp.id,
                                                                     Number(e.target.value) || 0
                                                                 )
                                                             }
-                                                            style={styles.qtyInput}
-                                                        />
-                                                    ) : (
-                                                        <span
                                                             style={{
-                                                                ...styles.qtyPill,
-                                                                background: withAlpha(
-                                                                    BRAND.lightBlue,
-                                                                    0.12
-                                                                ),
-                                                                color: BRAND.blue,
+                                                                ...styles.qtyInput,
+                                                                textAlign: "right",
                                                             }}
-                                                        >
-                                                            {r.qty}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td
-                                                style={{
-                                                    ...styles.td,
-                                                    paddingRight: 18,
-                                                    position: "relative",
-                                                }}
-                                            >
-                                                <button
-                                                    style={styles.dotsBtn}
-                                                    onClick={() =>
-                                                        setOpenMenuFor(
-                                                            openMenuFor === emp.id ? null : emp.id
-                                                        )
-                                                    }
-                                                >
-                                                    <MoreVertical size={15} color="#9ca3af" />
-                                                </button>
-                                                {openMenuFor === emp.id && (
-                                                    <div ref={menuRef} style={styles.rowMenu}>
-                                                        <button
-                                                            style={styles.rowMenuItem}
-                                                            onClick={() => markPresentRow(emp.id)}
-                                                        >
-                                                            Mark Present
-                                                        </button>
-                                                        <button
-                                                            style={styles.rowMenuItem}
-                                                            onClick={() => resetRow(emp.id)}
-                                                        >
-                                                            Reset to 0
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                                            disabled={!productSelected}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
 
-                {/* ---- 6. BOTTOM BUTTON ---- */}
-                <button
-                    style={{
-                        ...styles.saveBtn,
-                        opacity: submitting || !productSelected ? 0.6 : 1,
-                        cursor: submitting || !productSelected ? "not-allowed" : "pointer",
-                    }}
-                    disabled={submitting || !productSelected}
-                    onClick={async () => {
-                        if (!selectedBatch) {
-                            setError('Select a specific product (not "All") before saving.');
-                            return;
-                        }
-                        const rowsPayload = filteredEmployees.map((emp) => {
-                            const r = rows[emp.id] || { status: "PRESENT" as RowStatus, qty: 0 };
-                            return { employeeId: emp.id, status: r.status, allocatedQty: r.qty };
-                        });
-                        if (rowsPayload.length === 0) {
-                            setError("No employees to allocate — check your search.");
-                            return;
-                        }
-                        setSubmitting(true);
-                        setError("");
-                        try {
-                            const res = await authFetch(`${API_BASE}/api/allocations/bulk-upsert`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                    dailyWorkId: selectedBatch.id,
-                                    rows: rowsPayload,
-                                }),
-                            });
-                            const json = await res.json();
-                            if (!res.ok || !json.success)
-                                throw new Error(json.message || "Failed to save allocation");
-                            showToast("Allocation Saved");
-                            loadBatches();
-                        } catch (err: any) {
-                            setError(err.message || "Failed to save allocation");
-                        } finally {
-                            setSubmitting(false);
-                        }
-                    }}
-                >
-                    <Save size={16} />
-                    {submitting ? "Saving..." : "Allocate & Save"}
-                </button>
+                        <button
+                            style={{
+                                ...styles.saveBtn,
+                                opacity: submitting || !productSelected ? 0.6 : 1,
+                                cursor: submitting || !productSelected ? "not-allowed" : "pointer",
+                            }}
+                            disabled={submitting || !productSelected}
+                            onClick={handleSaveAllocations}
+                        >
+                            <Save size={16} />
+                            {submitting ? "Saving..." : "Save Changes"}
+                        </button>
+                    </>
+                )}
 
                 {toast && (
                     <div style={styles.toast}>
@@ -1201,6 +1528,59 @@ const styles: Record<string, CSSProperties> = {
     },
     headerIllustration: { flexShrink: 0, marginLeft: 20 },
 
+    tabBarRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        marginBottom: 16,
+        flexWrap: "wrap",
+    },
+    tabBarRowMobile: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: 10,
+        marginBottom: 14,
+    },
+    tabBar: {
+        display: "inline-flex",
+        background: "#fff",
+        borderRadius: radius.xl,
+        padding: 4,
+        gap: 4,
+        boxShadow: "0 2px 10px rgba(32,66,151,0.06)",
+    },
+    tabBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        border: "none",
+        background: "transparent",
+        color: "#6b7280",
+        borderRadius: radius.lg,
+        padding: "8px 18px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    tabBtnActive: {
+        background: GRADIENT,
+        color: "#fff",
+        boxShadow: "0 4px 12px rgba(32,66,151,0.3)",
+    },
+    loadTestCasesBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#fff",
+        color: BRAND.blue,
+        border: `1px dashed ${withAlpha(BRAND.blue, 0.4)}`,
+        borderRadius: radius.xl,
+        padding: "10px 18px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+    },
     errorBanner: {
         display: "flex",
         alignItems: "center",

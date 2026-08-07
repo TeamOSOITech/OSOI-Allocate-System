@@ -2,6 +2,13 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../config/supabaseClient";
 
+// Password policy: at least 8 characters, containing at least one
+// uppercase letter (A-Z) — same rule enforced on the Add User form.
+const PASSWORD_MIN_LENGTH = 8;
+const isValidPassword = (pw: string) =>
+    pw.length >= PASSWORD_MIN_LENGTH && /[A-Z]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+const PASSWORD_REQUIREMENT_TEXT = `At least ${PASSWORD_MIN_LENGTH} characters, including one uppercase letter (A-Z) and one special character (!@#$ etc.)`;
+
 const ResetPassword = () => {
     const navigate = useNavigate();
     const [password, setPassword] = useState("");
@@ -78,9 +85,19 @@ const ResetPassword = () => {
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        setLoading(true);
         setError("");
 
+        // FIX: previously only enforced minLength={6} via the native input
+        // attribute — no uppercase requirement, and nothing stopped a
+        // password that met minLength but failed policy from being
+        // submitted (native minLength doesn't check character composition).
+        // This mirrors the same rule enforced on the Add User form.
+        if (!isValidPassword(password)) {
+            setError(`Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`);
+            return;
+        }
+
+        setLoading(true);
         const { error } = await supabase.auth.updateUser({ password });
 
         if (error) {
@@ -196,7 +213,7 @@ const ResetPassword = () => {
                             <input
                                 type="password"
                                 required
-                                minLength={6}
+                                minLength={PASSWORD_MIN_LENGTH}
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="Enter new password"
@@ -212,6 +229,18 @@ const ResetPassword = () => {
                                     color: "#1e2a4a",
                                 }}
                             />
+                            <p
+                                style={{
+                                    margin: "6px 0 0",
+                                    fontSize: 12,
+                                    color:
+                                        password && !isValidPassword(password)
+                                            ? "#dc2626"
+                                            : "#8a93a8",
+                                }}
+                            >
+                                {PASSWORD_REQUIREMENT_TEXT}
+                            </p>
                         </div>
                         <button
                             type="submit"
