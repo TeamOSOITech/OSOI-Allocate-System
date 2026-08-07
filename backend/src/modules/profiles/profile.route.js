@@ -1,23 +1,52 @@
 const router = require("express").Router();
+const multer = require("multer");
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
 
-// FIX: this endpoint had NO auth at all — anyone could pass any userId
-// in the query string and read that person's profile. Now requires
-// login, and only allows reading your OWN profile unless you're
-// Super Admin (full report/admin access per the approval doc).
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB — matches the frontend's own check
+});
+
+// Storage bucket for profile photos. Must be a PUBLIC bucket named
+// "avatars" in this Supabase project (Storage tab in the dashboard) —
+// create it once if it doesn't exist yet; this code doesn't create it
+// for you.
+const AVATAR_BUCKET = "avatars";
+
+// SECURITY: a SUPER_ADMIN could previously view ANY user's profile by
+// passing their userId in the query string — the check only verified
+// the role, not that the target user belongs to the SAME organization.
+// SUPER_ADMIN is an org-level role here, not a platform-operator
+// concept (see permissions.js), so this must be scoped.
+async function isSameOrg(targetUserId, organizationId) {
+  const { data } = await supabase
+    .from("user_master")
+    .select("organization_id")
+    .eq("Auth User Id", targetUserId)
+    .maybeSingle();
+  return !!data && data.organization_id === organizationId;
+}
+
 router.get("/profile", authenticate, async (req, res) => {
   try {
     const requestedUserId = req.query.userId || req.user.userId;
+    const isSelf = requestedUserId === req.user.userId;
 
-    if (
-      requestedUserId !== req.user.userId &&
-      req.user.role !== "SUPER_ADMIN"
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only view your own profile",
-      });
+    if (!isSelf) {
+      if (req.user.role !== "SUPER_ADMIN") {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view your own profile",
+        });
+      }
+      const sameOrg = await isSameOrg(requestedUserId, req.user.organizationId);
+      if (!sameOrg) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view profiles within your own organization",
+        });
+      }
     }
 
     const { data, error } = await supabase
@@ -39,5 +68,109 @@ router.get("/profile", authenticate, async (req, res) => {
     });
   }
 });
+
+// PATCH /api/profile — update your own bio/phone. Was previously
+// missing entirely (the frontend called this and got Express's
+// default HTML 404 page back, which the JSON parser choked on).
+router.patch("/profile", authenticate, async (req, res) => {
+  try {
+    const { phone, bio } = req.body || {};
+    const updatePayload = {};
+    if (phone !== undefined) updatePayload.phone = phone;
+    if (bio !== undefined) updatePayload.bio = bio;
+
+    if (Object.keys(updatePayload).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields to update",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(updatePayload)
+      .eq("user_id", req.user.userId) // can only ever update your OWN row
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+// PATCH /api/profile/photo — was missing entirely on the backend, which
+// is why changing your photo threw "Unexpected token '<' ... is not
+// valid JSON": the frontend hit a route that didn't exist, Express
+// returned its default HTML 404 page, and res.json() choked trying to
+// parse HTML as JSON.
+router.patch(
+  "/profile/photo",
+  authenticate,
+  upload.single("photo"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({ success: false, message: "No photo file uploaded" });
+      }
+      if (!req.file.mimetype.startsWith("image/")) {
+        return res
+          .status(400)
+          .json({ success: false, message: "File must be an image" });
+      }
+
+      const ext = (
+        req.file.originalname.split(".").pop() || "jpg"
+      ).toLowerCase();
+      // Scoped under organizationId/userId so no cross-tenant filename
+      // collisions, and one photo per user (fixed name, upsert:true) so
+      // re-uploading just replaces the old one instead of piling up.
+      const path = `${req.user.organizationId}/${req.user.userId}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(AVATAR_BUCKET)
+        .upload(path, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new Error(
+          `Photo upload failed: ${uploadError.message}. Make sure a public Storage bucket named "${AVATAR_BUCKET}" exists in this Supabase project.`,
+        );
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from(AVATAR_BUCKET)
+        .getPublicUrl(path);
+
+      // Cache-bust so the browser doesn't keep showing the old cached
+      // image after an upsert to the same filename.
+      const photoUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`;
+
+      const { error: updateError } = await supabase
+        .from("user_master")
+        .update({ photo_url: photoUrl })
+        .eq("Auth User Id", req.user.userId)
+        .eq("organization_id", req.user.organizationId);
+
+      if (updateError) throw updateError;
+
+      res.json({ success: true, data: { photoUrl } });
+    } catch (err) {
+      res.status(400).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  },
+);
 
 module.exports = router;

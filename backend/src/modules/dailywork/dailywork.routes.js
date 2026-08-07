@@ -8,6 +8,7 @@ const {
   createDailyWork,
   updateDailyWork,
   deleteDailyWork,
+  seedDummyCases,
 } = require("./dailywork.controller");
 
 router.use(authenticate);
@@ -23,6 +24,17 @@ router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   createDailyWork,
+);
+
+// "Load Test Cases" button on the Allocation page — seeds one dummy
+// daily_work case per service for the given date (skips services that
+// already have one for that date). Literal path, so it never collides
+// with GET/PUT/PATCH/DELETE "/:id" below. Same permission as creating
+// a real Daily Work batch.
+router.post(
+  "/seed-dummy",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  seedDummyCases,
 );
 router.put(
   "/:id",
