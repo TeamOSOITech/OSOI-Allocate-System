@@ -33,14 +33,6 @@ const isProfessionalEmail = (email: string) => {
     return !BLOCKED_EMAIL_DOMAINS.includes(domain);
 };
 
-// Password policy: at least 8 characters, containing at least one
-// uppercase letter (A-Z). Shared by the single Add User form and the
-// bulk-upload path so both enforce the exact same rule.
-const PASSWORD_MIN_LENGTH = 8;
-const isValidPassword = (pw: string) =>
-    pw.length >= PASSWORD_MIN_LENGTH && /[A-Z]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
-const PASSWORD_REQUIREMENT_TEXT = `At least ${PASSWORD_MIN_LENGTH} characters, including one uppercase letter (A-Z) and one special character (!@#$ etc.)`;
-
 // Styled tooltip (matches the gradient tooltip used on the Clients page) —
 // inline style objects can't express :hover, so this small bit of CSS is
 // injected once via a <style> tag instead of scattered onMouseEnter handlers.
@@ -51,7 +43,7 @@ const GLOBAL_CSS = `
   top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%) translateY(-4px);
-  background: linear-gradient(135deg, #2BAADD, #2A2F8F);
+  background: linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue));
   color: #fff;
   font-size: 11.5px;
   font-weight: 600;
@@ -72,7 +64,7 @@ const GLOBAL_CSS = `
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: #2BAADD;
+  border-bottom-color: var(--brand-light-blue);
 }
 .au-tooltip-wrap:hover .au-tooltip-bubble {
   opacity: 1;
@@ -336,36 +328,13 @@ export default function AddUser() {
         }
     };
 
-    // FIX: previously picked purely random characters from a pool that
-    // included uppercase letters — but nothing guaranteed one actually got
-    // picked, so an auto-generated password could (rarely) fail the new
-    // "at least one uppercase letter" policy. Now builds the password from
-    // guaranteed-included character classes, then shuffles, so it always
-    // satisfies isValidPassword().
     const generatePassword = () => {
-        const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        const lower = "abcdefghijklmnopqrstuvwxyz";
-        const digits = "0123456789";
-        const symbols = "@#$%";
-        const all = upper + lower + digits + symbols;
-
-        const pick = (pool: string) => pool.charAt(Math.floor(Math.random() * pool.length));
-
-        // Guarantee at least one uppercase (policy requirement) plus a
-        // lowercase and digit for reasonable strength, then fill the rest
-        // randomly from the full pool.
-        const guaranteed = [pick(upper), pick(lower), pick(digits), pick(symbols)];
-        const remainingLength = Math.max(PASSWORD_MIN_LENGTH, 10) - guaranteed.length;
-        const rest = Array.from({ length: remainingLength }, () => pick(all));
-
-        // Shuffle so the guaranteed characters aren't always in the same
-        // first-three positions.
-        const chars = [...guaranteed, ...rest];
-        for (let i = chars.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [chars[i], chars[j]] = [chars[j], chars[i]];
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
+        let pass = "";
+        for (let i = 0; i < 10; i++) {
+            pass += chars.charAt(Math.floor(Math.random() * chars.length));
         }
-        return chars.join("");
+        return pass;
     };
 
     const handleGeneratePasswordClick = () => {
@@ -428,9 +397,7 @@ export default function AddUser() {
 
             // ---- client-side validation pass, mirrors handleRegister ----
             // Required fields (DOB & Contact Number excluded) + professional
-            // email domain check + password policy (only when a password
-            // was actually supplied in the sheet — blank cells still
-            // auto-generate on the backend/below).
+            // email domain check, same rules as the single Add User form.
             const validUsers: ReturnType<typeof mapBulkRow>[] = [];
             const preFailedResults: any[] = [];
 
@@ -453,18 +420,7 @@ export default function AddUser() {
                     });
                     return;
                 }
-                if (u.password && !isValidPassword(u.password)) {
-                    preFailedResults.push({
-                        email: u.email,
-                        success: false,
-                        message: `Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`,
-                    });
-                    return;
-                }
-                // Blank password in the sheet -> auto-generate one here so
-                // every row sent to the backend already satisfies policy,
-                // same as the single-user form below.
-                validUsers.push(u.password ? u : { ...u, password: generatePassword() });
+                validUsers.push(u);
             });
 
             let backendResults: any[] = [];
@@ -516,15 +472,6 @@ export default function AddUser() {
             setError(
                 "Please enter a professional company email (e.g. abc@osoitech.com). Gmail, Yahoo, Outlook etc. are not allowed."
             );
-            return;
-        }
-
-        // Password is optional in the form, but if the admin typed one in
-        // manually it must meet the policy — an auto-generated one always
-        // will (see generatePassword above), so this only ever blocks a
-        // manually-typed weak password.
-        if (formData.password && !isValidPassword(formData.password)) {
-            setError(`Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`);
             return;
         }
 
@@ -719,7 +666,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-user"
-                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Personal Information</span>
                             </div>
@@ -863,7 +810,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-building"
-                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Organization Details</span>
                             </div>
@@ -1006,7 +953,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-lock"
-                                    style={{ fontSize: fontSize.lg, color: "#2A2F8F" }}
+                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
                                 />
                                 <span style={styles.sectionHeaderText}>Security</span>
                             </div>
@@ -1020,65 +967,44 @@ export default function AddUser() {
                                     }
                                 >
                                     <div
-                                        style={{ width: isMobile ? "100%" : "58%", minWidth: 280 }}
+                                        style={
+                                            isMobile ? styles.passwordRowMobile : styles.passwordRow
+                                        }
                                     >
-                                        <div
-                                            style={
-                                                isMobile
-                                                    ? styles.passwordRowMobile
-                                                    : { ...styles.passwordRow, width: "100%" }
+                                        <input
+                                            type="text"
+                                            style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                            value={formData.password}
+                                            onChange={(e) =>
+                                                setFormData({
+                                                    ...formData,
+                                                    password: e.target.value,
+                                                })
                                             }
+                                            placeholder="Optional — auto-generated if left blank"
+                                        />
+                                        <button
+                                            style={styles.generateBtn}
+                                            onClick={handleGeneratePasswordClick}
+                                            type="button"
                                         >
-                                            <input
-                                                type="text"
-                                                style={{ ...styles.input, flex: 1, minWidth: 0 }}
-                                                value={formData.password}
-                                                onChange={(e) =>
-                                                    setFormData({
-                                                        ...formData,
-                                                        password: e.target.value,
-                                                    })
-                                                }
-                                                placeholder="Optional — auto-generated if left blank"
+                                            <i
+                                                className="ti ti-refresh"
+                                                style={{ fontSize: fontSize.base }}
                                             />
-                                            <button
-                                                style={styles.generateBtn}
-                                                onClick={handleGeneratePasswordClick}
-                                                type="button"
-                                            >
-                                                <i
-                                                    className="ti ti-refresh"
-                                                    style={{ fontSize: fontSize.base }}
-                                                />
-                                                Generate
-                                            </button>
-                                            <button
-                                                style={styles.copyBtn}
-                                                onClick={copyPassword}
-                                                type="button"
-                                            >
-                                                <i
-                                                    className="ti ti-copy"
-                                                    style={{ fontSize: fontSize.base }}
-                                                />
-                                                Copy
-                                            </button>
-                                        </div>
-                                        {/* Policy hint — only flags red once the admin has
-                                            typed something invalid; blank/auto-generated
-                                            passwords always satisfy the rule already. */}
-                                        <p
-                                            style={{
-                                                ...styles.note,
-                                                color:
-                                                    formData.password &&
-                                                    !isValidPassword(formData.password)
-                                                        ? "#dc2626"
-                                                        : "#767F92",
-                                            }}
+                                            Generate
+                                        </button>
+                                        <button
+                                            style={styles.copyBtn}
+                                            onClick={copyPassword}
+                                            type="button"
                                         >
-                                            {PASSWORD_REQUIREMENT_TEXT}
-                                        </p>
+                                            <i
+                                                className="ti ti-copy"
+                                                style={{ fontSize: fontSize.base }}
+                                            />
+                                            Copy
+                                        </button>
                                     </div>
 
                                     <button
@@ -1144,10 +1070,7 @@ export default function AddUser() {
                                 <p style={styles.bulkInfoText}>
                                     Full Name, Email (company domain only), Employee ID,
                                     Designation, Department, Date of Joining, Reporting Manager,
-                                    Teams, Role. Contact Number and Date of Birth are optional. If
-                                    Password is filled in, it must be{" "}
-                                    {PASSWORD_REQUIREMENT_TEXT.toLowerCase()}; leave it blank to
-                                    auto-generate one.
+                                    Teams, Role. Contact Number and Date of Birth are optional.
                                 </p>
                             </div>
 
@@ -1366,7 +1289,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 8,
         background: "#fff",
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         border: "1px solid #C7D9F0",
         borderRadius: radius["2xl"],
         padding: "11px 20px",
@@ -1378,7 +1301,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius["2xl"],
@@ -1389,7 +1312,7 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
     },
     bulkHeaderBtnMobile: {
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.xl,
@@ -1422,7 +1345,7 @@ const styles: Record<string, CSSProperties> = {
     sectionHeaderText: {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
     },
     sectionBody: { padding: "16px 24px" },
 
@@ -1468,7 +1391,7 @@ const styles: Record<string, CSSProperties> = {
         border: "1px dashed #C7D9F0",
         borderRadius: radius.circle,
         background: "#fff",
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         cursor: "pointer",
         padding: 0,
     },
@@ -1490,7 +1413,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
     },
     addOptionSubmit: {
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.xs,
@@ -1528,7 +1451,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.sm,
@@ -1543,7 +1466,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         border: "1px solid #C7D9F0",
         borderRadius: radius.sm,
         padding: "10px 16px",
@@ -1564,7 +1487,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius["2xl"],
@@ -1591,7 +1514,7 @@ const styles: Record<string, CSSProperties> = {
         height: 56,
         borderRadius: radius.circle,
         background: "#DCEAFB",
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         fontSize: fontSize["6xl"],
         fontWeight: fontWeight.semibold,
         display: "flex",
@@ -1607,7 +1530,7 @@ const styles: Record<string, CSSProperties> = {
     },
     successText: { margin: "0 0 24px", fontSize: fontSize.md, color: "#767F92" },
     successBtn: {
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.sm,
@@ -1636,7 +1559,7 @@ const styles: Record<string, CSSProperties> = {
         margin: 0,
         fontSize: fontSize["3xl"],
         fontWeight: fontWeight.semibold,
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
     },
     bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
     closeBtn: {
@@ -1659,14 +1582,14 @@ const styles: Record<string, CSSProperties> = {
         margin: "20px 28px",
         padding: "14px 16px",
         background: "#EEF6FB",
-        borderLeft: "3px solid #2BAADD",
+        borderLeft: "3px solid var(--brand-light-blue)",
         borderRadius: radius.xs,
     },
     bulkInfoLabel: {
         display: "block",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
@@ -1693,7 +1616,7 @@ const styles: Record<string, CSSProperties> = {
     },
     fileInputHidden: { display: "none" },
     fileInputButton: {
-        background: "#2A2F8F",
+        background: "var(--brand-blue)",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
@@ -1709,7 +1632,7 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     bulkUploadBtn: {
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.sm,
@@ -1778,7 +1701,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #2BAADD, #2A2F8F)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius["2xl"],
@@ -1800,7 +1723,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         background: "#fff",
-        color: "#2A2F8F",
+        color: "var(--brand-blue)",
         border: "1px solid #C7D9F0",
         borderRadius: radius.circle,
         width: 30,
