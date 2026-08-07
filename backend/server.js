@@ -8,6 +8,18 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
+// SECURITY / BUG FIX: Render (like most hosts) sits behind a reverse
+// proxy — every incoming request's socket IP is the proxy's own IP, not
+// the real client's. Without this, express-rate-limit (see auth.routes.js)
+// treats every single user as coming from that ONE shared IP, so the
+// "10 login attempts per IP" limit was actually being shared across
+// EVERY user on the platform combined — a handful of unrelated login
+// attempts anywhere would lock everyone else out, including someone
+// logging in for the very first time. `1` tells Express to trust
+// exactly one hop of proxy (Render's own edge), and read the real
+// client IP from the X-Forwarded-For header it sets.
+app.set("trust proxy", 1);
+
 // Import Supabase Client
 const supabase = require("./src/config/supabaseClient");
 
