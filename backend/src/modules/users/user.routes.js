@@ -199,7 +199,7 @@ async function createUserAndGenerateResetLink({
         type: "recovery",
         email,
         options: {
-          redirectTo: `${process.env.APP_URL}/reset-password`,
+          redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
         },
       });
     if (linkError) throw linkError;
