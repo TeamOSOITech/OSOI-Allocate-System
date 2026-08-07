@@ -48,7 +48,17 @@ const API_URL = import.meta.env.VITE_API_URL;
 // VERTICAL_HEAD) keeps whatever access it already had — this phase only
 // tightens TEAM_MEMBER. Add more paths here as Normal User's access
 // expands later; nothing else about the routing needs to change.
-const NORMAL_USER_ALLOWED_PATHS = ["/report", "/history", "/daily-work", "/profile"];
+const NORMAL_USER_ALLOWED_PATHS = [
+    "/report",
+    "/history",
+    "/daily-work",
+    "/profile",
+    // Role-based access Phase 2: Normal User can now also reach Services,
+    // Clients Preview, and Employee Preview.
+    "/products",
+    "/clients",
+    "/employees",
+];
 const NORMAL_USER_HOME = "/report";
 
 // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly cookies the
@@ -221,7 +231,7 @@ function App() {
                         <Route
                             path="/clients"
                             element={
-                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                <PrivateRoute requiredRole={[...ADMIN_TIER_ROLES, "TEAM_MEMBER"]}>
                                     <AppLayout onLogout={handleLogout}>
                                         <Clients user={user} onLogout={handleLogout} />
                                     </AppLayout>

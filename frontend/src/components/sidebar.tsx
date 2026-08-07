@@ -56,22 +56,21 @@ const menuItems: MenuItem[] = [
         label: "Services",
         icon: "ti ti-package",
         path: "/products",
-        // Role-based access Phase 1: Normal User no longer sees this —
-        // was EVERYONE (included TEAM_MEMBER), narrowed to admin-tier +
-        // Vertical Head only.
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        // Role-based access Phase 2: Normal User now sees this again,
+        // alongside admin-tier + Vertical Head.
+        roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
     {
         label: "Clients Preview",
         icon: "ti ti-users",
         path: "/clients",
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
     {
         label: "Employee Preview",
         icon: "ti ti-eye",
         path: "/employees",
-        roles: ADMIN_AND_VERTICAL_HEAD,
+        roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
     {
         label: "Daily Work",
