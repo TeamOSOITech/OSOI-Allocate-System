@@ -15,29 +15,37 @@ router.use(authenticate);
 router.get("/", productController.getAllProducts);
 router.get("/:id", productController.getProductById);
 
-// "Can add new tasks" — Super Admin only per the approval doc.
-router.post("/", authorize("SUPER_ADMIN"), productController.createProduct);
+// PERMISSIONS: create/bulk-upload/delete now use the "products.manage"
+// permission code (see src/config/permissions.js) instead of a
+// hardcoded SUPER_ADMIN-only check — Process Lead, Ops Manager, Audit
+// Manager, and Super Admin all hold this permission.
+router.post(
+  "/",
+  requireAnyPermission("products.manage"),
+  productController.createProduct,
+);
 router.post(
   "/bulk/upload",
-  authorize("SUPER_ADMIN"),
+  requireAnyPermission("products.manage"),
   upload.single("file"),
   productController.bulkUploadProducts,
 );
 
 // "Can amend existing verticals and tasks" / "amend time taken for a task"
-// — Ops Manager or Super Admin.
+// — Ops Manager or Super Admin already had this via tasks.amend /
+// tasks.amend_time. products.manage is added alongside so Process Lead
+// and Audit Manager (who don't hold tasks.amend) can edit too.
 router.put(
   "/:id",
-  requireAnyPermission("tasks.amend", "tasks.amend_time"),
+  requireAnyPermission("tasks.amend", "tasks.amend_time", "products.manage"),
   productController.updateProduct,
 );
 
-// Hard delete is intentionally Super-Admin-only. Routine removal from
-// allocation should go through the "hide task" APPROVAL flow instead
-// (Ops Manager requests -> Super Admin approves) — see modules/approvals.
+// Delete now uses "products.manage" instead of a hardcoded
+// SUPER_ADMIN-only check.
 router.delete(
   "/:id",
-  authorize("SUPER_ADMIN"),
+  requireAnyPermission("products.manage"),
   productController.deleteProduct,
 );
 

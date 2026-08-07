@@ -11,12 +11,12 @@ const supabase = require("../../config/supabaseClient");
 // which every query below now filters on.
 const { authenticate } = require("../../middlewares/auth");
 
-// SECURITY: unlike subclients.routes.js (which correctly gates writes
-// with authorize("SUPER_ADMIN")), this file had NO role check at all on
-// create/update/delete/bulk-upload — any authenticated user, including
-// TEAM_MEMBER, could create/edit/delete client master data. Matching
-// subclients.routes.js's pattern here.
-const { authorize } = require("../../middlewares/rbac");
+// PERMISSIONS: writes are now gated by the "clients.manage" permission
+// code (see src/config/permissions.js) instead of a hardcoded
+// SUPER_ADMIN-only check. Process Lead, Ops Manager, Audit Manager, and
+// Super Admin all hold this permission — Team Member and Vertical Head
+// do not.
+const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 
 // REVERSED MAPPING: Products no longer carry client/subclient on
 // themselves — a Client instead picks which existing Products it uses.
@@ -184,7 +184,7 @@ router.get("/", async (req, res) => {
 
 // ---------- POST /api/clients ----------
 
-router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
+router.post("/", requireAnyPermission("clients.manage"), async (req, res) => {
   try {
     if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
@@ -401,7 +401,7 @@ router.get("/bulk/template", async (req, res) => {
 
 router.post(
   "/bulk/upload",
-  authorize("SUPER_ADMIN"),
+  requireAnyPermission("clients.manage"),
   upload.single("file"),
   async (req, res) => {
     try {
@@ -677,7 +677,7 @@ router.get("/:id", async (req, res) => {
 
 // ---------- PUT /api/clients/:id ----------
 
-router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
+router.put("/:id", requireAnyPermission("clients.manage"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const id = Number(req.params.id);
@@ -738,42 +738,47 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
 
 // ---------- DELETE /api/clients/:id ----------
 
-router.delete("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const id = Number(req.params.id);
+router.delete(
+  "/:id",
+  requireAnyPermission("clients.manage"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const id = Number(req.params.id);
 
-    const { data: existing, error: findErr } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("id", id)
-      .eq("organization_id", orgId)
-      .maybeSingle();
+      const { data: existing, error: findErr } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", id)
+        .eq("organization_id", orgId)
+        .maybeSingle();
 
-    if (findErr) throw findErr;
-    if (!existing) return res.status(404).json({ message: "Client not found" });
+      if (findErr) throw findErr;
+      if (!existing)
+        return res.status(404).json({ message: "Client not found" });
 
-    const { error } = await supabase
-      .from("clients")
-      .delete()
-      .eq("id", id)
-      .eq("organization_id", orgId);
+      const { error } = await supabase
+        .from("clients")
+        .delete()
+        .eq("id", id)
+        .eq("organization_id", orgId);
 
-    if (error) {
-      if (error.code === "23503") {
-        return res.status(409).json({
-          message:
-            "Cannot delete this client because it still has subclients or branches. Delete those first.",
-        });
+      if (error) {
+        if (error.code === "23503") {
+          return res.status(409).json({
+            message:
+              "Cannot delete this client because it still has subclients or branches. Delete those first.",
+          });
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    res.json({ message: "Client deleted" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to delete client" });
-  }
-});
+      res.json({ message: "Client deleted" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete client" });
+    }
+  },
+);
 
 module.exports = router;

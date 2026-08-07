@@ -5,7 +5,14 @@ const XLSX = require("xlsx");
 const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
-const { authorize } = require("../../middlewares/rbac");
+
+// PERMISSIONS: writes are now gated by the "clients.manage" permission
+// code (see src/config/permissions.js) instead of a hardcoded
+// SUPER_ADMIN-only check. Process Lead, Ops Manager, Audit Manager, and
+// Super Admin all hold this permission — Team Member and Vertical Head
+// do not. (Subclients share the same "clients.manage" permission as
+// Clients — there's no separate subclients-only code.)
+const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 
 // REVERSED MAPPING: a Subclient now picks which existing Products it uses,
 // linked via the subclient_products junction table.
@@ -189,7 +196,7 @@ router.get("/", async (req, res) => {
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
+router.post("/", requireAnyPermission("clients.manage"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const { name, clientId, status } = req.body;
@@ -407,7 +414,7 @@ router.get("/bulk/template", async (req, res) => {
 // full row-by-row list instead of only showing errors.
 router.post(
   "/bulk/upload",
-  authorize("SUPER_ADMIN"),
+  requireAnyPermission("clients.manage"),
   upload.single("file"),
   async (req, res) => {
     try {
@@ -632,7 +639,7 @@ router.get("/:id", async (req, res) => {
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
+router.put("/:id", requireAnyPermission("clients.manage"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const id = Number(req.params.id);
@@ -705,43 +712,47 @@ router.put("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
 
 // ---------- DELETE /api/subclients/:id ----------
 
-router.delete("/:id", authorize("SUPER_ADMIN"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const id = Number(req.params.id);
+router.delete(
+  "/:id",
+  requireAnyPermission("clients.manage"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const id = Number(req.params.id);
 
-    const { data: existing, error: findErr } = await supabase
-      .from("subclients")
-      .select("id")
-      .eq("id", id)
-      .eq("organization_id", orgId)
-      .maybeSingle();
+      const { data: existing, error: findErr } = await supabase
+        .from("subclients")
+        .select("id")
+        .eq("id", id)
+        .eq("organization_id", orgId)
+        .maybeSingle();
 
-    if (findErr) throw findErr;
-    if (!existing)
-      return res.status(404).json({ message: "Subclient not found" });
+      if (findErr) throw findErr;
+      if (!existing)
+        return res.status(404).json({ message: "Subclient not found" });
 
-    const { error } = await supabase
-      .from("subclients")
-      .delete()
-      .eq("id", id)
-      .eq("organization_id", orgId);
+      const { error } = await supabase
+        .from("subclients")
+        .delete()
+        .eq("id", id)
+        .eq("organization_id", orgId);
 
-    if (error) {
-      if (error.code === "23503") {
-        return res.status(409).json({
-          message:
-            "Cannot delete this subclient because it still has branches. Delete those first.",
-        });
+      if (error) {
+        if (error.code === "23503") {
+          return res.status(409).json({
+            message:
+              "Cannot delete this subclient because it still has branches. Delete those first.",
+          });
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    res.json({ message: "Subclient deleted" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to delete subclient" });
-  }
-});
+      res.json({ message: "Subclient deleted" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete subclient" });
+    }
+  },
+);
 
 module.exports = router;

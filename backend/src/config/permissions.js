@@ -58,6 +58,9 @@ const ROLE_PERMISSIONS = {
     "verticals.start_for_existing_user",
     "qc_permission.request", // still needs approval — see APPROVAL_RULES
     "reports.materialisation.view.org",
+    // NEW: Client / Subclient / Product (Service) create-edit-delete access
+    "clients.manage",
+    "products.manage",
   ],
 
   [ROLES.OPS_MANAGER]: [
@@ -75,6 +78,9 @@ const ROLE_PERMISSIONS = {
     "reports.qc.view.org",
     "reports.materialisation.view.org",
     "qc_permission.approve", // one of the 3 possible approvers
+    // NEW: Client / Subclient / Product (Service) create-edit-delete access
+    "clients.manage",
+    "products.manage",
   ],
 
   [ROLES.AUDIT_MANAGER]: [
@@ -84,6 +90,9 @@ const ROLE_PERMISSIONS = {
     "qc.assignments.modify",
     "users.deactivate_qc",
     "reports.qc.view.org",
+    // NEW: Client / Subclient / Product (Service) create-edit-delete access
+    "clients.manage",
+    "products.manage",
   ],
 
   [ROLES.SUPER_ADMIN]: [
