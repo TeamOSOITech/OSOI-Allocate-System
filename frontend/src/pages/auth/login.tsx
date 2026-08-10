@@ -105,7 +105,7 @@ const Login = () => {
                     break;
 
                 case "TEAM_MEMBER":
-                    window.location.href = "/report";
+                    window.location.href = "/products";
                     break;
 
                 default:
