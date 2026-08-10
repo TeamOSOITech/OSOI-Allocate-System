@@ -1,18 +1,47 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import { authFetch } from "../utils/authFetch";
+import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
+import { useTheme } from "../context/themecontext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
 
-const BRAND = {
-    blue: "#204297",
-    lightBlue: "#08A1CE",
-    green: "#2EBBA8",
-    amber: "#F59E0B",
-    red: "#DC2626",
-};
-const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
+// THEME: blue/lightBlue/green now come from the active theme color (see
+// useTheme() in the component below) instead of being hardcoded here, so
+// this page repaints with the rest of the app when the user switches
+// theme color. amber/red stay as fixed constants — they're pending/error
+// status colors, not brand colors, and the theme palette doesn't define
+// them.
+const STATUS_AMBER = "#F59E0B";
+const STATUS_RED = "#DC2626";
+
+function withAlpha(hex: string, alpha: number) {
+    const clean = hex.replace("#", "");
+    const n = parseInt(clean, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Small injected stylesheet so buttons/rows/cards get real :hover states
+// (inline style objects can't express :hover on their own). Built from the
+// active theme color instead of a hardcoded navy, so hover tints track
+// whatever theme color is picked.
+function getHoverCss(BRAND: { blue: string }) {
+    return `
+.pf-card-hover { transition: box-shadow .18s ease, transform .18s ease; }
+.pf-card-hover:hover { box-shadow: 0 8px 24px ${withAlpha(BRAND.blue, 0.1)}; transform: translateY(-1px); }
+.pf-btn { transition: background .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.pf-btn-outline:hover { background: ${withAlpha(BRAND.blue, 0.06)}; }
+.pf-btn-solid:hover { filter: brightness(1.06); box-shadow: 0 6px 18px ${withAlpha(BRAND.blue, 0.25)}; }
+.pf-btn-danger:hover { background: rgba(220,38,38,0.06); }
+.pf-tab:hover { color: ${BRAND.blue}; }
+.pf-row:hover { background: #FAFBFF; }
+.pf-avatar-edit:hover { filter: brightness(1.1); }
+`;
+}
 
 const REASON_OPTIONS = [
     "Completed as planned",
@@ -21,20 +50,6 @@ const REASON_OPTIONS = [
     "Resource / data unavailable",
     "Other",
 ];
-
-// Small injected stylesheet so buttons/rows/cards get real :hover states
-// (inline style objects can't express :hover on their own).
-const HOVER_CSS = `
-.pf-card-hover { transition: box-shadow .18s ease, transform .18s ease; }
-.pf-card-hover:hover { box-shadow: 0 8px 24px rgba(32,66,151,0.10); transform: translateY(-1px); }
-.pf-btn { transition: background .15s ease, box-shadow .15s ease, border-color .15s ease; }
-.pf-btn-outline:hover { background: rgba(32,66,151,0.06); }
-.pf-btn-solid:hover { filter: brightness(1.06); box-shadow: 0 6px 18px rgba(32,66,151,0.25); }
-.pf-btn-danger:hover { background: rgba(220,38,38,0.06); }
-.pf-tab:hover { color: #204297; }
-.pf-row:hover { background: #FAFBFF; }
-.pf-avatar-edit:hover { filter: brightness(1.1); }
-`;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -232,6 +247,20 @@ const InfoIcon = () => (
 
 export default function Profile({ onLogout }: ProfileProps) {
     const isMobile = useIsMobile();
+    const { colors: themeColors } = useTheme();
+    // amber/red are fixed status colors (not part of the theme palette),
+    // appended onto the active blue/lightBlue/green from useTheme().
+    const BRAND = {
+        blue: themeColors.blue,
+        lightBlue: themeColors.lightBlue,
+        green: themeColors.green,
+        amber: STATUS_AMBER,
+        red: STATUS_RED,
+    };
+    const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
+    const styles = getStyles(BRAND, GRADIENT);
+    const hoverCss = getHoverCss(BRAND);
+
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [employee, setEmployee] = useState<EmployeeData | null>(null);
     const [allocations, setAllocations] = useState<Allocation[]>([]);
@@ -550,7 +579,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             {/* Same signature gradient rail used on Dashboard/Products pages */}
             <div style={styles.topBar} />
 
-            <style>{HOVER_CSS}</style>
+            <style>{hoverCss}</style>
 
             {error && <div style={styles.noteWarning}>{error}</div>}
 
@@ -654,9 +683,24 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </div>
 
                     <div style={styles.identityColumn}>
-                        <InfoIconRow icon={<TeamIcon />} label="Team" value={team} />
-                        <InfoIconRow icon={<DeptIcon />} label="Department" value={department} />
-                        <InfoIconRow icon={<UserIcon />} label="Manager" value={manager} />
+                        <InfoIconRow
+                            icon={<TeamIcon />}
+                            label="Team"
+                            value={team}
+                            styles={styles}
+                        />
+                        <InfoIconRow
+                            icon={<DeptIcon />}
+                            label="Department"
+                            value={department}
+                            styles={styles}
+                        />
+                        <InfoIconRow
+                            icon={<UserIcon />}
+                            label="Manager"
+                            value={manager}
+                            styles={styles}
+                        />
                     </div>
 
                     <div style={styles.aboutBox}>
@@ -688,6 +732,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     value={stats.totalAllocated}
                     label="Total Allocation"
                     sub="Total tasks allocated today"
+                    styles={styles}
                 />
                 <StatCard
                     icon={<CheckIcon />}
@@ -695,6 +740,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     value={stats.submittedQty}
                     label="Submitted"
                     sub="Completed & submitted"
+                    styles={styles}
                 />
                 <StatCard
                     icon={<ClockIcon />}
@@ -702,6 +748,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     value={stats.pendingCount}
                     label="Pending"
                     sub="Awaiting submission"
+                    styles={styles}
                 />
                 <StatCard
                     icon={<AlertIcon />}
@@ -709,6 +756,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     value={stats.remaining}
                     label="Remaining"
                     sub="Yet to submit"
+                    styles={styles}
                 />
             </div>
 
@@ -795,7 +843,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             {/* ---- Table / mobile list ---- */}
             <div className="pf-card-hover" style={styles.tableCard}>
                 {loading ? (
-                    <EmptyState text="Loading…" />
+                    <EmptyState text="Loading…" styles={styles} />
                 ) : filteredRows.length === 0 ? (
                     <EmptyState
                         text={
@@ -803,6 +851,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 ? "No allocation found for today."
                                 : "No past allocations found."
                         }
+                        styles={styles}
                     />
                 ) : isMobile ? (
                     <div style={styles.allocList}>
@@ -812,6 +861,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 index={i + 1}
                                 a={a}
                                 onSubmit={() => handlePickForSubmit(a)}
+                                styles={styles}
                             />
                         ))}
                     </div>
@@ -836,7 +886,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 return (
                                     <tr key={a.id} className="pf-row" style={styles.tr}>
                                         <td style={styles.td}>{i + 1}</td>
-                                        <td style={{ ...styles.td, fontWeight: 700 }}>
+                                        <td style={{ ...styles.td, fontWeight: fontWeight.bold }}>
                                             {a.productName || "-"}
                                         </td>
                                         <td style={styles.td}>{a.description || "-"}</td>
@@ -972,16 +1022,20 @@ export default function Profile({ onLogout }: ProfileProps) {
 
 /* ---------------------------------------------------------------------- */
 /*  Small presentational subcomponents                                     */
+/*  (take `styles` as a prop since it's now built per-render from the      */
+/*  active theme, instead of a module-level constant.)                     */
 /* ---------------------------------------------------------------------- */
 
 function InfoIconRow({
     icon,
     label,
     value,
+    styles,
 }: {
     icon: React.ReactNode;
     label: string;
     value: string;
+    styles: Record<string, CSSProperties>;
 }) {
     return (
         <div style={styles.infoIconRow}>
@@ -1000,12 +1054,14 @@ function StatCard({
     value,
     label,
     sub,
+    styles,
 }: {
     icon: React.ReactNode;
     tint: string;
     value: number;
     label: string;
     sub: string;
+    styles: Record<string, CSSProperties>;
 }) {
     return (
         <div className="pf-card-hover" style={styles.statCard}>
@@ -1021,11 +1077,21 @@ function StatCard({
     );
 }
 
-function EmptyState({ text }: { text: string }) {
+function EmptyState({ text, styles }: { text: string; styles: Record<string, CSSProperties> }) {
     return <div style={styles.emptyState}>{text}</div>;
 }
 
-function MobileRow({ index, a, onSubmit }: { index: number; a: Allocation; onSubmit: () => void }) {
+function MobileRow({
+    index,
+    a,
+    onSubmit,
+    styles,
+}: {
+    index: number;
+    a: Allocation;
+    onSubmit: () => void;
+    styles: Record<string, CSSProperties>;
+}) {
     const submitted = a.submitted_qty !== null && a.submitted_qty !== undefined;
     return (
         <div style={styles.mobileCard}>
@@ -1053,412 +1119,484 @@ function MobileRow({ index, a, onSubmit }: { index: number; a: Allocation; onSub
 }
 
 /* ---------------------------------------------------------------------- */
-/*  Styles — width/padding/gap now match the Dashboard & Products pages   */
-/*  (full-width container, same padding scale, same card radius/shadow). */
-/*  All content below is unchanged from what's currently running.         */
+/*  Styles — now a function of the active theme color (BRAND/GRADIENT)     */
+/*  instead of a module-level constant, so every gradient/tinted shadow/   */
+/*  border on this page repaints when the user switches theme color.       */
+/*  Same recipes as before: Add User's outline button (white bg + tinted   */
+/*  border + brand text), filled button (brand gradient + tinted shadow),  */
+/*  input recipe (background #fafafa, border #ececf5), neutral card        */
+/*  shadow ("0 10px 30px rgba(0,0,0,.06)"), and theme.ts tokens            */
+/*  (fontFamily, fontWeight, radius).                                      */
 /* ---------------------------------------------------------------------- */
 
-const styles: Record<string, CSSProperties> = {
-    topBar: {
-        height: "4px",
-        width: "100%",
-        borderRadius: 4,
-        marginBottom: 4,
-        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
-    },
-    root: {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "20px 24px 28px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    },
-    rootMobile: {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "14px 14px 22px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    },
+const CARD_SHADOW = "0 10px 30px rgba(0,0,0,.06)";
 
-    pageHeaderRow: {},
-    pageTitleBlock: {},
-    pageTitle: { margin: 0, fontSize: 24, fontWeight: 800, color: "#17181C" },
-    pageSubtitle: { margin: "4px 0 0", fontSize: 13, color: "#767F92" },
+function getStyles(
+    BRAND: { blue: string; lightBlue: string; green: string; amber: string; red: string },
+    GRADIENT: string
+): Record<string, CSSProperties> {
+    return {
+        topBar: {
+            height: "4px",
+            width: "100%",
+            borderRadius: radius.xs,
+            marginBottom: 4,
+            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
+        },
+        root: {
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "20px 24px 28px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 18,
+            background: "#EAF3FC",
+            fontFamily: fontFamily.base,
+        },
+        rootMobile: {
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "14px 14px 22px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            background: "#EAF3FC",
+            fontFamily: fontFamily.base,
+        },
 
-    noteWarning: {
-        fontSize: 12,
-        color: "#92400E",
-        background: "rgba(245,158,11,0.1)",
-        padding: "8px 12px",
-        borderRadius: 6,
-    },
+        pageHeaderRow: {},
+        pageTitleBlock: {},
+        pageTitle: {
+            margin: 0,
+            fontSize: fontSize["5xl"],
+            fontWeight: fontWeight.bold,
+            color: "#17181C",
+        },
+        pageSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
 
-    /* Identity card */
-    identityCard: {
-        background: "#fff",
-        borderRadius: 16,
-        padding: 24,
-        border: "1px solid #F0F1F7",
-        boxShadow: "0 4px 20px rgba(32,66,151,.06)",
-    },
-    identityTop: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        marginBottom: 20,
-    },
-    identityTopMobile: { display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 },
-    avatarBlock: { display: "flex", alignItems: "center", gap: 16 },
-    avatarWrap: { position: "relative", flexShrink: 0 },
-    avatar: {
-        width: 64,
-        height: 64,
-        borderRadius: "50%",
-        background: GRADIENT,
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 22,
-        fontWeight: 700,
-        boxShadow: `0 0 0 4px rgba(32,66,151,0.08)`,
-    },
-    avatarImg: {
-        width: 64,
-        height: 64,
-        borderRadius: "50%",
-        objectFit: "cover",
-        boxShadow: `0 0 0 4px rgba(32,66,151,0.08)`,
-    },
-    avatarEditBtn: {
-        position: "absolute",
-        right: -2,
-        bottom: -2,
-        width: 24,
-        height: 24,
-        borderRadius: "50%",
-        background: BRAND.blue,
-        color: "#fff",
-        border: "2px solid #fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        padding: 0,
-    },
-    nameRow: { display: "flex", alignItems: "center", gap: 8 },
-    name: { fontSize: 18, fontWeight: 700, color: "#17181C" },
-    activePill: {
-        fontSize: 10.5,
-        fontWeight: 700,
-        color: BRAND.green,
-        background: "rgba(46,187,168,0.12)",
-        padding: "2px 9px",
-        borderRadius: 12,
-    },
-    roleBadge: {
-        display: "inline-block",
-        marginTop: 4,
-        fontSize: 11,
-        fontWeight: 700,
-        color: "#fff",
-        background: GRADIENT,
-        padding: "3px 10px",
-        borderRadius: 999,
-        letterSpacing: 0.3,
-    },
-    editProfileBtn: {
-        border: `1px solid ${BRAND.blue}`,
-        background: "#fff",
-        color: BRAND.blue,
-        fontWeight: 700,
-        fontSize: 13,
-        padding: "9px 18px",
-        borderRadius: 8,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-    },
-    cancelEditBtn: {
-        border: "1px solid #e5e7eb",
-        background: "#fff",
-        color: "#767F92",
-        fontWeight: 600,
-        fontSize: 12.5,
-        padding: "9px 16px",
-        borderRadius: 8,
-        cursor: "pointer",
-    },
+        noteWarning: {
+            fontSize: fontSize.sm,
+            color: "#92400E",
+            background: "rgba(245,158,11,0.1)",
+            padding: "8px 12px",
+            borderRadius: radius.sm,
+        },
 
-    identityGrid: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr 1.2fr",
-        gap: 20,
-        borderTop: "1px solid #f1f1f1",
-        paddingTop: 18,
-    },
-    identityGridMobile: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        borderTop: "1px solid #f1f1f1",
-        paddingTop: 16,
-    },
-    identityColumn: { display: "flex", flexDirection: "column", gap: 14 },
-    contactRow: { display: "flex", alignItems: "center", gap: 10 },
-    contactIcon: { color: BRAND.lightBlue, flexShrink: 0, display: "flex" },
-    contactValue: { fontSize: 13.5, color: "#3D4459", fontWeight: 500 },
-    infoIconRow: { display: "flex", alignItems: "center", gap: 10 },
-    infoTextWrap: { display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 },
-    infoLabel: { fontSize: 11, color: "#9099AC" },
-    infoValue: { fontSize: 13.5, color: "#17181C", fontWeight: 600 },
-    aboutBox: {
-        background: "#EEF1FB",
-        borderRadius: 12,
-        padding: 16,
-        borderLeft: `3px solid ${BRAND.blue}`,
-    },
-    aboutTitle: { fontSize: 12.5, fontWeight: 700, color: BRAND.blue, marginBottom: 6 },
-    aboutText: { margin: 0, fontSize: 13, color: "#3D4459", lineHeight: 1.5 },
-    aboutTextarea: {
-        width: "100%",
-        border: "1px solid #dbe1f5",
-        borderRadius: 8,
-        padding: 10,
-        fontSize: 13,
-        fontFamily: "inherit",
-        color: "#17181C",
-        resize: "vertical",
-        boxSizing: "border-box",
-    },
-    editField: { display: "flex", flexDirection: "column", gap: 4 },
-    logoutRow: {
-        display: "flex",
-        justifyContent: "flex-end",
-        marginTop: 18,
-    },
-    logoutButton: {
-        padding: "10px 18px",
-        borderRadius: 8,
-        border: `1px solid ${BRAND.red}`,
-        background: "#fff",
-        color: BRAND.red,
-        fontWeight: 600,
-        fontSize: 13,
-        cursor: "pointer",
-    },
+        /* Identity card */
+        identityCard: {
+            background: "#fff",
+            borderRadius: radius.xl,
+            padding: 24,
+            border: "1px solid #F0F1F7",
+            boxShadow: CARD_SHADOW,
+        },
+        identityTop: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: 20,
+        },
+        identityTopMobile: { display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 },
+        avatarBlock: { display: "flex", alignItems: "center", gap: 16 },
+        avatarWrap: { position: "relative", flexShrink: 0 },
+        avatar: {
+            width: 64,
+            height: 64,
+            borderRadius: radius.circle,
+            background: GRADIENT,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: fontSize["2xl"],
+            fontWeight: fontWeight.semibold,
+            boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
+        },
+        avatarImg: {
+            width: 64,
+            height: 64,
+            borderRadius: radius.circle,
+            objectFit: "cover",
+            boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
+        },
+        avatarEditBtn: {
+            position: "absolute",
+            right: -2,
+            bottom: -2,
+            width: 24,
+            height: 24,
+            borderRadius: radius.circle,
+            background: BRAND.blue,
+            color: "#fff",
+            border: "2px solid #fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
+        },
+        nameRow: { display: "flex", alignItems: "center", gap: 8 },
+        name: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
+        activePill: {
+            fontSize: fontSize.xxs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.green,
+            background: withAlpha(BRAND.green, 0.12),
+            padding: "2px 9px",
+            borderRadius: radius.pill,
+        },
+        roleBadge: {
+            display: "inline-block",
+            marginTop: 4,
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: "#fff",
+            background: GRADIENT,
+            padding: "3px 10px",
+            borderRadius: radius.pill,
+            letterSpacing: 0.3,
+        },
+        // Matches Add User's `styles.templateBtn` — white bg, brand text,
+        // tinted border, semibold weight, pill-ish radius.
+        editProfileBtn: {
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            background: "#fff",
+            color: BRAND.blue,
+            fontWeight: fontWeight.semibold,
+            fontSize: fontSize.base,
+            padding: "9px 18px",
+            borderRadius: radius["2xl"],
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        cancelEditBtn: {
+            border: "1px solid #e5e7eb",
+            background: "#fff",
+            color: "#767F92",
+            fontWeight: fontWeight.medium,
+            fontSize: fontSize.sm,
+            padding: "9px 16px",
+            borderRadius: radius["2xl"],
+            cursor: "pointer",
+        },
 
-    /* Stats */
-    statsGrid: {
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: 16,
-    },
-    statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
-    statCard: {
-        background: "#fff",
-        borderRadius: 14,
-        padding: 16,
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
-    statIconWrap: {
-        width: 40,
-        height: 40,
-        borderRadius: 10,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
-    statValue: { fontSize: 20, fontWeight: 800, lineHeight: 1.1 },
-    statLabel: { fontSize: 12.5, fontWeight: 700, color: "#17181C", marginTop: 2 },
-    statSub: { fontSize: 10.5, color: "#9099AC", marginTop: 1 },
+        identityGrid: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1.2fr",
+            gap: 20,
+            borderTop: "1px solid #f1f1f1",
+            paddingTop: 18,
+        },
+        identityGridMobile: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 16,
+            borderTop: "1px solid #f1f1f1",
+            paddingTop: 16,
+        },
+        identityColumn: { display: "flex", flexDirection: "column", gap: 14 },
+        contactRow: { display: "flex", alignItems: "center", gap: 10 },
+        contactIcon: { color: BRAND.lightBlue, flexShrink: 0, display: "flex" },
+        contactValue: { fontSize: fontSize.base, color: "#3D4459", fontWeight: fontWeight.regular },
+        infoIconRow: { display: "flex", alignItems: "center", gap: 10 },
+        infoTextWrap: { display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 },
+        infoLabel: { fontSize: fontSize.xs, color: "#9099AC" },
+        infoValue: { fontSize: fontSize.base, color: "#17181C", fontWeight: fontWeight.medium },
+        aboutBox: {
+            background: "#EEF1FB",
+            borderRadius: radius.lg,
+            padding: 16,
+            borderLeft: `3px solid ${BRAND.blue}`,
+        },
+        aboutTitle: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+            marginBottom: 6,
+        },
+        aboutText: { margin: 0, fontSize: fontSize.base, color: "#3D4459", lineHeight: 1.5 },
+        aboutTextarea: {
+            width: "100%",
+            border: "1px solid #ececf5",
+            borderRadius: radius.sm,
+            padding: 10,
+            fontSize: fontSize.base,
+            fontFamily: "inherit",
+            color: "#17181C",
+            resize: "vertical",
+            boxSizing: "border-box",
+            background: "#fafafa",
+        },
+        editField: { display: "flex", flexDirection: "column", gap: 4 },
+        logoutRow: {
+            display: "flex",
+            justifyContent: "flex-end",
+            marginTop: 18,
+        },
+        logoutButton: {
+            padding: "10px 18px",
+            borderRadius: radius.sm,
+            border: `1px solid ${BRAND.red}`,
+            background: "#fff",
+            color: BRAND.red,
+            fontWeight: fontWeight.medium,
+            fontSize: fontSize.base,
+            cursor: "pointer",
+        },
 
-    /* Tabs */
-    tabsRow: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        flexWrap: "wrap",
-        gap: 10,
-    },
-    tabsGroup: { display: "flex", gap: 8, background: "#EEF1FB", padding: 4, borderRadius: 10 },
-    tab: {
-        border: "none",
-        background: "transparent",
-        color: "#767F92",
-        fontWeight: 600,
-        fontSize: 13,
-        padding: "8px 16px",
-        borderRadius: 8,
-        cursor: "pointer",
-    },
-    tabActive: {
-        border: "none",
-        background: BRAND.blue,
-        color: "#fff",
-        fontWeight: 700,
-        fontSize: 13,
-        padding: "8px 16px",
-        borderRadius: 8,
-        cursor: "pointer",
-    },
-    exportBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        border: "1px solid #e5e7eb",
-        background: "#fff",
-        color: "#3D4459",
-        fontWeight: 600,
-        fontSize: 12.5,
-        padding: "9px 14px",
-        borderRadius: 8,
-        cursor: "pointer",
-    },
+        /* Stats */
+        statsGrid: {
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 16,
+        },
+        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+        statCard: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: CARD_SHADOW,
+        },
+        statIconWrap: {
+            width: 40,
+            height: 40,
+            borderRadius: radius.md,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+        },
+        statValue: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, lineHeight: 1.1 },
+        statLabel: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#17181C",
+            marginTop: 2,
+        },
+        statSub: { fontSize: fontSize.xxs, color: "#9099AC", marginTop: 1 },
 
-    /* Filters */
-    filterRow: {
-        display: "flex",
-        gap: 12,
-        flexWrap: "wrap",
-        background: "#fff",
-        borderRadius: 14,
-        padding: 16,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
-    filterRowMobile: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        background: "#fff",
-        borderRadius: 14,
-        padding: 14,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
-    filterField: { display: "flex", flexDirection: "column", gap: 4, minWidth: 150 },
-    smallLabel: { fontSize: 11, fontWeight: 600, color: "#3D4459" },
-    textInput: {
-        padding: "9px 10px",
-        background: "#fafafa",
-        border: "1px solid #ececf5",
-        outline: "none",
-        fontSize: 13,
-        borderRadius: 8,
-        boxSizing: "border-box",
-        color: "#17181C",
-        fontFamily: "inherit",
-    },
+        /* Tabs */
+        tabsRow: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 10,
+        },
+        tabsGroup: {
+            display: "flex",
+            gap: 8,
+            background: "#EEF1FB",
+            padding: 4,
+            borderRadius: radius.md,
+        },
+        tab: {
+            border: "none",
+            background: "transparent",
+            color: "#767F92",
+            fontWeight: fontWeight.medium,
+            fontSize: fontSize.base,
+            padding: "8px 16px",
+            borderRadius: radius.sm,
+            cursor: "pointer",
+        },
+        tabActive: {
+            border: "none",
+            background: BRAND.blue,
+            color: "#fff",
+            fontWeight: fontWeight.semibold,
+            fontSize: fontSize.base,
+            padding: "8px 16px",
+            borderRadius: radius.sm,
+            cursor: "pointer",
+        },
+        // Matches Add User's outline button recipe.
+        exportBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            background: "#fff",
+            color: BRAND.blue,
+            fontWeight: fontWeight.semibold,
+            fontSize: fontSize.sm,
+            padding: "9px 14px",
+            borderRadius: radius["2xl"],
+            cursor: "pointer",
+        },
 
-    /* Table */
-    tableCard: {
-        background: "#fff",
-        borderRadius: 14,
-        padding: 6,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-        overflowX: "auto",
-    },
-    table: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
-    th: {
-        textAlign: "left",
-        fontSize: 11.5,
-        color: "#9099AC",
-        fontWeight: 700,
-        padding: "12px 14px",
-        borderBottom: "1px solid #f1f1f1",
-        whiteSpace: "nowrap",
-    },
-    tr: {},
-    td: { fontSize: 13, color: "#3D4459", padding: "12px 14px", borderBottom: "1px solid #f6f6f9" },
-    statusDone: {
-        fontSize: 11,
-        fontWeight: 700,
-        color: BRAND.green,
-        background: "rgba(46,187,168,0.12)",
-        padding: "3px 10px",
-        borderRadius: 999,
-    },
-    statusPending: {
-        fontSize: 11,
-        fontWeight: 700,
-        color: BRAND.amber,
-        background: "rgba(245,158,11,0.12)",
-        padding: "3px 10px",
-        borderRadius: 999,
-    },
-    rowSubmitBtn: {
-        background: GRADIENT,
-        color: "#fff",
-        border: "none",
-        borderRadius: 7,
-        padding: "6px 14px",
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: "pointer",
-    },
+        /* Filters */
+        filterRow: {
+            display: "flex",
+            gap: 12,
+            flexWrap: "wrap",
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 16,
+            boxShadow: CARD_SHADOW,
+        },
+        filterRowMobile: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 14,
+            boxShadow: CARD_SHADOW,
+        },
+        filterField: { display: "flex", flexDirection: "column", gap: 4, minWidth: 150 },
+        smallLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#3D4459" },
+        // Matches Add User's `styles.input` recipe exactly.
+        textInput: {
+            padding: "10px 12px",
+            background: "#fafafa",
+            border: "1px solid #ececf5",
+            outline: "none",
+            fontSize: fontSize.base,
+            borderRadius: radius.sm,
+            boxSizing: "border-box",
+            color: "#17181C",
+            fontFamily: "inherit",
+        },
 
-    emptyState: { padding: "36px 20px", textAlign: "center", color: "#9ca3af", fontSize: 13 },
+        /* Table */
+        tableCard: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 6,
+            boxShadow: CARD_SHADOW,
+            overflowX: "auto",
+        },
+        table: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
+        th: {
+            textAlign: "left",
+            fontSize: fontSize.xs,
+            color: "#9099AC",
+            fontWeight: fontWeight.semibold,
+            padding: "12px 14px",
+            borderBottom: "1px solid #f1f1f1",
+            whiteSpace: "nowrap",
+        },
+        tr: {},
+        td: {
+            fontSize: fontSize.base,
+            color: "#3D4459",
+            padding: "12px 14px",
+            borderBottom: "1px solid #f6f6f9",
+        },
+        statusDone: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.green,
+            background: withAlpha(BRAND.green, 0.12),
+            padding: "3px 10px",
+            borderRadius: radius.pill,
+        },
+        statusPending: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.amber,
+            background: withAlpha(BRAND.amber, 0.12),
+            padding: "3px 10px",
+            borderRadius: radius.pill,
+        },
+        // Matches Add User's filled button recipe — brand gradient + tinted
+        // shadow.
+        rowSubmitBtn: {
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.sm,
+            padding: "6px 14px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 4px 12px ${withAlpha(BRAND.blue, 0.25)}`,
+        },
 
-    /* Mobile list */
-    allocList: { display: "flex", flexDirection: "column", gap: 10, padding: 8 },
-    mobileCard: {
-        background: "#fafafa",
-        borderRadius: 12,
-        padding: 14,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-    },
-    mobileCardTop: { display: "flex", alignItems: "center", gap: 8 },
-    mobileIndex: { fontSize: 11, color: "#9099AC", fontWeight: 700 },
-    mobileProduct: { fontSize: 13.5, fontWeight: 700, color: "#17181C", flex: 1 },
-    mobileMetaRow: { display: "flex", gap: 12, fontSize: 12, color: "#767F92", flexWrap: "wrap" },
+        emptyState: {
+            padding: "36px 20px",
+            textAlign: "center",
+            color: "#9ca3af",
+            fontSize: fontSize.base,
+        },
 
-    /* Submit panel */
-    submitPanel: {
-        background: "#fff",
-        borderRadius: 16,
-        padding: 22,
-        boxShadow: "0 4px 18px rgba(32,66,151,.06)",
-    },
-    submitPanelTitle: { fontSize: 15.5, fontWeight: 800, color: BRAND.blue },
-    submitPanelSub: { fontSize: 12.5, color: "#767F92", marginTop: 3, marginBottom: 16 },
-    submitGrid: {
-        display: "flex",
-        alignItems: "flex-end",
-        gap: 14,
-        flexWrap: "wrap",
-        marginBottom: 14,
-    },
-    submitGridMobile: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 },
-    infoBox: {
-        display: "flex",
-        gap: 10,
-        background: "#EEF1FB",
-        borderRadius: 10,
-        padding: "12px 14px",
-        fontSize: 12,
-        color: "#3D4459",
-        marginBottom: 16,
-    },
-    infoBoxIcon: { color: BRAND.blue, flexShrink: 0, marginTop: 1 },
-    submitBtn: {
-        width: "100%",
-        background: GRADIENT,
-        color: "#fff",
-        border: "none",
-        borderRadius: 10,
-        padding: "13px",
-        fontSize: 14,
-        fontWeight: 700,
-    },
-    rowError: { margin: "6px 0 0", fontSize: 12, color: BRAND.red, fontWeight: 600 },
-    smallMuted: { fontSize: 11.5, color: "#9099AC" },
-};
+        /* Mobile list */
+        allocList: { display: "flex", flexDirection: "column", gap: 10, padding: 8 },
+        mobileCard: {
+            background: "#fafafa",
+            borderRadius: radius.md,
+            padding: 14,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+        },
+        mobileCardTop: { display: "flex", alignItems: "center", gap: 8 },
+        mobileIndex: { fontSize: fontSize.xs, color: "#9099AC", fontWeight: fontWeight.semibold },
+        mobileProduct: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            color: "#17181C",
+            flex: 1,
+        },
+        mobileMetaRow: {
+            display: "flex",
+            gap: 12,
+            fontSize: fontSize.sm,
+            color: "#767F92",
+            flexWrap: "wrap",
+        },
+
+        /* Submit panel */
+        submitPanel: {
+            background: "#fff",
+            borderRadius: radius.xl,
+            padding: 22,
+            boxShadow: CARD_SHADOW,
+        },
+        submitPanelTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: BRAND.blue },
+        submitPanelSub: { fontSize: fontSize.sm, color: "#767F92", marginTop: 3, marginBottom: 16 },
+        submitGrid: {
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 14,
+            flexWrap: "wrap",
+            marginBottom: 14,
+        },
+        submitGridMobile: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 },
+        infoBox: {
+            display: "flex",
+            gap: 10,
+            background: "#EEF1FB",
+            borderRadius: radius.md,
+            padding: "12px 14px",
+            fontSize: fontSize.sm,
+            color: "#3D4459",
+            marginBottom: 16,
+        },
+        infoBoxIcon: { color: BRAND.blue, flexShrink: 0, marginTop: 1 },
+        // Matches Add User's filled `registerButton` recipe — gradient,
+        // tinted shadow, semibold weight.
+        submitBtn: {
+            width: "100%",
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.md,
+            padding: "13px",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.3)}`,
+        },
+        rowError: {
+            margin: "6px 0 0",
+            fontSize: fontSize.xs,
+            color: BRAND.red,
+            fontWeight: fontWeight.medium,
+        },
+        smallMuted: { fontSize: fontSize.xs, color: "#9099AC" },
+    };
+}

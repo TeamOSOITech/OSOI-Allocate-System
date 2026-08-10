@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 //import { speak } from "../../utils/speak";
 import FormErrorBoundary from "../../components/formErrorBoundary";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { useTheme } from "../../context/themecontext";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -33,17 +34,39 @@ const isProfessionalEmail = (email: string) => {
     return !BLOCKED_EMAIL_DOMAINS.includes(domain);
 };
 
+// Password policy: at least 8 characters, containing at least one
+// uppercase letter (A-Z). Shared by the single Add User form and the
+// bulk-upload path so both enforce the exact same rule.
+const PASSWORD_MIN_LENGTH = 8;
+const isValidPassword = (pw: string) =>
+    pw.length >= PASSWORD_MIN_LENGTH && /[A-Z]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+const PASSWORD_REQUIREMENT_TEXT = `At least ${PASSWORD_MIN_LENGTH} characters, including one uppercase letter (A-Z) and one special character (!@#$ etc.)`;
+
+// helper: hex -> rgba(...) string, so buttons/tooltips can use the active
+// theme color at any opacity (shadows, tinted borders, etc.) without
+// hardcoding a color that won't move when the theme changes.
+function withAlpha(hex: string, alpha: number) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 // Styled tooltip (matches the gradient tooltip used on the Clients page) —
 // inline style objects can't express :hover, so this small bit of CSS is
 // injected once via a <style> tag instead of scattered onMouseEnter handlers.
-const GLOBAL_CSS = `
+// Built from the active theme color (BRAND) instead of a hardcoded
+// gradient, so the tooltip repaints when the user switches theme color.
+function getGlobalCss(BRAND: { blue: string; lightBlue: string; green: string }) {
+    return `
 .au-tooltip-wrap { position: relative; display: inline-flex; }
 .au-tooltip-wrap .au-tooltip-bubble {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%) translateY(-4px);
-  background: linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue));
+  background: linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue});
   color: #fff;
   font-size: 11.5px;
   font-weight: 600;
@@ -55,7 +78,7 @@ const GLOBAL_CSS = `
   pointer-events: none;
   transition: opacity .15s ease, transform .15s ease;
   z-index: 20;
-  box-shadow: 0 8px 20px rgba(42,47,143,.35);
+  box-shadow: 0 8px 20px ${withAlpha(BRAND.blue, 0.35)};
 }
 .au-tooltip-wrap .au-tooltip-bubble::after {
   content: "";
@@ -64,7 +87,7 @@ const GLOBAL_CSS = `
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: var(--brand-light-blue);
+  border-bottom-color: ${BRAND.lightBlue};
 }
 .au-tooltip-wrap:hover .au-tooltip-bubble {
   opacity: 1;
@@ -72,6 +95,7 @@ const GLOBAL_CSS = `
   transform: translateX(-50%) translateY(0);
 }
 `;
+}
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -93,9 +117,11 @@ function useIsMobile() {
 function InlineAddOption({
     onAdd,
     placeholder,
+    styles,
 }: {
     onAdd: (value: string) => Promise<void> | void;
     placeholder?: string;
+    styles: Record<string, CSSProperties>;
 }) {
     const [open, setOpen] = useState(false);
     const [value, setValue] = useState("");
@@ -197,6 +223,9 @@ const BULK_REQUIRED_FIELDS: (keyof ReturnType<typeof mapBulkRow>)[] = [
 export default function AddUser() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
+    const { colors: BRAND } = useTheme();
+    const styles = getStyles(BRAND);
+    const globalCss = getGlobalCss(BRAND);
 
     const [formData, setFormData] = useState({
         fullName: "",
@@ -260,6 +289,23 @@ export default function AddUser() {
                 setDepartmentOptions(data.departments || []);
                 setDesignationOptions(data.designations || []);
                 setTeamsOptions(data.teams || []);
+
+                // Custom Reporting Manager values added via the "+" control
+                // are persisted separately from the real Process Lead list
+                // (see fetchProcessLeads below) — merge them in here so a
+                // previously-added custom value still shows up after a
+                // refresh instead of only existing in local state until
+                // reload.
+                const customManagers: string[] = data.reportingManagers || [];
+                if (customManagers.length > 0) {
+                    setProcessLeads((prev) => {
+                        const existingEmails = new Set(prev.map((pl) => pl.email));
+                        const additions = customManagers
+                            .filter((name) => !existingEmails.has(name))
+                            .map((name) => ({ id: `custom-${name}`, name, email: name }));
+                        return additions.length > 0 ? [...prev, ...additions] : prev;
+                    });
+                }
             } catch (err) {
                 console.error("Failed to load dropdown options:", err);
             } finally {
@@ -328,13 +374,36 @@ export default function AddUser() {
         }
     };
 
+    // FIX: previously picked purely random characters from a pool that
+    // included uppercase letters — but nothing guaranteed one actually got
+    // picked, so an auto-generated password could (rarely) fail the new
+    // "at least one uppercase letter" policy. Now builds the password from
+    // guaranteed-included character classes, then shuffles, so it always
+    // satisfies isValidPassword().
     const generatePassword = () => {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
-        let pass = "";
-        for (let i = 0; i < 10; i++) {
-            pass += chars.charAt(Math.floor(Math.random() * chars.length));
+        const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const lower = "abcdefghijklmnopqrstuvwxyz";
+        const digits = "0123456789";
+        const symbols = "@#$%";
+        const all = upper + lower + digits + symbols;
+
+        const pick = (pool: string) => pool.charAt(Math.floor(Math.random() * pool.length));
+
+        // Guarantee at least one uppercase (policy requirement) plus a
+        // lowercase and digit for reasonable strength, then fill the rest
+        // randomly from the full pool.
+        const guaranteed = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+        const remainingLength = Math.max(PASSWORD_MIN_LENGTH, 10) - guaranteed.length;
+        const rest = Array.from({ length: remainingLength }, () => pick(all));
+
+        // Shuffle so the guaranteed characters aren't always in the same
+        // first-three positions.
+        const chars = [...guaranteed, ...rest];
+        for (let i = chars.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [chars[i], chars[j]] = [chars[j], chars[i]];
         }
-        return pass;
+        return chars.join("");
     };
 
     const handleGeneratePasswordClick = () => {
@@ -397,7 +466,9 @@ export default function AddUser() {
 
             // ---- client-side validation pass, mirrors handleRegister ----
             // Required fields (DOB & Contact Number excluded) + professional
-            // email domain check, same rules as the single Add User form.
+            // email domain check + password policy (only when a password
+            // was actually supplied in the sheet — blank cells still
+            // auto-generate on the backend/below).
             const validUsers: ReturnType<typeof mapBulkRow>[] = [];
             const preFailedResults: any[] = [];
 
@@ -420,7 +491,18 @@ export default function AddUser() {
                     });
                     return;
                 }
-                validUsers.push(u);
+                if (u.password && !isValidPassword(u.password)) {
+                    preFailedResults.push({
+                        email: u.email,
+                        success: false,
+                        message: `Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`,
+                    });
+                    return;
+                }
+                // Blank password in the sheet -> auto-generate one here so
+                // every row sent to the backend already satisfies policy,
+                // same as the single-user form below.
+                validUsers.push(u.password ? u : { ...u, password: generatePassword() });
             });
 
             let backendResults: any[] = [];
@@ -472,6 +554,15 @@ export default function AddUser() {
             setError(
                 "Please enter a professional company email (e.g. abc@osoitech.com). Gmail, Yahoo, Outlook etc. are not allowed."
             );
+            return;
+        }
+
+        // Password is optional in the form, but if the admin typed one in
+        // manually it must meet the policy — an auto-generated one always
+        // will (see generatePassword above), so this only ever blocks a
+        // manually-typed weak password.
+        if (formData.password && !isValidPassword(formData.password)) {
+            setError(`Password does not meet requirements: ${PASSWORD_REQUIREMENT_TEXT}.`);
             return;
         }
 
@@ -577,7 +668,7 @@ export default function AddUser() {
     return (
         <FormErrorBoundary>
             <div style={isMobile ? styles.rootMobile : styles.root}>
-                <style>{GLOBAL_CSS}</style>
+                <style>{globalCss}</style>
                 {isMobile && (
                     <div style={styles.mobileTopbar}>
                         <span style={styles.mobileTitle}>Add New User</span>
@@ -666,7 +757,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-user"
-                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
+                                    style={{ fontSize: fontSize.lg, color: BRAND.blue }}
                                 />
                                 <span style={styles.sectionHeaderText}>Personal Information</span>
                             </div>
@@ -757,6 +848,7 @@ export default function AddUser() {
                                             ))}
                                         </select>
                                         <InlineAddOption
+                                            styles={styles}
                                             placeholder="e.g. Senior Developer"
                                             onAdd={async (val) => {
                                                 setDesignationOptions((prev) =>
@@ -790,6 +882,7 @@ export default function AddUser() {
                                             ))}
                                         </select>
                                         <InlineAddOption
+                                            styles={styles}
                                             placeholder="e.g. Finance"
                                             onAdd={async (val) => {
                                                 setDepartmentOptions((prev) =>
@@ -810,7 +903,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-building"
-                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
+                                    style={{ fontSize: fontSize.lg, color: BRAND.blue }}
                                 />
                                 <span style={styles.sectionHeaderText}>Organization Details</span>
                             </div>
@@ -833,6 +926,7 @@ export default function AddUser() {
                                             ))}
                                         </select>
                                         <InlineAddOption
+                                            styles={styles}
                                             placeholder="e.g. QA_LEAD"
                                             onAdd={async (val) => {
                                                 setRoleOptions((prev) =>
@@ -872,6 +966,7 @@ export default function AddUser() {
                                         </select>
 
                                         <InlineAddOption
+                                            styles={styles}
                                             placeholder="Manager name"
                                             onAdd={async (val) => {
                                                 setProcessLeads((prev) =>
@@ -914,6 +1009,7 @@ export default function AddUser() {
                                             ))}
                                         </select>
                                         <InlineAddOption
+                                            styles={styles}
                                             placeholder="e.g. Support"
                                             onAdd={async (val) => {
                                                 setTeamsOptions((prev) =>
@@ -953,7 +1049,7 @@ export default function AddUser() {
                             <div style={styles.sectionHeader}>
                                 <i
                                     className="ti ti-lock"
-                                    style={{ fontSize: fontSize.lg, color: "var(--brand-blue)" }}
+                                    style={{ fontSize: fontSize.lg, color: BRAND.blue }}
                                 />
                                 <span style={styles.sectionHeaderText}>Security</span>
                             </div>
@@ -967,44 +1063,65 @@ export default function AddUser() {
                                     }
                                 >
                                     <div
-                                        style={
-                                            isMobile ? styles.passwordRowMobile : styles.passwordRow
-                                        }
+                                        style={{ width: isMobile ? "100%" : "58%", minWidth: 280 }}
                                     >
-                                        <input
-                                            type="text"
-                                            style={{ ...styles.input, flex: 1, minWidth: 0 }}
-                                            value={formData.password}
-                                            onChange={(e) =>
-                                                setFormData({
-                                                    ...formData,
-                                                    password: e.target.value,
-                                                })
+                                        <div
+                                            style={
+                                                isMobile
+                                                    ? styles.passwordRowMobile
+                                                    : { ...styles.passwordRow, width: "100%" }
                                             }
-                                            placeholder="Optional — auto-generated if left blank"
-                                        />
-                                        <button
-                                            style={styles.generateBtn}
-                                            onClick={handleGeneratePasswordClick}
-                                            type="button"
                                         >
-                                            <i
-                                                className="ti ti-refresh"
-                                                style={{ fontSize: fontSize.base }}
+                                            <input
+                                                type="text"
+                                                style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                                value={formData.password}
+                                                onChange={(e) =>
+                                                    setFormData({
+                                                        ...formData,
+                                                        password: e.target.value,
+                                                    })
+                                                }
+                                                placeholder="Optional — auto-generated if left blank"
                                             />
-                                            Generate
-                                        </button>
-                                        <button
-                                            style={styles.copyBtn}
-                                            onClick={copyPassword}
-                                            type="button"
+                                            <button
+                                                style={styles.generateBtn}
+                                                onClick={handleGeneratePasswordClick}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="ti ti-refresh"
+                                                    style={{ fontSize: fontSize.base }}
+                                                />
+                                                Generate
+                                            </button>
+                                            <button
+                                                style={styles.copyBtn}
+                                                onClick={copyPassword}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="ti ti-copy"
+                                                    style={{ fontSize: fontSize.base }}
+                                                />
+                                                Copy
+                                            </button>
+                                        </div>
+                                        {/* Policy hint — only flags red once the admin has
+                                            typed something invalid; blank/auto-generated
+                                            passwords always satisfy the rule already. */}
+                                        <p
+                                            style={{
+                                                ...styles.note,
+                                                color:
+                                                    formData.password &&
+                                                    !isValidPassword(formData.password)
+                                                        ? "#dc2626"
+                                                        : "#767F92",
+                                            }}
                                         >
-                                            <i
-                                                className="ti ti-copy"
-                                                style={{ fontSize: fontSize.base }}
-                                            />
-                                            Copy
-                                        </button>
+                                            {PASSWORD_REQUIREMENT_TEXT}
+                                        </p>
                                     </div>
 
                                     <button
@@ -1070,7 +1187,10 @@ export default function AddUser() {
                                 <p style={styles.bulkInfoText}>
                                     Full Name, Email (company domain only), Employee ID,
                                     Designation, Department, Date of Joining, Reporting Manager,
-                                    Teams, Role. Contact Number and Date of Birth are optional.
+                                    Teams, Role. Contact Number and Date of Birth are optional. If
+                                    Password is filled in, it must be{" "}
+                                    {PASSWORD_REQUIREMENT_TEXT.toLowerCase()}; leave it blank to
+                                    auto-generate one.
                                 </p>
                             </div>
 
@@ -1166,569 +1286,585 @@ export default function AddUser() {
     );
 }
 
-const styles: Record<string, CSSProperties> = {
-    root: {
-        display: "flex",
-        width: "100%",
-        flex: 1,
-        minHeight: 0,
-        background: "#EAF3FC",
-        fontFamily: fontFamily.base,
-        overflowX: "hidden",
-    },
-    rootMobile: {
-        display: "flex",
-        flexDirection: "column",
-        flex: 1,
-        minHeight: 0,
-        width: "100%",
-        background: "#EAF3FC",
-        fontFamily: fontFamily.base,
-        position: "relative",
-        overflowX: "hidden",
-    },
+// Built from the active theme color (BRAND) instead of hardcoded hex
+// values, so every button/border/shadow on this page repaints when the
+// user switches theme color in Settings — same pattern as header.tsx.
+function getStyles(BRAND: {
+    blue: string;
+    lightBlue: string;
+    green: string;
+}): Record<string, CSSProperties> {
+    const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
-    mobileTopbar: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "12px",
-        padding: "12px 16px",
-        background: "#fff",
-        borderBottom: "1px solid #eee",
-        position: "sticky",
-        top: 0,
-        zIndex: 30,
-        boxSizing: "border-box",
-        width: "100%",
-    },
-    hamburgerBtn: {
-        border: "none",
-        background: "transparent",
-        fontSize: fontSize["3xl"],
-        cursor: "pointer",
-        padding: 4,
-    },
-    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
-    overlay: {
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 40,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    sidebarDrawer: {
-        position: "fixed",
-        top: 0,
-        left: 0,
-        bottom: 0,
-        width: "230px",
-        maxWidth: "80vw",
-        zIndex: 50,
-        transition: "transform 0.25s ease",
-        boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
-        overflowY: "auto",
-    },
+    return {
+        root: {
+            display: "flex",
+            width: "100%",
+            flex: 1,
+            minHeight: 0,
+            background: "#EAF3FC",
+            fontFamily: fontFamily.base,
+            overflowX: "hidden",
+        },
+        rootMobile: {
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            background: "#EAF3FC",
+            fontFamily: fontFamily.base,
+            position: "relative",
+            overflowX: "hidden",
+        },
 
-    contentCol: {
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-    },
-    contentColMobile: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" },
-    contentBody: {
-        display: "flex",
-        flexDirection: "column",
-        padding: "20px 24px",
-        flex: 1,
-        overflow: "hidden",
-        minHeight: 0,
-        maxWidth: "100%",
-        boxSizing: "border-box",
-    },
+        mobileTopbar: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            padding: "12px 16px",
+            background: "#fff",
+            borderBottom: "1px solid #eee",
+            position: "sticky",
+            top: 0,
+            zIndex: 30,
+            boxSizing: "border-box",
+            width: "100%",
+        },
+        hamburgerBtn: {
+            border: "none",
+            background: "transparent",
+            fontSize: fontSize["3xl"],
+            cursor: "pointer",
+            padding: 4,
+        },
+        mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
+        overlay: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 40,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        sidebarDrawer: {
+            position: "fixed",
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: "230px",
+            maxWidth: "80vw",
+            zIndex: 50,
+            transition: "transform 0.25s ease",
+            boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
+            overflowY: "auto",
+        },
 
-    pageHeaderRow: {
-        position: "relative",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        marginBottom: 6,
-        minHeight: 48,
-    },
-    pageTitleBlock: { textAlign: "center" },
-    pageTitle: {
-        margin: 0,
-        fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
-        color: "#17181C",
-    },
+        contentCol: {
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            minHeight: 0,
+        },
+        contentColMobile: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" },
+        contentBody: {
+            display: "flex",
+            flexDirection: "column",
+            padding: "20px 24px",
+            flex: 1,
+            overflow: "hidden",
+            minHeight: 0,
+            maxWidth: "100%",
+            boxSizing: "border-box",
+        },
 
-    headerSubtext: {
-        margin: "4px 0 0",
+        pageHeaderRow: {
+            position: "relative",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 6,
+            minHeight: 48,
+        },
+        pageTitleBlock: { textAlign: "center" },
+        pageTitle: {
+            margin: 0,
+            fontSize: fontSize["5xl"],
+            fontWeight: fontWeight.bold,
+            color: "#17181C",
+        },
 
-        fontSize: fontSize.base,
+        headerSubtext: {
+            margin: "4px 0 0",
+            fontSize: fontSize.base,
+            color: "#767F92",
+            textAlign: "left",
+        },
 
-        color: "#767F92",
+        headerButtonGroup: {
+            position: "absolute",
+            right: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+        },
+        templateBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "#fff",
+            color: BRAND.blue,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            borderRadius: radius["2xl"],
+            padding: "11px 20px",
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
+        bulkBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius["2xl"],
+            padding: "11px 22px",
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.3)}`,
+        },
+        bulkHeaderBtnMobile: {
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.xl,
+            padding: "6px 14px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
 
-        textAlign: "left",
-    },
+        formCard: {
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            background: "#fff",
+            borderRadius: radius.xl,
+            padding: 0,
+            boxShadow: "0 10px 30px rgba(0,0,0,.06)",
+            overflow: "hidden",
+            minHeight: 0,
+        },
+        sectionHeader: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "14px 24px",
+            background: "#F4F8FD",
+            borderBottom: "1px solid #E7F0FB",
+        },
+        sectionHeaderText: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+        },
+        sectionBody: { padding: "16px 24px" },
 
-    headerButtonGroup: {
-        position: "absolute",
-        right: 0,
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-    },
-    templateBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: "#fff",
-        color: "var(--brand-blue)",
-        border: "1px solid #C7D9F0",
-        borderRadius: radius["2xl"],
-        padding: "11px 20px",
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-    },
-    bulkBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius["2xl"],
-        padding: "11px 22px",
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
-    },
-    bulkHeaderBtnMobile: {
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.xl,
-        padding: "6px 14px",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-    },
+        grid: {
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: "18px 24px",
+        },
+        gridMobile: {
+            display: "grid",
+            gridTemplateColumns: "1fr",
+            gap: "12px",
+        },
 
-    formCard: {
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        background: "#fff",
-        borderRadius: radius.xl,
-        padding: 0,
-        boxShadow: "0 10px 30px rgba(0,0,0,.06)",
-        overflow: "hidden",
-        minHeight: 0,
-    },
-    sectionHeader: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "14px 24px",
-        background: "#F4F8FD",
-        borderBottom: "1px solid #E7F0FB",
-    },
-    sectionHeaderText: {
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.semibold,
-        color: "var(--brand-blue)",
-    },
-    sectionBody: { padding: "16px 24px" },
+        label: {
+            display: "block",
+            marginBottom: 6,
+            color: "#3D4459",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+        },
+        labelRequired: {
+            // Required labels match the regular label color (not red).
+            color: "#3D4459",
+        },
+        input: {
+            width: "100%",
+            padding: "10px 12px",
+            background: "#fafafa",
+            border: "1px solid #ececf5",
+            outline: "none",
+            fontSize: fontSize.base,
+            borderRadius: radius.sm,
+            boxSizing: "border-box",
+            color: "#17181C",
+        },
+        note: {
+            color: "#f59e0b",
+            marginTop: 6,
+            fontWeight: fontWeight.medium,
+            fontSize: fontSize.xs,
+        },
 
-    grid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px 24px" },
-    gridMobile: {
-        display: "grid",
-        gridTemplateColumns: "1fr",
-        gap: "12px",
-    },
+        addOptionToggle: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 22,
+            height: 22,
+            marginTop: 6,
+            border: `1px dashed ${withAlpha(BRAND.blue, 0.35)}`,
+            borderRadius: radius.circle,
+            background: "#fff",
+            color: BRAND.blue,
+            cursor: "pointer",
+            padding: 0,
+        },
+        addOptionRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: 6,
+        },
+        addOptionInput: {
+            flex: 1,
+            minWidth: 0,
+            padding: "6px 8px",
+            fontSize: fontSize.sm,
+            border: "1px solid #ececf5",
+            borderRadius: radius.xs,
+            outline: "none",
+            background: "#fafafa",
+            color: "#17181C",
+        },
+        addOptionSubmit: {
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.xs,
+            padding: "6px 10px",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        addOptionCancel: {
+            border: "none",
+            background: "transparent",
+            color: "#9ca3af",
+            cursor: "pointer",
+            fontSize: fontSize.sm,
+            padding: "0 4px",
+        },
 
-    label: {
-        display: "block",
-        marginBottom: 6,
-        color: "#3D4459",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.medium,
-    },
-    labelRequired: {
-        // Changed: no longer red — required labels now match the
-        // regular label color (same as Contact Number's label).
-        color: "#3D4459",
-    },
-    input: {
-        width: "100%",
-        padding: "10px 12px",
-        background: "#fafafa",
-        border: "1px solid #ececf5",
-        outline: "none",
-        fontSize: fontSize.base,
-        borderRadius: radius.sm,
-        boxSizing: "border-box",
-        color: "#17181C",
-    },
-    note: { color: "#f59e0b", marginTop: 6, fontWeight: fontWeight.medium, fontSize: fontSize.xs },
+        passwordRegisterRow: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 20,
+            flexWrap: "wrap",
+        },
+        passwordRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "58%",
+            minWidth: 280,
+        },
 
-    addOptionToggle: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 22,
-        height: 22,
-        marginTop: 6,
-        border: "1px dashed #C7D9F0",
-        borderRadius: radius.circle,
-        background: "#fff",
-        color: "var(--brand-blue)",
-        cursor: "pointer",
-        padding: 0,
-    },
-    addOptionRow: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        marginTop: 6,
-    },
-    addOptionInput: {
-        flex: 1,
-        minWidth: 0,
-        padding: "6px 8px",
-        fontSize: fontSize.sm,
-        border: "1px solid #ececf5",
-        borderRadius: radius.xs,
-        outline: "none",
-        background: "#fafafa",
-        color: "#17181C",
-    },
-    addOptionSubmit: {
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.xs,
-        padding: "6px 10px",
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-    },
-    addOptionCancel: {
-        border: "none",
-        background: "transparent",
-        color: "#9ca3af",
-        cursor: "pointer",
-        fontSize: fontSize.sm,
-        padding: "0 4px",
-    },
+        generateBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.sm,
+            padding: "10px 16px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        copyBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "#fff",
+            color: BRAND.blue,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            borderRadius: radius.sm,
+            padding: "10px 16px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
 
-    passwordRegisterRow: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 20,
-        flexWrap: "wrap",
-    },
-    passwordRow: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        width: "58%",
-        minWidth: 280,
-    },
+        error: {
+            color: "#dc2626",
+            margin: "16px 0 0",
+            fontWeight: fontWeight.medium,
+            fontSize: fontSize.base,
+        },
 
-    generateBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.sm,
-        padding: "10px 16px",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-    },
-    copyBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        background: "#fff",
-        color: "var(--brand-blue)",
-        border: "1px solid #C7D9F0",
-        borderRadius: radius.sm,
-        padding: "10px 16px",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-    },
+        registerButton: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius["2xl"],
+            padding: "12px 26px",
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.3)}`,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+        },
 
-    error: {
-        color: "#dc2626",
-        margin: "16px 0 0",
-        fontWeight: fontWeight.medium,
-        fontSize: fontSize.base,
-    },
+        successModal: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 32,
+            width: 360,
+            maxWidth: "90vw",
+            textAlign: "center",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+        },
+        successIcon: {
+            width: 56,
+            height: 56,
+            borderRadius: radius.circle,
+            background: withAlpha(BRAND.blue, 0.12),
+            color: BRAND.blue,
+            fontSize: fontSize["6xl"],
+            fontWeight: fontWeight.semibold,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 16px",
+        },
+        successTitle: {
+            margin: "0 0 8px",
+            fontSize: fontSize["2xl"],
+            fontWeight: fontWeight.semibold,
+            color: "#17181C",
+        },
+        successText: { margin: "0 0 24px", fontSize: fontSize.md, color: "#767F92" },
+        successBtn: {
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.sm,
+            padding: "10px 32px",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
 
-    registerButton: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius["2xl"],
-        padding: "12px 26px",
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-    },
-
-    successModal: {
-        background: "#fff",
-        borderRadius: radius.lg,
-        padding: 32,
-        width: 360,
-        maxWidth: "90vw",
-        textAlign: "center",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-    },
-    successIcon: {
-        width: 56,
-        height: 56,
-        borderRadius: radius.circle,
-        background: "#DCEAFB",
-        color: "var(--brand-blue)",
-        fontSize: fontSize["6xl"],
-        fontWeight: fontWeight.semibold,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        margin: "0 auto 16px",
-    },
-    successTitle: {
-        margin: "0 0 8px",
-        fontSize: fontSize["2xl"],
-        fontWeight: fontWeight.semibold,
-        color: "#17181C",
-    },
-    successText: { margin: "0 0 24px", fontSize: fontSize.md, color: "#767F92" },
-    successBtn: {
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.sm,
-        padding: "10px 32px",
-        fontSize: fontSize.md,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-    },
-
-    bulkModal: {
-        background: "#fff",
-        borderRadius: radius.lg,
-        width: 560,
-        maxWidth: "92vw",
-        maxHeight: "88vh",
-        overflowY: "auto",
-        boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
-    },
-    bulkModalHeader: {
-        position: "relative",
-        textAlign: "center",
-        padding: "24px 28px 16px",
-        borderBottom: "1px solid #f0f0f0",
-    },
-    bulkModalTitle: {
-        margin: 0,
-        fontSize: fontSize["3xl"],
-        fontWeight: fontWeight.semibold,
-        color: "var(--brand-blue)",
-    },
-    bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
-    closeBtn: {
-        position: "absolute",
-        top: 20,
-        right: 24,
-        border: "none",
-        background: "#f3f4f6",
-        borderRadius: radius.circle,
-        width: 28,
-        height: 28,
-        fontSize: fontSize.md,
-        cursor: "pointer",
-        color: "#6b7280",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    bulkInfoBox: {
-        margin: "20px 28px",
-        padding: "14px 16px",
-        background: "#EEF6FB",
-        borderLeft: "3px solid var(--brand-light-blue)",
-        borderRadius: radius.xs,
-    },
-    bulkInfoLabel: {
-        display: "block",
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.semibold,
-        color: "var(--brand-blue)",
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-        marginBottom: 4,
-    },
-    bulkInfoText: { margin: 0, fontSize: fontSize.base, color: "#6b7280", lineHeight: 1.6 },
-    bulkUploadRow: {
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 10,
-        margin: "0 28px 24px",
-    },
-    fileInputWrapper: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        border: "1px solid #e5e7eb",
-        borderRadius: radius.sm,
-        padding: "8px 12px",
-        cursor: "pointer",
-        flex: 1,
-        minWidth: 200,
-        background: "#fafafa",
-    },
-    fileInputHidden: { display: "none" },
-    fileInputButton: {
-        background: "var(--brand-blue)",
-        color: "#fff",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.medium,
-        padding: "6px 12px",
-        borderRadius: radius.xs,
-        whiteSpace: "nowrap",
-    },
-    fileInputName: {
-        fontSize: fontSize.base,
-        color: "#6b7280",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-    },
-    bulkUploadBtn: {
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius.sm,
-        padding: "10px 20px",
-        fontSize: fontSize.md,
-        fontWeight: fontWeight.semibold,
-        whiteSpace: "nowrap",
-    },
-    resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
-    resultsSummary: { marginBottom: 12 },
-    resultsSummaryText: { fontSize: fontSize.md, color: "#17181C" },
-    resultsList: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        maxHeight: 260,
-        overflowY: "auto",
-    },
-    resultRow: {
-        border: "1px solid #f0f0f0",
-        borderRadius: radius.sm,
-        padding: "10px 14px",
-        background: "#fafafa",
-    },
-    resultRowMain: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 10,
-    },
-    resultEmail: {
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.medium,
-        color: "#17181C",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-    },
-    statusPill: {
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.semibold,
-        padding: "3px 10px",
-        borderRadius: radius.xl,
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-    },
-    statusPillSuccess: { background: "#dcfce7", color: "#15803d" },
-    statusPillFail: { background: "#fee2e2", color: "#dc2626" },
-    resultMessage: { margin: "4px 0 0", fontSize: fontSize.sm, color: "#9ca3af" },
-    passwordRegisterRowMobile: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 12,
-    },
-    passwordRowMobile: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        width: "100%",
-        minWidth: 0,
-        boxSizing: "border-box",
-    },
-    registerButtonMobile: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        border: "none",
-        borderRadius: radius["2xl"],
-        padding: "12px 28px",
-        fontSize: fontSize.md,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(42,47,143,0.3)",
-        whiteSpace: "nowrap",
-    },
-    mobileHeaderBtnGroup: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        flexShrink: 0,
-    },
-    templateBtnMobile: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#fff",
-        color: "var(--brand-blue)",
-        border: "1px solid #C7D9F0",
-        borderRadius: radius.circle,
-        width: 30,
-        height: 30,
-        cursor: "pointer",
-        flexShrink: 0,
-    },
-};
+        bulkModal: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            width: 560,
+            maxWidth: "92vw",
+            maxHeight: "88vh",
+            overflowY: "auto",
+            boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+        },
+        bulkModalHeader: {
+            position: "relative",
+            textAlign: "center",
+            padding: "24px 28px 16px",
+            borderBottom: "1px solid #f0f0f0",
+        },
+        bulkModalTitle: {
+            margin: 0,
+            fontSize: fontSize["3xl"],
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+        },
+        bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
+        closeBtn: {
+            position: "absolute",
+            top: 20,
+            right: 24,
+            border: "none",
+            background: "#f3f4f6",
+            borderRadius: radius.circle,
+            width: 28,
+            height: 28,
+            fontSize: fontSize.md,
+            cursor: "pointer",
+            color: "#6b7280",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        bulkInfoBox: {
+            margin: "20px 28px",
+            padding: "14px 16px",
+            background: withAlpha(BRAND.lightBlue, 0.08),
+            borderLeft: `3px solid ${BRAND.lightBlue}`,
+            borderRadius: radius.xs,
+        },
+        bulkInfoLabel: {
+            display: "block",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+            marginBottom: 4,
+        },
+        bulkInfoText: { margin: 0, fontSize: fontSize.base, color: "#6b7280", lineHeight: 1.6 },
+        bulkUploadRow: {
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 10,
+            margin: "0 28px 24px",
+        },
+        fileInputWrapper: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            border: "1px solid #e5e7eb",
+            borderRadius: radius.sm,
+            padding: "8px 12px",
+            cursor: "pointer",
+            flex: 1,
+            minWidth: 200,
+            background: "#fafafa",
+        },
+        fileInputHidden: { display: "none" },
+        fileInputButton: {
+            background: BRAND.blue,
+            color: "#fff",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            padding: "6px 12px",
+            borderRadius: radius.xs,
+            whiteSpace: "nowrap",
+        },
+        fileInputName: {
+            fontSize: fontSize.base,
+            color: "#6b7280",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        bulkUploadBtn: {
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.sm,
+            padding: "10px 20px",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+            whiteSpace: "nowrap",
+        },
+        resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
+        resultsSummary: { marginBottom: 12 },
+        resultsSummaryText: { fontSize: fontSize.md, color: "#17181C" },
+        resultsList: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            maxHeight: 260,
+            overflowY: "auto",
+        },
+        resultRow: {
+            border: "1px solid #f0f0f0",
+            borderRadius: radius.sm,
+            padding: "10px 14px",
+            background: "#fafafa",
+        },
+        resultRowMain: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+        },
+        resultEmail: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.medium,
+            color: "#17181C",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        statusPill: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            padding: "3px 10px",
+            borderRadius: radius.xl,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+        },
+        statusPillSuccess: { background: "#dcfce7", color: "#15803d" },
+        statusPillFail: { background: "#fee2e2", color: "#dc2626" },
+        resultMessage: { margin: "4px 0 0", fontSize: fontSize.sm, color: "#9ca3af" },
+        passwordRegisterRowMobile: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 12,
+        },
+        passwordRowMobile: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            width: "100%",
+            minWidth: 0,
+            boxSizing: "border-box",
+        },
+        registerButtonMobile: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            background: GRADIENT,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius["2xl"],
+            padding: "12px 28px",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.3)}`,
+            whiteSpace: "nowrap",
+        },
+        mobileHeaderBtnGroup: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexShrink: 0,
+        },
+        templateBtnMobile: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#fff",
+            color: BRAND.blue,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            borderRadius: radius.circle,
+            width: 30,
+            height: 30,
+            cursor: "pointer",
+            flexShrink: 0,
+        },
+    };
+}

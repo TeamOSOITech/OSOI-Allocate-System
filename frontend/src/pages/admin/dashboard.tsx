@@ -12,18 +12,25 @@ import {
 } from "recharts";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { useTheme } from "../../context/themecontext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
 
-// Same three-color brand palette used everywhere else (header.tsx brandRail,
-// clients.tsx avatars, sidebar active state, etc.)
-const BRAND = {
-    blue: "#204297",
-    lightBlue: "#08A1CE",
-    green: "#2EBBA8",
-    amber: "#F59E0B",
-};
+// blue/lightBlue/green now come from the active theme color (useTheme()
+// below) instead of being hardcoded, so this page repaints with the rest
+// of the app when the user switches theme color. amber is a fixed status
+// color (Pending), not a brand color, so it stays constant across themes.
+const STATUS_AMBER = "#F59E0B";
+
+function withAlpha(hex: string, alpha: number) {
+    const clean = hex.replace("#", "");
+    const n = parseInt(clean, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 interface User {
     name: string;
@@ -72,19 +79,32 @@ function formatDisplayDate(iso: string) {
     return `${d}-${m}-${y}`;
 }
 
-function statusBadgeStyle(status: string): CSSProperties {
+// Takes BRAND (from the active theme) so the "in progress" tint tracks the
+// theme's light-blue instead of a hardcoded one.
+function statusBadgeStyle(
+    status: string,
+    BRAND: { lightBlue: string; green: string }
+): CSSProperties {
     const s = (status || "").toUpperCase();
     if (s === "COMPLETED") {
-        return { background: "rgba(46,187,168,0.12)", color: BRAND.green };
+        return { background: withAlpha(BRAND.green, 0.12), color: BRAND.green };
     }
     if (s === "ASSIGNED" || s === "IN_PROGRESS") {
-        return { background: "rgba(8,161,206,0.12)", color: BRAND.lightBlue };
+        return { background: withAlpha(BRAND.lightBlue, 0.12), color: BRAND.lightBlue };
     }
     return { background: "rgba(245,158,11,0.14)", color: "#B45309" }; // PENDING / default
 }
 
 export default function Dashboard({ user }: DashboardProps) {
     const isMobile = useIsMobile();
+    const { colors: themeColors } = useTheme();
+    const BRAND = {
+        blue: themeColors.blue,
+        lightBlue: themeColors.lightBlue,
+        green: themeColors.green,
+        amber: STATUS_AMBER,
+    };
+    const styles = getStyles(BRAND);
 
     const [employeeCount, setEmployeeCount] = useState<number | null>(null);
     const [batches, setBatches] = useState<DailyWorkBatch[]>([]);
@@ -313,7 +333,7 @@ export default function Dashboard({ user }: DashboardProps) {
                             <div
                                 style={{
                                     ...styles.emptyIconCircle,
-                                    background: "rgba(46,187,168,0.1)",
+                                    background: withAlpha(BRAND.green, 0.1),
                                 }}
                             >
                                 <i
@@ -336,7 +356,7 @@ export default function Dashboard({ user }: DashboardProps) {
                                         <span
                                             style={{
                                                 ...styles.statusBadge,
-                                                ...statusBadgeStyle(b.status),
+                                                ...statusBadgeStyle(b.status, BRAND),
                                             }}
                                         >
                                             {b.status}
@@ -387,7 +407,7 @@ export default function Dashboard({ user }: DashboardProps) {
                                             <span
                                                 style={{
                                                     ...styles.statusBadge,
-                                                    ...statusBadgeStyle(b.status),
+                                                    ...statusBadgeStyle(b.status, BRAND),
                                                 }}
                                             >
                                                 {b.status}
@@ -404,224 +424,235 @@ export default function Dashboard({ user }: DashboardProps) {
     );
 }
 
-const styles: Record<string, CSSProperties> = {
-    root: {
-        width: "100%",
-        minHeight: "100%",
-        background: "#f4f5fb",
-        fontFamily: fontFamily.base,
-    },
-    rootMobile: {
-        width: "100%",
-        minHeight: "100%",
-        background: "#f0f0f5",
-        fontFamily: fontFamily.base,
-    },
-    // Same signature strip as header.tsx's brandRail — all three brand
-    // colors in one gradient, used consistently at the top of the page.
-    topBar: {
-        height: "4px",
-        width: "100%",
-        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
-    },
-    contentBody: {
-        display: "flex",
-        flexDirection: "column",
-        gap: "18px",
-        padding: "20px 24px 28px",
-    },
-    contentBodyMobile: {
-        display: "flex",
-        flexDirection: "column",
-        gap: "14px",
-        padding: "14px 14px 22px",
-    },
+// Built from the active theme color instead of hardcoded hex values, so
+// the brand rail, KPI gradients, panel underline, and date badge all
+// repaint when the user switches theme color — same pattern as
+// adduser.tsx / profile.tsx.
+function getStyles(BRAND: {
+    blue: string;
+    lightBlue: string;
+    green: string;
+    amber: string;
+}): Record<string, CSSProperties> {
+    return {
+        root: {
+            width: "100%",
+            minHeight: "100%",
+            background: "#f4f5fb",
+            fontFamily: fontFamily.base,
+        },
+        rootMobile: {
+            width: "100%",
+            minHeight: "100%",
+            background: "#f0f0f5",
+            fontFamily: fontFamily.base,
+        },
+        // Same signature strip as header.tsx's brandRail — all three brand
+        // colors in one gradient, used consistently at the top of the page.
+        topBar: {
+            height: "4px",
+            width: "100%",
+            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
+        },
+        contentBody: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "18px",
+            padding: "20px 24px 28px",
+        },
+        contentBodyMobile: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+            padding: "14px 14px 22px",
+        },
 
-    headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
-    headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
-    headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
-    headerIcon: {
-        width: 44,
-        height: 44,
-        minWidth: 44,
-        borderRadius: radius.md,
-        background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
+        headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
+        headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
+        headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
+        headerIcon: {
+            width: 44,
+            height: 44,
+            minWidth: 44,
+            borderRadius: radius.md,
+            background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+        },
 
-    pageTitle: {
-        margin: 0,
-        fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
-        color: "#17181C",
-        textAlign: "left",
-    },
-    headerSubtext: {
-        margin: "4px 0 0",
+        pageTitle: {
+            margin: 0,
+            fontSize: fontSize["5xl"],
+            fontWeight: fontWeight.bold,
+            color: "#17181C",
+            textAlign: "left",
+        },
+        headerSubtext: {
+            margin: "4px 0 0",
 
-        fontSize: fontSize.base,
+            fontSize: fontSize.base,
 
-        color: "#767F92",
+            color: "#767F92",
 
-        textAlign: "left",
-    },
+            textAlign: "left",
+        },
 
-    dateBadge: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        color: "#fff",
-        background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-        padding: "8px 14px",
-        borderRadius: radius.md,
-        whiteSpace: "nowrap",
-        boxShadow: `0 6px 16px rgba(32,66,151,0.28)`,
-    },
-    errorBanner: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        background: "#fef2f2",
-        color: "#b91c1c",
-        border: "1px solid #fecaca",
-        borderRadius: radius.md,
-        padding: "10px 14px",
-        fontSize: fontSize.base,
-    },
-    errorDismissBtn: {
-        border: "none",
-        background: "transparent",
-        color: "#b91c1c",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        padding: 4,
-    },
-    kpiGrid: {
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: 16,
-    },
-    kpiGridMobile: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: 12,
-    },
-    kpiCard: {
-        background: "#fff",
-        borderRadius: radius.lg,
-        padding: "16px",
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-    },
-    kpiTop: {
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        marginBottom: 14,
-    },
-    kpiIconWrap: {
-        width: 40,
-        height: 40,
-        minWidth: 40,
-        borderRadius: radius.md,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    kpiValue: {
-        fontSize: fontSize["4xl"],
-        fontWeight: fontWeight.bold,
-        color: "#16233a",
-        lineHeight: 1.2,
-    },
-    kpiLabel: { fontSize: fontSize.sm, color: "#7d90a6", marginTop: 4 },
-    panel: {
-        background: "#fff",
-        borderRadius: radius.lg,
-        padding: "20px",
-        height: 240,
-        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-    },
-    panelTitleRow: { marginBottom: 16 },
-    panelTitle: {
-        fontSize: fontSize.lg,
-        fontWeight: fontWeight.bold,
-        color: "#16233a",
-        textAlign: "left",
-    },
-    panelTitleUnderline: {
-        width: 40,
-        height: 3,
-        borderRadius: 2,
-        background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-        margin: "8px 0 0", // was "8px auto 0" (auto centered it)
-    },
-    emptyState: {
-        padding: "28px 0 12px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 10,
-    },
-    emptyIconCircle: {
-        width: 56,
-        height: 56,
-        borderRadius: radius.circle,
-        background: "rgba(8,161,206,0.1)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    emptyText: { color: "#7d90a6", fontSize: fontSize.base, textAlign: "center" },
-    table: { width: "100%", borderCollapse: "collapse" },
-    th: {
-        textAlign: "left",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        color: "#7d90a6",
-        padding: "10px 12px",
-        borderBottom: "2px solid #eef0f3",
-    },
-    td: {
-        fontSize: fontSize.base,
-        color: "#16233a",
-        padding: "12px",
-        borderBottom: "1px solid #f1f2f4",
-    },
-    statusBadge: {
-        display: "inline-block",
-        padding: "4px 10px",
-        borderRadius: radius.xl,
-        fontSize: fontSize.xs,
-        fontWeight: fontWeight.semibold,
-    },
-    cardList: { display: "flex", flexDirection: "column", gap: 10 },
-    pendingCard: {
-        border: "1px solid #eef0f3",
-        borderRadius: radius.md,
-        padding: "12px 14px",
-    },
-    pendingCardTop: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 8,
-    },
-    pendingCardProduct: {
-        fontSize: fontSize.base,
-        fontWeight: fontWeight.semibold,
-        color: "#16233a",
-    },
-    pendingCardRow: {
-        display: "flex",
-        justifyContent: "space-between",
-        fontSize: fontSize.sm,
-        color: "#7d90a6",
-    },
-};
+        dateBadge: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#fff",
+            background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            padding: "8px 14px",
+            borderRadius: radius.md,
+            whiteSpace: "nowrap",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
+        },
+        errorBanner: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "#fef2f2",
+            color: "#b91c1c",
+            border: "1px solid #fecaca",
+            borderRadius: radius.md,
+            padding: "10px 14px",
+            fontSize: fontSize.base,
+        },
+        errorDismissBtn: {
+            border: "none",
+            background: "transparent",
+            color: "#b91c1c",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            padding: 4,
+        },
+        kpiGrid: {
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 16,
+        },
+        kpiGridMobile: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 12,
+        },
+        kpiCard: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: "16px",
+            boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        },
+        kpiTop: {
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            marginBottom: 14,
+        },
+        kpiIconWrap: {
+            width: 40,
+            height: 40,
+            minWidth: 40,
+            borderRadius: radius.md,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        kpiValue: {
+            fontSize: fontSize["4xl"],
+            fontWeight: fontWeight.bold,
+            color: "#16233a",
+            lineHeight: 1.2,
+        },
+        kpiLabel: { fontSize: fontSize.sm, color: "#7d90a6", marginTop: 4 },
+        panel: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: "20px",
+            height: 240,
+            boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+        },
+        panelTitleRow: { marginBottom: 16 },
+        panelTitle: {
+            fontSize: fontSize.lg,
+            fontWeight: fontWeight.bold,
+            color: "#16233a",
+            textAlign: "left",
+        },
+        panelTitleUnderline: {
+            width: 40,
+            height: 3,
+            borderRadius: 2,
+            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            margin: "8px 0 0", // was "8px auto 0" (auto centered it)
+        },
+        emptyState: {
+            padding: "28px 0 12px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+        },
+        emptyIconCircle: {
+            width: 56,
+            height: 56,
+            borderRadius: radius.circle,
+            background: withAlpha(BRAND.lightBlue, 0.1),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        emptyText: { color: "#7d90a6", fontSize: fontSize.base, textAlign: "center" },
+        table: { width: "100%", borderCollapse: "collapse" },
+        th: {
+            textAlign: "left",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#7d90a6",
+            padding: "10px 12px",
+            borderBottom: "2px solid #eef0f3",
+        },
+        td: {
+            fontSize: fontSize.base,
+            color: "#16233a",
+            padding: "12px",
+            borderBottom: "1px solid #f1f2f4",
+        },
+        statusBadge: {
+            display: "inline-block",
+            padding: "4px 10px",
+            borderRadius: radius.xl,
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+        },
+        cardList: { display: "flex", flexDirection: "column", gap: 10 },
+        pendingCard: {
+            border: "1px solid #eef0f3",
+            borderRadius: radius.md,
+            padding: "12px 14px",
+        },
+        pendingCardTop: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+        },
+        pendingCardProduct: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            color: "#16233a",
+        },
+        pendingCardRow: {
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: fontSize.sm,
+            color: "#7d90a6",
+        },
+    };
+}
