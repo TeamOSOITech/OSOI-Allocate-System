@@ -36,6 +36,21 @@ export const THEMES: Record<ThemeName, ThemePalette> = {
 const STORAGE_KEY_THEME = "app_theme_color";
 const STORAGE_KEY_MODE = "app_display_mode";
 
+// FIX: several pages (e.g. clients.tsx) use rgba(var(--brand-blue-rgb), 0.28)
+// for colored shadows — that only works if --brand-blue-rgb holds
+// comma-separated numbers like "32, 66, 151", NOT a hex string. This was
+// never being set at all, so every one of those shadows was silently
+// invalid CSS (rgba(var(--undefined-variable), 0.28)) and rendered as no
+// shadow, regardless of which theme color was picked.
+function hexToRgbString(hex: string): string {
+    const clean = hex.replace("#", "");
+    const bigint = parseInt(clean, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `${r}, ${g}, ${b}`;
+}
+
 /* ---------------------------------------------------------------------- */
 /*  Context                                                                 */
 /* ---------------------------------------------------------------------- */
@@ -81,6 +96,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         root.style.setProperty("--brand-blue", c.blue);
         root.style.setProperty("--brand-light-blue", c.lightBlue);
         root.style.setProperty("--brand-green", c.green);
+        // NEW: the -rgb counterparts used by every rgba(var(--brand-blue-rgb), x)
+        // shadow across the app (buttons, cards, tabs, tooltips, etc.)
+        root.style.setProperty("--brand-blue-rgb", hexToRgbString(c.blue));
+        root.style.setProperty("--brand-light-blue-rgb", hexToRgbString(c.lightBlue));
+        root.style.setProperty("--brand-green-rgb", hexToRgbString(c.green));
     }, [themeName]);
 
     useEffect(() => {

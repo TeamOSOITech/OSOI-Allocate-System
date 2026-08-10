@@ -101,33 +101,38 @@ function formatTimeTaken(value?: string | number | null, unit?: string | null) {
 // handful of interactive/motion rules live here instead of duplicating them
 // as onMouseEnter/onMouseLeave handlers everywhere. Mirrors the Clients page
 // one-for-one so both entities read as the same product.
+//
+// All brand colors below reference the CSS custom properties set on
+// <html> by ThemeProvider (--brand-blue / --brand-light-blue and their
+// *-rgb counterparts for rgba() shadows), so this page follows whichever
+// theme color is selected, same as Clients/Add User.
 const GLOBAL_CSS = `
 .pr-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .pr-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(32,66,151,.12);
+  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb),.12);
   border-color: #cfe0f5;
 }
 .pr-row:nth-child(even) { background: #fbfcfe; }
 .pr-row { box-shadow: inset 3px 0 0 0 transparent; }
-.pr-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 #08A1CE; }
+.pr-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 var(--brand-light-blue); }
 .pr-view-btn:hover { text-decoration: underline; }
 .pr-view-btn-filled:hover { filter: brightness(1.06); transform: translateY(-1px); }
-.pr-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: #204297; transform: translateY(-1px); }
+.pr-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: var(--brand-blue); transform: translateY(-1px); }
 .pr-icon-btn-danger:hover { background: #fee2e2; border-color: #fecaca; transform: translateY(-1px); }
 .pr-table thead th:first-child { border-top-left-radius: 16px; }
 .pr-table thead th:last-child { border-top-right-radius: 16px; }
 
 /* Tooltip used on the Sample Sheet / Bulk Upload buttons so hover clearly
    communicates the download/upload is an Excel (.xlsx) file. Colors match
-   this page's blue brand gradient (tabs, Add button, filled View button). */
+   this page's brand gradient (tabs, Add button, filled View button). */
 .pr-tooltip-wrap { position: relative; display: inline-flex; }
 .pr-tooltip-wrap .pr-tooltip-bubble {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%) translateY(-4px);
-  background: linear-gradient(135deg, #08A1CE, #204297);
+  background: linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue));
   color: #fff;
   font-size: 11.5px;
   font-weight: 600;
@@ -139,7 +144,7 @@ const GLOBAL_CSS = `
   pointer-events: none;
   transition: opacity .15s ease, transform .15s ease;
   z-index: 20;
-  box-shadow: 0 8px 20px rgba(32,66,151,.35);
+  box-shadow: 0 8px 20px rgba(var(--brand-blue-rgb),.35);
 }
 .pr-tooltip-wrap .pr-tooltip-bubble::after {
   content: "";
@@ -148,7 +153,7 @@ const GLOBAL_CSS = `
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-bottom-color: #08A1CE;
+  border-bottom-color: var(--brand-light-blue);
 }
 .pr-tooltip-wrap:hover .pr-tooltip-bubble {
   opacity: 1;
@@ -1268,7 +1273,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         border: "1px solid #cfe0f5",
         borderRadius: radius.md,
         padding: "11px 16px",
@@ -1281,7 +1286,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
@@ -1289,7 +1294,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
         whiteSpace: "nowrap",
     },
 
@@ -1379,7 +1384,7 @@ const styles: Record<string, CSSProperties> = {
     },
     viewToggleBtnActive: {
         background: "#e7ecf8",
-        color: "#204297",
+        color: "var(--brand-blue)",
     },
 
     // Scrollable: fills remaining vertical space in contentBody and only
@@ -1492,7 +1497,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 4,
         border: "none",
         background: "transparent",
-        color: "#204297",
+        color: "var(--brand-blue)",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
@@ -1505,14 +1510,14 @@ const styles: Record<string, CSSProperties> = {
         gap: 6,
         flex: 1,
         border: "none",
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         borderRadius: radius.md,
         padding: "11px 16px",
         cursor: "pointer",
-        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
+        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb),0.25)",
     },
     iconBtn: {
         display: "flex",
@@ -1523,7 +1528,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.sm,
         border: "1px solid #d8e3fa",
         background: "#eef2fc",
-        color: "#3454ad",
+        color: "var(--brand-blue)",
         cursor: "pointer",
         transition: "background .15s ease, border-color .15s ease, color .15s ease",
     },
@@ -1562,7 +1567,7 @@ const styles: Record<string, CSSProperties> = {
         boxSizing: "border-box",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.bold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: 0.3,
         whiteSpace: "nowrap",
@@ -1716,19 +1721,20 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
         padding: "12px 20px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        boxShadow: "0 6px 16px rgba(32,66,151,0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
         gridColumn: "1 / -1",
     },
 
     // ---- Bulk Upload modal (matches Add User's "Bulk Add Users" modal,
-    // recolored to this page's blue #08A1CE -> #204297 brand gradient) ----
+    // now themed with the app's brand palette so it follows whichever
+    // color the person picks from the header's theme switcher). ----
     bulkModal: {
         background: "#fff",
         borderRadius: radius.lg,
@@ -1748,21 +1754,21 @@ const styles: Record<string, CSSProperties> = {
         margin: 0,
         fontSize: fontSize["3xl"],
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
     },
     bulkModalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#7c8aa3" },
     bulkInfoBox: {
         margin: "20px 28px",
         padding: "14px 16px",
-        background: "#eaf6fb",
-        borderLeft: "3px solid #08A1CE",
+        background: "color-mix(in srgb, var(--brand-light-blue) 10%, white)",
+        borderLeft: "3px solid var(--brand-light-blue)",
         borderRadius: radius.xs,
     },
     bulkInfoLabel: {
         display: "block",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         marginBottom: 4,
@@ -1789,7 +1795,7 @@ const styles: Record<string, CSSProperties> = {
     },
     fileInputHidden: { display: "none" },
     fileInputButton: {
-        background: "#204297",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
@@ -1805,7 +1811,7 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     bulkUploadBtn: {
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.sm,

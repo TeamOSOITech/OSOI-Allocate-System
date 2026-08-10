@@ -131,11 +131,16 @@ const pathToLabel: Record<string, string> = {
 };
 
 // ---- Brand palette ----
+// Sourced from the CSS custom properties ThemeProvider sets on <html>
+// (see context/themecontext.tsx) instead of fixed hex values — this is
+// what makes picking a different color in the header's "Theme color"
+// picker actually repaint the sidebar too, instead of it staying pinned
+// to the default blue/teal regardless of the selected theme.
 const COLORS = {
-    blue: "#204297", // primary
-    lightBlue: "#08A1CE", // secondary / accent
-    green: "#2EBBA8", // accent / status
-    blueTint: "#EAF0FB", // light tint of primary blue, used for hover backgrounds
+    blue: "var(--brand-blue)", // primary
+    lightBlue: "var(--brand-light-blue)", // secondary / accent
+    green: "var(--brand-green)", // accent / status
+    blueTint: "#EAF0FB", // light tint, kept fixed — decorative only, not a brand color
 };
 
 const SIDEBAR_WIDTH = 176;
@@ -340,7 +345,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                     fontWeight: isActive ? fontWeight.semibold : fontWeight.regular,
                                     cursor: "pointer",
                                     boxShadow: isActive
-                                        ? `0 4px 12px rgba(32,66,151,0.35)`
+                                        ? `0 4px 12px rgba(var(--brand-blue-rgb),0.35)`
                                         : "none",
                                     transition: "all 0.15s",
                                     flexShrink: 0,

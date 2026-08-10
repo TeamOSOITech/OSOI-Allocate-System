@@ -114,7 +114,11 @@ function toDateInputValue(iso: string | null | undefined) {
 
 // Injected once — inline style objects can't express :hover/:focus, so the
 // handful of interactive/motion rules live here instead of duplicating them
-// as onMouseEnter/onMouseLeave handlers everywhere.
+// as onMouseEnter/onMouseLeave handlers everywhere. Brand colors below use
+// the CSS custom properties ThemeProvider sets on <html> (see
+// context/themecontext.tsx) so the header's "Theme color" picker also
+// updates this page's hover/focus accents, instead of them staying pinned
+// to the fixed default blue/teal.
 const GLOBAL_CSS = `
 @keyframes empSkeletonPulse {
   0%, 100% { opacity: .55; }
@@ -132,16 +136,16 @@ const GLOBAL_CSS = `
 .emp-card { animation: empFadeIn .35s ease both; }
 .emp-card:hover {
   transform: translateY(-3px);
-  box-shadow: 0 14px 30px rgba(32,66,151,.16);
+  box-shadow: 0 14px 30px rgba(var(--brand-blue-rgb), .16);
 }
 .emp-card:focus-visible {
-  outline: 2px solid #08a1ce;
+  outline: 2px solid var(--brand-light-blue);
   outline-offset: 2px;
 }
 .emp-search-input::placeholder { color: #9bb0c2; }
 .emp-search-wrap:focus-within {
   border-color: #7fc9e2;
-  box-shadow: 0 0 0 3px rgba(8,161,206,.14);
+  box-shadow: 0 0 0 3px rgba(var(--brand-light-blue-rgb),.14);
 }
 .emp-clear-btn:hover { background: #dee9f4; }
 .emp-select:hover { border-color: #9ecfe8; }
@@ -151,7 +155,7 @@ const GLOBAL_CSS = `
 .emp-icon-btn-sm:hover { filter: brightness(0.95); }
 .emp-drawer-input:focus, .emp-drawer-select:focus {
   border-color: #7fc9e2;
-  box-shadow: 0 0 0 3px rgba(8,161,206,.14);
+  box-shadow: 0 0 0 3px rgba(var(--brand-light-blue-rgb),.14);
   outline: none;
 }
 `;
@@ -573,7 +577,10 @@ export default function Employees() {
                                 <div style={styles.emptyIconWrap}>
                                     <i
                                         className="ti ti-users"
-                                        style={{ fontSize: fontSize["6xl"], color: "#08a1ce" }}
+                                        style={{
+                                            fontSize: fontSize["6xl"],
+                                            color: "var(--brand-light-blue)",
+                                        }}
                                     />
                                 </div>
                                 <p style={styles.emptyTitle}>No employees match your filters</p>
@@ -778,7 +785,7 @@ export default function Employees() {
                                             ...styles.statusDotLarge,
                                             background:
                                                 drawerData.status !== "Inactive"
-                                                    ? "#2ebba8"
+                                                    ? "var(--brand-green)"
                                                     : "#c2cedb",
                                         }}
                                     />
@@ -1259,7 +1266,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: radius.lg,
         padding: "12px 14px",
-        boxShadow: "0 4px 16px rgba(32,66,151,.06)",
+        boxShadow: "0 4px 16px rgba(var(--brand-blue-rgb),.06)",
         border: "1px solid #dfeaf5",
     },
     filterRowMobile: {
@@ -1269,7 +1276,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: radius.lg,
         padding: "12px 14px",
-        boxShadow: "0 4px 16px rgba(32,66,151,.06)",
+        boxShadow: "0 4px 16px rgba(var(--brand-blue-rgb),.06)",
         border: "1px solid #dfeaf5",
     },
     searchWrap: {
@@ -1362,7 +1369,7 @@ const styles: Record<string, CSSProperties> = {
         marginTop: 10,
         border: "1px solid #b9d9ec",
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         borderRadius: radius.sm,
@@ -1629,7 +1636,7 @@ const styles: Record<string, CSSProperties> = {
     },
     drawerBanner: {
         height: 72,
-        background: "linear-gradient(135deg, #08a1ce, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         position: "relative",
         flexShrink: 0,
     },
@@ -1711,7 +1718,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 5,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
+        color: "var(--brand-blue)",
         background: "#eef1fb",
         border: "none",
         borderRadius: radius.sm,
@@ -1817,7 +1824,7 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         borderRadius: radius.sm,
         cursor: "pointer",
-        background: "#204297",
+        background: "var(--brand-blue)",
         color: "#fff",
         fontWeight: fontWeight.medium,
     },

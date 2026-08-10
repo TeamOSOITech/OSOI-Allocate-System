@@ -2819,7 +2819,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 6,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
-        color: "#3454ad",
+        color: "var(--brand-blue)",
     },
     cardContactRow: {
         display: "flex",
@@ -2958,7 +2958,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.sm,
         border: "1px solid #d8e3fa",
         background: "#eef2fc",
-        color: "#3454ad",
+        color: "var(--brand-blue)",
         cursor: "pointer",
         transition: "background .15s ease, border-color .15s ease, color .15s ease",
     },
