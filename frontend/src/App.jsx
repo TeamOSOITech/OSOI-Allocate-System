@@ -16,7 +16,7 @@ const Landing = lazy(() => import("./pages/public/landing"));
 const Register = lazy(() => import("./pages/auth/register"));
 const ForgotPassword = lazy(() => import("./pages/auth/forgotPassword"));
 const ResetPassword = lazy(() => import("./pages/auth/resetPassword"));
-const ReportDashboard = lazy(() => import("./pages/admin/reportdashboard"));
+//const ReportDashboard = lazy(() => import("./pages/admin/reportdashboard"));
 const Dashboard = lazy(() => import("./pages/admin/dashboard"));
 const Products = lazy(() => import("./pages/admin/products"));
 const DailyWork = lazy(() => import("./pages/admin/dailywork"));
@@ -218,33 +218,11 @@ function App() {
                         <Route path="/reset-password" element={<ResetPassword />} />
 
                         <Route
-                            path="/reportdashboard"
-                            element={
-                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <ReportDashboard user={user} onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
-
-                        <Route
                             path="/clients"
                             element={
                                 <PrivateRoute requiredRole={[...ADMIN_TIER_ROLES, "TEAM_MEMBER"]}>
                                     <AppLayout onLogout={handleLogout}>
                                         <Clients user={user} onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
-
-                        <Route
-                            path="/report"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <ReportDashboard user={user} onLogout={handleLogout} />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
