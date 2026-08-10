@@ -135,50 +135,67 @@ const APPROVAL_RULES = {
   // matching request gets intercepted before reaching the real
   // controller, and approvals.controller.js's applyApprovedAction() for
   // what actually happens on APPROVE.
+  //
+  // restrictToReportingManager: true — narrows `approvers` (any Ops
+  // Manager) down to specifically the requester's OWN reporting manager.
+  // approvalGate.js resolves that at request-creation time and stores it
+  // as target_user_id; approvals.controller.js's listRequests/
+  // decideRequest then only let that specific user act on it (falling
+  // back to the broad `approvers` role check if no reporting manager
+  // could be resolved, so a request never gets stuck un-actionable).
   SERVICE_CREATE: {
     description: "Create a new service (product)",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   SERVICE_UPDATE: {
     description: "Edit an existing service (product)",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   SERVICE_DELETE: {
     description: "Delete a service (product)",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   CLIENT_CREATE: {
     description: "Create a new client",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   CLIENT_UPDATE: {
     description: "Edit an existing client",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   CLIENT_DELETE: {
     description: "Delete a client",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   SUBCLIENT_CREATE: {
     description: "Create a new subclient",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   SUBCLIENT_UPDATE: {
     description: "Edit an existing subclient",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
   SUBCLIENT_DELETE: {
     description: "Delete a subclient",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
   },
 };
 

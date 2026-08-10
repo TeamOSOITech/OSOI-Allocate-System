@@ -19,6 +19,38 @@
 const supabase = require("../config/supabaseClient");
 const { APPROVAL_RULES } = require("../config/permissions");
 
+// Looks up the requester's own "Reporting Manager" (stored as an email
+// string on user_master — see employees.controller.js's mapRow), then
+// resolves THAT email to its own Auth User Id. Returns null if the
+// requester has no reporting manager set, or if that email doesn't match
+// any user in this org — callers must handle null by falling back to the
+// role-based approver list (see APPROVAL_RULES[type].approvers), so a
+// request never becomes permanently un-actionable just because the
+// employee record is incomplete.
+async function resolveReportingManagerId(requesterUserId, organizationId) {
+  const { data: requester, error: requesterErr } = await supabase
+    .from("user_master")
+    .select('"Reporting Manager"')
+    .eq("Auth User Id", requesterUserId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (requesterErr || !requester) return null;
+
+  const managerEmail = requester["Reporting Manager"];
+  if (!managerEmail) return null;
+
+  const { data: manager, error: managerErr } = await supabase
+    .from("user_master")
+    .select('"Auth User Id"')
+    .eq("Email", managerEmail)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (managerErr || !manager) return null;
+  return manager["Auth User Id"] || null;
+}
+
 /**
  * @param {string} type - one of the keys in APPROVAL_RULES (e.g. "SERVICE_CREATE")
  * @param {object} [options]
@@ -48,11 +80,23 @@ function approvalGate(type, { includeParamsId = false } = {}) {
         ? { id: req.params.id, ...req.body }
         : { ...req.body };
 
+      // When this rule is meant to go specifically to the requester's own
+      // reporting manager (rather than any Ops Manager broadly), resolve
+      // that now. Falls back to null (broad role-based approval, handled
+      // in approvals.controller.js) if no manager could be resolved.
+      const targetUserId = rule.restrictToReportingManager
+        ? await resolveReportingManagerId(
+            req.user.userId,
+            req.user.organizationId,
+          )
+        : null;
+
       const { data, error } = await supabase
         .from("approval_requests")
         .insert({
           type,
           requested_by: req.user.userId,
+          target_user_id: targetUserId,
           payload,
           status: "PENDING",
           organization_id: req.user.organizationId,

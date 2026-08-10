@@ -13,6 +13,7 @@ const { authenticate } = require("../../middlewares/auth");
 // do not. (Subclients share the same "clients.manage" permission as
 // Clients — there's no separate subclients-only code.)
 const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
+const { approvalGate } = require("../../middlewares/approvalGate");
 
 // REVERSED MAPPING: a Subclient now picks which existing Products it uses,
 // linked via the subclient_products junction table.
@@ -212,78 +213,86 @@ router.get("/", async (req, res) => {
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.post("/", requireAnyPermission("clients.manage"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const { name, clientId, status } = req.body;
+router.post(
+  "/",
+  requireAnyPermission("clients.manage"),
+  approvalGate("SUBCLIENT_CREATE"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const { name, clientId, status } = req.body;
 
-    if (!name || !name.trim()) {
-      return res.status(400).json({ message: "Subclient name is required" });
+      if (!name || !name.trim()) {
+        return res.status(400).json({ message: "Subclient name is required" });
+      }
+      if (!clientId) {
+        return res.status(400).json({ message: "Client is required" });
+      }
+
+      // Make sure this client actually belongs to the caller's org — otherwise
+      // someone could attach a subclient to another organization's client id.
+      const { data: ownedClient } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", Number(clientId))
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (!ownedClient) {
+        return res.status(404).json({ message: "Client not found" });
+      }
+
+      const { data: subclient, error } = await supabase
+        .from("subclients")
+        .insert({
+          name: name.trim(),
+          client_id: Number(clientId),
+          status: status === "Inactive" ? "Inactive" : "Active",
+          organization_id: orgId,
+          ...toDbContactFields(req.body),
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // REVERSED MAPPING: link whichever existing Products were picked in
+      // the Add Subclient form — req.body.productRates is
+      // [{ productId, amount, currency }].
+      let products = [];
+      if (
+        Array.isArray(req.body.productRates) &&
+        req.body.productRates.length
+      ) {
+        await productsService.syncSubclientProducts(
+          subclient.id,
+          req.body.productRates,
+          orgId,
+        );
+        products = await productsService.getProductsForSubclient(
+          subclient.id,
+          orgId,
+        );
+      }
+
+      res.status(201).json({
+        ...subclient,
+        ...toApiContactFields(subclient),
+        products,
+        productRates: products.map((p) => ({
+          productId: p.id,
+          amount: p.amount,
+          currency: p.currency,
+        })),
+      });
+    } catch (err) {
+      console.error(err);
+      res
+        .status(500)
+        .json({ message: "Failed to create subclient", detail: err.message });
     }
-    if (!clientId) {
-      return res.status(400).json({ message: "Client is required" });
-    }
-
-    // Make sure this client actually belongs to the caller's org — otherwise
-    // someone could attach a subclient to another organization's client id.
-    const { data: ownedClient } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("id", Number(clientId))
-      .eq("organization_id", orgId)
-      .maybeSingle();
-
-    if (!ownedClient) {
-      return res.status(404).json({ message: "Client not found" });
-    }
-
-    const { data: subclient, error } = await supabase
-      .from("subclients")
-      .insert({
-        name: name.trim(),
-        client_id: Number(clientId),
-        status: status === "Inactive" ? "Inactive" : "Active",
-        organization_id: orgId,
-        ...toDbContactFields(req.body),
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // REVERSED MAPPING: link whichever existing Products were picked in
-    // the Add Subclient form — req.body.productRates is
-    // [{ productId, amount, currency }].
-    let products = [];
-    if (Array.isArray(req.body.productRates) && req.body.productRates.length) {
-      await productsService.syncSubclientProducts(
-        subclient.id,
-        req.body.productRates,
-        orgId,
-      );
-      products = await productsService.getProductsForSubclient(
-        subclient.id,
-        orgId,
-      );
-    }
-
-    res.status(201).json({
-      ...subclient,
-      ...toApiContactFields(subclient),
-      products,
-      productRates: products.map((p) => ({
-        productId: p.id,
-        amount: p.amount,
-        currency: p.currency,
-      })),
-    });
-  } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to create subclient", detail: err.message });
-  }
-});
+  },
+);
 
 // ---------- Excel template download (styled) ----------
 // Column groups mirror clients.js: core identity (blue), company info
@@ -655,82 +664,88 @@ router.get("/:id", async (req, res) => {
 // Body: { name, clientId, status, country, website, mainEmail, mainPhone,
 //         primaryContactName, primaryContactEmail, primaryContactPhone,
 //         secondaryContactName, secondaryContactEmail, secondaryContactPhone }
-router.put("/:id", requireAnyPermission("clients.manage"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const id = Number(req.params.id);
-    const { name, clientId, status } = req.body;
+router.put(
+  "/:id",
+  requireAnyPermission("clients.manage"),
+  approvalGate("SUBCLIENT_UPDATE", { includeParamsId: true }),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const id = Number(req.params.id);
+      const { name, clientId, status } = req.body;
 
-    if (!name || !name.trim()) {
-      return res.status(400).json({ message: "Subclient name is required" });
+      if (!name || !name.trim()) {
+        return res.status(400).json({ message: "Subclient name is required" });
+      }
+      if (!clientId) {
+        return res.status(400).json({ message: "Client is required" });
+      }
+
+      // Make sure the (possibly reassigned) client belongs to this org too.
+      const { data: ownedClient } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", Number(clientId))
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (!ownedClient) {
+        return res.status(404).json({ message: "Client not found" });
+      }
+
+      const { data: subclient, error } = await supabase
+        .from("subclients")
+        .update({
+          name: name.trim(),
+          client_id: Number(clientId),
+          status: status === "Inactive" ? "Inactive" : "Active",
+          ...toDbContactFields(req.body),
+        })
+        .eq("id", id)
+        .eq("organization_id", orgId) // can't update another org's subclient
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!subclient)
+        return res.status(404).json({ message: "Subclient not found" });
+
+      // REVERSED MAPPING: only touch product links if productRates was
+      // actually sent, so other PUT callers can't accidentally wipe them.
+      if (req.body.productRates !== undefined) {
+        await productsService.syncSubclientProducts(
+          id,
+          req.body.productRates,
+          orgId,
+        );
+      }
+      const products = await productsService.getProductsForSubclient(id, orgId);
+
+      res.json({
+        ...subclient,
+        ...toApiContactFields(subclient),
+        products,
+        productRates: products.map((p) => ({
+          productId: p.id,
+          amount: p.amount,
+          currency: p.currency,
+        })),
+      });
+    } catch (err) {
+      console.error(err);
+      res
+        .status(500)
+        .json({ message: "Failed to update subclient", detail: err.message });
     }
-    if (!clientId) {
-      return res.status(400).json({ message: "Client is required" });
-    }
-
-    // Make sure the (possibly reassigned) client belongs to this org too.
-    const { data: ownedClient } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("id", Number(clientId))
-      .eq("organization_id", orgId)
-      .maybeSingle();
-
-    if (!ownedClient) {
-      return res.status(404).json({ message: "Client not found" });
-    }
-
-    const { data: subclient, error } = await supabase
-      .from("subclients")
-      .update({
-        name: name.trim(),
-        client_id: Number(clientId),
-        status: status === "Inactive" ? "Inactive" : "Active",
-        ...toDbContactFields(req.body),
-      })
-      .eq("id", id)
-      .eq("organization_id", orgId) // can't update another org's subclient
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!subclient)
-      return res.status(404).json({ message: "Subclient not found" });
-
-    // REVERSED MAPPING: only touch product links if productRates was
-    // actually sent, so other PUT callers can't accidentally wipe them.
-    if (req.body.productRates !== undefined) {
-      await productsService.syncSubclientProducts(
-        id,
-        req.body.productRates,
-        orgId,
-      );
-    }
-    const products = await productsService.getProductsForSubclient(id, orgId);
-
-    res.json({
-      ...subclient,
-      ...toApiContactFields(subclient),
-      products,
-      productRates: products.map((p) => ({
-        productId: p.id,
-        amount: p.amount,
-        currency: p.currency,
-      })),
-    });
-  } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to update subclient", detail: err.message });
-  }
-});
+  },
+);
 
 // ---------- DELETE /api/subclients/:id ----------
 
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
+  approvalGate("SUBCLIENT_DELETE", { includeParamsId: true }),
   async (req, res) => {
     try {
       const orgId = req.user.organizationId;

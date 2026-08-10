@@ -83,30 +83,41 @@ async function createRequest(req, res) {
 
 async function listRequests(req, res) {
   try {
-    // A user only sees requests they're eligible to act on (or their own).
-    const eligibleTypes = Object.entries(APPROVAL_RULES)
-      .filter(([, rule]) => rule.approvers.includes(req.user.role))
-      .map(([type]) => type);
-
-    let query = supabase
+    // Fetch every pending request in this org, then decide per-request
+    // whether the caller may see it — some types are broad role-based
+    // (any approver role sees them), others (restrictToReportingManager)
+    // are narrowed to one specific target_user_id. A single Supabase
+    // query can't express that mix cleanly, so it's filtered here instead.
+    const { data, error } = await supabase
       .from("approval_requests")
       .select("*")
       .eq("status", "PENDING")
-      .eq("organization_id", req.user.organizationId) // SUPER_ADMIN is org-level, not a platform operator — always scope
+      .eq("organization_id", req.user.organizationId)
       .order("created_at", { ascending: false });
 
-    if (req.user.role !== "SUPER_ADMIN") {
-      // Super Admin can see every pending request in their own org;
-      // everyone else only sees pending requests (in their own org)
-      // they're allowed to decide on, plus their own.
-      query = query.or(
-        `type.in.(${eligibleTypes.length ? eligibleTypes.join(",") : "NONE"}),requested_by.eq.${req.user.userId}`,
-      );
-    }
-
-    const { data, error } = await query;
     if (error) throw error;
-    res.json({ success: true, data });
+
+    const visible = (data || []).filter((request) => {
+      if (req.user.role === "SUPER_ADMIN") return true;
+      if (request.requested_by === req.user.userId) return true; // always see your own
+
+      const rule = APPROVAL_RULES[request.type];
+      if (!rule) return false;
+
+      if (rule.restrictToReportingManager) {
+        // Narrowed to the specific reporting manager it was routed to —
+        // unless none could be resolved at request time, in which case
+        // fall back to the broad approver-role list so it's never stuck
+        // un-actionable.
+        return request.target_user_id
+          ? request.target_user_id === req.user.userId
+          : rule.approvers.includes(req.user.role);
+      }
+
+      return rule.approvers.includes(req.user.role);
+    });
+
+    res.json({ success: true, data: visible });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -145,7 +156,12 @@ async function decideRequest(req, res) {
 
     const rule = APPROVAL_RULES[request.type];
     const isEligibleApprover =
-      req.user.role === "SUPER_ADMIN" || rule.approvers.includes(req.user.role);
+      req.user.role === "SUPER_ADMIN" ||
+      (rule.restrictToReportingManager
+        ? request.target_user_id
+          ? request.target_user_id === req.user.userId
+          : rule.approvers.includes(req.user.role)
+        : rule.approvers.includes(req.user.role));
 
     if (!isEligibleApprover) {
       return res.status(403).json({
