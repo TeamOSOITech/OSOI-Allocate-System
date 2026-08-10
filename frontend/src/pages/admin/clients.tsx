@@ -323,6 +323,7 @@ export default function Clients() {
     const [addForm, setAddForm] = useState({ ...emptyForm });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
+    const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
     // ---- Edit state ----
     const [editTarget, setEditTarget] = useState<ViewDetailsTarget | null>(null);
@@ -503,6 +504,16 @@ export default function Clients() {
                 throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
+            // NEW: 202 = Process Lead's request went for approval, not created yet.
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
+                setApprovalNotice(
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
+            }
+
             await fetchAll();
             setShowAddModal(false);
         } catch (err: any) {
@@ -656,6 +667,16 @@ export default function Clients() {
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
                 throw new Error(data?.message || "Failed to delete");
+            }
+
+            // NEW: 202 = Process Lead's request went for approval, not created yet.
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
+                setApprovalNotice(
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
             }
 
             await fetchAll();
