@@ -26,27 +26,19 @@ export function getCurrentUser(): CurrentUser | null {
     }
 }
 
-export function getAccessToken(): string | null {
-    return localStorage.getItem("accessToken");
-}
-
+// FIX (Finding #05): tokens now live only in httpOnly cookies (never
+// readable by JS, never in localStorage) — "authenticated" is
+// determined by having a user profile cached client-side; the actual
+// session is proven server-side by the cookie on the next API call.
 export function isAuthenticated(): boolean {
-    return Boolean(getAccessToken() && getCurrentUser());
+    return Boolean(getCurrentUser());
 }
 
-export function saveSession(session: {
-    accessToken: string;
-    refreshToken: string;
-    user: CurrentUser;
-}) {
-    localStorage.setItem("accessToken", session.accessToken);
-    localStorage.setItem("refreshToken", session.refreshToken);
+export function saveSession(session: { user: CurrentUser }) {
     localStorage.setItem("user", JSON.stringify(session.user));
 }
 
 export function clearSession() {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
 }
 

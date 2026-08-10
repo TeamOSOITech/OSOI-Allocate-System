@@ -235,14 +235,20 @@ const Landing = () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),
+                // COOKIE-AUTH FIX (Finding #05): the backend no longer returns
+                // accessToken/refreshToken in the response body — they only
+                // ever live in httpOnly cookies now. `credentials: "include"`
+                // is required so the browser actually stores those Set-Cookie
+                // headers (matches pages/auth/login.tsx).
+                credentials: "include",
             });
             const data = await res.json();
             if (!res.ok || !data.success) {
                 throw new Error(data.message || "Login failed");
             }
 
-            localStorage.setItem("accessToken", data.data.accessToken);
-            localStorage.setItem("refreshToken", data.data.refreshToken);
+            // Tokens live in httpOnly cookies now, not localStorage — only
+            // the (non-sensitive) user profile is kept client-side.
             localStorage.setItem("user", JSON.stringify(data.data.user));
 
             switch (data.data.user.role) {

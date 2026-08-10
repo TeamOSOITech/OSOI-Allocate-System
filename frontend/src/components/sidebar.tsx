@@ -107,10 +107,15 @@ const menuItems: MenuItem[] = [
         roles: SUPER_ADMIN_ONLY,
     },
     {
+        // FIX: /profile route in App.jsx has no requiredRole (every logged-in
+        // user, including TEAM_MEMBER via NORMAL_USER_ALLOWED_PATHS, can
+        // already reach it directly) — but this sidebar entry was gated to
+        // SUPER_ADMIN_ONLY, so everyone else could visit the URL but never
+        // saw the link. Opened up to match what the route actually allows.
         label: "Profile",
         icon: "ti ti-settings",
         path: "/profile",
-        roles: SUPER_ADMIN_ONLY,
+        roles: EVERYONE,
     },
 ];
 
