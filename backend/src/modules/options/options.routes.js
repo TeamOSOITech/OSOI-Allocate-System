@@ -11,10 +11,17 @@ const { authenticate } = require("../../middlewares/auth");
 // "department", "designation", "Teams" today — kept lowercase here and
 // mapped case-insensitively below so the frontend doesn't need to change
 // how it calls saveCustomOption).
+//
+// FIX: "reportingManager" was completely missing from this map — every
+// custom Reporting Manager added via the "+" control on Add User was
+// silently 400'ing (caught non-fatally on the frontend, so nothing
+// visibly broke, but nothing was ever actually saved). Added the missing
+// entry + a dedicated `reporting_managers` table for it below.
 const OPTION_TABLES = {
   department: "departments",
   designation: "designations",
   teams: "teams",
+  reportingmanager: "reporting_managers",
 };
 
 router.use(authenticate);
@@ -25,9 +32,9 @@ router.use((req, res, next) => {
 });
 
 // ---------- GET /api/options ----------
-// Returns every option list in one call: { departments: [...], designations: [...], teams: [...] }
-// so the Add User form can fetch all three dropdowns on mount with a
-// single request instead of three.
+// Returns every option list in one call: { departments: [...], designations: [...], teams: [...], reportingManagers: [...] }
+// so the Add User form can fetch all dropdowns on mount with a single
+// request instead of several.
 router.get("/", async (req, res) => {
   try {
     const orgId = req.user.organizationId;
@@ -36,6 +43,7 @@ router.get("/", async (req, res) => {
       { data: departments, error: deptErr },
       { data: designations, error: desErr },
       { data: teams, error: teamErr },
+      { data: reportingManagers, error: rmErr },
     ] = await Promise.all([
       supabase
         .from("departments")
@@ -52,16 +60,23 @@ router.get("/", async (req, res) => {
         .select("id,name")
         .eq("organization_id", orgId)
         .order("name", { ascending: true }),
+      supabase
+        .from("reporting_managers")
+        .select("id,name")
+        .eq("organization_id", orgId)
+        .order("name", { ascending: true }),
     ]);
 
     if (deptErr) throw deptErr;
     if (desErr) throw desErr;
     if (teamErr) throw teamErr;
+    if (rmErr) throw rmErr;
 
     res.json({
       departments: (departments || []).map((d) => d.name),
       designations: (designations || []).map((d) => d.name),
       teams: (teams || []).map((d) => d.name),
+      reportingManagers: (reportingManagers || []).map((d) => d.name),
     });
   } catch (err) {
     console.error(err);
@@ -70,7 +85,7 @@ router.get("/", async (req, res) => {
 });
 
 // ---------- POST /api/options ----------
-// Body: { field: "department" | "designation" | "teams", value: string }
+// Body: { field: "department" | "designation" | "teams" | "reportingManager", value: string }
 // Adds a new option, scoped to the caller's org. If it already exists for
 // this org (case-sensitive unique constraint), that's treated as success —
 // the frontend just wants "this value now exists and is selectable".
