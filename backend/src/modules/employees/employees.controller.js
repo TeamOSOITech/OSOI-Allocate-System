@@ -6,6 +6,7 @@
 // ACTUAL primary key column: "Auth User Id" (uuid)
 
 const supabase = require("../../config/supabaseClient");
+const { canAssignRole } = require("../../config/permissions");
 
 function mapRow(row) {
   const firstName = row["First Name"] ?? "";
@@ -73,6 +74,23 @@ async function updateEmployee(req, res) {
   const body = req.body || {};
 
   const updatePayload = {};
+
+  // FIX (Finding #03): there was previously no way to change a user's
+  // role after creation — req.body.role was never read, so a demoted
+  // SUPER_ADMIN kept full access until someone edited user_master.Role
+  // directly in Supabase. Role changes are allowed here, but ONLY if the
+  // acting user is permitted to assign the target role (same matrix used
+  // at user-creation time), so e.g. an OPS_MANAGER still cannot promote
+  // anyone to SUPER_ADMIN just because they hold "employees.manage".
+  if (body.role !== undefined) {
+    if (!canAssignRole(req.user.role, body.role)) {
+      return res.status(403).json({
+        error: `You are not permitted to assign the role "${body.role}"`,
+      });
+    }
+    updatePayload["Role"] = body.role;
+  }
+
   if (body.name !== undefined) {
     const [firstName, ...rest] = String(body.name).trim().split(" ");
     updatePayload["First Name"] = firstName ?? "";

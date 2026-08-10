@@ -24,7 +24,25 @@ const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
 
-const upload = multer({ storage: multer.memoryStorage() });
+// SECURITY FIX (Finding #16): this multer config had no fileFilter or
+// size limit at all — anyone with "clients.manage" could upload a file
+// of unlimited size and any type (e.g. a .exe) to /bulk/upload. Now
+// restricted to the actual spreadsheet types this endpoint parses, with
+// a 10MB cap.
+const path = require("path");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowed = [".xlsx", ".xls", ".csv"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.

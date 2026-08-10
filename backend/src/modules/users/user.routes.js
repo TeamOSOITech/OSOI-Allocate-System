@@ -52,6 +52,30 @@ function normalizeEmail(email) {
   return (email || "").toString().trim().toLowerCase();
 }
 
+// SECURITY FIX (Finding #09): "professional email only" was enforced ONLY
+// in the frontend (adduser.tsx isProfessionalEmail) — anyone calling
+// /api/users/add-user or /bulk-add-user directly (Postman, curl, a script)
+// bypassed the rule entirely. Mirrors the same blocklist server-side so
+// the rule actually holds regardless of caller.
+const BLOCKED_EMAIL_DOMAINS = [
+  "gmail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "rediffmail.com",
+  "icloud.com",
+  "aol.com",
+  "protonmail.com",
+  "msn.com",
+];
+
+function isProfessionalEmail(email) {
+  const trimmed = normalizeEmail(email);
+  const domain = trimmed.split("@")[1];
+  return !!domain && !BLOCKED_EMAIL_DOMAINS.includes(domain);
+}
+
 /**
  * How many users this organization's plan is allowed to have — based on
  * their active row in `subscriptions` (joined to `plans` for the name).
@@ -278,6 +302,16 @@ router.post(
           .json({ message: "Full name, email and role are required." });
       }
 
+      // SECURITY FIX (Finding #09): this rule previously only lived in
+      // the frontend form — enforce it here too so a direct API call
+      // can't bypass it.
+      if (!isProfessionalEmail(email)) {
+        return res.status(400).json({
+          message:
+            "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
+        });
+      }
+
       // SECURITY: never trust body.role blindly — check it against what
       // THIS caller's role is allowed to hand out. See ASSIGNABLE_ROLES
       // in config/permissions.js. Without this, any role holding
@@ -334,7 +368,13 @@ router.post(
           dob: body.dob,
           doj: body.doj,
           reportingManager: body.reportingManager,
-          workedInTeams: body.workedInTeams,
+          // FIX (Finding #06): frontend (adduser.tsx) sends this field as
+          // "Teams" (capital T), not "workedInTeams" — the old key was
+          // never sent by the client, so every newly created user got
+          // "Worked In Teams": null despite it being a required field.
+          // The edit path already read the right key; this was the
+          // unfixed create-path instance of the same mismatch.
+          workedInTeams: body.Teams,
           role: requestedRole,
         },
       });
@@ -398,6 +438,19 @@ router.post(
             email: rawUser.email || "(missing)",
             success: false,
             message: "Missing email.",
+          });
+          continue;
+        }
+
+        // SECURITY FIX (Finding #09): same rule as add-user — reject rows
+        // with a personal/free email domain instead of trusting the
+        // frontend's client-side check.
+        if (!isProfessionalEmail(email)) {
+          results.push({
+            email,
+            success: false,
+            message:
+              "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
           });
           continue;
         }
@@ -475,7 +528,11 @@ router.post(
               dob: rawUser.dob,
               doj: rawUser.doj,
               reportingManager: rawUser.reportingManager,
-              workedInTeams: rawUser.workedInTeams,
+              // FIX (Finding #06): bulk rows are mapped client-side via
+              // mapBulkRow() in adduser.tsx, which also uses "Teams"
+              // (capital T), same mismatch as the single add-user path
+              // above.
+              workedInTeams: rawUser.Teams,
               role: requestedRole,
             },
           });

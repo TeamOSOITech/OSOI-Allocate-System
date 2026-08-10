@@ -5,7 +5,23 @@ const productController = require("./products.controller");
 const { authenticate } = require("../../middlewares/auth");
 const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 
-const upload = multer({ dest: "uploads/" });
+// SECURITY FIX (Finding #16): no fileFilter or size limit previously —
+// restricted to the spreadsheet types this endpoint actually parses
+// (mirrors clients.routes.js / subclients.routes.js), with a 10MB cap.
+const path = require("path");
+const upload = multer({
+  dest: "uploads/",
+  fileFilter: (req, file, cb) => {
+    const allowed = [".xlsx", ".xls", ".csv"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 // FIX: this entire router previously had ZERO authentication.
 router.use(authenticate);
