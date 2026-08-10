@@ -1,19 +1,27 @@
 // src/modules/approvals/approvals.controller.js
 //
-// Implements the three approval-gated actions from
-// "Approval Flow for Allocation App.docx":
+// Implements the approval-gated actions from
+// "Approval Flow for Allocation App.docx", plus (NEW) Process Lead's
+// Service (Product) / Client / Subclient create-update-delete requests:
 //   1. QC_PERMISSION_GRANT — Process Lead requests, Ops Manager /
 //      Audit Manager / Super Admin approve (any ONE of them).
 //   2. NEW_VERTICAL        — Ops Manager requests, Super Admin approves.
 //   3. HIDE_TASK           — Ops Manager requests, Super Admin approves.
+//   4. SERVICE_CREATE/UPDATE/DELETE,
+//      CLIENT_CREATE/UPDATE/DELETE,
+//      SUBCLIENT_CREATE/UPDATE/DELETE
+//                          — Process Lead requests, Ops Manager approves.
+//      Filed by src/middlewares/approvalGate.js on the corresponding
+//      /api/products, /api/clients, /api/subclients routes.
 //
 // Requires a Postgres table (see db/migration_rbac_approvals.sql):
 //   approval_requests(id, type, requested_by, target_user_id,
 //                      payload jsonb, status, approved_by, decided_at,
-//                      created_at)
+//                      created_at, organization_id)
 
 const supabase = require("../../config/supabaseClient");
 const { APPROVAL_RULES } = require("../../config/permissions");
+const productsService = require("../products/products.service");
 
 async function createRequest(req, res) {
   try {
@@ -171,7 +179,32 @@ async function decideRequest(req, res) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Shared field maps for CLIENT_* / SUBCLIENT_* — mirror the exact same
+// camelCase(body) -> snake_case(db) mapping used in
+// clients.routes.js (fromClientBody) and subclients.routes.js
+// (toDbContactFields), so an approved request always writes the same
+// shape the direct (non-gated) create/update path would have written.
+// ---------------------------------------------------------------------
+function contactFieldsFromPayload(body) {
+  return {
+    country: body.country || null,
+    website: body.website || null,
+    main_email: body.mainEmail || null,
+    main_phone: body.mainPhone || null,
+    primary_contact_name: body.primaryContactName || null,
+    primary_contact_email: body.primaryContactEmail || null,
+    primary_contact_phone: body.primaryContactPhone || null,
+    secondary_contact_name: body.secondaryContactName || null,
+    secondary_contact_email: body.secondaryContactEmail || null,
+    secondary_contact_phone: body.secondaryContactPhone || null,
+  };
+}
+
 async function applyApprovedAction(request) {
+  const orgId = request.organization_id;
+  const body = request.payload || {};
+
   switch (request.type) {
     case "QC_PERMISSION_GRANT":
       await supabase.from("qc_assignments").insert({
@@ -203,6 +236,135 @@ async function applyApprovedAction(request) {
       if (hideError) {
         console.error("HIDE_TASK failed to apply:", hideError);
       }
+      break;
+    }
+
+    // ---- NEW: Service (Product) ----
+    case "SERVICE_CREATE": {
+      const { product_name, time_taken, time_unit, teams } = body;
+      await productsService.createProduct(
+        { product_name, time_taken, time_unit, teams },
+        orgId,
+      );
+      break;
+    }
+    case "SERVICE_UPDATE": {
+      const { id, product_name, time_taken, time_unit, teams } = body;
+      await productsService.updateProduct(
+        id,
+        { product_name, time_taken, time_unit, teams },
+        orgId,
+      );
+      break;
+    }
+    case "SERVICE_DELETE": {
+      await productsService.deleteProduct(body.id, orgId);
+      break;
+    }
+
+    // ---- NEW: Client ----
+    case "CLIENT_CREATE": {
+      const { data: client, error } = await supabase
+        .from("clients")
+        .insert({
+          name: (body.name || "").trim(),
+          status: body.status === "Inactive" ? "Inactive" : "Active",
+          ...contactFieldsFromPayload(body),
+          organization_id: orgId,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      if (Array.isArray(body.productRates) && body.productRates.length) {
+        await productsService.syncClientProducts(
+          client.id,
+          body.productRates,
+          orgId,
+        );
+      }
+      break;
+    }
+    case "CLIENT_UPDATE": {
+      const { id, ...rest } = body;
+      const { error } = await supabase
+        .from("clients")
+        .update({
+          name: (rest.name || "").trim(),
+          status: rest.status === "Inactive" ? "Inactive" : "Active",
+          ...contactFieldsFromPayload(rest),
+        })
+        .eq("id", id)
+        .eq("organization_id", orgId);
+      if (error) throw error;
+
+      if (rest.productRates !== undefined) {
+        await productsService.syncClientProducts(id, rest.productRates, orgId);
+      }
+      break;
+    }
+    case "CLIENT_DELETE": {
+      await supabase
+        .from("clients")
+        .delete()
+        .eq("id", body.id)
+        .eq("organization_id", orgId);
+      break;
+    }
+
+    // ---- NEW: Subclient ----
+    case "SUBCLIENT_CREATE": {
+      const { data: subclient, error } = await supabase
+        .from("subclients")
+        .insert({
+          name: (body.name || "").trim(),
+          client_id: Number(body.clientId),
+          status: body.status === "Inactive" ? "Inactive" : "Active",
+          ...contactFieldsFromPayload(body),
+          organization_id: orgId,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      if (Array.isArray(body.productRates) && body.productRates.length) {
+        await productsService.syncSubclientProducts(
+          subclient.id,
+          body.productRates,
+          orgId,
+        );
+      }
+      break;
+    }
+    case "SUBCLIENT_UPDATE": {
+      const { id, ...rest } = body;
+      const { error } = await supabase
+        .from("subclients")
+        .update({
+          name: (rest.name || "").trim(),
+          client_id: Number(rest.clientId),
+          status: rest.status === "Inactive" ? "Inactive" : "Active",
+          ...contactFieldsFromPayload(rest),
+        })
+        .eq("id", id)
+        .eq("organization_id", orgId);
+      if (error) throw error;
+
+      if (rest.productRates !== undefined) {
+        await productsService.syncSubclientProducts(
+          id,
+          rest.productRates,
+          orgId,
+        );
+      }
+      break;
+    }
+    case "SUBCLIENT_DELETE": {
+      await supabase
+        .from("subclients")
+        .delete()
+        .eq("id", body.id)
+        .eq("organization_id", orgId);
       break;
     }
   }

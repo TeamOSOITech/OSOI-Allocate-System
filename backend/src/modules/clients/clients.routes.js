@@ -11,12 +11,21 @@ const supabase = require("../../config/supabaseClient");
 // which every query below now filters on.
 const { authenticate } = require("../../middlewares/auth");
 
-// PERMISSIONS: writes are now gated by the "clients.manage" permission
-// code (see src/config/permissions.js) instead of a hardcoded
-// SUPER_ADMIN-only check. Process Lead, Ops Manager, Audit Manager, and
-// Super Admin all hold this permission — Team Member and Vertical Head
-// do not.
-const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
+// PERMISSIONS FIX: POST/PUT/DELETE here used to be gated with
+// `authorize("SUPER_ADMIN")` — a hardcoded role check that completely
+// blocked Process Lead, Ops Manager, and Audit Manager even though
+// permissions.js already grants all three the "clients.manage"
+// permission. Switched to requireAnyPermission("clients.manage") so the
+// route-level gate actually matches the permission matrix. Process Lead
+// still doesn't get to act immediately, though — see approvalGate below.
+const { requireAnyPermission } = require("../../middlewares/rbac");
+
+// APPROVAL: intercepts Process Lead's create/update/delete here and
+// files it as a pending approval instead of letting it reach the route
+// handler — see src/middlewares/approvalGate.js and the CLIENT_CREATE /
+// CLIENT_UPDATE / CLIENT_DELETE rules in src/config/permissions.js. Ops
+// Manager / Audit Manager / Super Admin are unaffected (act immediately).
+const { approvalGate } = require("../../middlewares/approvalGate");
 
 // REVERSED MAPPING: Products no longer carry client/subclient on
 // themselves — a Client instead picks which existing Products it uses.
@@ -24,25 +33,7 @@ const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
 
-// SECURITY FIX (Finding #16): this multer config had no fileFilter or
-// size limit at all — anyone with "clients.manage" could upload a file
-// of unlimited size and any type (e.g. a .exe) to /bulk/upload. Now
-// restricted to the actual spreadsheet types this endpoint parses, with
-// a 10MB cap.
-const path = require("path");
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
-    }
-  },
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.
@@ -80,6 +71,10 @@ function styleHeaderCell(cell, colorHex) {
 
 // ---------- helpers: map between frontend (camelCase) <-> db (snake_case) ----------
 
+// APPROVAL: `approvalStatus` (added by attachPendingApprovals below) is
+// deliberately spread in here too so the frontend can badge a client
+// that has a pending Edit/Delete without touching every call site that
+// builds a response.
 function toClientResponse(client, subclientsCount, branchesCount, products) {
   return {
     id: client.id,
@@ -146,6 +141,68 @@ function fromClientBody(body) {
   // set server-side by the authenticate middleware.
 }
 
+// APPROVAL: same merge pattern as products.controller.js —
+//   - CLIENT_CREATE: no real row yet, synthesize a placeholder client
+//     card from the request payload (id prefixed "pending-").
+//   - CLIENT_UPDATE / CLIENT_DELETE: stamp approvalStatus onto the real,
+//     already-existing client so the UI can badge it in place.
+async function attachPendingClientApprovals(formattedClients, organizationId) {
+  const { data: pending } = await supabase
+    .from("approval_requests")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("status", "PENDING")
+    .in("type", ["CLIENT_CREATE", "CLIENT_UPDATE", "CLIENT_DELETE"]);
+
+  if (!pending || pending.length === 0) return formattedClients;
+
+  const updateOrDeleteById = new Map();
+  const pendingCreates = [];
+
+  for (const req of pending) {
+    if (req.type === "CLIENT_CREATE") {
+      pendingCreates.push(req);
+    } else {
+      updateOrDeleteById.set(String(req.payload?.id), req.type);
+    }
+  }
+
+  const withBadges = formattedClients.map((c) => {
+    const pendingType = updateOrDeleteById.get(String(c.id));
+    if (!pendingType) return c;
+    return {
+      ...c,
+      approvalStatus:
+        pendingType === "CLIENT_UPDATE" ? "PENDING_UPDATE" : "PENDING_DELETE",
+    };
+  });
+
+  const placeholders = pendingCreates.map((req) => ({
+    id: `pending-${req.id}`,
+    name: req.payload?.name || "(untitled)",
+    country: req.payload?.country || null,
+    status: req.payload?.status === "Inactive" ? "Inactive" : "Active",
+    subclients: 0,
+    branches: 0,
+    users: 0,
+    products: [],
+    productRates: [],
+    website: req.payload?.website || null,
+    mainEmail: req.payload?.mainEmail || null,
+    mainPhone: req.payload?.mainPhone || null,
+    primaryContactName: req.payload?.primaryContactName || null,
+    primaryContactEmail: req.payload?.primaryContactEmail || null,
+    primaryContactPhone: req.payload?.primaryContactPhone || null,
+    secondaryContactName: req.payload?.secondaryContactName || null,
+    secondaryContactEmail: req.payload?.secondaryContactEmail || null,
+    secondaryContactPhone: req.payload?.secondaryContactPhone || null,
+    approvalStatus: "PENDING_CREATE",
+    approvalRequestId: req.id,
+  }));
+
+  return [...placeholders, ...withBadges];
+}
+
 // ---------- GET /api/clients ----------
 
 router.get("/", async (req, res) => {
@@ -193,7 +250,9 @@ router.get("/", async (req, res) => {
       );
     });
 
-    res.json(formatted);
+    const withPending = await attachPendingClientApprovals(formatted, orgId);
+
+    res.json(withPending);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch clients" });
@@ -202,48 +261,56 @@ router.get("/", async (req, res) => {
 
 // ---------- POST /api/clients ----------
 
-router.post("/", requireAnyPermission("clients.manage"), async (req, res) => {
-  try {
-    if (!req.body?.name || !req.body.name.trim()) {
-      return res.status(400).json({ message: "Client name is required" });
+router.post(
+  "/",
+  requireAnyPermission("clients.manage"),
+  approvalGate("CLIENT_CREATE"),
+  async (req, res) => {
+    try {
+      if (!req.body?.name || !req.body.name.trim()) {
+        return res.status(400).json({ message: "Client name is required" });
+      }
+
+      const { data: client, error } = await supabase
+        .from("clients")
+        .insert({
+          ...fromClientBody(req.body),
+          organization_id: req.user.organizationId, // stamped server-side, never from body
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // REVERSED MAPPING: link whichever existing Products were picked in
+      // the Add Client form — req.body.productRates is
+      // [{ productId, amount, currency }], since the rate is per client, not
+      // fixed on the product itself.
+      let products = [];
+      if (
+        Array.isArray(req.body.productRates) &&
+        req.body.productRates.length
+      ) {
+        await productsService.syncClientProducts(
+          client.id,
+          req.body.productRates,
+          req.user.organizationId,
+        );
+        products = await productsService.getProductsForClient(
+          client.id,
+          req.user.organizationId,
+        );
+      }
+
+      res.status(201).json(toClientResponse(client, 0, 0, products));
+    } catch (err) {
+      console.error(err);
+      res
+        .status(500)
+        .json({ message: "Failed to create client", detail: err.message });
     }
-
-    const { data: client, error } = await supabase
-      .from("clients")
-      .insert({
-        ...fromClientBody(req.body),
-        organization_id: req.user.organizationId, // stamped server-side, never from body
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // REVERSED MAPPING: link whichever existing Products were picked in
-    // the Add Client form — req.body.productRates is
-    // [{ productId, amount, currency }], since the rate is per client, not
-    // fixed on the product itself.
-    let products = [];
-    if (Array.isArray(req.body.productRates) && req.body.productRates.length) {
-      await productsService.syncClientProducts(
-        client.id,
-        req.body.productRates,
-        req.user.organizationId,
-      );
-      products = await productsService.getProductsForClient(
-        client.id,
-        req.user.organizationId,
-      );
-    }
-
-    res.status(201).json(toClientResponse(client, 0, 0, products));
-  } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to create client", detail: err.message });
-  }
-});
+  },
+);
 
 // ---------- Excel template download (styled) ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
@@ -416,6 +483,8 @@ router.get("/bulk/template", async (req, res) => {
 
 // ---------- Excel bulk upload ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
+// NOTE: bulk upload is NOT approval-gated (same reasoning as products'
+// bulk upload) — it always creates directly regardless of caller's role.
 
 router.post(
   "/bulk/upload",
@@ -695,70 +764,76 @@ router.get("/:id", async (req, res) => {
 
 // ---------- PUT /api/clients/:id ----------
 
-router.put("/:id", requireAnyPermission("clients.manage"), async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const id = Number(req.params.id);
+router.put(
+  "/:id",
+  requireAnyPermission("clients.manage"),
+  approvalGate("CLIENT_UPDATE", { includeParamsId: true }),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const id = Number(req.params.id);
 
-    if (!req.body?.name || !req.body.name.trim()) {
-      return res.status(400).json({ message: "Client name is required" });
-    }
+      if (!req.body?.name || !req.body.name.trim()) {
+        return res.status(400).json({ message: "Client name is required" });
+      }
 
-    const { data: client, error } = await supabase
-      .from("clients")
-      .update(fromClientBody(req.body))
-      .eq("id", id)
-      .eq("organization_id", orgId) // can't update a row belonging to another org
-      .select()
-      .single();
+      const { data: client, error } = await supabase
+        .from("clients")
+        .update(fromClientBody(req.body))
+        .eq("id", id)
+        .eq("organization_id", orgId) // can't update a row belonging to another org
+        .select()
+        .single();
 
-    if (error) throw error;
-    if (!client) return res.status(404).json({ message: "Client not found" });
+      if (error) throw error;
+      if (!client) return res.status(404).json({ message: "Client not found" });
 
-    // REVERSED MAPPING: only touch the product links if productRates was
-    // actually sent — this lets other PUT callers (e.g. a status-only
-    // toggle) update a client without accidentally wiping its products.
-    if (req.body.productRates !== undefined) {
-      await productsService.syncClientProducts(
-        id,
-        req.body.productRates,
-        orgId,
+      // REVERSED MAPPING: only touch the product links if productRates was
+      // actually sent — this lets other PUT callers (e.g. a status-only
+      // toggle) update a client without accidentally wiping its products.
+      if (req.body.productRates !== undefined) {
+        await productsService.syncClientProducts(
+          id,
+          req.body.productRates,
+          orgId,
+        );
+      }
+      const products = await productsService.getProductsForClient(id, orgId);
+
+      const { data: subclients } = await supabase
+        .from("subclients")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("client_id", id);
+      const { data: branches } = await supabase
+        .from("branches")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("client_id", id);
+
+      res.json(
+        toClientResponse(
+          client,
+          subclients?.length || 0,
+          branches?.length || 0,
+          products,
+        ),
       );
+    } catch (err) {
+      console.error(err);
+      res
+        .status(500)
+        .json({ message: "Failed to update client", detail: err.message });
     }
-    const products = await productsService.getProductsForClient(id, orgId);
-
-    const { data: subclients } = await supabase
-      .from("subclients")
-      .select("id")
-      .eq("organization_id", orgId)
-      .eq("client_id", id);
-    const { data: branches } = await supabase
-      .from("branches")
-      .select("id")
-      .eq("organization_id", orgId)
-      .eq("client_id", id);
-
-    res.json(
-      toClientResponse(
-        client,
-        subclients?.length || 0,
-        branches?.length || 0,
-        products,
-      ),
-    );
-  } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to update client", detail: err.message });
-  }
-});
+  },
+);
 
 // ---------- DELETE /api/clients/:id ----------
 
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
+  approvalGate("CLIENT_DELETE", { includeParamsId: true }),
   async (req, res) => {
     try {
       const orgId = req.user.organizationId;

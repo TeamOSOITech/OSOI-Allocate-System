@@ -1,13 +1,76 @@
 const fs = require("fs");
 const xlsx = require("xlsx");
 const productService = require("./products.service");
+const supabase = require("../../config/supabaseClient");
+
+// APPROVAL: merges any PENDING SERVICE_* approval requests into the
+// normal product list so the person who just submitted one sees it right
+// away, badge and all, instead of the list looking like nothing
+// happened until an Ops Manager approves it (which could be hours/days
+// later). Two shapes get merged in:
+//   - SERVICE_CREATE: no real row exists yet — synthesize a placeholder
+//     product from the request's payload, id prefixed "pending-" so the
+//     frontend can tell it apart from a real numeric id and disable
+//     edit/delete on it.
+//   - SERVICE_UPDATE / SERVICE_DELETE: the real row already exists —
+//     just stamp `approvalStatus` onto it so the UI can show a badge
+//     without changing what's actually displayed underneath.
+async function attachPendingApprovals(products, organizationId) {
+  const { data: pending } = await supabase
+    .from("approval_requests")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("status", "PENDING")
+    .in("type", ["SERVICE_CREATE", "SERVICE_UPDATE", "SERVICE_DELETE"]);
+
+  if (!pending || pending.length === 0) return products;
+
+  const updateOrDeleteById = new Map();
+  const pendingCreates = [];
+
+  for (const req of pending) {
+    if (req.type === "SERVICE_CREATE") {
+      pendingCreates.push(req);
+    } else {
+      // SERVICE_UPDATE / SERVICE_DELETE — payload.id is the real product id.
+      updateOrDeleteById.set(String(req.payload?.id), req.type);
+    }
+  }
+
+  const withBadges = products.map((p) => {
+    const pendingType = updateOrDeleteById.get(String(p.id));
+    if (!pendingType) return p;
+    return {
+      ...p,
+      approvalStatus:
+        pendingType === "SERVICE_UPDATE" ? "PENDING_UPDATE" : "PENDING_DELETE",
+    };
+  });
+
+  const placeholders = pendingCreates.map((req) => ({
+    id: `pending-${req.id}`,
+    product_name: req.payload?.product_name || "(untitled)",
+    time_taken: req.payload?.time_taken ?? null,
+    time_unit: req.payload?.time_unit ?? null,
+    teams: req.payload?.teams || [],
+    hidden: false,
+    approvalStatus: "PENDING_CREATE",
+    approvalRequestId: req.id,
+  }));
+
+  return [...placeholders, ...withBadges];
+}
 
 const getAllProducts = async (req, res) => {
   try {
     const products = await productService.getAllProducts(
       req.user.organizationId,
     );
-    return res.status(200).json({ success: true, data: products });
+    const withPending = await attachPendingApprovals(
+      products,
+      req.user.organizationId,
+    );
+    return res.status(200).json({ success: true, data: withPending });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -104,6 +167,10 @@ const parseTimeTaken = (raw) => {
 // is standalone. Only "Product Name" and "Time Taken" are read now.
 // (Teams aren't part of the bulk sheet yet — bulk-created products start
 // with an empty teams list and can be tagged afterwards from Edit.)
+//
+// NOTE: bulk upload is NOT approval-gated — it's intentionally not routed
+// through approvalGate() in products.routes.js, so it always creates
+// directly regardless of the caller's role.
 const bulkUploadProducts = async (req, res) => {
   try {
     if (!req.file) {

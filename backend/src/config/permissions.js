@@ -59,6 +59,11 @@ const ROLE_PERMISSIONS = {
     "qc_permission.request", // still needs approval — see APPROVAL_RULES
     "reports.materialisation.view.org",
     // NEW: Client / Subclient / Product (Service) create-edit-delete access
+    // NOTE: Process Lead HOLDS these permissions (so it can reach the
+    // routes at all) but every create/update/delete it attempts is
+    // intercepted by approvalGate() and routed through APPROVAL_RULES
+    // below instead of taking effect immediately — see
+    // src/middlewares/approvalGate.js.
     "clients.manage",
     "products.manage",
   ],
@@ -79,6 +84,8 @@ const ROLE_PERMISSIONS = {
     "reports.materialisation.view.org",
     "qc_permission.approve", // one of the 3 possible approvers
     // NEW: Client / Subclient / Product (Service) create-edit-delete access
+    // — Ops Manager acts directly (no approval needed) AND is the
+    // approver for Process Lead's requests (see APPROVAL_RULES below).
     "clients.manage",
     "products.manage",
   ],
@@ -120,6 +127,58 @@ const APPROVAL_RULES = {
     description: "Hide a task from allocation",
     requestedBy: [ROLES.OPS_MANAGER],
     approvers: [ROLES.SUPER_ADMIN],
+  },
+
+  // NEW: Process Lead's Service (Product) / Client / Subclient
+  // create-update-delete actions all require Ops Manager approval before
+  // taking effect. See src/middlewares/approvalGate.js for how a
+  // matching request gets intercepted before reaching the real
+  // controller, and approvals.controller.js's applyApprovedAction() for
+  // what actually happens on APPROVE.
+  SERVICE_CREATE: {
+    description: "Create a new service (product)",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  SERVICE_UPDATE: {
+    description: "Edit an existing service (product)",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  SERVICE_DELETE: {
+    description: "Delete a service (product)",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  CLIENT_CREATE: {
+    description: "Create a new client",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  CLIENT_UPDATE: {
+    description: "Edit an existing client",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  CLIENT_DELETE: {
+    description: "Delete a client",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  SUBCLIENT_CREATE: {
+    description: "Create a new subclient",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  SUBCLIENT_UPDATE: {
+    description: "Edit an existing subclient",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+  },
+  SUBCLIENT_DELETE: {
+    description: "Delete a subclient",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
   },
 };
 
