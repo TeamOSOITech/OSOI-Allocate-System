@@ -15,27 +15,18 @@ const app = express();
 // "10 login attempts per IP" limit was actually being shared across
 // EVERY user on the platform combined — a handful of unrelated login
 // attempts anywhere would lock everyone else out, including someone
-// logging in for the very first time. `"loopback"` tells Express to
-// trust proxies connecting from 127.0.0.1/::1 (i.e. a local reverse
-// proxy in front of this process) and read the real client IP from
-// the X-Forwarded-For header it sets.
-app.set("trust proxy", "loopback");
-
-// TEMP DEBUG — remove after confirming req.ip shows the real client IP
-// and not Render's internal proxy address. Check your deploy logs after
-// a couple of real requests (e.g. hitting /api/auth/login from your
-// phone and from your laptop) — the two should show DIFFERENT ips.
-// If they show the SAME ip both times, "loopback" isn't matching your
-// proxy hop and you should switch back to app.set("trust proxy", 1).
-app.use((req, res, next) => {
-  console.log(
-    "[TRUST PROXY CHECK] req.ip =",
-    req.ip,
-    "| x-forwarded-for =",
-    req.headers["x-forwarded-for"],
-  );
-  next();
-});
+// logging in for the very first time.
+//
+// CONFIRMED IN PROD LOGS: requests here pass through TWO proxy hops
+// before reaching this process — Cloudflare, then Render's own internal
+// load balancer — producing an X-Forwarded-For chain shaped like:
+//   "<real client ip>, <cloudflare ip>, <render internal ip>"
+// Neither intermediate hop is a loopback address, so `"loopback"` never
+// matched and req.ip was falling back to the raw socket address (Render's
+// internal 10.x.x.x IP) — the exact same bug as having no setting at all.
+// `2` tells Express to trust the 2 nearest hops (Cloudflare + Render's
+// LB) and take the next address in the chain as the real client IP.
+app.set("trust proxy", 2);
 
 // Import Supabase Client
 const supabase = require("./src/config/supabaseClient");
