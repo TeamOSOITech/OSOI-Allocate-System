@@ -33,23 +33,7 @@ const { approvalGate } = require("../../middlewares/approvalGate");
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
 
-// SECURITY FIX (Finding #16): no fileFilter or size limit previously —
-// restricted to the spreadsheet types this endpoint actually parses,
-// with a 10MB cap (mirrors subclients.routes.js).
-const path = require("path");
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
-    }
-  },
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.
@@ -120,6 +104,21 @@ function toClientResponse(client, subclientsCount, branchesCount, products) {
     secondaryContactEmail: client.secondary_contact_email,
     secondaryContactPhone: client.secondary_contact_phone,
   };
+}
+
+// Turns a raw Postgres unique-constraint violation (code 23505) into a
+// clean, specific message instead of leaking the constraint name and SQL
+// wording straight to the user (e.g. `duplicate key value violates unique
+// constraint "uq_client_name"`). Returns null for any other kind of
+// error, so callers can fall back to their own generic message.
+function friendlyDuplicateClientNameError(err, name) {
+  if (
+    err?.code === "23505" &&
+    String(err?.message || "").includes("uq_client_name")
+  ) {
+    return `A client named "${name}" already exists. Please use a different name.`;
+  }
+  return null;
 }
 
 function fromClientBody(body) {
@@ -321,6 +320,10 @@ router.post(
       res.status(201).json(toClientResponse(client, 0, 0, products));
     } catch (err) {
       console.error(err);
+      const friendly = friendlyDuplicateClientNameError(err, req.body?.name);
+      if (friendly) {
+        return res.status(409).json({ message: friendly });
+      }
       res
         .status(500)
         .json({ message: "Failed to create client", detail: err.message });
@@ -837,6 +840,10 @@ router.put(
       );
     } catch (err) {
       console.error(err);
+      const friendly = friendlyDuplicateClientNameError(err, req.body?.name);
+      if (friendly) {
+        return res.status(409).json({ message: friendly });
+      }
       res
         .status(500)
         .json({ message: "Failed to update client", detail: err.message });

@@ -83,6 +83,11 @@ const ROLE_PERMISSIONS = {
     "reports.qc.view.org",
     "reports.materialisation.view.org",
     "qc_permission.approve", // one of the 3 possible approvers
+    // NEW: Ops Manager can also use Add User — same as Process Lead,
+    // but scoped to a narrower set of assignable roles (see
+    // ASSIGNABLE_ROLES below): can't hand out Super Admin, Ops Manager,
+    // or Audit Manager access, only the roles below Process Lead.
+    "users.onboard",
     // NEW: Client / Subclient / Product (Service) create-edit-delete access
     // — Ops Manager acts directly (no approval needed) AND is the
     // approver for Process Lead's requests (see APPROVAL_RULES below).
@@ -208,6 +213,15 @@ const APPROVAL_RULES = {
 // check alone.
 const ASSIGNABLE_ROLES = {
   [ROLES.PROCESS_LEAD]: [ROLES.TEAM_MEMBER, ROLES.VERTICAL_HEAD],
+  // NEW: matches Add User being opened up to Ops Manager above. Ops
+  // Manager sits above Process Lead, so it can create everything
+  // Process Lead can plus Process Lead itself — but still not Super
+  // Admin, Ops Manager, or Audit Manager (Super Admin only, below).
+  [ROLES.OPS_MANAGER]: [
+    ROLES.TEAM_MEMBER,
+    ROLES.VERTICAL_HEAD,
+    ROLES.PROCESS_LEAD,
+  ],
   [ROLES.SUPER_ADMIN]: [
     ROLES.TEAM_MEMBER,
     ROLES.VERTICAL_HEAD,
