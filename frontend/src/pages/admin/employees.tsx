@@ -422,6 +422,34 @@ export default function Employees() {
         [employees]
     );
 
+    // Reporting Manager dropdown options — built from the employees
+    // already loaded on this page rather than a separate fetch. Value is
+    // the manager's email (matches how reportingManager is already stored
+    // — see the Add User page's Reporting Manager field), label shows
+    // name + email so two people with the same name are distinguishable.
+    // The employee currently open in the drawer is excluded so they can't
+    // be set as their own manager.
+    const reportingManagerOptions = useMemo(
+        () =>
+            employees
+                .filter((e) => e.email && e.id !== editForm?.id)
+                .map((e) => ({ value: e.email, label: `${e.name} (${e.email})` }))
+                .sort((a, b) => a.label.localeCompare(b.label)),
+        [employees, editForm?.id]
+    );
+
+    // Department dropdown options for the drawer — merges the curated
+    // /api/options list (departmentOptions) with whatever department
+    // values already exist on real employee records (departments,
+    // computed below). Covers the case where nobody has added anything
+    // via the Add User page's "+" control yet and the curated table is
+    // still empty — the dropdown still has real options instead of
+    // silently falling back to a plain text box.
+    const departmentDropdownOptions = useMemo(
+        () => Array.from(new Set([...departmentOptions, ...departments])).sort(),
+        [departmentOptions, departments]
+    );
+
     // FIX: previously called `.toLowerCase()` directly on `e.name`,
     // `e.designation`, `e.employeeCode` without guarding against
     // null/undefined values coming back from the API. A single record
@@ -929,16 +957,17 @@ export default function Employees() {
                                     )}
                                 </div>
 
-                                {/* NEW: Department — now a dropdown sourced from GET
-                                    /api/options (same authoritative list used on the
-                                    Add User page), instead of a free-text input.
-                                    Falls back to plain text if the list couldn't be
-                                    loaded, so editing never gets blocked — same
-                                    pattern as Team just below. */}
+                                {/* Department — dropdown merging the curated /api/options
+                                    list with whatever department values already exist on
+                                    real employees (see departmentDropdownOptions above),
+                                    so it's populated even before anyone's used the "+ Add"
+                                    control on the Add User page. Falls back to plain text
+                                    only if there are truly zero department values anywhere
+                                    yet, so editing never gets blocked. */}
                                 <div style={styles.detailsRow}>
                                     <span style={styles.detailsLabel}>Department</span>
                                     {isEditingDrawer ? (
-                                        departmentOptions.length > 0 ? (
+                                        departmentDropdownOptions.length > 0 ? (
                                             <select
                                                 className="emp-drawer-select"
                                                 style={styles.detailsInput}
@@ -948,7 +977,19 @@ export default function Employees() {
                                                 }
                                             >
                                                 <option value="">Select department</option>
-                                                {departmentOptions.map((d) => (
+                                                {/* Keep the existing value selectable even if
+                                                    it isn't in the merged list, so saving
+                                                    without touching this field never
+                                                    silently blanks it out. */}
+                                                {drawerData.department &&
+                                                    !departmentDropdownOptions.includes(
+                                                        drawerData.department
+                                                    ) && (
+                                                        <option value={drawerData.department}>
+                                                            {drawerData.department}
+                                                        </option>
+                                                    )}
+                                                {departmentDropdownOptions.map((d) => (
                                                     <option key={d} value={d}>
                                                         {d}
                                                     </option>
@@ -1016,14 +1057,60 @@ export default function Employees() {
                                 <div style={styles.detailsRow}>
                                     <span style={styles.detailsLabel}>Reporting Manager</span>
                                     {isEditingDrawer ? (
-                                        <input
-                                            className="emp-drawer-input"
-                                            style={styles.detailsInput}
-                                            value={drawerData.reportingManager || ""}
-                                            onChange={(e) =>
-                                                updateEditField("reportingManager", e.target.value)
-                                            }
-                                        />
+                                        // NEW: dropdown instead of free text — sourced from
+                                        // the employees already loaded on this page (no
+                                        // extra fetch needed), same pattern as the Team and
+                                        // Department dropdowns just above. Excludes the
+                                        // employee currently being edited so nobody can be
+                                        // set as their own manager. Falls back to a plain
+                                        // text input if the list is empty (still loading),
+                                        // so editing never gets blocked.
+                                        reportingManagerOptions.length > 0 ? (
+                                            <select
+                                                className="emp-drawer-select"
+                                                style={styles.detailsInput}
+                                                value={drawerData.reportingManager || ""}
+                                                onChange={(e) =>
+                                                    updateEditField(
+                                                        "reportingManager",
+                                                        e.target.value
+                                                    )
+                                                }
+                                            >
+                                                <option value="">Select manager</option>
+                                                {/* Keep the existing value selectable even if
+                                                    it doesn't match any current employee
+                                                    (e.g. a manager who has since left), so
+                                                    saving without touching this field doesn't
+                                                    silently blank it out. */}
+                                                {drawerData.reportingManager &&
+                                                    !reportingManagerOptions.some(
+                                                        (m) =>
+                                                            m.value === drawerData.reportingManager
+                                                    ) && (
+                                                        <option value={drawerData.reportingManager}>
+                                                            {drawerData.reportingManager}
+                                                        </option>
+                                                    )}
+                                                {reportingManagerOptions.map((m) => (
+                                                    <option key={m.value} value={m.value}>
+                                                        {m.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                className="emp-drawer-input"
+                                                style={styles.detailsInput}
+                                                value={drawerData.reportingManager || ""}
+                                                onChange={(e) =>
+                                                    updateEditField(
+                                                        "reportingManager",
+                                                        e.target.value
+                                                    )
+                                                }
+                                            />
+                                        )
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {drawerData.reportingManager || "—"}
