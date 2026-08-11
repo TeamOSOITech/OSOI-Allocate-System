@@ -452,7 +452,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     height="120"
                     viewBox="0 0 100 90"
                     style={{
-                        marginTop: "12px",
+                        marginTop: "4px",
+                        marginBottom: "14px",
                         alignSelf: "flex-end",
                         opacity: 0.95,
                         pointerEvents: "none",
