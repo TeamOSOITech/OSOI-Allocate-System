@@ -171,7 +171,12 @@ const GLOBAL_CSS = `
 
 // Columns required in the bulk-upload sheet, shown in the modal's info
 // callout and used to build the downloadable sample sheet client-side.
-const BULK_REQUIRED_COLUMNS_TEXT = "Product Name, Time Taken";
+// FIX: text and column keys must always match — kept as one constant
+// instead of two separate hardcoded strings (info callout vs. XLSX
+// template), so a future rename can't make them drift out of sync again.
+const PRODUCT_NAME_COLUMN = "Service Name";
+const TIME_TAKEN_COLUMN = "Time Taken";
+const BULK_REQUIRED_COLUMNS_TEXT = `${PRODUCT_NAME_COLUMN}, ${TIME_TAKEN_COLUMN}`;
 
 const Products = () => {
     // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
@@ -239,7 +244,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to load products");
+                throw new Error(json.message || "Failed to load services");
             }
             setProducts(json.data || []);
         } catch (err: any) {
@@ -278,7 +283,7 @@ const Products = () => {
     const handleAddSubmit = async () => {
         setAddError("");
         if (!addForm.product_name.trim()) {
-            setAddError("Product name is required.");
+            setAddError("Service name is required.");
             return;
         }
         if (!addForm.time_unit) {
@@ -295,7 +300,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to create product");
+                throw new Error(json.message || "Failed to create service");
             }
 
             // NEW: 202 = a Process Lead's request went to their reporting
@@ -339,7 +344,7 @@ const Products = () => {
         if (!editTarget) return;
         setEditError("");
         if (!editForm.product_name.trim()) {
-            setEditError("Product name is required.");
+            setEditError("Service name is required.");
             return;
         }
         if (!editForm.time_unit) {
@@ -356,7 +361,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to update product");
+                throw new Error(json.message || "Failed to update service");
             }
 
             // NEW: 202 = this edit went to the reporting manager for
@@ -400,7 +405,7 @@ const Products = () => {
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to delete product");
+                throw new Error(json.message || "Failed to delete service");
             }
 
             // NEW: 202 = this delete went to the reporting manager for
@@ -437,21 +442,21 @@ const Products = () => {
     const handleDownloadTemplate = () => {
         const templateData = [
             {
-                "Product Name": "Inventory Sync",
-                "Time Taken": "2 hours",
+                [PRODUCT_NAME_COLUMN]: "Inventory Sync",
+                [TIME_TAKEN_COLUMN]: "2 hours",
             },
         ];
 
         const worksheet = XLSX.utils.json_to_sheet(templateData);
         const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Products");
-        XLSX.writeFile(workbook, "bulk_add_products_template.xlsx");
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Services");
+        XLSX.writeFile(workbook, "bulk_add_services_template.xlsx");
     };
 
     // Bulk upload now lives in its own modal (matching the Add User page's
     // "Bulk Add Users" modal) instead of firing immediately off a hidden
     // file input: choosing a file just stages it, and the actual POST only
-    // happens once "Upload & Create Products" is clicked.
+    // happens once "Upload & Create Services" is clicked.
     const openBulkModal = () => {
         setBulkFile(null);
         setBulkResult(null);
@@ -515,7 +520,7 @@ const Products = () => {
     ) => (
         <>
             <div>
-                <label style={styles.formLabel}>Product Name</label>
+                <label style={styles.formLabel}>Service Name</label>
                 <input
                     style={styles.formInput}
                     value={formState.product_name}
@@ -600,13 +605,13 @@ const Products = () => {
                     )}
 
                     {/* Page title */}
-                    {!isMobile && <h2 style={styles.pageTitle}>Products</h2>}
+                    {!isMobile && <h2 style={styles.pageTitle}>Services</h2>}
 
                     {/* Header row */}
                     {!isMobile && (
                         <div style={styles.headerRow}>
                             <p style={styles.headerSubtext}>
-                                View, add, edit or remove Products from the system.
+                                View, add, edit or remove Services from the system.
                             </p>
 
                             <div style={styles.headerActions}>
@@ -644,7 +649,7 @@ const Products = () => {
                                             Bulk Upload
                                         </button>
                                         <span className="pr-tooltip-bubble">
-                                            Upload products from an Excel (.xlsx) file
+                                            Upload services from an Excel (.xlsx) file
                                         </span>
                                     </span>
                                 )}
@@ -654,13 +659,13 @@ const Products = () => {
                                         style={styles.addBtn}
                                         type="button"
                                         onClick={openAddModal}
-                                        title="Add a new product"
+                                        title="Add a new service"
                                     >
                                         <i
                                             className="ti ti-plus"
                                             style={{ fontSize: fontSize.md }}
                                         />
-                                        Add Product
+                                        Add Service
                                     </button>
                                 )}
                             </div>
@@ -669,13 +674,13 @@ const Products = () => {
 
                     {isMobile && (
                         <div style={styles.headerRowMobile}>
-                            <h2 style={styles.pageTitle}>Products</h2>
+                            <h2 style={styles.pageTitle}>Services</h2>
                             {canManage && (
                                 <button
                                     style={styles.addBtn}
                                     type="button"
                                     onClick={openAddModal}
-                                    title="Add a new product"
+                                    title="Add a new service"
                                 >
                                     <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
                                     Add
@@ -701,7 +706,7 @@ const Products = () => {
                             />
                             <input
                                 style={styles.searchInput}
-                                placeholder="Search products..."
+                                placeholder="Search services..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
@@ -755,7 +760,7 @@ const Products = () => {
                                     className="ti ti-package"
                                     style={{ fontSize: fontSize["7xl"], color: "#9fd6e6" }}
                                 />
-                                <p style={styles.emptyText}>No products match your filters.</p>
+                                <p style={styles.emptyText}>No services match your filters.</p>
                             </div>
                         ) : viewMode === "list" ? (
                             <div style={styles.tableWrap}>
@@ -767,7 +772,7 @@ const Products = () => {
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            <th style={styles.th}>Product</th>
+                                            <th style={styles.th}>Service</th>
                                             <th style={styles.th}>Time Taken</th>
                                             <th style={{ ...styles.th, textAlign: "left" }}>
                                                 Actions
@@ -819,7 +824,7 @@ const Products = () => {
                                                                 className="pr-icon-btn"
                                                                 style={styles.iconBtn}
                                                                 aria-label="Edit"
-                                                                title="Edit product"
+                                                                title="Edit service"
                                                                 onClick={() => openEditModal(p)}
                                                             >
                                                                 <i
@@ -834,7 +839,7 @@ const Products = () => {
                                                                 className="pr-icon-btn-danger"
                                                                 style={styles.iconBtnDanger}
                                                                 aria-label="Delete"
-                                                                title="Delete product"
+                                                                title="Delete service"
                                                                 onClick={() =>
                                                                     openDeleteConfirm(
                                                                         p.id,
@@ -1015,7 +1020,7 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeAddModal}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Add Product</h3>
+                            <h3 style={styles.detailsTitle}>Add Service</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeAddModal}
@@ -1042,7 +1047,7 @@ const Products = () => {
                                 onClick={handleAddSubmit}
                                 disabled={addSubmitting}
                             >
-                                {addSubmitting ? "Saving..." : "Add Product"}
+                                {addSubmitting ? "Saving..." : "Add Service"}
                             </button>
                         </div>
                     </div>
@@ -1054,7 +1059,7 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeEditModal}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Edit Product</h3>
+                            <h3 style={styles.detailsTitle}>Edit Service</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeEditModal}
@@ -1156,9 +1161,9 @@ const Products = () => {
                 <div style={styles.overlay} onClick={closeBulkModal}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Bulk Add Products</h3>
+                            <h3 style={styles.bulkModalTitle}>Bulk Add Services</h3>
                             <p style={styles.bulkModalSubtitle}>
-                                Upload an Excel file to create multiple products at once
+                                Upload an Excel file to create multiple services at once
                             </p>
                             <button
                                 style={styles.closeBtn}
@@ -1199,7 +1204,7 @@ const Products = () => {
                                     cursor: bulkUploading ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {bulkUploading ? "Uploading…" : "Upload & Create Products"}
+                                {bulkUploading ? "Uploading…" : "Upload & Create Services"}
                             </button>
                         </div>
 

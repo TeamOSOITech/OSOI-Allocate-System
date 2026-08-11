@@ -859,7 +859,7 @@ export default function Clients() {
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
     ) => (
         <div style={{ gridColumn: "1 / -1" }}>
-            <label style={styles.formLabel}>Products</label>
+            <label style={styles.formLabel}>Services</label>
             {products.length === 0 ? (
                 <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
                     No products yet — add one from the Products page first.
