@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
@@ -39,6 +39,10 @@ type Product = {
     product_name: string;
     time_taken: string;
     time_unit: string;
+    // NEW: which team(s) this service is tagged with — optional, purely
+    // informational, same team names as the Teams dropdown on the Add
+    // User / Employees pages.
+    teams?: string[];
     created_at?: string;
     updated_at?: string;
 };
@@ -47,13 +51,19 @@ type ProductForm = {
     product_name: string;
     time_taken: string;
     time_unit: string;
+    teams: string[];
 };
 
 const emptyForm: ProductForm = {
     product_name: "",
     time_taken: "",
     time_unit: "",
+    teams: [],
 };
+
+// Shape returned by GET /api/teams — same shape used on the Employees
+// page's Team dropdown.
+type Team = { id: string; name: string };
 
 type DeleteTarget = { id: string; name: string };
 
@@ -224,6 +234,17 @@ const Products = () => {
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState("");
 
+    // NEW: Teams for the Add/Edit forms' Teams dropdown — same source as
+    // the Employees page (GET /api/teams). If this org hasn't created any
+    // teams yet, teamsList stays empty and the field shows "Not found."
+    const [teamsList, setTeamsList] = useState<Team[]>([]);
+    const [teamsLoading, setTeamsLoading] = useState(true);
+
+    // Collapsed-by-default "Select Team" dropdown state, shared by the Add
+    // and Edit modals (they're never mounted at the same time).
+    const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
+    const teamDropdownRef = useRef<HTMLDivElement | null>(null);
+
     // ---- Bulk upload state ----
     // Bulk upload now lives inside its own modal (opened via the "Bulk
     // Upload" button) instead of firing immediately off a hidden file
@@ -254,10 +275,47 @@ const Products = () => {
         }
     };
 
+    // NEW: Non-critical — if this fails or returns nothing, the Teams
+    // field just shows "Not found." instead of blocking Add/Edit.
+    const fetchTeams = async () => {
+        setTeamsLoading(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/teams`, { cache: "no-store" });
+            if (!res.ok) return;
+            const json = await res.json();
+            setTeamsList(json?.data || []);
+        } catch {
+            // silent — non-critical
+        } finally {
+            setTeamsLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchProducts();
+        fetchTeams();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Close the Teams dropdown panel when clicking anywhere outside it.
+    // FIX: this used to listen on "mousedown". That fires and collapses the
+    // dropdown (shrinking the modal) BEFORE the click's mouseup happens, so
+    // if you were clicking the Save button while the dropdown was open, the
+    // button would shift position mid-click and the click would miss it —
+    // you'd have to click twice (once to close the dropdown, once more to
+    // actually hit Save). Listening on "click" instead means any button's
+    // own onClick (e.g. Save) fires first during bubbling, and only then
+    // does this outside-click check run and close the dropdown.
+    useEffect(() => {
+        if (!teamDropdownOpen) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (teamDropdownRef.current && !teamDropdownRef.current.contains(e.target as Node)) {
+                setTeamDropdownOpen(false);
+            }
+        };
+        document.addEventListener("click", handleClickOutside);
+        return () => document.removeEventListener("click", handleClickOutside);
+    }, [teamDropdownOpen]);
 
     const filteredProducts = useMemo(
         () =>
@@ -272,6 +330,7 @@ const Products = () => {
     const openAddModal = () => {
         setAddForm({ ...emptyForm });
         setAddError("");
+        setTeamDropdownOpen(false);
         setShowAddModal(true);
     };
 
@@ -331,7 +390,9 @@ const Products = () => {
             product_name: product.product_name || "",
             time_taken: product.time_taken || "",
             time_unit: product.time_unit || "",
+            teams: product.teams || [],
         });
+        setTeamDropdownOpen(false);
         setEditTarget(product);
     };
 
@@ -512,6 +573,24 @@ const Products = () => {
         }
     };
 
+    // Toggles one team name in/out of a form's `teams` array — shared by
+    // both Add and Edit via the fieldset below.
+    const toggleTeam = (
+        formState: ProductForm,
+        setFormState: (updater: (prev: ProductForm) => ProductForm) => void,
+        teamName: string
+    ) => {
+        setFormState((prev) => {
+            const exists = prev.teams.includes(teamName);
+            return {
+                ...prev,
+                teams: exists
+                    ? prev.teams.filter((t) => t !== teamName)
+                    : [...prev.teams, teamName],
+            };
+        });
+    };
+
     // Shared form fieldset used by both Add and Edit modals so the two
     // never drift out of parity.
     const renderProductFieldset = (
@@ -558,6 +637,141 @@ const Products = () => {
                         <option value="hours">Hours</option>
                     </select>
                 </div>
+            </div>
+
+            {/* NEW: Teams — collapsed "Select Team" dropdown, multi-select via
+                checkboxes in the expanded panel (same pattern as the Products
+                picker on the Clients page). If this org hasn't created any
+                teams yet, shows "Not found." instead.
+
+                FIX: the expanded checkbox panel used to be `position: absolute`,
+                which floated it OVER the rest of the modal (including the
+                Save/Add button) instead of pushing content down. That made the
+                submit button invisible/unreachable whenever the dropdown was
+                open. It's now `position: relative` so it sits inline in normal
+                document flow — opening it pushes the button down instead of
+                covering it, and the modal (which already scrolls) handles any
+                extra height. */}
+            <div style={{ gridColumn: "1 / -1", position: "relative" }} ref={teamDropdownRef}>
+                <label style={styles.formLabel}>Teams</label>
+
+                {teamsLoading ? (
+                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                        Loading teams…
+                    </p>
+                ) : teamsList.length === 0 ? (
+                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                        Not found.
+                    </p>
+                ) : (
+                    <>
+                        {/* Collapsed control — click to open/close the panel */}
+                        <div
+                            onClick={() => setTeamDropdownOpen((prev) => !prev)}
+                            style={{
+                                ...styles.formInput,
+                                display: "flex",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: 6,
+                                cursor: "pointer",
+                                minHeight: 20,
+                            }}
+                        >
+                            {formState.teams.length === 0 ? (
+                                <span style={{ color: "#8b96a8" }}>Select Team</span>
+                            ) : (
+                                formState.teams.map((t) => (
+                                    <span
+                                        key={t}
+                                        style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 4,
+                                            background:
+                                                "color-mix(in srgb, var(--brand-light-blue) 14%, white)",
+                                            color: "var(--brand-blue)",
+                                            fontSize: fontSize.xs,
+                                            fontWeight: fontWeight.medium,
+                                            padding: "2px 8px",
+                                            borderRadius: 999,
+                                        }}
+                                    >
+                                        {t}
+                                        <span
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleTeam(formState, setFormState, t);
+                                            }}
+                                            style={{
+                                                cursor: "pointer",
+                                                fontWeight: fontWeight.bold,
+                                            }}
+                                        >
+                                            ×
+                                        </span>
+                                    </span>
+                                ))
+                            )}
+                            <span
+                                style={{
+                                    marginLeft: "auto",
+                                    color: "#8b96a8",
+                                    fontSize: fontSize.xs,
+                                }}
+                            >
+                                {teamDropdownOpen ? "▲" : "▼"}
+                            </span>
+                        </div>
+
+                        {/* Expanded checkbox panel — now inline (position: relative)
+                            instead of absolute, so it pushes the rest of the form
+                            (including the Save/Add button) down instead of
+                            floating over it. */}
+                        {teamDropdownOpen && (
+                            <div
+                                style={{
+                                    position: "relative",
+                                    zIndex: 5,
+                                    marginTop: 4,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 6,
+                                    maxHeight: 200,
+                                    overflowY: "auto",
+                                    border: "1px solid #e4e9f2",
+                                    borderRadius: radius.sm,
+                                    padding: "10px 12px",
+                                    background: "#fff",
+                                    boxShadow: "0 4px 12px rgba(16, 24, 40, 0.08)",
+                                }}
+                            >
+                                {teamsList.map((t) => (
+                                    <label
+                                        key={t.id}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            fontSize: fontSize.sm,
+                                            color: "#16233c",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={formState.teams.includes(t.name)}
+                                            onChange={() =>
+                                                toggleTeam(formState, setFormState, t.name)
+                                            }
+                                        />
+                                        {t.name}
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
             </div>
         </>
     );
@@ -964,6 +1178,15 @@ const Products = () => {
                                 <span style={styles.detailsLabel}>Time Taken</span>
                                 <span style={styles.detailsValue}>
                                     {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Teams</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.teams && viewDetails.teams.length > 0
+                                        ? viewDetails.teams.join(", ")
+                                        : "—"}
                                 </span>
                             </div>
 
