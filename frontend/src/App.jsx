@@ -23,7 +23,6 @@ const DailyWork = lazy(() => import("./pages/admin/dailywork"));
 const AddUser = lazy(() => import("./pages/admin/adduser"));
 const Clients = lazy(() => import("./pages/admin/clients"));
 const Employees = lazy(() => import("./pages/admin/employees"));
-const WorkInProgress = lazy(() => import("./pages/workinprogress"));
 const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
 // Attendance is no longer a standalone page — leave-marking lives inside
 // manualallocation.tsx instead.
@@ -31,6 +30,21 @@ const QC = lazy(() => import("./pages/admin/qc"));
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 //import VoiceAssistant from "./components/voiceAssistant";
+// (old commented-out WorkInProgress lazy import removed — the file
+// pages/workinprogress.tsx no longer exists; see ComingSoon below.)
+
+// REMOVED: pages/workinprogress.tsx has been deleted. It was a shared
+// placeholder used by a handful of routes for pages that weren't built
+// yet (Billing, Admin, History, Tasks) and as a fallback redirect target
+// for VERTICAL_HEAD users hitting a page they can't access. This inline
+// component replaces it in both roles so none of those routes/redirects
+// reference a file that no longer exists. Swap in the real page
+// component as each one gets built — same as before.
+const ComingSoon = () => (
+    <div style={{ padding: 24, color: "#6B7280" }}>
+        This page isn&apos;t built yet — check back soon.
+    </div>
+);
 
 // Backend base URL, same source every other page uses for API calls.
 const API_URL = import.meta.env.VITE_API_URL;
@@ -310,19 +324,21 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Billing — Admin only */}
+                        {/* Billing — Admin only. Placeholder page (pages/workinprogress.tsx)
+                    was deleted; ComingSoon stands in until the real Billing
+                    page is built. */}
                         <Route
                             path="/billing"
                             element={
                                 <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                     <AppLayout onLogout={handleLogout}>
-                                        <WorkInProgress />
+                                        <ComingSoon />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
                         />
 
-                        {/* Quality Scores — Admin and Manager only. Was WorkInProgress
+                        {/* Quality Scores — Admin and Manager only. Was the WorkInProgress
                     placeholder; now the real QC page (Page 7). */}
                         <Route
                             path="/quality-scores"
@@ -335,12 +351,17 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
+                        {/* /workinprogress is kept as a route (pointing at the inline
+                    ComingSoon component) because PrivateRoute still redirects
+                    VERTICAL_HEAD users here when they hit a page they can't
+                    access — removing the route entirely would turn that
+                    redirect into a dead link. */}
                         <Route
                             path="/workinprogress"
                             element={
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
-                                        <WorkInProgress />
+                                        <ComingSoon />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
@@ -349,16 +370,15 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         {/* FIX: sidebar.tsx links to /admin, /history, /profile, and
                     /tasks, but none of these had a matching route or page
                     component — clicking them dead-ended. None of these
-                    pages are built yet, so point them at the existing
-                    WorkInProgress placeholder for now instead of leaving a
-                    broken link; swap in the real page component as each
-                    one gets built. */}
+                    pages are built yet, so point them at the ComingSoon
+                    placeholder for now instead of leaving a broken link;
+                    swap in the real page component as each one gets built. */}
                         <Route
                             path="/admin"
                             element={
                                 <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                     <AppLayout onLogout={handleLogout}>
-                                        <WorkInProgress />
+                                        <ComingSoon />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
@@ -368,7 +388,7 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             element={
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
-                                        <WorkInProgress />
+                                        <ComingSoon />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
@@ -391,7 +411,7 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             element={
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
-                                        <WorkInProgress />
+                                        <ComingSoon />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
