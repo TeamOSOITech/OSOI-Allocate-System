@@ -36,12 +36,12 @@ const menuItems: MenuItem[] = [
     // App.jsx) rather than /dashboard, which is the admin-tier metrics
     // dashboard. Shown only to TEAM_MEMBER — admin-tier roles already
     // have "Dashboard" above.
-    {
+    /*{
         label: "User Dashboard",
         icon: "ti ti-smart-home",
         path: "/report",
         roles: ["TEAM_MEMBER"],
-    },
+    },*/
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
@@ -51,17 +51,6 @@ const menuItems: MenuItem[] = [
         icon: "ti ti-user-plus",
         path: "/admin/add-user",
         roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
-    },
-    // NEW: Approvals — Process Lead sees their own submitted requests;
-    // Ops Manager (their reporting manager, usually) sees what's waiting
-    // on them to decide. Audit Manager/Super Admin included since they're
-    // also eligible approvers for some request types (see
-    // backend/src/config/permissions.js APPROVAL_RULES).
-    {
-        label: "Approvals",
-        icon: "ti ti-checkbox",
-        path: "/approvals",
-        roles: ADMIN_TIER,
     },
     {
         label: "Services",
@@ -140,7 +129,6 @@ const pathToLabel: Record<string, string> = {
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",
-    "/approvals": "Approvals",
     "/history": "History",
     "/billing": "Billing",
     "/quality-scores": "Quality Scores",

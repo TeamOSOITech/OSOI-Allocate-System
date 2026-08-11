@@ -940,8 +940,14 @@ export default function AddUser() {
                                         />
                                     </div>
                                     <div>
+                                        {/* Heading updated: "Reporting Manager" ->
+                                            "Reporting Manager Email" — this field is matched
+                                            against a real user's email server-side
+                                            (validateReportingManager in userRoutes.js), so the
+                                            label now makes that expectation explicit instead
+                                            of implying a free-text name is fine. */}
                                         <label style={labelStyle("reportingManager")}>
-                                            Reporting Manager *
+                                            Reporting Manager Email *
                                         </label>
                                         <select
                                             style={styles.input}
@@ -965,9 +971,14 @@ export default function AddUser() {
                                             ))}
                                         </select>
 
+                                        {/* "+" control kept as requested. Placeholder now
+                                            reads as an email prompt (not a name) so whatever
+                                            gets typed here matches what the backend's
+                                            validateReportingManager() actually checks against
+                                            — a real user's email in the same organization. */}
                                         <InlineAddOption
                                             styles={styles}
-                                            placeholder="Manager name"
+                                            placeholder="manager@yourcompany.com"
                                             onAdd={async (val) => {
                                                 setProcessLeads((prev) =>
                                                     prev.some((pl) => pl.email === val)
