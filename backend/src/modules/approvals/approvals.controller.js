@@ -117,7 +117,35 @@ async function listRequests(req, res) {
       return rule.approvers.includes(req.user.role);
     });
 
-    res.json({ success: true, data: visible });
+    // NEW: attach each requester's display name so the frontend never has
+    // to show a raw UUID. One batched lookup for every distinct
+    // requested_by in this page of results, instead of an N+1 query.
+    const requesterIds = Array.from(
+      new Set(visible.map((r) => r.requested_by)),
+    ).filter(Boolean);
+    let namesById = {};
+    if (requesterIds.length > 0) {
+      const { data: requesters } = await supabase
+        .from("user_master")
+        .select('"Auth User Id", "First Name", "Last Name"')
+        .in("Auth User Id", requesterIds);
+
+      namesById = (requesters || []).reduce((acc, u) => {
+        const name = [u["First Name"], u["Last Name"]]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        acc[u["Auth User Id"]] = name || null;
+        return acc;
+      }, {});
+    }
+
+    const enriched = visible.map((r) => ({
+      ...r,
+      requestedByName: namesById[r.requested_by] || null,
+    }));
+
+    res.json({ success: true, data: enriched });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
