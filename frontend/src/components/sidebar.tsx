@@ -29,19 +29,23 @@ const menuItems: MenuItem[] = [
         label: "Dashboard",
         icon: "ti ti-layout-dashboard",
         path: "/dashboard",
-        roles: SUPER_ADMIN_ONLY,
+        // /dashboard route in App.jsx is gated to ADMIN_TIER_ROLES, which
+        // already includes OPS_MANAGER — this link was narrower than the
+        // actual route (SUPER_ADMIN_ONLY), so Ops Manager could reach the
+        // page directly by URL but never saw the sidebar link.
+        roles: [...SUPER_ADMIN_ONLY, "OPS_MANAGER"],
     },
     // Role-based access Phase 1: Normal User's own landing page. Points
     // at /report (open to any logged-in user, no requiredRole in
     // App.jsx) rather than /dashboard, which is the admin-tier metrics
     // dashboard. Shown only to TEAM_MEMBER — admin-tier roles already
     // have "Dashboard" above.
-    /*{
+    {
         label: "User Dashboard",
         icon: "ti ti-smart-home",
         path: "/report",
         roles: ["TEAM_MEMBER"],
-    },*/
+    },
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
@@ -50,7 +54,7 @@ const menuItems: MenuItem[] = [
         label: "Add User",
         icon: "ti ti-user-plus",
         path: "/admin/add-user",
-        roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
+        roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"],
     },
     {
         label: "Services",
