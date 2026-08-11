@@ -52,6 +52,17 @@ const menuItems: MenuItem[] = [
         path: "/admin/add-user",
         roles: ["SUPER_ADMIN", "PROCESS_LEAD"],
     },
+    // NEW: Approvals — Process Lead sees their own submitted requests;
+    // Ops Manager (their reporting manager, usually) sees what's waiting
+    // on them to decide. Audit Manager/Super Admin included since they're
+    // also eligible approvers for some request types (see
+    // backend/src/config/permissions.js APPROVAL_RULES).
+    {
+        label: "Approvals",
+        icon: "ti ti-checkbox",
+        path: "/approvals",
+        roles: ADMIN_TIER,
+    },
     {
         label: "Services",
         icon: "ti ti-package",
@@ -129,6 +140,7 @@ const pathToLabel: Record<string, string> = {
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",
+    "/approvals": "Approvals",
     "/history": "History",
     "/billing": "Billing",
     "/quality-scores": "Quality Scores",

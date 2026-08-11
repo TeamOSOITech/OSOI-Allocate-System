@@ -205,6 +205,11 @@ const Products = () => {
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
 
+    // NEW: shown as a dismissible banner when a create/edit/delete came
+    // back 202 (Process Lead's request went to their reporting manager
+    // for approval instead of applying immediately) — see approvalGate.js.
+    const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
+
     const [editTarget, setEditTarget] = useState<Product | null>(null);
     const [editForm, setEditForm] = useState<ProductForm>({ ...emptyForm });
     const [editSubmitting, setEditSubmitting] = useState(false);
@@ -292,6 +297,18 @@ const Products = () => {
             if (!res.ok || json.success === false) {
                 throw new Error(json.message || "Failed to create product");
             }
+
+            // NEW: 202 = a Process Lead's request went to their reporting
+            // manager for approval instead of being created immediately —
+            // see approvalGate.js.
+            if (res.status === 202) {
+                setApprovalNotice(
+                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
+            }
+
             await fetchProducts();
             setShowAddModal(false);
         } catch (err: any) {
@@ -341,6 +358,17 @@ const Products = () => {
             if (!res.ok || json.success === false) {
                 throw new Error(json.message || "Failed to update product");
             }
+
+            // NEW: 202 = this edit went to the reporting manager for
+            // approval instead of applying immediately — see approvalGate.js.
+            if (res.status === 202) {
+                setApprovalNotice(
+                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
+            }
+
             await fetchProducts();
             setEditTarget(null);
         } catch (err: any) {
@@ -374,7 +402,21 @@ const Products = () => {
             if (!res.ok || json.success === false) {
                 throw new Error(json.message || "Failed to delete product");
             }
-            setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+
+            // NEW: 202 = this delete went to the reporting manager for
+            // approval instead of applying immediately — see approvalGate.js.
+            // Don't remove the row locally in that case; it's still there
+            // until an Ops Manager approves it. Re-fetch instead of the
+            // previous local-filter so both paths always reflect the
+            // server's actual state.
+            if (res.status === 202) {
+                setApprovalNotice(
+                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
+            }
+            await fetchProducts();
             setDeleteTarget(null);
         } catch (err: any) {
             setDeleteError(err.message || "Something went wrong.");
@@ -521,6 +563,42 @@ const Products = () => {
 
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
+                    {/* NEW: shown when a Process Lead's create/edit/delete came back
+                        202 — it went to their reporting manager for approval instead
+                        of applying immediately. See approvalGate.js. */}
+                    {approvalNotice && (
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                background: "#eaf6fb",
+                                color: "#204297",
+                                padding: "10px 16px",
+                                borderRadius: radius.md,
+                                fontSize: fontSize.base,
+                                fontWeight: fontWeight.medium,
+                                margin: "0 0 12px",
+                            }}
+                        >
+                            <span>{approvalNotice}</span>
+                            <button
+                                type="button"
+                                onClick={() => setApprovalNotice(null)}
+                                style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    cursor: "pointer",
+                                    color: "#204297",
+                                }}
+                                aria-label="Dismiss"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
                     {/* Page title */}
                     {!isMobile && <h2 style={styles.pageTitle}>Products</h2>}
 

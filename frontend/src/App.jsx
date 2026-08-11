@@ -30,6 +30,7 @@ const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
 const QC = lazy(() => import("./pages/admin/qc"));
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
+const Approvals = lazy(() => import("./pages/admin/approvals"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
 // Backend base URL, same source every other page uses for API calls.
@@ -282,6 +283,22 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
                                         <ProductionReports />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Approvals — Process Lead's Client/Subclient/Service
+                        requests, decided here by their reporting manager. Gated to
+                        ADMIN_TIER_ROLES; the backend further narrows what each role
+                        actually sees (own submissions + whatever they're eligible
+                        to decide on). */}
+                        <Route
+                            path="/approvals"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Approvals />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

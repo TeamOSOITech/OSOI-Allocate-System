@@ -323,6 +323,10 @@ export default function Clients() {
     const [addForm, setAddForm] = useState({ ...emptyForm });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
+
+    // NEW: shown as a dismissible banner when a create/edit/delete came
+    // back 202 (Process Lead's request went to their reporting manager
+    // for approval instead of applying immediately) — see approvalGate.js.
     const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
     // ---- Edit state ----
@@ -504,7 +508,10 @@ export default function Clients() {
                 throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
-            // NEW: 202 = Process Lead's request went for approval, not created yet.
+            // NEW: 202 = a Process Lead's request went to their reporting
+            // manager for approval instead of being created immediately —
+            // see approvalGate.js. Surface that clearly instead of letting
+            // it look like a normal, already-applied create.
             if (response.status === 202) {
                 const data = await response.json().catch(() => null);
                 setApprovalNotice(
@@ -632,6 +639,17 @@ export default function Clients() {
                 throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
+            // NEW: 202 = this edit went to the reporting manager for
+            // approval instead of applying immediately — see approvalGate.js.
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
+                setApprovalNotice(
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setApprovalNotice(null);
+            }
+
             await fetchAll();
             setEditTarget(null);
         } catch (err: any) {
@@ -669,7 +687,8 @@ export default function Clients() {
                 throw new Error(data?.message || "Failed to delete");
             }
 
-            // NEW: 202 = Process Lead's request went for approval, not created yet.
+            // NEW: 202 = this delete went to the reporting manager for
+            // approval instead of applying immediately — see approvalGate.js.
             if (response.status === 202) {
                 const data = await response.json().catch(() => null);
                 setApprovalNotice(
@@ -1070,6 +1089,42 @@ export default function Clients() {
 
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
+                    {/* NEW: shown when a Process Lead's create/edit/delete came back
+                        202 — it went to their reporting manager for approval instead
+                        of applying immediately. See approvalGate.js. */}
+                    {approvalNotice && (
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                background: "#eaf6fb",
+                                color: "#204297",
+                                padding: "10px 16px",
+                                borderRadius: radius.md,
+                                fontSize: fontSize.base,
+                                fontWeight: fontWeight.medium,
+                                margin: "0 0 12px",
+                            }}
+                        >
+                            <span>{approvalNotice}</span>
+                            <button
+                                type="button"
+                                onClick={() => setApprovalNotice(null)}
+                                style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    cursor: "pointer",
+                                    color: "#204297",
+                                }}
+                                aria-label="Dismiss"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
                     {/* Tabs — flexWrap so on very narrow phones "Subclient" wraps to
                         its own line instead of being clipped by the mobile shell's
                         overflow:hidden, and stays reachable/tappable either way. */}
