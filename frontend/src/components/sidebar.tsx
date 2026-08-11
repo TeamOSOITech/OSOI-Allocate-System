@@ -40,12 +40,12 @@ const menuItems: MenuItem[] = [
     // App.jsx) rather than /dashboard, which is the admin-tier metrics
     // dashboard. Shown only to TEAM_MEMBER — admin-tier roles already
     // have "Dashboard" above.
-    {
+    /*{
         label: "User Dashboard",
         icon: "ti ti-smart-home",
         path: "/report",
         roles: ["TEAM_MEMBER"],
-    },
+    },*/
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
