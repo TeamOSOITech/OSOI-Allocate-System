@@ -76,6 +76,69 @@ function isProfessionalEmail(email) {
   return !!domain && !BLOCKED_EMAIL_DOMAINS.includes(domain);
 }
 
+// ---------------------------------------------------------------------------
+// NEW: Tenant lock — a user can only add other users whose email domain
+// matches their OWN email domain (e.g. an admin at "you@cms.com" can only
+// create "*@cms.com" accounts). This stops one org's admin from
+// accidentally (or deliberately) onboarding someone into the wrong tenant.
+//
+// We resolve the caller's own domain by looking up their row in
+// user_master via Auth User Id (req.user.userId), rather than trusting
+// anything from the request body.
+// ---------------------------------------------------------------------------
+
+function getDomain(email) {
+  return normalizeEmail(email).split("@")[1] || null;
+}
+
+function sameDomain(email, domain) {
+  if (!domain) return false;
+  return normalizeEmail(email).split("@")[1] === domain;
+}
+
+// NEW: phone must be exactly 10 digits. Strips spaces/dashes/+91 etc.
+// before checking, so "+91 98765-43210" and "9876543210" are both
+// accepted as long as the core number is 10 digits — adjust the strip
+// regex if you want to be stricter (e.g. reject +91 entirely).
+function isValidPhone(phone) {
+  if (!phone) return true; // phone is optional — only validate if provided
+  const digitsOnly = phone
+    .toString()
+    .replace(/[\s\-()]/g, "")
+    .replace(/^\+?91/, "");
+  return /^\d{10}$/.test(digitsOnly);
+}
+
+// NEW: Reporting Manager must be a real, existing user's email — and
+// that user must belong to the SAME organization as the person being
+// added. Prevents typos (silently storing a manager that doesn't exist)
+// and cross-tenant leakage (pointing at someone else's org).
+async function validateReportingManager(email, organizationId) {
+  if (!email) return { valid: true }; // optional field
+
+  const normalized = normalizeEmail(email);
+  const { data, error } = await supabaseAdmin
+    .from("user_master")
+    .select("Email")
+    .eq("Email", normalized)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("validateReportingManager lookup failed:", error);
+    return { valid: false, message: "Could not verify reporting manager." };
+  }
+
+  if (!data) {
+    return {
+      valid: false,
+      message: `Reporting manager "${email}" was not found in your organization.`,
+    };
+  }
+
+  return { valid: true };
+}
+
 /**
  * How many users this organization's plan is allowed to have — based on
  * their active row in `subscriptions` (joined to `plans` for the name).
@@ -312,6 +375,20 @@ router.post(
         });
       }
 
+      // NEW: tenant lock — new user's email domain must match the
+      // requesting admin's own domain (same organization). Prevents an
+      // admin at "you@cms.com" from onboarding "someone@otherco.com".
+      // req.user.email comes straight from Supabase Auth (authenticate
+      // middleware) — no extra DB lookup needed.
+      const creatorDomain = getDomain(req.user.email);
+      if (!sameDomain(email, creatorDomain)) {
+        return res.status(400).json({
+          message: creatorDomain
+            ? `You can only add users with an @${creatorDomain} email address.`
+            : "Could not verify your organization's domain. Contact support.",
+        });
+      }
+
       // SECURITY: never trust body.role blindly — check it against what
       // THIS caller's role is allowed to hand out. See ASSIGNABLE_ROLES
       // in config/permissions.js. Without this, any role holding
@@ -321,6 +398,25 @@ router.post(
         return res.status(403).json({
           message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole}.`,
         });
+      }
+
+      // NEW: phone must be 10 digits, if provided.
+      if (body.phone && !isValidPhone(body.phone)) {
+        return res.status(400).json({
+          message: "Phone number must be exactly 10 digits.",
+        });
+      }
+
+      // NEW: reporting manager, if provided, must be a real user in the
+      // same organization.
+      if (body.reportingManager) {
+        const rmCheck = await validateReportingManager(
+          body.reportingManager,
+          req.user.organizationId,
+        );
+        if (!rmCheck.valid) {
+          return res.status(400).json({ message: rmCheck.message });
+        }
       }
 
       const alreadyExists = await emailExists(email);
@@ -430,6 +526,10 @@ router.post(
       ]);
       let remainingSlots = Math.max(limit - currentCount, 0);
 
+      // NEW: tenant lock — resolve the caller's own domain once, reuse
+      // for every row. req.user.email comes from Supabase Auth directly.
+      const creatorDomain = getDomain(req.user.email);
+
       for (const rawUser of users) {
         const email = normalizeEmail(rawUser.email);
 
@@ -455,6 +555,19 @@ router.post(
           continue;
         }
 
+        // NEW: tenant lock — every row's email domain must match the
+        // caller's own domain.
+        if (!sameDomain(email, creatorDomain)) {
+          results.push({
+            email,
+            success: false,
+            message: creatorDomain
+              ? `Email domain doesn't match your organization (@${creatorDomain}).`
+              : "Could not verify your organization's domain.",
+          });
+          continue;
+        }
+
         // SECURITY: same check as add-user — reject any row asking for a
         // role this caller isn't allowed to hand out, instead of trusting
         // whatever the Excel file says. See ASSIGNABLE_ROLES.
@@ -468,6 +581,29 @@ router.post(
             message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole || "(missing)"}.`,
           });
           continue;
+        }
+
+        // NEW: phone must be 10 digits, if provided.
+        if (rawUser.phone && !isValidPhone(rawUser.phone)) {
+          results.push({
+            email,
+            success: false,
+            message: "Phone number must be exactly 10 digits.",
+          });
+          continue;
+        }
+
+        // NEW: reporting manager, if provided, must be a real user in
+        // the same organization.
+        if (rawUser.reportingManager) {
+          const rmCheck = await validateReportingManager(
+            rawUser.reportingManager,
+            req.user.organizationId,
+          );
+          if (!rmCheck.valid) {
+            results.push({ email, success: false, message: rmCheck.message });
+            continue;
+          }
         }
 
         // Duplicate check within THIS upload batch — email only, role/password ignored

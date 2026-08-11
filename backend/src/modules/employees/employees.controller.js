@@ -31,6 +31,41 @@ function mapRow(row) {
   };
 }
 
+function normalizeEmail(email) {
+  return (email || "").toString().trim().toLowerCase();
+}
+
+// NEW: Reporting Manager must be a real, existing user's email — and
+// that user must belong to the SAME organization as the employee being
+// edited. Mirrors the same check used at user-creation time
+// (userRoutes.js's validateReportingManager) so the rule holds
+// consistently whether a manager is set at signup or via later edit.
+async function validateReportingManager(email, organizationId) {
+  if (!email) return { valid: true }; // optional field
+
+  const normalized = normalizeEmail(email);
+  const { data, error } = await supabase
+    .from("user_master")
+    .select("Email")
+    .eq("Email", normalized)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("validateReportingManager lookup failed:", error);
+    return { valid: false, message: "Could not verify reporting manager." };
+  }
+
+  if (!data) {
+    return {
+      valid: false,
+      message: `Reporting manager "${email}" was not found in your organization.`,
+    };
+  }
+
+  return { valid: true };
+}
+
 async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
 
@@ -72,6 +107,19 @@ async function updateEmployee(req, res) {
   const { id } = req.params;
   const orgId = req.user.organizationId;
   const body = req.body || {};
+
+  // NEW: reporting manager, if being changed, must be a real user in
+  // the same organization. Checked before building updatePayload so a
+  // bad value never reaches the DB write.
+  if (body.reportingManager !== undefined && body.reportingManager) {
+    const rmCheck = await validateReportingManager(
+      body.reportingManager,
+      orgId,
+    );
+    if (!rmCheck.valid) {
+      return res.status(400).json({ error: rmCheck.message });
+    }
+  }
 
   const updatePayload = {};
 
