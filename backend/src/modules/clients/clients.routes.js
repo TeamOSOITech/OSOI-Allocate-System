@@ -33,7 +33,23 @@ const { approvalGate } = require("../../middlewares/approvalGate");
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
 
-const upload = multer({ storage: multer.memoryStorage() });
+// SECURITY FIX (Finding #16): no fileFilter or size limit previously —
+// restricted to the spreadsheet types this endpoint actually parses,
+// with a 10MB cap (mirrors subclients.routes.js).
+const path = require("path");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowed = [".xlsx", ".xls", ".csv"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.
