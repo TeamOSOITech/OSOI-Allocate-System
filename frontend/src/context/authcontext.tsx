@@ -14,13 +14,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import type { ReactNode } from "react";
-import {
-    getCurrentUser,
-    getAccessToken,
-    saveSession,
-    clearSession,
-    type CurrentUser,
-} from "../utils/auth";
+import { getCurrentUser, saveSession, clearSession, type CurrentUser } from "../utils/auth";
 import { authFetch } from "../utils/authFetch";
 
 interface AuthContextValue {
@@ -51,6 +45,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),
+                // FIX (Finding #05 follow-up): tokens now arrive as httpOnly
+                // cookies via Set-Cookie, not in the response body. Without
+                // credentials: "include" on this cross-domain request
+                // (frontend/backend are different origins), the browser
+                // discards those Set-Cookie headers entirely — login would
+                // look successful (user data still comes back) but no
+                // session cookie would ever actually be stored.
+                credentials: "include",
             });
             const data = await res.json();
 
@@ -58,11 +60,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 return { success: false, message: data.message || "Login failed" };
             }
 
-            saveSession({
-                accessToken: data.data.accessToken,
-                refreshToken: data.data.refreshToken,
-                user: data.data.user,
-            });
+            // FIX (Finding #05 follow-up): saveSession only takes { user }
+            // now — accessToken/refreshToken no longer exist on data.data
+            // (stripped server-side) and passing them here was a stale
+            // leftover from before the cookie-auth migration.
+            saveSession({ user: data.data.user });
             setUser(data.data.user);
             return { success: true };
         } catch (err: any) {
