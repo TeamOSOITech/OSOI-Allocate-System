@@ -42,6 +42,39 @@ const isValidPassword = (pw: string) =>
     pw.length >= PASSWORD_MIN_LENGTH && /[A-Z]/.test(pw) && /[^A-Za-z0-9]/.test(pw);
 const PASSWORD_REQUIREMENT_TEXT = `At least ${PASSWORD_MIN_LENGTH} characters, including one uppercase letter (A-Z) and one special character (!@#$ etc.)`;
 
+// NEW: fixed catalog of every role in the system, and — separately — which
+// of those roles each "creator" role is allowed to assign to a new user.
+// This is a frontend mirror of ASSIGNABLE_ROLES in the backend's
+// src/config/permissions.js (canAssignRole), so the dropdown only ever
+// offers options the backend will actually accept:
+//   - Super Admin: can assign any role, including Super Admin.
+//   - Ops Manager: can assign Process Lead, Vertical Head, Team Member.
+//   - Process Lead: can assign Vertical Head, Team Member.
+// Anyone else landing on this page (shouldn't normally happen — the
+// sidebar/route already gate who can reach Add User) sees an empty list
+// rather than silently falling back to "everything".
+const ALL_ROLE_OPTIONS: { value: string; label: string }[] = [
+    { value: "TEAM_MEMBER", label: "Team Member" },
+    { value: "VERTICAL_HEAD", label: "Vertical Head" },
+    { value: "PROCESS_LEAD", label: "Process Lead" },
+    { value: "OPS_MANAGER", label: "Ops Manager" },
+    { value: "AUDIT_MANAGER", label: "Audit Manager" },
+    { value: "SUPER_ADMIN", label: "Super Admin" },
+];
+
+const ASSIGNABLE_ROLES_BY_CREATOR: Record<string, string[]> = {
+    SUPER_ADMIN: [
+        "TEAM_MEMBER",
+        "VERTICAL_HEAD",
+        "PROCESS_LEAD",
+        "OPS_MANAGER",
+        "AUDIT_MANAGER",
+        "SUPER_ADMIN",
+    ],
+    OPS_MANAGER: ["TEAM_MEMBER", "VERTICAL_HEAD", "PROCESS_LEAD"],
+    PROCESS_LEAD: ["TEAM_MEMBER", "VERTICAL_HEAD"],
+};
+
 // helper: hex -> rgba(...) string, so buttons/tooltips can use the active
 // theme color at any opacity (shadows, tinted borders, etc.) without
 // hardcoding a color that won't move when the theme changes.
@@ -110,10 +143,11 @@ function useIsMobile() {
 }
 
 // Small reusable "+ add new option" control used under Department,
-// Designation, Role, Reporting Manager and Teams. Clicking the + reveals
-// an inline text box; submitting calls onAdd(value), which the parent
-// uses to (a) push the value into that field's dropdown list and (b)
-// persist it to the backend.
+// Designation, Reporting Manager and Teams (no longer under Role — see
+// the fixed ASSIGNABLE_ROLES_BY_CREATOR list above). Clicking the +
+// reveals an inline text box; submitting calls onAdd(value), which the
+// parent uses to (a) push the value into that field's dropdown list and
+// (b) persist it to the backend.
 function InlineAddOption({
     onAdd,
     placeholder,
@@ -227,6 +261,19 @@ export default function AddUser() {
     const styles = getStyles(BRAND);
     const globalCss = getGlobalCss(BRAND);
 
+    // NEW: who's actually logged in right now — determines which roles
+    // show up in the Role dropdown below (see ASSIGNABLE_ROLES_BY_CREATOR).
+    let loggedInUser: { role?: string } | null = null;
+    try {
+        loggedInUser = JSON.parse(localStorage.getItem("user") || "null");
+    } catch {
+        loggedInUser = null;
+    }
+    const creatorRole = (loggedInUser?.role || "").toUpperCase();
+    const roleOptions = ALL_ROLE_OPTIONS.filter((r) =>
+        (ASSIGNABLE_ROLES_BY_CREATOR[creatorRole] || []).includes(r.value)
+    );
+
     const [formData, setFormData] = useState({
         fullName: "",
         email: "",
@@ -314,19 +361,6 @@ export default function AddUser() {
         };
         fetchOptions();
     }, []);
-    // NOTE: Roles are tied to permission gating elsewhere (App.jsx role
-    // lists, backend src/config/permissions.js). Adding a role name here
-    // that doesn't exist in those places will let it be selected, but that
-    // user won't actually get any matching permissions. Keeping this
-    // addable because it was requested — worth revisiting.
-    const [roleOptions, setRoleOptions] = useState<{ value: string; label: string }[]>([
-        { value: "TEAM_MEMBER", label: "Team Member" },
-        { value: "VERTICAL_HEAD", label: "Vertical Head" },
-        { value: "PROCESS_LEAD", label: "Process Lead" },
-        { value: "OPS_MANAGER", label: "Ops Manager" },
-        { value: "AUDIT_MANAGER", label: "Audit Manager" },
-        { value: "SUPER_ADMIN", label: "Super Admin" },
-    ]);
 
     // Reporting Manager dropdown = every current Process Lead, fetched
     // live from /api/employees and filtered by role, plus anything added
@@ -910,6 +944,11 @@ export default function AddUser() {
                             <div style={styles.sectionBody}>
                                 <div style={isMobile ? styles.gridMobile : styles.grid}>
                                     <div>
+                                        {/* NEW: options are now the fixed, role-based list
+                                            from ASSIGNABLE_ROLES_BY_CREATOR (mirrors the
+                                            backend's canAssignRole) — no "+" control here
+                                            anymore, since roles aren't a free-text/custom
+                                            value the way Department/Designation/Teams are. */}
                                         <label style={labelStyle("role")}>Role *</label>
                                         <select
                                             style={styles.input}
@@ -918,26 +957,17 @@ export default function AddUser() {
                                                 setFormData({ ...formData, role: e.target.value })
                                             }
                                         >
-                                            <option value="">Select Role</option>
+                                            <option value="">
+                                                {roleOptions.length === 0
+                                                    ? "No roles available"
+                                                    : "Select Role"}
+                                            </option>
                                             {roleOptions.map((r) => (
                                                 <option key={r.value} value={r.value}>
                                                     {r.label}
                                                 </option>
                                             ))}
                                         </select>
-                                        <InlineAddOption
-                                            styles={styles}
-                                            placeholder="e.g. QA_LEAD"
-                                            onAdd={async (val) => {
-                                                setRoleOptions((prev) =>
-                                                    prev.some((r) => r.value === val)
-                                                        ? prev
-                                                        : [...prev, { value: val, label: val }]
-                                                );
-                                                setFormData((prev) => ({ ...prev, role: val }));
-                                                await saveCustomOption("role", val);
-                                            }}
-                                        />
                                     </div>
                                     <div>
                                         {/* Heading updated: "Reporting Manager" ->
