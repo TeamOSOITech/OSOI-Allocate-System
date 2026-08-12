@@ -190,10 +190,46 @@ export default function Employees() {
     // row/record's editability is being decided; canManage stays as-is
     // for section-level checks (e.g. "does this role see the Edit
     // affordance at all").
+    //
+    // FIX #2: the previous version only special-cased "target is SUPER_
+    // ADMIN" and returned true for every other target — so an Ops
+    // Manager editing ANOTHER Ops Manager (or Process Lead editing
+    // another Process Lead, or itself) still got a fully-editable drawer
+    // that the backend would then 403 on Save. Mirrors backend's
+    // EDITABLE_TARGET_ROLES in src/config/permissions.js exactly instead
+    // of special-casing one role: Super Admin -> everyone, Ops Manager ->
+    // Process Lead/Vertical Head/Team Member only, Process Lead ->
+    // Vertical Head/Team Member only. No self-edit exception either —
+    // matches backend, which has none.
+    const EDITABLE_TARGET_ROLES: Record<string, string[]> = {
+        SUPER_ADMIN: [
+            "TEAM_MEMBER",
+            "VERTICAL_HEAD",
+            "PROCESS_LEAD",
+            "OPS_MANAGER",
+            "AUDIT_MANAGER",
+            "SUPER_ADMIN",
+        ],
+        OPS_MANAGER: ["PROCESS_LEAD", "VERTICAL_HEAD", "TEAM_MEMBER"],
+        PROCESS_LEAD: ["VERTICAL_HEAD", "TEAM_MEMBER"],
+    };
     const canEditEmployee = (employee: Employee | null | undefined) => {
         if (!canManage) return false;
-        if (employee?.role === "SUPER_ADMIN" && role !== "SUPER_ADMIN") return false;
-        return true;
+        const allowed = EDITABLE_TARGET_ROLES[role] || [];
+        return allowed.includes(employee?.role || "");
+    };
+    // NEW: Delete is narrower than Edit — only Super Admin and Ops
+    // Manager can delete an employee record; Process Lead can create/edit
+    // but never delete (matches DELETABLE_TARGET_ROLES in the backend's
+    // src/config/permissions.js). Ops Manager can delete Process Lead /
+    // Vertical Head / Team Member records, but not another Ops Manager,
+    // Audit Manager, or Super Admin.
+    const canDeleteEmployee = (employee: Employee | null | undefined) => {
+        if (role === "SUPER_ADMIN") return true;
+        if (role === "OPS_MANAGER") {
+            return ["PROCESS_LEAD", "VERTICAL_HEAD", "TEAM_MEMBER"].includes(employee?.role || "");
+        }
+        return false;
     };
     // NEW: Role field is special — Ops Manager can edit everything else
     // about an employee, but only a Super Admin can change someone's
@@ -706,35 +742,33 @@ export default function Employees() {
                                                         </button>
 
                                                         {canEditEmployee(emp) && (
-                                                            <>
-                                                                <button
-                                                                    type="button"
-                                                                    className="emp-icon-btn-sm emp-icon-btn-sm-edit"
-                                                                    style={styles.editIconBtnSmall}
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleEdit(emp);
-                                                                    }}
-                                                                    aria-label={`Edit ${emp.name}`}
-                                                                >
-                                                                    <i className="ti ti-pencil" />
-                                                                </button>
+                                                            <button
+                                                                type="button"
+                                                                className="emp-icon-btn-sm emp-icon-btn-sm-edit"
+                                                                style={styles.editIconBtnSmall}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleEdit(emp);
+                                                                }}
+                                                                aria-label={`Edit ${emp.name}`}
+                                                            >
+                                                                <i className="ti ti-pencil" />
+                                                            </button>
+                                                        )}
 
-                                                                <button
-                                                                    type="button"
-                                                                    className="emp-icon-btn-sm emp-icon-btn-sm-delete"
-                                                                    style={
-                                                                        styles.deleteIconBtnSmall
-                                                                    }
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleDelete(emp);
-                                                                    }}
-                                                                    aria-label={`Delete ${emp.name}`}
-                                                                >
-                                                                    <i className="ti ti-trash" />
-                                                                </button>
-                                                            </>
+                                                        {canDeleteEmployee(emp) && (
+                                                            <button
+                                                                type="button"
+                                                                className="emp-icon-btn-sm emp-icon-btn-sm-delete"
+                                                                style={styles.deleteIconBtnSmall}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleDelete(emp);
+                                                                }}
+                                                                aria-label={`Delete ${emp.name}`}
+                                                            >
+                                                                <i className="ti ti-trash" />
+                                                            </button>
                                                         )}
                                                     </div>
                                                 </div>
@@ -813,7 +847,14 @@ export default function Employees() {
 
                         <div style={styles.drawerBody}>
                             <div style={styles.drawerProfileRow}>
-                                <div style={styles.avatarWrap}>
+                                <div
+                                    style={{
+                                        ...styles.avatarWrap,
+                                        position: "absolute",
+                                        top: -32,
+                                        left: 0,
+                                    }}
+                                >
                                     {drawerData.photoUrl ? (
                                         <img
                                             src={drawerData.photoUrl}
@@ -841,7 +882,7 @@ export default function Employees() {
                                         }}
                                     />
                                 </div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ minWidth: 0, marginLeft: 86 }}>
                                     {isEditingDrawer ? (
                                         <>
                                             <input
@@ -1774,10 +1815,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 22,
     },
     drawerProfileRow: {
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 14,
-        marginTop: -32,
+        position: "relative",
     },
     drawerHeaderRow: {
         display: "flex",
