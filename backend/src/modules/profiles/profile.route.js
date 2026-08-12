@@ -53,13 +53,21 @@ router.get("/profile", authenticate, async (req, res) => {
       .from("profiles")
       .select("*")
       .eq("user_id", requestedUserId)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
 
+    // FIX: some users (esp. ones onboarded before the profiles table
+    // existed, or via Add User flows that never insert a profiles row)
+    // have NO matching row here. .single() used to throw Postgrest's
+    // "Cannot coerce the result to a single JSON object" (PGRST116) in
+    // that case, which surfaced as a hard error on the Profile page
+    // instead of an empty, editable form. Fall back to sensible blank
+    // defaults — the PATCH handler below now upserts, so the very next
+    // save creates the row for real.
     res.json({
       success: true,
-      data,
+      data: data || { user_id: requestedUserId, phone: null, bio: null },
     });
   } catch (err) {
     res.status(400).json({
@@ -86,12 +94,53 @@ router.patch("/profile", authenticate, async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase
+    // FIX: a bare upsert with only {user_id, phone, bio} fails on INSERT
+    // (the first-ever save for a user with no existing profiles row)
+    // because profiles.first_name/last_name are NOT NULL — Postgres
+    // rejects the insert with "null value in column ... violates
+    // not-null constraint". Check whether the row exists first: if it
+    // does, a plain update (phone/bio only, never touching name) is
+    // enough; if it doesn't, seed the required NOT NULL columns from
+    // user_master before inserting.
+    const { data: existing, error: existingError } = await supabase
       .from("profiles")
-      .update(updatePayload)
-      .eq("user_id", req.user.userId) // can only ever update your OWN row
-      .select()
-      .single();
+      .select("user_id")
+      .eq("user_id", req.user.userId)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    let data, error;
+
+    if (existing) {
+      ({ data, error } = await supabase
+        .from("profiles")
+        .update(updatePayload) // can only ever touch your OWN row
+        .eq("user_id", req.user.userId)
+        .select()
+        .single());
+    } else {
+      const { data: userRow, error: userRowError } = await supabase
+        .from("user_master")
+        .select('"First Name", "Last Name", "Email"')
+        .eq("Auth User Id", req.user.userId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+
+      if (userRowError) throw userRowError;
+
+      ({ data, error } = await supabase
+        .from("profiles")
+        .insert({
+          user_id: req.user.userId,
+          first_name: userRow?.["First Name"] || "",
+          last_name: userRow?.["Last Name"] || "",
+          email: userRow?.["Email"] || null,
+          ...updatePayload,
+        })
+        .select()
+        .single());
+    }
 
     if (error) throw error;
 
