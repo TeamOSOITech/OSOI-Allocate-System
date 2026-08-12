@@ -1467,47 +1467,62 @@ export default function Clients() {
                                                                 >
                                                                     View
                                                                 </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="cl-icon-btn"
-                                                                    style={styles.iconBtn}
-                                                                    aria-label="Edit"
-                                                                    title="Edit client"
-                                                                    onClick={() =>
-                                                                        openEditModal({
-                                                                            type: "client",
-                                                                            data: client,
-                                                                        })
-                                                                    }
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-pencil"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="cl-icon-btn-danger"
-                                                                    style={styles.iconBtnDanger}
-                                                                    aria-label="Delete"
-                                                                    title="Delete client"
-                                                                    onClick={() =>
-                                                                        openDeleteConfirm(
-                                                                            "client",
-                                                                            client.id,
-                                                                            client.name
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-trash"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
+                                                                {/* FIX: Edit/Delete were always rendered
+                                                                    regardless of role — Team Member /
+                                                                    Vertical Head (view-only per the backend's
+                                                                    authorize("SUPER_ADMIN"/etc.) gate) could
+                                                                    see and click these, only to get a 403
+                                                                    from the API. Now hidden entirely for
+                                                                    anyone canManage doesn't cover, matching
+                                                                    the same gate already used for the Add
+                                                                    button above. */}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn"
+                                                                        style={styles.iconBtn}
+                                                                        aria-label="Edit"
+                                                                        title="Edit client"
+                                                                        onClick={() =>
+                                                                            openEditModal({
+                                                                                type: "client",
+                                                                                data: client,
+                                                                            })
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-pencil"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn-danger"
+                                                                        style={styles.iconBtnDanger}
+                                                                        aria-label="Delete"
+                                                                        title="Delete client"
+                                                                        onClick={() =>
+                                                                            openDeleteConfirm(
+                                                                                "client",
+                                                                                client.id,
+                                                                                client.name
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-trash"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                         </td>
                                                     </tr>
@@ -1617,47 +1632,53 @@ export default function Clients() {
                                                                 >
                                                                     View
                                                                 </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="cl-icon-btn"
-                                                                    style={styles.iconBtn}
-                                                                    aria-label="Edit"
-                                                                    title="Edit subclient"
-                                                                    onClick={() =>
-                                                                        openEditModal({
-                                                                            type: "subclient",
-                                                                            data: sub,
-                                                                        })
-                                                                    }
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-pencil"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="cl-icon-btn-danger"
-                                                                    style={styles.iconBtnDanger}
-                                                                    aria-label="Delete"
-                                                                    title="Delete subclient"
-                                                                    onClick={() =>
-                                                                        openDeleteConfirm(
-                                                                            "subclient",
-                                                                            sub.id,
-                                                                            sub.name
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-trash"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn"
+                                                                        style={styles.iconBtn}
+                                                                        aria-label="Edit"
+                                                                        title="Edit subclient"
+                                                                        onClick={() =>
+                                                                            openEditModal({
+                                                                                type: "subclient",
+                                                                                data: sub,
+                                                                            })
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-pencil"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn-danger"
+                                                                        style={styles.iconBtnDanger}
+                                                                        aria-label="Delete"
+                                                                        title="Delete subclient"
+                                                                        onClick={() =>
+                                                                            openDeleteConfirm(
+                                                                                "subclient",
+                                                                                sub.id,
+                                                                                sub.name
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-trash"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                         </td>
                                                     </tr>

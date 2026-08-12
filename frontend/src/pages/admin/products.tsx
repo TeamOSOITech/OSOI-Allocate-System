@@ -1033,41 +1033,50 @@ const Products = () => {
                                                             >
                                                                 View
                                                             </button>
-                                                            <button
-                                                                type="button"
-                                                                className="pr-icon-btn"
-                                                                style={styles.iconBtn}
-                                                                aria-label="Edit"
-                                                                title="Edit service"
-                                                                onClick={() => openEditModal(p)}
-                                                            >
-                                                                <i
-                                                                    className="ti ti-pencil"
-                                                                    style={{
-                                                                        fontSize: fontSize.base,
-                                                                    }}
-                                                                />
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                className="pr-icon-btn-danger"
-                                                                style={styles.iconBtnDanger}
-                                                                aria-label="Delete"
-                                                                title="Delete service"
-                                                                onClick={() =>
-                                                                    openDeleteConfirm(
-                                                                        p.id,
-                                                                        p.product_name
-                                                                    )
-                                                                }
-                                                            >
-                                                                <i
-                                                                    className="ti ti-trash"
-                                                                    style={{
-                                                                        fontSize: fontSize.base,
-                                                                    }}
-                                                                />
-                                                            </button>
+                                                            {/* FIX: same as clients.tsx — Edit/Delete
+                                                                were always rendered regardless of role,
+                                                                so Team Member / Vertical Head (view-only)
+                                                                could see and click them and get a 403.
+                                                                Gated behind canManage now. */}
+                                                            {canManage && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="pr-icon-btn"
+                                                                    style={styles.iconBtn}
+                                                                    aria-label="Edit"
+                                                                    title="Edit service"
+                                                                    onClick={() => openEditModal(p)}
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-pencil"
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
+                                                                    />
+                                                                </button>
+                                                            )}
+                                                            {canManage && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="pr-icon-btn-danger"
+                                                                    style={styles.iconBtnDanger}
+                                                                    aria-label="Delete"
+                                                                    title="Delete service"
+                                                                    onClick={() =>
+                                                                        openDeleteConfirm(
+                                                                            p.id,
+                                                                            p.product_name
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-trash"
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
+                                                                    />
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     </td>
                                                 </tr>
