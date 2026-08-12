@@ -2027,51 +2027,64 @@ export default function Clients() {
                             </div>
 
                             <div style={styles.detailsModalFooter}>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.secondaryBtn,
-                                        flex: 1,
-                                        justifyContent: "center",
-                                    }}
-                                    onClick={() => {
-                                        const target = viewDetails;
-                                        setViewDetails(null);
-                                        if (target) openEditModal(target);
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-pencil"
-                                        style={{ fontSize: fontSize.base }}
-                                    />
-                                    Edit
-                                </button>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.addSubmitBtn,
-                                        flex: 1,
-                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
-                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
-                                    }}
-                                    onClick={() => {
-                                        const target = viewDetails;
-                                        setViewDetails(null);
-                                        if (target) {
-                                            openDeleteConfirm(
-                                                target.type,
-                                                target.data.id,
-                                                target.data.name
-                                            );
-                                        }
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-trash"
-                                        style={{ fontSize: fontSize.base }}
-                                    />
-                                    Delete
-                                </button>
+                                {/* FIX: these Edit/Delete buttons inside the View
+                                    Details modal were always rendered regardless
+                                    of role — Team Member / Vertical Head (view-only
+                                    access) could see and click them, only to get
+                                    "Access denied" from the backend on submit.
+                                    Gate them the same way as the list-row icons
+                                    above (canManage), so anyone without edit/delete
+                                    permission never sees affordances that are
+                                    guaranteed to fail. */}
+                                {canManage && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.secondaryBtn,
+                                            flex: 1,
+                                            justifyContent: "center",
+                                        }}
+                                        onClick={() => {
+                                            const target = viewDetails;
+                                            setViewDetails(null);
+                                            if (target) openEditModal(target);
+                                        }}
+                                    >
+                                        <i
+                                            className="ti ti-pencil"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Edit
+                                    </button>
+                                )}
+                                {canManage && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.addSubmitBtn,
+                                            flex: 1,
+                                            background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                            boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        }}
+                                        onClick={() => {
+                                            const target = viewDetails;
+                                            setViewDetails(null);
+                                            if (target) {
+                                                openDeleteConfirm(
+                                                    target.type,
+                                                    target.data.id,
+                                                    target.data.name
+                                                );
+                                            }
+                                        }}
+                                    >
+                                        <i
+                                            className="ti ti-trash"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Delete
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>

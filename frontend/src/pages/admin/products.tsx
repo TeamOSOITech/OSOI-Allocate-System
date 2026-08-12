@@ -1200,47 +1200,58 @@ const Products = () => {
                             </div>
 
                             <div style={styles.detailsModalFooter}>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.secondaryBtn,
-                                        flex: 1,
-                                        justifyContent: "center",
-                                    }}
-                                    onClick={() => {
-                                        const target = viewDetails;
-                                        setViewDetails(null);
-                                        if (target) openEditModal(target);
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-pencil"
-                                        style={{ fontSize: fontSize.base }}
-                                    />
-                                    Edit
-                                </button>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.addSubmitBtn,
-                                        flex: 1,
-                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
-                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
-                                    }}
-                                    onClick={() => {
-                                        const target = viewDetails;
-                                        setViewDetails(null);
-                                        if (target) {
-                                            openDeleteConfirm(target.id, target.product_name);
-                                        }
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-trash"
-                                        style={{ fontSize: fontSize.base }}
-                                    />
-                                    Delete
-                                </button>
+                                {/* FIX: same as clients.tsx — these View Details
+                                    modal Edit/Delete buttons were always rendered
+                                    regardless of role, so Team Member / Vertical
+                                    Head (view-only) could click them and only find
+                                    out via a backend "Access denied" on submit.
+                                    Gated behind canManage, matching the list-row
+                                    icons above. */}
+                                {canManage && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.secondaryBtn,
+                                            flex: 1,
+                                            justifyContent: "center",
+                                        }}
+                                        onClick={() => {
+                                            const target = viewDetails;
+                                            setViewDetails(null);
+                                            if (target) openEditModal(target);
+                                        }}
+                                    >
+                                        <i
+                                            className="ti ti-pencil"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Edit
+                                    </button>
+                                )}
+                                {canManage && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.addSubmitBtn,
+                                            flex: 1,
+                                            background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                            boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        }}
+                                        onClick={() => {
+                                            const target = viewDetails;
+                                            setViewDetails(null);
+                                            if (target) {
+                                                openDeleteConfirm(target.id, target.product_name);
+                                            }
+                                        }}
+                                    >
+                                        <i
+                                            className="ti ti-trash"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Delete
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>

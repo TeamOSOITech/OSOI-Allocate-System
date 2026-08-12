@@ -847,14 +847,7 @@ export default function Employees() {
 
                         <div style={styles.drawerBody}>
                             <div style={styles.drawerProfileRow}>
-                                <div
-                                    style={{
-                                        ...styles.avatarWrap,
-                                        position: "absolute",
-                                        top: -32,
-                                        left: 0,
-                                    }}
-                                >
+                                <div style={{ ...styles.avatarWrap, flexShrink: 0 }}>
                                     {drawerData.photoUrl ? (
                                         <img
                                             src={drawerData.photoUrl}
@@ -882,7 +875,7 @@ export default function Employees() {
                                         }}
                                     />
                                 </div>
-                                <div style={{ minWidth: 0, marginLeft: 86 }}>
+                                <div style={{ minWidth: 0, paddingTop: 30 }}>
                                     {isEditingDrawer ? (
                                         <>
                                             <input
@@ -1816,6 +1809,10 @@ const styles: Record<string, CSSProperties> = {
     },
     drawerProfileRow: {
         position: "relative",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 14,
+        marginTop: -32,
     },
     drawerHeaderRow: {
         display: "flex",
@@ -1882,6 +1879,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         color: "#16233a",
         boxSizing: "border-box",
+        textAlign: "left",
     },
     drawerStatusSelect: {
         border: "1px solid #dbe6f0",
