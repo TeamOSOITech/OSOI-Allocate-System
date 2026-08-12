@@ -179,6 +179,22 @@ export default function Employees() {
     }
     const role = (currentUser?.role || "TEAM_MEMBER").toUpperCase();
     const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"].includes(role);
+    // FIX: canManage alone was global ("can this user edit employees at
+    // all") and didn't consider WHO the target employee is. That let an
+    // Ops Manager/Process Lead open the edit drawer for a Super Admin's
+    // record and see every field as an editable input (Department,
+    // Designation, Reporting Manager, Joining Date, Email...) with an
+    // enabled Save button — even though the backend now rejects the
+    // PATCH with a 403. The UI shouldn't offer an editing experience
+    // that's guaranteed to fail. Use this wherever a specific employee
+    // row/record's editability is being decided; canManage stays as-is
+    // for section-level checks (e.g. "does this role see the Edit
+    // affordance at all").
+    const canEditEmployee = (employee: Employee | null | undefined) => {
+        if (!canManage) return false;
+        if (employee?.role === "SUPER_ADMIN" && role !== "SUPER_ADMIN") return false;
+        return true;
+    };
     // NEW: Role field is special — Ops Manager can edit everything else
     // about an employee, but only a Super Admin can change someone's
     // role (prevents a lower admin tier from granting/removing Super
@@ -296,7 +312,7 @@ export default function Employees() {
 
     // Opens the drawer straight into edit mode (pencil icon on the card).
     const handleEdit = (employee: Employee) => {
-        if (!canManage) return;
+        if (!canEditEmployee(employee)) return;
         setSelectedEmployee(employee);
         setEditForm({ ...employee });
         setIsEditingDrawer(true);
@@ -304,7 +320,7 @@ export default function Employees() {
 
     // Switches an already-open (read-only) drawer into edit mode.
     const startEditingDrawer = () => {
-        if (!canManage || !selectedEmployee) return;
+        if (!canEditEmployee(selectedEmployee) || !selectedEmployee) return;
         setEditForm({ ...selectedEmployee });
         setIsEditingDrawer(true);
     };
@@ -324,6 +340,13 @@ export default function Employees() {
     // the catch block below — the UI is ready as soon as the route is.
     const handleSaveEdit = async () => {
         if (!editForm) return;
+        // Defense in depth: the pencil/Edit affordances are already hidden
+        // via canEditEmployee() above, but guard the actual save action
+        // too in case editForm/selectedEmployee got out of sync.
+        if (!canEditEmployee(selectedEmployee)) {
+            alert("You don't have permission to edit this employee.");
+            return;
+        }
         setSaving(true);
         try {
             // Guard on the frontend too: even though the Role <select> is
@@ -380,7 +403,7 @@ export default function Employees() {
     };
 
     const handleDelete = (employee: Employee) => {
-        if (!canManage) return;
+        if (!canEditEmployee(employee)) return;
         setEmployeeToDelete(employee);
         setShowDeleteModal(true);
     };
@@ -682,7 +705,7 @@ export default function Employees() {
                                                             <i className="ti ti-maximize" />
                                                         </button>
 
-                                                        {canManage && (
+                                                        {canEditEmployee(emp) && (
                                                             <>
                                                                 <button
                                                                     type="button"
@@ -883,7 +906,7 @@ export default function Employees() {
                                             </span>
                                         )}
 
-                                        {!isEditingDrawer && canManage && (
+                                        {!isEditingDrawer && canEditEmployee(selectedEmployee) && (
                                             <button
                                                 type="button"
                                                 style={styles.drawerEditBtn}
