@@ -1209,7 +1209,7 @@ export default function AddUser() {
                 )}
 
                 {showBulkModal && (
-                    <div style={styles.overlay} onClick={closeBulkModal}>
+                    <div style={styles.overlay}>
                         <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                             <div style={styles.bulkModalHeader}>
                                 <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>

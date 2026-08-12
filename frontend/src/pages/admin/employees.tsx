@@ -826,7 +826,7 @@ export default function Employees() {
 
             {/* Right side profile drawer */}
             {selectedEmployee && drawerData && (
-                <div style={styles.drawerOverlay} onClick={closeProfile}>
+                <div style={styles.drawerOverlay}>
                     <div
                         className="emp-drawer"
                         style={isMobile ? styles.drawerMobile : styles.drawer}
@@ -1243,7 +1243,7 @@ export default function Employees() {
 
             {/* Delete confirmation modal */}
             {showDeleteModal && employeeToDelete && (
-                <div style={styles.modalOverlay} onClick={closeDeleteModal}>
+                <div style={styles.modalOverlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.modalIcon}>
                             <i className="ti ti-trash" />

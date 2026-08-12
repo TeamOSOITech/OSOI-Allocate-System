@@ -829,22 +829,28 @@ const Products = () => {
                             </p>
 
                             <div style={styles.headerActions}>
-                                <span className="pr-tooltip-wrap">
-                                    <button
-                                        style={styles.secondaryBtn}
-                                        type="button"
-                                        onClick={handleDownloadTemplate}
-                                    >
-                                        <i
-                                            className="ti ti-file-spreadsheet"
-                                            style={{ fontSize: fontSize.md }}
-                                        />
-                                        Sample Sheet
-                                    </button>
-                                    <span className="pr-tooltip-bubble">
-                                        Sample sheet for bulk upload (.xlsx)
+                                {/* Sample sheet is only useful for bulk-uploading, which
+                                    itself is gated behind canManage — Team Member /
+                                    Vertical Head (view-only) have no use for a template
+                                    they can't upload, so hide it for them too. */}
+                                {canManage && (
+                                    <span className="pr-tooltip-wrap">
+                                        <button
+                                            style={styles.secondaryBtn}
+                                            type="button"
+                                            onClick={handleDownloadTemplate}
+                                        >
+                                            <i
+                                                className="ti ti-file-spreadsheet"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            Sample Sheet
+                                        </button>
+                                        <span className="pr-tooltip-bubble">
+                                            Sample sheet for bulk upload (.xlsx)
+                                        </span>
                                     </span>
-                                </span>
+                                )}
 
                                 {/* Bulk Upload now opens a modal (matching the Add User
                                     page's "Bulk Add Users" modal) instead of firing an
@@ -1167,7 +1173,7 @@ const Products = () => {
 
             {/* View Details modal */}
             {viewDetails && (
-                <div style={styles.overlay} onClick={() => setViewDetails(null)}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>{viewDetails.product_name}</h3>
@@ -1260,7 +1266,7 @@ const Products = () => {
 
             {/* Add modal */}
             {showAddModal && (
-                <div style={styles.overlay} onClick={closeAddModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Add Service</h3>
@@ -1299,7 +1305,7 @@ const Products = () => {
 
             {/* Edit modal */}
             {editTarget && (
-                <div style={styles.overlay} onClick={closeEditModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Edit Service</h3>
@@ -1338,7 +1344,7 @@ const Products = () => {
 
             {/* Delete confirmation modal */}
             {deleteTarget && (
-                <div style={styles.overlay} onClick={closeDeleteConfirm}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Delete {deleteTarget.name}?</h3>
@@ -1401,7 +1407,7 @@ const Products = () => {
                 results/errors rendered inline below once a file is
                 submitted. */}
             {showBulkModal && (
-                <div style={styles.overlay} onClick={closeBulkModal}>
+                <div style={styles.overlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
                             <h3 style={styles.bulkModalTitle}>Bulk Add Services</h3>
