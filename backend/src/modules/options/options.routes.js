@@ -31,10 +31,52 @@ router.use((req, res, next) => {
   next();
 });
 
+// Small helper: merge the curated options-table names with whatever
+// distinct values already exist on user_master for the same org, so a
+// department/designation/team that was typed directly on a user (e.g. via
+// bulk upload, or before the options table existed) still shows up in the
+// dropdown even though it was never explicitly added via the "+" control.
+// Case-insensitive de-dupe (keeps the options-table casing when both exist),
+// alphabetically sorted, blanks/nulls dropped.
+function mergeDistinct(curatedNames, userValues) {
+  const seenLower = new Set();
+  const merged = [];
+
+  for (const name of curatedNames || []) {
+    const trimmed = (name || "").toString().trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seenLower.has(key)) continue;
+    seenLower.add(key);
+    merged.push(trimmed);
+  }
+
+  for (const value of userValues || []) {
+    const trimmed = (value || "").toString().trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seenLower.has(key)) continue;
+    seenLower.add(key);
+    merged.push(trimmed);
+  }
+
+  return merged.sort((a, b) => a.localeCompare(b));
+}
+
 // ---------- GET /api/options ----------
 // Returns every option list in one call: { departments: [...], designations: [...], teams: [...], reportingManagers: [...] }
 // so the Add User form can fetch all dropdowns on mount with a single
 // request instead of several.
+//
+// FIX: department/designation/team values that already exist on employee
+// records (typed directly at creation time or via bulk upload) were never
+// being inserted into the departments/designations/teams options tables —
+// only values added through the "+" control on Add User were. So a
+// Super Admin looking at an employee with e.g. Department = "Finance"
+// would NOT see "Finance" in the dropdown unless someone had separately
+// added it via "+". Now we also pull the distinct values already in use
+// on user_master (scoped to the same org) and merge them in, so the
+// dropdown always reflects what's actually already "filled" for real users.
 router.get("/", async (req, res) => {
   try {
     const orgId = req.user.organizationId;
@@ -44,6 +86,7 @@ router.get("/", async (req, res) => {
       { data: designations, error: desErr },
       { data: teams, error: teamErr },
       { data: reportingManagers, error: rmErr },
+      { data: userValues, error: userValuesErr },
     ] = await Promise.all([
       supabase
         .from("departments")
@@ -65,17 +108,41 @@ router.get("/", async (req, res) => {
         .select("id,name")
         .eq("organization_id", orgId)
         .order("name", { ascending: true }),
+      // Read-only, same org_id scope as everything else here — just used
+      // to backfill the dropdowns, never written to from this route.
+      supabase
+        .from("user_master")
+        .select('"Department","Designation","Worked In Teams"')
+        .eq("organization_id", orgId),
     ]);
 
     if (deptErr) throw deptErr;
     if (desErr) throw desErr;
     if (teamErr) throw teamErr;
     if (rmErr) throw rmErr;
+    if (userValuesErr) throw userValuesErr;
+
+    const rows = userValues || [];
+    const usedDepartments = rows.map((r) => r["Department"]);
+    const usedDesignations = rows.map((r) => r["Designation"]);
+    const usedTeams = rows.map((r) => r["Worked In Teams"]);
 
     res.json({
-      departments: (departments || []).map((d) => d.name),
-      designations: (designations || []).map((d) => d.name),
-      teams: (teams || []).map((d) => d.name),
+      departments: mergeDistinct(
+        (departments || []).map((d) => d.name),
+        usedDepartments,
+      ),
+      designations: mergeDistinct(
+        (designations || []).map((d) => d.name),
+        usedDesignations,
+      ),
+      teams: mergeDistinct(
+        (teams || []).map((d) => d.name),
+        usedTeams,
+      ),
+      // Reporting manager is intentionally left as-is (curated list only) —
+      // it's tied to actual manager emails elsewhere in the app, so
+      // auto-merging free-text user values here isn't safe/meaningful.
       reportingManagers: (reportingManagers || []).map((d) => d.name),
     });
   } catch (err) {
