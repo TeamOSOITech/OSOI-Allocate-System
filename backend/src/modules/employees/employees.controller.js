@@ -6,7 +6,11 @@
 // ACTUAL primary key column: "Auth User Id" (uuid)
 
 const supabase = require("../../config/supabaseClient");
-const { canAssignRole } = require("../../config/permissions");
+const {
+  canAssignRole,
+  canEditTargetRole,
+  canDeleteTargetRole,
+} = require("../../config/permissions");
 
 function mapRow(row) {
   const firstName = row["First Name"] ?? "";
@@ -230,6 +234,34 @@ async function updateEmployee(req, res) {
 async function deleteEmployee(req, res) {
   const { id } = req.params;
   const orgId = req.user.organizationId;
+
+  // FIX: requirePermission("employees.manage") on the route alone isn't
+  // enough — Process Lead also holds that permission (for create/edit),
+  // but per the org's flow, delete is Super Admin / Ops Manager ONLY.
+  // See DELETABLE_TARGET_ROLES in src/config/permissions.js — Process
+  // Lead is intentionally omitted there, so canDeleteTargetRole() always
+  // returns false for it, blocking delete regardless of the target's
+  // role. Also enforces the target-role hierarchy for Ops Manager
+  // (can't delete another Ops Manager / Audit Manager / Super Admin).
+  const { data: targetRow, error: targetLookupError } = await supabase
+    .from("user_master")
+    .select('"Role"')
+    .eq("Auth User Id", id)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+
+  if (targetLookupError) {
+    console.error("Failed to look up target employee role:", targetLookupError);
+    return res.status(500).json({ error: "Failed to delete employee" });
+  }
+  if (!targetRow) {
+    return res.status(404).json({ error: "Employee not found" });
+  }
+  if (!canDeleteTargetRole(req.user.role, targetRow["Role"])) {
+    return res.status(403).json({
+      error: "You don't have permission to delete this employee.",
+    });
+  }
 
   const { error } = await supabase
     .from("user_master")
