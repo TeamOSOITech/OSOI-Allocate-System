@@ -108,33 +108,6 @@ async function updateEmployee(req, res) {
   const orgId = req.user.organizationId;
   const body = req.body || {};
 
-  // FIX: previously ANY field (department, designation, reporting
-  // manager, etc.) on a SUPER_ADMIN's record could be edited by anyone
-  // holding "employees.manage" (e.g. Ops Manager) — only the `role`
-  // field itself was protected via canAssignRole below. A Super Admin's
-  // record should not be editable by anyone except another Super Admin,
-  // full stop, on any field. Fetch the target's current role first and
-  // block the whole request up front if that's violated.
-  const { data: targetRow, error: targetLookupError } = await supabase
-    .from("user_master")
-    .select('"Role"')
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId)
-    .maybeSingle();
-
-  if (targetLookupError) {
-    console.error("Failed to look up target employee role:", targetLookupError);
-    return res.status(500).json({ error: "Failed to update employee" });
-  }
-  if (!targetRow) {
-    return res.status(404).json({ error: "Employee not found" });
-  }
-  if (targetRow["Role"] === "SUPER_ADMIN" && req.user.role !== "SUPER_ADMIN") {
-    return res.status(403).json({
-      error: "Super Admin accounts can only be edited by another Super Admin.",
-    });
-  }
-
   // NEW: reporting manager, if being changed, must be a real user in
   // the same organization. Checked before building updatePayload so a
   // bad value never reaches the DB write.
@@ -157,7 +130,24 @@ async function updateEmployee(req, res) {
   // acting user is permitted to assign the target role (same matrix used
   // at user-creation time), so e.g. an OPS_MANAGER still cannot promote
   // anyone to SUPER_ADMIN just because they hold "employees.manage".
+  // FIX (Finding #03 + tester feedback): Role changes must be restricted
+  // to Super Admin ONLY, regardless of who the target user is or what
+  // role is being requested. The old check (canAssignRole) only looked
+  // at "is this role in the requester's assignable list" — that let an
+  // Ops Manager legally set body.role to e.g. "TEAM_MEMBER" on ANY
+  // user's record, including silently demoting a Super Admin, since
+  // TEAM_MEMBER is in Ops Manager's assignable list. Role edits are
+  // sensitive enough that only Super Admin should ever be allowed to
+  // change them via this endpoint — every other field (Department,
+  // Designation, Reporting Manager, Team, etc.) remains editable by
+  // anyone holding "employees.manage" (Ops Manager, Process Lead),
+  // including on a Super Admin's own record.
   if (body.role !== undefined) {
+    if (req.user.role !== "SUPER_ADMIN") {
+      return res.status(403).json({
+        error: "Only a Super Admin can change a user's role.",
+      });
+    }
     if (!canAssignRole(req.user.role, body.role)) {
       return res.status(403).json({
         error: `You are not permitted to assign the role "${body.role}"`,

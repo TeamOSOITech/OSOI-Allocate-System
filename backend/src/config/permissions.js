@@ -58,14 +58,19 @@ const ROLE_PERMISSIONS = {
     "verticals.start_for_existing_user",
     "qc_permission.request", // still needs approval — see APPROVAL_RULES
     "reports.materialisation.view.org",
-    // NEW: Client / Subclient / Product (Service) create-edit-delete access
-    // NOTE: Process Lead HOLDS these permissions (so it can reach the
+    // NEW: Process Lead HOLDS these permissions (so it can reach the
     // routes at all) but every create/update/delete it attempts is
     // intercepted by approvalGate() and routed through APPROVAL_RULES
     // below instead of taking effect immediately — see
     // src/middlewares/approvalGate.js.
     "clients.manage",
     "products.manage",
+    // NEW (tester feedback): Process Lead should be able to edit an
+    // employee's Reporting Manager / Department / Designation / Team —
+    // just never their Role (that's enforced separately in
+    // employees.controller.js's updateEmployee(), which now hard-blocks
+    // role changes to Super-Admin-only regardless of this permission).
+    "employees.manage",
   ],
 
   [ROLES.OPS_MANAGER]: [
