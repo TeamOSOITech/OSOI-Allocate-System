@@ -243,6 +243,66 @@ function canAssignRole(creatorRole, targetRole) {
   return Array.isArray(allowed) && allowed.includes(targetRole);
 }
 
+// Who can EDIT (Department, Designation, Reporting Manager, Team, name,
+// email, etc. — everything except the Role field itself, which is
+// handled separately below) an employee record whose current role is
+// `targetRole`. Mirrors the org hierarchy:
+//   Super Admin  -> everyone (including other Super Admins)
+//   Ops Manager  -> Process Lead, Vertical Head, Team Member
+//   Process Lead -> Vertical Head, Team Member
+// Anyone not listed here (Team Member, Vertical Head, Audit Manager) has
+// no edit access at all — enforced upstream by requirePermission
+// ("employees.manage"), which only Super Admin/Ops Manager/Process Lead
+// hold.
+const EDITABLE_TARGET_ROLES = {
+  [ROLES.SUPER_ADMIN]: [
+    ROLES.TEAM_MEMBER,
+    ROLES.VERTICAL_HEAD,
+    ROLES.PROCESS_LEAD,
+    ROLES.OPS_MANAGER,
+    ROLES.AUDIT_MANAGER,
+    ROLES.SUPER_ADMIN,
+  ],
+  [ROLES.OPS_MANAGER]: [
+    ROLES.PROCESS_LEAD,
+    ROLES.VERTICAL_HEAD,
+    ROLES.TEAM_MEMBER,
+  ],
+  [ROLES.PROCESS_LEAD]: [ROLES.VERTICAL_HEAD, ROLES.TEAM_MEMBER],
+};
+
+// Who can DELETE an employee record whose current role is `targetRole`.
+// Narrower than EDITABLE_TARGET_ROLES on purpose — Process Lead can edit
+// Vertical Head / Team Member records but has NO delete access at all,
+// per the org's requested flow ("delete ka option bas super admin and
+// ops manager ke pass hoga").
+const DELETABLE_TARGET_ROLES = {
+  [ROLES.SUPER_ADMIN]: [
+    ROLES.TEAM_MEMBER,
+    ROLES.VERTICAL_HEAD,
+    ROLES.PROCESS_LEAD,
+    ROLES.OPS_MANAGER,
+    ROLES.AUDIT_MANAGER,
+    ROLES.SUPER_ADMIN,
+  ],
+  [ROLES.OPS_MANAGER]: [
+    ROLES.PROCESS_LEAD,
+    ROLES.VERTICAL_HEAD,
+    ROLES.TEAM_MEMBER,
+  ],
+  // PROCESS_LEAD intentionally omitted — no delete access for any target role.
+};
+
+function canEditTargetRole(actorRole, targetRole) {
+  const allowed = EDITABLE_TARGET_ROLES[actorRole];
+  return Array.isArray(allowed) && allowed.includes(targetRole);
+}
+
+function canDeleteTargetRole(actorRole, targetRole) {
+  const allowed = DELETABLE_TARGET_ROLES[actorRole];
+  return Array.isArray(allowed) && allowed.includes(targetRole);
+}
+
 function hasPermission(role, permissionCode) {
   const perms = ROLE_PERMISSIONS[role];
   if (!perms) return false;
@@ -258,8 +318,12 @@ module.exports = {
   ROLE_RANK,
   ROLE_PERMISSIONS,
   ASSIGNABLE_ROLES,
+  EDITABLE_TARGET_ROLES,
+  DELETABLE_TARGET_ROLES,
   APPROVAL_RULES,
   hasPermission,
   isAtLeast,
   canAssignRole,
+  canEditTargetRole,
+  canDeleteTargetRole,
 };
