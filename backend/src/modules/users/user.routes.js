@@ -31,7 +31,7 @@ const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
 const { canAssignRole } = require("../../config/permissions");
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
-const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
+const { getPrimaryFrontendUrl } = require("../../config/ABC");
 
 const router = express.Router();
 

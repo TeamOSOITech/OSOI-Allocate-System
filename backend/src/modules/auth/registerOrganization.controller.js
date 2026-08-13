@@ -23,7 +23,7 @@
 const crypto = require("crypto");
 const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer");
-const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
+const { getPrimaryFrontendUrl } = require("../../config/ABC");
 
 // POST /api/auth/register-organization
 // body: { organizationName, email }
