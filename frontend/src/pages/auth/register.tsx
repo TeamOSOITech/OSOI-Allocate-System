@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { setCsrfToken } from "../../utils/authFetch";
 
 // Landed on from the Razorpay checkout flow in Landing.tsx:
 // /register?token=<signup_token>
@@ -70,15 +71,32 @@ const Register = () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ token, name, password }),
+                // COOKIE-AUTH: required so the browser actually stores the
+                // Set-Cookie headers the backend sends back (accessToken/
+                // refreshToken/csrfToken) — see login.tsx. Without this, the
+                // cookies are silently dropped on this cross-domain request,
+                // and the very first state-changing request the new account
+                // makes afterward fails CSRF (no csrfToken cookie to check).
+                credentials: "include",
             });
             const data = await res.json();
             if (!res.ok || !data.success) {
                 throw new Error(data.message || "Could not create your account.");
             }
 
-            localStorage.setItem("accessToken", data.data.accessToken);
-            localStorage.setItem("refreshToken", data.data.refreshToken);
+            // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
+            // cookies set by the server above (registerWithPayment.controller.js
+            // was fixed to call setAuthCookies, matching loginHandler) — the
+            // backend no longer returns them in the body, so storing them in
+            // localStorage would just be dead/undefined. Only the (non-sensitive)
+            // user profile is kept client-side, same as login.tsx.
             localStorage.setItem("user", JSON.stringify(data.data.user));
+
+            // CROSS-DOMAIN CSRF FIX: same reasoning as login.tsx — our JS
+            // can't read the csrfToken cookie cross-domain, so the backend
+            // also returns it in the response body for authFetch() to attach
+            // as X-CSRF-Token on every request after this one.
+            if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
 
             // Same role-redirect logic as Landing.tsx / pages/auth/login.tsx
             switch (data.data.user.role) {
