@@ -164,7 +164,7 @@ const parseTimeTaken = (raw) => {
 };
 
 // Bulk upload sheet no longer needs Client / Subclient columns — a product
-// is standalone. Only "Product Name" and "Time Taken" are read now.
+// is standalone. Only "Service Name" and "Time Taken" are read now.
 // (Teams aren't part of the bulk sheet yet — bulk-created products start
 // with an empty teams list and can be tagged afterwards from Edit.)
 //
@@ -204,7 +204,12 @@ const bulkUploadProducts = async (req, res) => {
       const row = rows[index];
       const rowNumber = index + 2; // +2 accounts for header row + 1-indexing
 
-      const product_name = row["Product Name"]?.toString().trim() || null;
+      // FIX: sample-sheet template (frontend's handleDownloadTemplate,
+      // PRODUCT_NAME_COLUMN) generates the column as "Service Name" — this
+      // was reading "Product Name" instead, a header that never existed in
+      // the actual uploaded sheet, so every single row failed with
+      // "Missing Product Name" no matter what was in the file.
+      const product_name = row["Service Name"]?.toString().trim() || null;
       const { value: time_taken, unit: time_unit } = parseTimeTaken(
         row["Time Taken"],
       );
@@ -216,7 +221,7 @@ const bulkUploadProducts = async (req, res) => {
           identifier,
           row: rowNumber,
           success: false,
-          message: "Missing Product Name",
+          message: "Missing Service Name",
         });
         failedCount++;
         continue;
