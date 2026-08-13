@@ -31,7 +31,6 @@ const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
 const { canAssignRole } = require("../../config/permissions");
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
-const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const router = express.Router();
 
@@ -114,53 +113,23 @@ function isValidPhone(phone) {
 // that user must belong to the SAME organization as the person being
 // added. Prevents typos (silently storing a manager that doesn't exist)
 // and cross-tenant leakage (pointing at someone else's org).
-// NEW: Reporting Manager must EITHER be a real existing user's email
-// (same org, from user_master), OR a name/email added via the "+"
-// control on Add User — which lives in the `reporting_managers` table
-// (see optionsRoutes.js POST /api/options). Checks user_master first
-// (real users), falls back to reporting_managers (curated/manually-added
-// names) if not found there.
 async function validateReportingManager(email, organizationId) {
   if (!email) return { valid: true }; // optional field
 
   const normalized = normalizeEmail(email);
-
-  // 1. Check real users first.
-  const { data: userMatch, error: userErr } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("user_master")
     .select("Email")
     .eq("Email", normalized)
     .eq("organization_id", organizationId)
     .maybeSingle();
 
-  if (userErr) {
-    console.error(
-      "validateReportingManager user_master lookup failed:",
-      userErr,
-    );
+  if (error) {
+    console.error("validateReportingManager lookup failed:", error);
     return { valid: false, message: "Could not verify reporting manager." };
   }
 
-  if (userMatch) return { valid: true };
-
-  // 2. Fall back to manually-added reporting managers (the "+" control on
-  // Add User writes here). Matched case-insensitively against `name`.
-  const { data: customMatch, error: customErr } = await supabaseAdmin
-    .from("reporting_managers")
-    .select("name")
-    .ilike("name", normalized)
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-
-  if (customErr) {
-    console.error(
-      "validateReportingManager reporting_managers lookup failed:",
-      customErr,
-    );
-    return { valid: false, message: "Could not verify reporting manager." };
-  }
-
-  if (!customMatch) {
+  if (!data) {
     return {
       valid: false,
       message: `Reporting manager "${email}" was not found in your organization.`,
@@ -243,6 +212,33 @@ async function emailExists(email) {
  * NOTHING IS EMAILED. The admin UI is expected to display this link so it
  * can be copied and shared with the new user manually.
  */
+// Safety net for dob/doj: the frontend (adduser.tsx) now converts Excel
+// date cells to "YYYY-MM-DD" before sending, but this function is also
+// reachable from scripts/Postman directly (see comment below), so it
+// shouldn't trust the caller. A raw Excel serial number (e.g. "44688")
+// used to be passed straight to Postgres here and fail the whole insert
+// with "invalid input syntax for type date" — this converts it properly
+// instead, and drops anything unparseable to null rather than crashing.
+function normalizeDateInput(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value; // already fine
+
+  // Bare number (or numeric string) left over from an Excel serial date
+  // that slipped through un-converted — same epoch SheetJS itself uses.
+  if (/^\d+(\.\d+)?$/.test(String(value).trim())) {
+    const serial = Number(value);
+    const epochMs = Date.UTC(1899, 11, 30);
+    const d = new Date(epochMs + serial * 24 * 60 * 60 * 1000);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
 async function createUserAndGenerateResetLink({
   email,
   tempPassword,
@@ -283,8 +279,8 @@ async function createUserAndGenerateResetLink({
         "Last Name": metadata?.lastName || null,
         "Employee ID": metadata?.employeeId || null,
         Department: metadata?.department || null,
-        "Date of Birth": metadata?.dob || null,
-        "Date of Joining": metadata?.doj || null,
+        "Date of Birth": normalizeDateInput(metadata?.dob),
+        "Date of Joining": normalizeDateInput(metadata?.doj),
         "Reporting Manager": metadata?.reportingManager || null,
         "Worked In Teams": metadata?.workedInTeams || null,
         Designation: metadata?.designation || null,
@@ -317,7 +313,7 @@ async function createUserAndGenerateResetLink({
         type: "recovery",
         email,
         options: {
-          redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
+          redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
         },
       });
     if (linkError) throw linkError;
