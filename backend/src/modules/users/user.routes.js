@@ -114,23 +114,53 @@ function isValidPhone(phone) {
 // that user must belong to the SAME organization as the person being
 // added. Prevents typos (silently storing a manager that doesn't exist)
 // and cross-tenant leakage (pointing at someone else's org).
+// NEW: Reporting Manager must EITHER be a real existing user's email
+// (same org, from user_master), OR a name/email added via the "+"
+// control on Add User — which lives in the `reporting_managers` table
+// (see optionsRoutes.js POST /api/options). Checks user_master first
+// (real users), falls back to reporting_managers (curated/manually-added
+// names) if not found there.
 async function validateReportingManager(email, organizationId) {
   if (!email) return { valid: true }; // optional field
 
   const normalized = normalizeEmail(email);
-  const { data, error } = await supabaseAdmin
+
+  // 1. Check real users first.
+  const { data: userMatch, error: userErr } = await supabaseAdmin
     .from("user_master")
     .select("Email")
     .eq("Email", normalized)
     .eq("organization_id", organizationId)
     .maybeSingle();
 
-  if (error) {
-    console.error("validateReportingManager lookup failed:", error);
+  if (userErr) {
+    console.error(
+      "validateReportingManager user_master lookup failed:",
+      userErr,
+    );
     return { valid: false, message: "Could not verify reporting manager." };
   }
 
-  if (!data) {
+  if (userMatch) return { valid: true };
+
+  // 2. Fall back to manually-added reporting managers (the "+" control on
+  // Add User writes here). Matched case-insensitively against `name`.
+  const { data: customMatch, error: customErr } = await supabaseAdmin
+    .from("reporting_managers")
+    .select("name")
+    .ilike("name", normalized)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (customErr) {
+    console.error(
+      "validateReportingManager reporting_managers lookup failed:",
+      customErr,
+    );
+    return { valid: false, message: "Could not verify reporting manager." };
+  }
+
+  if (!customMatch) {
     return {
       valid: false,
       message: `Reporting manager "${email}" was not found in your organization.`,
