@@ -1,5 +1,6 @@
 const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
+const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const login = async (email, password) => {
   const { data: candidates, error: candidatesError } = await supabase
@@ -128,7 +129,7 @@ const forgotPassword = async (email) => {
             type: "recovery",
             email: loginEmail,
             options: {
-              redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+              redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
             },
           });
 

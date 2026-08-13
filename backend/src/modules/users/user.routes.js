@@ -31,6 +31,7 @@ const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
 const { canAssignRole } = require("../../config/permissions");
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
+const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const router = express.Router();
 
@@ -286,7 +287,7 @@ async function createUserAndGenerateResetLink({
         type: "recovery",
         email,
         options: {
-          redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+          redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
         },
       });
     if (linkError) throw linkError;

@@ -1013,6 +1013,12 @@ export default function AddUser() {
                                             styles={styles}
                                             placeholder="manager@yourcompany.com"
                                             onAdd={async (val) => {
+                                                if (!isProfessionalEmail(val)) {
+                                                    alert(
+                                                        "Please enter a valid company email address (Gmail, Yahoo, Outlook etc. are not allowed)."
+                                                    );
+                                                    return;
+                                                }
                                                 setProcessLeads((prev) =>
                                                     prev.some((pl) => pl.email === val)
                                                         ? prev
