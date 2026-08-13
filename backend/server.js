@@ -113,6 +113,12 @@ const { csrfProtection } = require("./src/middlewares/csrf");
 
 const CSRF_EXEMPT_PATHS = [
   "/api/billing/webhook",
+  // Pre-signup checkout flow — called from the public landing/checkout
+  // page BEFORE an account or session exists, so there is no csrfToken
+  // cookie yet to echo back (same reasoning as the auth routes below).
+  "/api/billing/create-order",
+  "/api/billing/mock-checkout",
+  "/api/billing/verify-payment",
   "/api/auth/login",
   "/api/auth/refresh",
   "/api/auth/forgot-password",

@@ -23,6 +23,7 @@
 //      and every other page already expect.
 
 const supabase = require("../../config/supabaseClient");
+const { setAuthCookies } = require("../../config/authCookies");
 
 // POST /api/auth/register-with-payment
 // body: { token, name, password }
@@ -179,11 +180,23 @@ const registerWithPaymentHandler = async (req, res) => {
       });
     }
 
+    // BUG FIX: this handler used to return accessToken/refreshToken raw
+    // in the JSON body and never called setAuthCookies — so unlike
+    // loginHandler, it never set the httpOnly accessToken/refreshToken
+    // cookies OR the JS-readable csrfToken cookie. The account/session
+    // was created fine, but the very next state-changing request the
+    // freshly-signed-up user made (anything hitting csrfProtection) had
+    // no csrfToken cookie to compare against the header, and failed with
+    // "CSRF check failed." Matching loginHandler's pattern fixes it.
+    const csrfToken = setAuthCookies(res, {
+      accessToken: sessionData.session.access_token,
+      refreshToken: sessionData.session.refresh_token,
+    });
+
     return res.status(201).json({
       success: true,
       data: {
-        accessToken: sessionData.session.access_token,
-        refreshToken: sessionData.session.refresh_token,
+        csrfToken,
         user: {
           id: authData.user.id,
           email: signup.email,

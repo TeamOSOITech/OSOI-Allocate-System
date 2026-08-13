@@ -43,7 +43,7 @@ const PLAN_CONFIG = {
 // "free" is the default for organizations with no active subscriptions
 // row at all (the no-payment /register-organization signup path).
 const PLAN_USER_LIMITS = {
-  free: 5,
+  free: 100,
   basic: 25,
   professional: 100,
   enterprise: Infinity,
