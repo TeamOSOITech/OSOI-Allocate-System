@@ -33,23 +33,7 @@ const { approvalGate } = require("../../middlewares/approvalGate");
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
 
-// SECURITY FIX (Finding #16): no fileFilter or size limit previously —
-// restricted to the spreadsheet types this endpoint actually parses,
-// with a 10MB cap (mirrors subclients.routes.js / products.routes.js).
-const path = require("path");
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
-    }
-  },
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.
@@ -91,14 +75,21 @@ function styleHeaderCell(cell, colorHex) {
 // deliberately spread in here too so the frontend can badge a client
 // that has a pending Edit/Delete without touching every call site that
 // builds a response.
-function toClientResponse(client, subclientsCount, branchesCount, products) {
+// FIX: the "branches" table was removed from the database, but this
+// still took a branchesCount and echoed it back — every call site had
+// to query a table that no longer exists just to satisfy this
+// signature, which is what was throwing (querying a dropped table
+// returns null, and the old code then called .filter()/.length on
+// that null). branches is now just a hardcoded 0 for API-shape
+// compatibility with any frontend still reading client.branches.
+function toClientResponse(client, subclientsCount, products) {
   return {
     id: client.id,
     name: client.name,
     country: client.country,
     status: client.status,
     subclients: subclientsCount,
-    branches: branchesCount,
+    branches: 0, // "branches" table no longer exists — kept for API shape only
     users: 0, // placeholder until a users table/relation exists
     // REVERSED MAPPING: products this client is linked to, via the
     // client_products junction table. `productRates` is what the Add/Edit
@@ -252,10 +243,6 @@ router.get("/", async (req, res) => {
       .from("subclients")
       .select("*")
       .eq("organization_id", orgId);
-    const { data: branches } = await supabase
-      .from("branches")
-      .select("*")
-      .eq("organization_id", orgId);
 
     // One query for every client->product link in this org, then group
     // in memory — avoids an N+1 query per client in the list view.
@@ -276,7 +263,6 @@ router.get("/", async (req, res) => {
       return toClientResponse(
         client,
         subclients.filter((s) => s.client_id === client.id).length,
-        branches.filter((b) => b.client_id === client.id).length,
         products,
       );
     });
@@ -333,7 +319,7 @@ router.post(
         );
       }
 
-      res.status(201).json(toClientResponse(client, 0, 0, products));
+      res.status(201).json(toClientResponse(client, 0, products));
     } catch (err) {
       console.error(err);
       const friendly = friendlyDuplicateClientNameError(err, req.body?.name);
@@ -427,18 +413,8 @@ const CLIENT_TEMPLATE_COLUMNS = [
     width: 16,
     color: BRAND.blue,
   },
-  {
-    header: "Branch Name",
-    key: "branchName",
-    width: 22,
-    color: BRAND.lightBlue,
-  },
-  {
-    header: "Branch Status",
-    key: "branchStatus",
-    width: 16,
-    color: BRAND.lightBlue,
-  },
+  // "Branch Name"/"Branch Status" columns removed — the branches table
+  // no longer exists.
 ];
 
 router.get("/bulk/template", async (req, res) => {
@@ -474,8 +450,6 @@ router.get("/bulk/template", async (req, res) => {
         secondaryContactPhone: "+91 90000 00002",
         subclientName: "Acme North",
         subclientStatus: "Active",
-        branchName: "Gurugram Branch",
-        branchStatus: "Active",
       },
       {
         clientName: "Acme Corp",
@@ -492,8 +466,6 @@ router.get("/bulk/template", async (req, res) => {
         secondaryContactPhone: "+91 90000 00002",
         subclientName: "Acme North",
         subclientStatus: "Active",
-        branchName: "Delhi Branch",
-        branchStatus: "Active",
       },
     ]);
 
@@ -547,7 +519,6 @@ router.post(
 
       const clientCache = new Map();
       const subclientCache = new Map();
-      const branchCache = new Map();
 
       const results = [];
       let createdCount = 0;
@@ -589,10 +560,6 @@ router.post(
             norm(row["Subclient Status"]) === "Inactive"
               ? "Inactive"
               : "Active";
-
-          const branchName = norm(row["Branch Name"]);
-          const branchStatus =
-            norm(row["Branch Status"]) === "Inactive" ? "Inactive" : "Active";
 
           if (!clientName) {
             failedCount++;
@@ -682,41 +649,6 @@ router.post(
             }
           }
 
-          // ---- resolve branch (optional), scoped to org + client ----
-          if (branchName) {
-            const branchKey = `${client.id}::${branchName.toLowerCase()}`;
-            let branch = branchCache.get(branchKey);
-
-            if (!branch) {
-              const { data: existingBranch } = await supabase
-                .from("branches")
-                .select("*")
-                .eq("organization_id", orgId)
-                .eq("client_id", client.id)
-                .ilike("name", branchName)
-                .maybeSingle();
-
-              if (existingBranch) {
-                branch = existingBranch;
-              } else {
-                const { data: newBranch, error: branchErr } = await supabase
-                  .from("branches")
-                  .insert({
-                    name: branchName,
-                    client_id: client.id,
-                    status: branchStatus,
-                    organization_id: orgId,
-                  })
-                  .select()
-                  .single();
-
-                if (branchErr) throw branchErr;
-                branch = newBranch;
-              }
-              branchCache.set(branchKey, branch);
-            }
-          }
-
           createdCount++;
           results.push({
             row: rowNum,
@@ -773,23 +705,13 @@ router.get("/:id", async (req, res) => {
       .select("*")
       .eq("organization_id", orgId)
       .eq("client_id", id);
-    const { data: branches } = await supabase
-      .from("branches")
-      .select("*")
-      .eq("organization_id", orgId)
-      .eq("client_id", id);
 
     const products = await productsService.getProductsForClient(id, orgId);
 
     res.json({
-      ...toClientResponse(
-        client,
-        subclients?.length || 0,
-        branches?.length || 0,
-        products,
-      ),
+      ...toClientResponse(client, subclients?.length || 0, products),
       subclients,
-      branches,
+      branches: [], // "branches" table no longer exists — kept for API shape only
     });
   } catch (err) {
     console.error(err);
@@ -840,20 +762,8 @@ router.put(
         .select("id")
         .eq("organization_id", orgId)
         .eq("client_id", id);
-      const { data: branches } = await supabase
-        .from("branches")
-        .select("id")
-        .eq("organization_id", orgId)
-        .eq("client_id", id);
 
-      res.json(
-        toClientResponse(
-          client,
-          subclients?.length || 0,
-          branches?.length || 0,
-          products,
-        ),
-      );
+      res.json(toClientResponse(client, subclients?.length || 0, products));
     } catch (err) {
       console.error(err);
       const friendly = friendlyDuplicateClientNameError(err, req.body?.name);
@@ -899,7 +809,7 @@ router.delete(
         if (error.code === "23503") {
           return res.status(409).json({
             message:
-              "Cannot delete this client because it still has subclients or branches. Delete those first.",
+              "Cannot delete this client because it still has subclients. Delete those first.",
           });
         }
         throw error;
