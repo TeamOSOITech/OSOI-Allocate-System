@@ -67,10 +67,23 @@ type Team = { id: string; name: string };
 
 type DeleteTarget = { id: string; name: string };
 
+// Matches the ACTUAL shape returned by
+// backend/src/modules/products/products.controller.js's
+// bulkUploadProducts: { success, data: { totalRows, createdCount,
+// failedCount, results } }. This previously didn't match at all
+// (expected `created`/`rowErrors` keys that the backend never sends),
+// so the results panel always rendered blank/undefined even on a
+// fully successful upload.
 type BulkResult = {
     totalRows: number;
-    created: Record<string, number>;
-    rowErrors: { row: number; message: string }[];
+    createdCount: number;
+    failedCount: number;
+    results: {
+        identifier: string;
+        row: number;
+        success: boolean;
+        message?: string;
+    }[];
 };
 
 const AVATAR_PALETTE = [
@@ -564,7 +577,12 @@ const Products = () => {
                 throw new Error(data?.message || "Bulk upload failed");
             }
 
-            setBulkResult(data as BulkResult);
+            // FIX: backend responds with { success, data: {...} } — this was
+            // storing the WHOLE envelope as bulkResult instead of unwrapping
+            // `data.data`, so every field the results panel reads
+            // (totalRows/createdCount/results) was undefined regardless of
+            // whether the upload actually succeeded.
+            setBulkResult(data?.data as BulkResult);
             await fetchProducts();
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong during bulk upload.");
@@ -1470,43 +1488,38 @@ const Products = () => {
                                 <div style={styles.resultsSummary}>
                                     <span style={styles.resultsSummaryText}>
                                         <strong>{bulkResult.totalRows}</strong> total rows
+                                        {" · "}
+                                        <strong style={{ color: "#16a34a" }}>
+                                            {bulkResult.createdCount}
+                                        </strong>{" "}
+                                        created
+                                        {bulkResult.failedCount > 0 && (
+                                            <>
+                                                {" · "}
+                                                <strong style={{ color: "#dc2626" }}>
+                                                    {bulkResult.failedCount}
+                                                </strong>{" "}
+                                                failed
+                                            </>
+                                        )}
                                     </span>
                                 </div>
 
-                                {bulkResult.created &&
-                                    Object.entries(bulkResult.created).map(([key, val]) => (
-                                        <div style={styles.detailsRow} key={key}>
-                                            <span style={styles.detailsLabel}>
-                                                Created {key.charAt(0).toUpperCase() + key.slice(1)}
-                                            </span>
-                                            <span style={styles.detailsValue}>{val}</span>
-                                        </div>
-                                    ))}
-
-                                {bulkResult.rowErrors && bulkResult.rowErrors.length > 0 && (
-                                    <div style={{ marginTop: 12 }}>
-                                        <p
-                                            style={{
-                                                ...styles.detailsLabel,
-                                                marginBottom: 8,
-                                                display: "block",
-                                            }}
-                                        >
-                                            Errors ({bulkResult.rowErrors.length})
-                                        </p>
-                                        <div style={styles.resultsList}>
-                                            {bulkResult.rowErrors.map((re, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    style={{
-                                                        fontSize: fontSize.sm,
-                                                        color: "#dc2626",
-                                                    }}
-                                                >
-                                                    Row {re.row}: {re.message}
-                                                </div>
-                                            ))}
-                                        </div>
+                                {bulkResult.results && bulkResult.results.length > 0 && (
+                                    <div style={styles.resultsList}>
+                                        {bulkResult.results.map((r, idx) => (
+                                            <div
+                                                key={idx}
+                                                style={{
+                                                    fontSize: fontSize.sm,
+                                                    color: r.success ? "#16a34a" : "#dc2626",
+                                                    padding: "4px 0",
+                                                }}
+                                            >
+                                                Row {r.row} ({r.identifier}):{" "}
+                                                {r.success ? "Created" : r.message}
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>

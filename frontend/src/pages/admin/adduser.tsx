@@ -279,40 +279,49 @@ export default function AddUser() {
     const [teamsOptions, setTeamsOptions] = useState<string[]>([]);
     const [optionsLoading, setOptionsLoading] = useState(true);
 
-    useEffect(() => {
-        const fetchOptions = async () => {
-            try {
-                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/options`, {
-                    cache: "no-store",
-                });
-                if (!res.ok) throw new Error("Failed to load options");
-                const data = await res.json();
-                setDepartmentOptions(data.departments || []);
-                setDesignationOptions(data.designations || []);
-                setTeamsOptions(data.teams || []);
+    // FIX: previously declared INSIDE the mount-only useEffect below, so
+    // it could only ever run once when the page first loaded. Bulk upload
+    // can introduce brand-new Department/Designation/Team values (backend
+    // already merges these in from user_master — see options.routes.js),
+    // but the dropdowns never picked them up without a full page refresh
+    // because nothing ever called this again after that first mount.
+    // Pulled out here so both the mount effect AND handleBulkUpload (after
+    // a successful upload) can call it.
+    const fetchOptions = async () => {
+        try {
+            const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/options`, {
+                cache: "no-store",
+            });
+            if (!res.ok) throw new Error("Failed to load options");
+            const data = await res.json();
+            setDepartmentOptions(data.departments || []);
+            setDesignationOptions(data.designations || []);
+            setTeamsOptions(data.teams || []);
 
-                // Custom Reporting Manager values added via the "+" control
-                // are persisted separately from the real Process Lead list
-                // (see fetchProcessLeads below) — merge them in here so a
-                // previously-added custom value still shows up after a
-                // refresh instead of only existing in local state until
-                // reload.
-                const customManagers: string[] = data.reportingManagers || [];
-                if (customManagers.length > 0) {
-                    setProcessLeads((prev) => {
-                        const existingEmails = new Set(prev.map((pl) => pl.email));
-                        const additions = customManagers
-                            .filter((name) => !existingEmails.has(name))
-                            .map((name) => ({ id: `custom-${name}`, name, email: name }));
-                        return additions.length > 0 ? [...prev, ...additions] : prev;
-                    });
-                }
-            } catch (err) {
-                console.error("Failed to load dropdown options:", err);
-            } finally {
-                setOptionsLoading(false);
+            // Custom Reporting Manager values added via the "+" control
+            // are persisted separately from the real Process Lead list
+            // (see fetchProcessLeads below) — merge them in here so a
+            // previously-added custom value still shows up after a
+            // refresh instead of only existing in local state until
+            // reload.
+            const customManagers: string[] = data.reportingManagers || [];
+            if (customManagers.length > 0) {
+                setProcessLeads((prev) => {
+                    const existingEmails = new Set(prev.map((pl) => pl.email));
+                    const additions = customManagers
+                        .filter((name) => !existingEmails.has(name))
+                        .map((name) => ({ id: `custom-${name}`, name, email: name }));
+                    return additions.length > 0 ? [...prev, ...additions] : prev;
+                });
             }
-        };
+        } catch (err) {
+            console.error("Failed to load dropdown options:", err);
+        } finally {
+            setOptionsLoading(false);
+        }
+    };
+
+    useEffect(() => {
         fetchOptions();
     }, []);
     // NOTE: Roles are tied to permission gating elsewhere (App.jsx role
@@ -369,23 +378,29 @@ export default function AddUser() {
     );
     const [processLeadsError, setProcessLeadsError] = useState("");
 
+    // FIX: same issue as fetchOptions above — pulled out of the mount-only
+    // useEffect so handleBulkUpload can call it again after a successful
+    // upload. A bulk sheet can create brand-new Process Leads, and until
+    // this re-runs, that new manager wouldn't show up in the Reporting
+    // Manager dropdown without a full page refresh.
+    const fetchProcessLeads = async () => {
+        try {
+            const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/employees`, {
+                cache: "no-store",
+            });
+            if (!res.ok) throw new Error("Failed to load Process Leads");
+            const all = await res.json();
+            setProcessLeads(
+                (all || [])
+                    .filter((e: any) => e.role === "PROCESS_LEAD")
+                    .map((e: any) => ({ id: e.id, name: e.name, email: e.email }))
+            );
+        } catch (err: any) {
+            setProcessLeadsError("Could not load Reporting Manager list.");
+        }
+    };
+
     useEffect(() => {
-        const fetchProcessLeads = async () => {
-            try {
-                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/employees`, {
-                    cache: "no-store",
-                });
-                if (!res.ok) throw new Error("Failed to load Process Leads");
-                const all = await res.json();
-                setProcessLeads(
-                    (all || [])
-                        .filter((e: any) => e.role === "PROCESS_LEAD")
-                        .map((e: any) => ({ id: e.id, name: e.name, email: e.email }))
-                );
-            } catch (err: any) {
-                setProcessLeadsError("Could not load Reporting Manager list.");
-            }
-        };
         fetchProcessLeads();
     }, []);
 
@@ -557,6 +572,17 @@ export default function AddUser() {
             // Combine so the results list shows every row from the sheet —
             // locally-rejected rows plus whatever the backend returned.
             setBulkResults([...preFailedResults, ...backendResults]);
+
+            // FIX: refresh the dropdown option lists after a bulk upload —
+            // new Department/Designation/Team values (and new Process
+            // Leads, for the Reporting Manager dropdown) created by the
+            // sheet were previously only visible after a full page
+            // refresh, since fetchOptions/fetchProcessLeads only ran once
+            // on mount. Only worth doing if at least one row actually
+            // succeeded — an all-failed upload didn't add anything new.
+            if (backendResults.some((r: any) => r.success)) {
+                await Promise.all([fetchOptions(), fetchProcessLeads()]);
+            }
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong reading the file.");
         } finally {
@@ -1013,12 +1039,6 @@ export default function AddUser() {
                                             styles={styles}
                                             placeholder="manager@yourcompany.com"
                                             onAdd={async (val) => {
-                                                if (!isProfessionalEmail(val)) {
-                                                    alert(
-                                                        "Please enter a valid company email address (Gmail, Yahoo, Outlook etc. are not allowed)."
-                                                    );
-                                                    return;
-                                                }
                                                 setProcessLeads((prev) =>
                                                     prev.some((pl) => pl.email === val)
                                                         ? prev
@@ -1215,7 +1235,7 @@ export default function AddUser() {
                 )}
 
                 {showBulkModal && (
-                    <div style={styles.overlay}>
+                    <div style={styles.overlay} onClick={closeBulkModal}>
                         <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                             <div style={styles.bulkModalHeader}>
                                 <h3 style={styles.bulkModalTitle}>Bulk Add Users</h3>
