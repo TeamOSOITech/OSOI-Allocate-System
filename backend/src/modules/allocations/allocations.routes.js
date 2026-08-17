@@ -10,6 +10,7 @@ const {
   transferAllocation,
   updateAllocationStatus,
   submitAllocationWork,
+  bulkSubmitAllocationWork,
   clearAllocationsForBatch,
 } = require("./allocations.controller");
 
@@ -62,6 +63,9 @@ router.delete(
 router.patch("/:id/status", updateAllocationStatus);
 
 // Submitting completed work: same self-or-manager rule as above.
+// Bulk route (literal path) comes first so it can never be shadowed
+// by the "/:id/submit" pattern below.
+router.patch("/bulk-submit", bulkSubmitAllocationWork);
 router.patch("/:id/submit", submitAllocationWork);
 
 module.exports = router;

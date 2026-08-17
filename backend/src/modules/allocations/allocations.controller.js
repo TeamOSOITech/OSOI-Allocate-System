@@ -678,6 +678,128 @@ async function submitAllocationWork(req, res) {
 }
 
 // ------------------------------------------------------------
+// PATCH /api/allocations/bulk-submit
+// body: { items: [{ id, submittedQty }, ...], reason }
+//
+// NEW: profile.tsx's "Bulk Submit" panel — lets an employee submit
+// several still-pending allocations in one go instead of opening the
+// single-item panel per row. Same ownership-or-manager permission
+// check as submitAllocationWork above, just applied per item so one
+// bad/foreign id in the batch can't block the rest — each item
+// succeeds or fails independently and the caller gets a per-item
+// result list back (same tolerant-batch shape as the bulk-upload
+// endpoints elsewhere in this app).
+//
+// The reason is shared across the whole batch by design (that's the
+// point of this endpoint) — it's required if ANY item in the batch
+// has a submittedQty that differs from its own allocated_qty, and is
+// applied only to the items that actually differ (items that match
+// their allocated_qty exactly are stored with no reason, same as the
+// single-item endpoint).
+// ------------------------------------------------------------
+async function bulkSubmitAllocationWork(req, res) {
+  try {
+    const { items, reason } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "items must be a non-empty array" });
+    }
+
+    const ids = items.map((it) => it.id).filter(Boolean);
+    const { data: existingRows, error: fetchError } = await supabase
+      .from("allocations")
+      .select("id, employee_id, allocated_qty")
+      .in("id", ids)
+      .eq("organization_id", req.user.organizationId);
+    if (fetchError) throw fetchError;
+
+    const existingById = new Map((existingRows || []).map((r) => [r.id, r]));
+
+    const { hasPermission } = require("../../config/permissions");
+    const canManageOthers =
+      hasPermission(req.user.role, "tasks.allocate.team") ||
+      hasPermission(req.user.role, "tasks.allocate.org");
+
+    const results = [];
+
+    for (const item of items) {
+      const existing = existingById.get(item.id);
+      if (!existing) {
+        results.push({
+          id: item.id,
+          success: false,
+          message: "Allocation not found",
+        });
+        continue;
+      }
+
+      const isOwner = existing.employee_id === req.user.userId;
+      if (!isOwner && !canManageOthers) {
+        results.push({ id: item.id, success: false, message: "Access denied" });
+        continue;
+      }
+
+      const submittedQty = Number(item.submittedQty);
+      if (!Number.isFinite(submittedQty) || submittedQty < 0) {
+        results.push({
+          id: item.id,
+          success: false,
+          message: "submittedQty must be a non-negative number",
+        });
+        continue;
+      }
+
+      const differs = submittedQty !== existing.allocated_qty;
+      if (differs && !(reason || "").trim()) {
+        results.push({
+          id: item.id,
+          success: false,
+          message:
+            "A reason is required — quantity differs from what was allocated.",
+        });
+        continue;
+      }
+
+      const { error: updateError } = await supabase
+        .from("allocations")
+        .update({
+          submitted_qty: submittedQty,
+          submission_reason: differs ? reason.trim() : null,
+          submitted_at: new Date().toISOString(),
+          status: "COMPLETED",
+        })
+        .eq("id", item.id)
+        .eq("organization_id", req.user.organizationId);
+
+      if (updateError) {
+        results.push({
+          id: item.id,
+          success: false,
+          message: updateError.message,
+        });
+      } else {
+        results.push({ id: item.id, success: true });
+      }
+    }
+
+    const successCount = results.filter((r) => r.success).length;
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalItems: items.length,
+        successCount,
+        failedCount: items.length - successCount,
+        results,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
 // POST /api/allocations/self
 // body: { dailyWorkId, qty }
 //
@@ -815,5 +937,6 @@ module.exports = {
   transferAllocation,
   updateAllocationStatus,
   submitAllocationWork,
+  bulkSubmitAllocationWork,
   clearAllocationsForBatch,
 };
