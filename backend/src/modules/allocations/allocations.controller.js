@@ -677,10 +677,140 @@ async function submitAllocationWork(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/allocations/self
+// body: { dailyWorkId, qty }
+//
+// NEW: lets a Team Member or Vertical Head pick up PENDING work for
+// THEMSELVES on the redesigned Today's Allocation page — never for
+// anyone else. Two things make this safe:
+//   1. employee_id is always req.user.userId — taken from the auth
+//      token, never from the request body — so there is no field a
+//      caller could set to allocate to someone else.
+//   2. qty is capped at whatever is still pending on the batch
+//      (total_qty - everything already allocated, by ANY employee).
+//      If nothing is pending, the request is rejected outright.
+//
+// Route-level permission is "tasks.allocate.self" (see
+// config/permissions.js) — deliberately a different code from
+// tasks.allocate.team/org, which mean "allocate to other people" and
+// must stay unreachable from here.
+// ------------------------------------------------------------
+async function selfAllocate(req, res) {
+  try {
+    const { dailyWorkId, qty } = req.body;
+
+    if (!dailyWorkId || typeof qty !== "number" || qty <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "dailyWorkId and a positive qty are required",
+      });
+    }
+
+    const dailyWork = await getOwnedDailyWork(
+      dailyWorkId,
+      req.user.organizationId,
+    );
+    if (!dailyWork) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Daily work batch not found" });
+    }
+
+    // Everything already allocated on this batch, by anyone — the same
+    // pending formula used everywhere else (total_qty - allocated).
+    const { data: allocRows, error: allocError } = await supabase
+      .from("allocations")
+      .select("id, employee_id, allocated_qty")
+      .eq("daily_work_id", dailyWorkId)
+      .eq("organization_id", req.user.organizationId);
+    if (allocError) throw allocError;
+
+    const alreadyAllocated = (allocRows || []).reduce(
+      (sum, r) => sum + r.allocated_qty,
+      0,
+    );
+    const pending = dailyWork.total_qty - alreadyAllocated;
+
+    // No pending work left on this task at all — nothing to self-allocate.
+    if (pending <= 0) {
+      return res.status(409).json({
+        success: false,
+        message: "No pending quantity left on this task.",
+      });
+    }
+    if (qty > pending) {
+      return res.status(409).json({
+        success: false,
+        message: `Only ${pending} unit(s) are pending on this task — you can't take ${qty}.`,
+      });
+    }
+
+    // If this employee already has a row on this batch (e.g. they took
+    // some earlier today), add to it instead of creating a second row
+    // for the same employee+batch.
+    const existingOwn = (allocRows || []).find(
+      (r) => r.employee_id === req.user.userId,
+    );
+
+    let allocation;
+    if (existingOwn) {
+      const { data, error } = await supabase
+        .from("allocations")
+        .update({ allocated_qty: existingOwn.allocated_qty + qty })
+        .eq("id", existingOwn.id)
+        .eq("organization_id", req.user.organizationId)
+        .select()
+        .single();
+      if (error) throw error;
+      allocation = data;
+    } else {
+      const { data, error } = await supabase
+        .from("allocations")
+        .insert({
+          organization_id: req.user.organizationId,
+          daily_work_id: dailyWorkId,
+          employee_id: req.user.userId,
+          allocated_qty: qty,
+          // Reuses the "MANUAL" allocation_type value (same as
+          // manualAllocate/bulkUpsertAllocations) rather than inventing a
+          // new one, since we don't have a guarantee the DB's CHECK
+          // constraint (if any) permits anything beyond AUTO/MANUAL.
+          // Self-allocated rows are still distinguishable from a
+          // manager's manual entries: employee_id === created_by here,
+          // which is never true when a manager allocates to someone else.
+          allocation_type: "MANUAL",
+          status: "ASSIGNED",
+          created_by: req.user.userId,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      allocation = data;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `You've allocated ${qty} unit(s) to yourself.`,
+      data: {
+        allocation,
+        summary: {
+          totalQty: dailyWork.total_qty,
+          allocatedQty: alreadyAllocated + qty,
+          pendingQty: pending - qty,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listAllocations,
   autoAllocate,
   manualAllocate,
+  selfAllocate,
   bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,

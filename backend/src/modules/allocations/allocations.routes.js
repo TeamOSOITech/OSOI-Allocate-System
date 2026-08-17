@@ -5,6 +5,7 @@ const {
   listAllocations,
   autoAllocate,
   manualAllocate,
+  selfAllocate,
   bulkUpsertAllocations,
   transferAllocation,
   updateAllocationStatus,
@@ -31,6 +32,14 @@ router.post(
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   manualAllocate,
 );
+// NEW: self-allocation — Team Member / Vertical Head picking up PENDING
+// work for THEMSELVES on the redesigned Today's Allocation page. Separate
+// permission code (tasks.allocate.self) from the manager routes above —
+// holding tasks.allocate.team/org does NOT grant this route, and holding
+// tasks.allocate.self does NOT grant the manager routes above. The
+// controller itself also hard-codes employee_id to req.user.userId, so
+// even a tampered request body can never target someone else.
+router.post("/self", requireAnyPermission("tasks.allocate.self"), selfAllocate);
 router.post(
   "/bulk-upsert",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),

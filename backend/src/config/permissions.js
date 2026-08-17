@@ -40,6 +40,13 @@ const ROLE_PERMISSIONS = {
   [ROLES.TEAM_MEMBER]: [
     "materialisation.update.own",
     "materialisation.view.own",
+    // NEW: Team Member can allocate PENDING work to THEMSELVES only —
+    // never to anyone else. Deliberately a separate permission code from
+    // tasks.allocate.team/org (which mean "allocate to other people") so
+    // the self-allocate endpoint can never be reached by generic
+    // allocate-for-others logic, and vice versa. See allocations.controller.js
+    // selfAllocate() and POST /api/allocations/self.
+    "tasks.allocate.self",
   ],
 
   [ROLES.VERTICAL_HEAD]: [
@@ -48,6 +55,11 @@ const ROLE_PERMISSIONS = {
     "tasks.allocate.team",
     "tasks.qc_allocate.team",
     "materialisation.view.team",
+    // NEW: on the redesigned Today's Allocation page specifically,
+    // Vertical Head also only self-allocates — tasks.allocate.team above
+    // still governs OTHER pages (Daily Work batch creation, Attendance,
+    // Tasks) where "manage my team" access is intentionally kept.
+    "tasks.allocate.self",
   ],
 
   [ROLES.PROCESS_LEAD]: [
