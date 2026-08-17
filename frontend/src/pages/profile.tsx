@@ -45,6 +45,7 @@ function getHoverCss(BRAND: { blue: string }) {
 
 const REASON_OPTIONS = [
     "Completed as planned",
+    "Pending from previous day",
     "Extra work assigned",
     "Technical issue",
     "Resource / data unavailable",
@@ -140,7 +141,26 @@ type Allocation = {
     team?: string | null;
     allocatedByName?: string | null;
     created_at: string;
+    carried_in_qty?: number | null;
 };
+
+// A task counts as "Submitted"/done only once the full allocated
+// quantity has come in. Anything submitted for less than the
+// allocated_qty (a partial submission) is still "Pending" so the
+// employee can come back and submit the remaining qty.
+function isFullyDone(a: Allocation) {
+    return (
+        a.submitted_qty !== null &&
+        a.submitted_qty !== undefined &&
+        a.submitted_qty >= a.allocated_qty
+    );
+}
+
+// How much is still owed on this task right now.
+function pendingQty(a: Allocation) {
+    const already = a.submitted_qty ?? 0;
+    return Math.max(a.allocated_qty - already, 0);
+}
 
 interface ProfileProps {
     onLogout: () => void;
@@ -290,10 +310,10 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [submitError, setSubmitError] = useState<string | null>(null);
     const panelRef = useRef<HTMLDivElement>(null);
 
-    // ---- Bulk Submit (all pending tasks at once, one shared reason) ----
+    // ---- Bulk Submit (all pending tasks at once, each with its own reason) ----
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkQtyById, setBulkQtyById] = useState<Record<string, string>>({});
-    const [bulkReason, setBulkReason] = useState("");
+    const [bulkReasonById, setBulkReasonById] = useState<Record<string, string>>({});
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState<string | null>(null);
 
@@ -417,23 +437,21 @@ export default function Profile({ onLogout }: ProfileProps) {
     const stats = useMemo(() => {
         const totalAllocated = todaysAllocations.reduce((s, a) => s + (a.allocated_qty || 0), 0);
         const submittedQty = todaysAllocations.reduce((s, a) => s + (a.submitted_qty ?? 0), 0);
-        const pendingCount = todaysAllocations.filter(
-            (a) => a.submitted_qty === null || a.submitted_qty === undefined
-        ).length;
+        const pendingCount = todaysAllocations.filter((a) => !isFullyDone(a)).length;
         const remaining = Math.max(totalAllocated - submittedQty, 0);
         return { totalAllocated, submittedQty, pendingCount, remaining };
     }, [todaysAllocations]);
 
     const selected = allocations.find((a) => a.id === selectedId) || null;
-    const submitDifference = selected ? Number(submitQty || 0) - selected.allocated_qty : 0;
+    // submitQty now means "how much are you submitting right now" — it
+    // gets added on top of whatever was already submitted before.
+    const alreadySubmitted = selected?.submitted_qty ?? 0;
+    const submitCumulative = alreadySubmitted + Number(submitQty || 0);
+    const submitDifference = selected ? submitCumulative - selected.allocated_qty : 0;
 
     useEffect(() => {
         if (selected) {
-            setSubmitQty(
-                selected.submitted_qty !== null && selected.submitted_qty !== undefined
-                    ? String(selected.submitted_qty)
-                    : String(selected.allocated_qty)
-            );
+            setSubmitQty(String(pendingQty(selected)));
             setSubmitReason("");
             setSubmitError(null);
         }
@@ -450,14 +468,15 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     const handleSubmitWork = async () => {
         if (!selected) return;
-        const qtyNum = Number(submitQty);
+        const qtyNow = Number(submitQty);
         setSubmitError(null);
 
-        if (Number.isNaN(qtyNum) || qtyNum < 0) {
+        if (Number.isNaN(qtyNow) || qtyNow < 0) {
             setSubmitError("Enter a valid quantity.");
             return;
         }
-        const differs = qtyNum !== selected.allocated_qty;
+        const cumulative = (selected.submitted_qty ?? 0) + qtyNow;
+        const differs = cumulative !== selected.allocated_qty;
         if (differs && !submitReason.trim()) {
             setSubmitError("Please select a reason for the difference.");
             return;
@@ -469,7 +488,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    submittedQty: qtyNum,
+                    submittedQty: cumulative,
                     reason: differs ? submitReason.trim() : undefined,
                 }),
             });
@@ -489,20 +508,19 @@ export default function Profile({ onLogout }: ProfileProps) {
     // work from past dates is handled per-row on the Past Allocation
     // tab, same as before). ----
     const pendingTodayAllocations = useMemo(
-        () =>
-            todaysAllocations.filter(
-                (a) => a.submitted_qty === null || a.submitted_qty === undefined
-            ),
+        () => todaysAllocations.filter((a) => !isFullyDone(a)),
         [todaysAllocations]
     );
 
     const openBulkModal = () => {
-        const initial: Record<string, string> = {};
+        const initialQty: Record<string, string> = {};
+        const initialReason: Record<string, string> = {};
         pendingTodayAllocations.forEach((a) => {
-            initial[a.id] = String(a.allocated_qty);
+            initialQty[a.id] = String(pendingQty(a));
+            initialReason[a.id] = "";
         });
-        setBulkQtyById(initial);
-        setBulkReason("");
+        setBulkQtyById(initialQty);
+        setBulkReasonById(initialReason);
         setBulkError(null);
         setShowBulkModal(true);
     };
@@ -510,7 +528,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     const closeBulkModal = () => {
         setShowBulkModal(false);
         setBulkQtyById({});
-        setBulkReason("");
+        setBulkReasonById({});
         setBulkError(null);
     };
 
@@ -518,39 +536,64 @@ export default function Profile({ onLogout }: ProfileProps) {
         setBulkQtyById((prev) => ({ ...prev, [id]: value }));
     };
 
+    const setBulkReason = (id: string, value: string) => {
+        setBulkReasonById((prev) => ({ ...prev, [id]: value }));
+    };
+
+    // Each field in the modal is "how much are you submitting right
+    // now" — it stacks on top of whatever was already submitted
+    // earlier (same as the single-item panel). A row is "ready" once
+    // it has a valid quantity, and — only when the resulting running
+    // total differs from what was allocated — its own reason. The
+    // submit button below stays disabled until every pending row is
+    // ready, i.e. nothing is left pending/incomplete.
+    const bulkRowState = (a: Allocation) => {
+        const qtyRaw = bulkQtyById[a.id] ?? "";
+        const qtyNum = Number(qtyRaw);
+        const qtyValid = qtyRaw.trim() !== "" && !Number.isNaN(qtyNum) && qtyNum >= 0;
+        const cumulative = (a.submitted_qty ?? 0) + qtyNum;
+        const differs = qtyValid && cumulative !== a.allocated_qty;
+        const reasonValid = !differs || !!(bulkReasonById[a.id] || "").trim();
+        return { qtyValid, differs, reasonValid, cumulative, ready: qtyValid && reasonValid };
+    };
+
+    const bulkAllReady = useMemo(
+        () =>
+            pendingTodayAllocations.length > 0 &&
+            pendingTodayAllocations.every((a) => bulkRowState(a).ready),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [pendingTodayAllocations, bulkQtyById, bulkReasonById]
+    );
+
     const handleBulkSubmit = async () => {
         setBulkError(null);
 
-        const items = pendingTodayAllocations.map((a) => ({
-            id: a.id,
-            submittedQty: Number(bulkQtyById[a.id] ?? a.allocated_qty),
-        }));
-
-        for (const it of items) {
-            if (Number.isNaN(it.submittedQty) || it.submittedQty < 0) {
+        for (const a of pendingTodayAllocations) {
+            const { qtyValid, differs, reasonValid } = bulkRowState(a);
+            if (!qtyValid) {
                 setBulkError("Enter a valid quantity for every task before submitting.");
                 return;
             }
+            if (differs && !reasonValid) {
+                setBulkError(
+                    `"${a.productName || "A task"}" has a quantity that differs from what was allocated — add a reason for it.`
+                );
+                return;
+            }
         }
-        // Same rule as the single-item panel, just checked once up front
-        // for the whole batch since they all share one reason field.
-        const anyDiffers = items.some((it, i) => {
-            const original = pendingTodayAllocations[i]?.allocated_qty ?? 0;
-            return it.submittedQty !== original;
-        });
-        if (anyDiffers && !bulkReason.trim()) {
-            setBulkError(
-                "One or more quantities differ from what was allocated — please add a reason."
-            );
-            return;
-        }
+
+        const items = pendingTodayAllocations.map((a) => ({
+            id: a.id,
+            submittedQty: bulkRowState(a).cumulative,
+            reason: (bulkReasonById[a.id] || "").trim() || undefined,
+        }));
 
         setBulkSubmitting(true);
         try {
             const res = await authFetch(`${API_BASE}/api/allocations/bulk-submit`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ items, reason: bulkReason.trim() || undefined }),
+                body: JSON.stringify({ items }),
             });
             const json = await safeJson(res);
             if (!res.ok || !json.success) {
@@ -984,12 +1027,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <table style={styles.table}>
                         <colgroup>
                             <col style={{ width: "4%" }} />
-                            <col style={{ width: "17%" }} />
-                            <col style={{ width: "21%" }} />
+                            <col style={{ width: "16%" }} />
+                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "10%" }} />
                             <col style={{ width: "12%" }} />
-                            <col style={{ width: "14%" }} />
-                            <col style={{ width: "11%" }} />
-                            <col style={{ width: "11%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
                             <col style={{ width: "10%" }} />
                         </colgroup>
                         <thead>
@@ -1000,14 +1044,18 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <th style={styles.th}>Team</th>
                                 <th style={styles.th}>Allocated By</th>
                                 <th style={styles.th}>Allocated Qty</th>
+                                <th style={styles.th}>Pending</th>
                                 <th style={styles.th}>Status</th>
                                 <th style={styles.th}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             {filteredRows.map((a, i) => {
-                                const submitted =
-                                    a.submitted_qty !== null && a.submitted_qty !== undefined;
+                                const submitted = isFullyDone(a);
+                                const hasPartial =
+                                    !submitted &&
+                                    a.submitted_qty !== null &&
+                                    a.submitted_qty !== undefined;
                                 return (
                                     <tr key={a.id} className="pf-row" style={styles.tr}>
                                         <td style={styles.td}>{i + 1}</td>
@@ -1017,7 +1065,28 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         <td style={styles.td}>{a.description || "-"}</td>
                                         <td style={styles.td}>{a.team || "-"}</td>
                                         <td style={styles.td}>{a.allocatedByName || "-"}</td>
-                                        <td style={styles.td}>{a.allocated_qty}</td>
+                                        <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                            {a.allocated_qty}
+                                            {!!a.carried_in_qty && (
+                                                <div style={styles.smallMuted}>
+                                                    incl. {a.carried_in_qty} carried
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td style={styles.td}>
+                                            {submitted ? (
+                                                <span style={styles.smallMuted}>—</span>
+                                            ) : (
+                                                <span
+                                                    style={{
+                                                        fontWeight: fontWeight.semibold,
+                                                        color: BRAND.amber,
+                                                    }}
+                                                >
+                                                    {pendingQty(a)}
+                                                </span>
+                                            )}
+                                        </td>
                                         <td style={styles.td}>
                                             <span
                                                 style={
@@ -1026,7 +1095,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         : styles.statusPending
                                                 }
                                             >
-                                                {submitted ? "Submitted" : "Pending"}
+                                                {submitted
+                                                    ? "Submitted"
+                                                    : hasPartial
+                                                      ? "Partially Submitted"
+                                                      : "Pending"}
                                             </span>
                                         </td>
                                         <td style={styles.td}>
@@ -1040,7 +1113,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                     style={styles.rowSubmitBtn}
                                                     onClick={() => handlePickForSubmit(a)}
                                                 >
-                                                    Submit
+                                                    {hasPartial
+                                                        ? `Submit Pending (${pendingQty(a)})`
+                                                        : "Submit"}
                                                 </button>
                                             )}
                                         </td>
@@ -1072,14 +1147,22 @@ export default function Profile({ onLogout }: ProfileProps) {
                             />
                         </div>
                         <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Submitted Qty *</label>
+                            <label style={styles.smallLabel}>Already Submitted</label>
+                            <input
+                                style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                value={alreadySubmitted}
+                                disabled
+                            />
+                        </div>
+                        <div style={styles.filterField}>
+                            <label style={styles.smallLabel}>Pending Qty *</label>
                             <input
                                 type="number"
                                 min={0}
                                 style={styles.textInput}
                                 value={submitQty}
                                 onChange={(e) => setSubmitQty(e.target.value)}
-                                placeholder="Enter submitted quantity"
+                                placeholder="Qty you're submitting now"
                             />
                         </div>
                         <div style={styles.filterField}>
@@ -1121,8 +1204,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <div>
                         <strong>How it works?</strong>
                         <p style={{ margin: "4px 0 0" }}>
-                            If you submit less or more than the allocated quantity, please select a
-                            reason for the difference.
+                            "Pending Qty" is pre-filled with what's still owed on this task. Enter
+                            how much you're submitting right now — if the running total ends up less
+                            or more than the allocated quantity, please select a reason.
                         </p>
                     </div>
                 </div>
@@ -1152,8 +1236,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     Bulk Submit — Today's Pending Tasks
                                 </h3>
                                 <p style={styles.bulkModalSubtitle}>
-                                    Review each task's quantity, then submit them all at once with a
-                                    shared reason.
+                                    Each field is pre-filled with what's still pending. Enter how
+                                    much you're submitting now — if the running total ends up
+                                    different from what was allocated, give that task its own
+                                    reason.
                                 </p>
                             </div>
                             <button
@@ -1167,65 +1253,91 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
 
                         <div style={styles.bulkTableWrap}>
-                            <table style={{ ...styles.table, tableLayout: "fixed" }}>
+                            <table style={styles.bulkTable}>
                                 <colgroup>
-                                    <col style={{ width: "34%" }} />
-                                    <col style={{ width: "22%" }} />
-                                    <col style={{ width: "44%" }} />
+                                    <col style={{ width: "26%" }} />
+                                    <col style={{ width: "14%" }} />
+                                    <col style={{ width: "18%" }} />
+                                    <col style={{ width: "42%" }} />
                                 </colgroup>
                                 <thead>
                                     <tr>
                                         <th style={styles.th}>Task / Service</th>
-                                        <th style={styles.th}>Allocated Qty</th>
-                                        <th style={styles.th}>Qty to Submit</th>
+                                        <th style={styles.th}>Pending</th>
+                                        <th style={styles.th}>Submit Now</th>
+                                        <th style={styles.th}>Reason</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pendingTodayAllocations.map((a) => (
-                                        <tr key={a.id} style={styles.tr}>
-                                            <td
-                                                style={{
-                                                    ...styles.td,
-                                                    fontWeight: fontWeight.bold,
-                                                }}
-                                            >
-                                                {a.productName || "-"}
-                                            </td>
-                                            <td style={styles.td}>{a.allocated_qty}</td>
-                                            <td style={styles.td}>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    style={{ ...styles.textInput, width: 120 }}
-                                                    value={bulkQtyById[a.id] ?? ""}
-                                                    onChange={(e) =>
-                                                        setBulkQty(a.id, e.target.value)
-                                                    }
-                                                />
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {pendingTodayAllocations.map((a) => {
+                                        const { differs, reasonValid } = bulkRowState(a);
+                                        return (
+                                            <tr key={a.id} style={styles.tr}>
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontWeight: fontWeight.bold,
+                                                        whiteSpace: "normal",
+                                                    }}
+                                                >
+                                                    {a.productName || "-"}
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <span
+                                                        style={{
+                                                            fontWeight: fontWeight.semibold,
+                                                            color: BRAND.amber,
+                                                        }}
+                                                    >
+                                                        {pendingQty(a)}
+                                                    </span>
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                        }}
+                                                        value={bulkQtyById[a.id] ?? ""}
+                                                        onChange={(e) =>
+                                                            setBulkQty(a.id, e.target.value)
+                                                        }
+                                                    />
+                                                </td>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    <select
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                            border:
+                                                                differs && !reasonValid
+                                                                    ? `1px solid ${BRAND.red || "#e04b4b"}`
+                                                                    : styles.textInput.border,
+                                                        }}
+                                                        value={bulkReasonById[a.id] ?? ""}
+                                                        onChange={(e) =>
+                                                            setBulkReason(a.id, e.target.value)
+                                                        }
+                                                    >
+                                                        <option value="">
+                                                            {differs
+                                                                ? "Select reason *"
+                                                                : "Select reason (optional)"}
+                                                        </option>
+                                                        {REASON_OPTIONS.map((r) => (
+                                                            <option key={r} value={r}>
+                                                                {r}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
-                        </div>
-
-                        <div style={styles.bulkReasonRow}>
-                            <label style={styles.smallLabel}>
-                                Reason (required only if any quantity above differs from what was
-                                allocated)
-                            </label>
-                            <select
-                                style={styles.textInput}
-                                value={bulkReason}
-                                onChange={(e) => setBulkReason(e.target.value)}
-                            >
-                                <option value="">Select reason</option>
-                                {REASON_OPTIONS.map((r) => (
-                                    <option key={r} value={r}>
-                                        {r}
-                                    </option>
-                                ))}
-                            </select>
                         </div>
 
                         {bulkError && <p style={styles.rowError}>{bulkError}</p>}
@@ -1247,11 +1359,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     ...styles.submitBtn,
                                     width: "auto",
                                     flex: 1,
-                                    opacity: bulkSubmitting ? 0.6 : 1,
-                                    cursor: bulkSubmitting ? "not-allowed" : "pointer",
+                                    opacity: bulkSubmitting || !bulkAllReady ? 0.6 : 1,
+                                    cursor:
+                                        bulkSubmitting || !bulkAllReady ? "not-allowed" : "pointer",
                                 }}
                                 onClick={handleBulkSubmit}
-                                disabled={bulkSubmitting}
+                                disabled={bulkSubmitting || !bulkAllReady}
+                                title={
+                                    !bulkAllReady
+                                        ? "Enter a quantity (and a reason for any that differ) for every task first"
+                                        : undefined
+                                }
                             >
                                 {bulkSubmitting
                                     ? "Submitting…"
@@ -1337,26 +1455,28 @@ function MobileRow({
     onSubmit: () => void;
     styles: Record<string, CSSProperties>;
 }) {
-    const submitted = a.submitted_qty !== null && a.submitted_qty !== undefined;
+    const submitted = isFullyDone(a);
+    const hasPartial = !submitted && a.submitted_qty !== null && a.submitted_qty !== undefined;
     return (
         <div style={styles.mobileCard}>
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
                 <span style={styles.mobileProduct}>{a.productName || "-"}</span>
                 <span style={submitted ? styles.statusDone : styles.statusPending}>
-                    {submitted ? "Submitted" : "Pending"}
+                    {submitted ? "Submitted" : hasPartial ? "Partially Submitted" : "Pending"}
                 </span>
             </div>
             <div style={styles.mobileMetaRow}>
                 <span>{formatDisplayDate(a.workDate)}</span>
                 <span>{a.team || "-"}</span>
                 <span>Qty: {a.allocated_qty}</span>
+                {!submitted && <span>Pending: {pendingQty(a)}</span>}
             </div>
             {submitted ? (
                 <div style={styles.smallMuted}>{a.submitted_qty} submitted</div>
             ) : (
                 <button type="button" style={styles.rowSubmitBtn} onClick={onSubmit}>
-                    Submit
+                    {hasPartial ? `Submit Pending (${pendingQty(a)})` : "Submit"}
                 </button>
             )}
         </div>
@@ -1863,12 +1983,13 @@ function getStyles(
         bulkModal: {
             background: "#fff",
             borderRadius: radius.lg,
-            width: 640,
+            width: 820,
             maxWidth: "100%",
             maxHeight: "88vh",
             overflowY: "auto",
             boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
             padding: 24,
+            boxSizing: "border-box",
         },
         bulkModalHeader: {
             display: "flex",
@@ -1902,14 +2023,15 @@ function getStyles(
         bulkTableWrap: {
             border: "1px solid #f1f1f5",
             borderRadius: radius.md,
-            overflow: "hidden",
+            overflowX: "auto",
+            overflowY: "hidden",
             marginBottom: 16,
         },
-        bulkReasonRow: {
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            marginBottom: 6,
+        bulkTable: {
+            width: "100%",
+            minWidth: 640,
+            borderCollapse: "collapse",
+            tableLayout: "fixed",
         },
         bulkModalFooter: {
             display: "flex",
