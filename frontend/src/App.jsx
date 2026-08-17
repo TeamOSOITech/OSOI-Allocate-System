@@ -24,6 +24,10 @@ const AddUser = lazy(() => import("./pages/admin/adduser"));
 const Clients = lazy(() => import("./pages/admin/clients"));
 const Employees = lazy(() => import("./pages/admin/employees"));
 const ManualAllocation = lazy(() => import("./pages/admin/manualallocation"));
+// NEW: redesigned self-service allocation for Team Member / Vertical
+// Head — same route as ManualAllocation, different component (see
+// "Today's Allocation" route below, which picks between them by role).
+const SelfAllocation = lazy(() => import("./pages/selfallocation"));
 // Attendance is no longer a standalone page — leave-marking lives inside
 // manualallocation.tsx instead.
 const QC = lazy(() => import("./pages/admin/qc"));
@@ -57,6 +61,10 @@ const NORMAL_USER_ALLOWED_PATHS = [
     "/products",
     "/clients",
     "/employees",
+    // NEW: Team Member can now reach Today's Allocation — but only ever
+    // sees the self-allocation view (see the route below), never the
+    // admin-tier bulk allocation grid.
+    "/today's-allocation",
 ];
 const NORMAL_USER_HOME = "/report";
 
@@ -281,13 +289,33 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Manual Allocation — Page 4. Same gate as Smart Auto Allocation. */}
+                        {/* "Today's Allocation" — Page 4. Same route for everyone, but a
+                    different experience by role:
+                      - Admin-tier (Super Admin / Ops Manager / Audit Manager /
+                        Process Lead): the existing full manager view — Smart
+                        Auto + Manual allocation across every employee,
+                        unchanged.
+                      - Team Member / Vertical Head: the redesigned
+                        self-service view — they can only ever allocate
+                        PENDING work to THEMSELVES, and only while pending
+                        actually remains on that task (see
+                        pages/selfallocation.tsx + POST /api/allocations/self
+                        on the backend, which hard-codes employee_id to the
+                        caller's own id regardless of anything in the
+                        request body). */}
                         <Route
                             path="/today's-allocation"
                             element={
-                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                <PrivateRoute
+                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
+                                >
                                     <AppLayout onLogout={handleLogout}>
-                                        <ManualAllocation />
+                                        {user?.role === "TEAM_MEMBER" ||
+                                        user?.role === "VERTICAL_HEAD" ? (
+                                            <SelfAllocation />
+                                        ) : (
+                                            <ManualAllocation />
+                                        )}
                                     </AppLayout>
                                 </PrivateRoute>
                             }

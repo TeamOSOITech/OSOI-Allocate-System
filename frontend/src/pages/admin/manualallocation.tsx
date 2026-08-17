@@ -328,13 +328,14 @@ export default function ManualAllocation() {
     const menuRef = useRef<HTMLDivElement>(null);
 
     // ---- Tab 1 "Allocate" (pick a service, see its case, auto/manual
-    // allocate) vs Tab 2 "Employees" (everyone for the selected service,
-    // their currently assigned qty, editable). Both tabs share the same
-    // date/product/team/search filters and the same `rows` state — the
-    // Employees tab is just a different view onto it, so edits there are
-    // saved through the exact same bulk-upsert call as Tab 1's button.
-    const [activeTab, setActiveTab] = useState<"allocate" | "employees">("allocate");
-    const [seedingCases, setSeedingCases] = useState(false);
+    // allocate). The "Employees" tab has been removed — everything it
+    // did (seeing/editing each employee's assigned qty for the selected
+    // service) already happens right here in the Allocate view, so a
+    // second tab for it was redundant. activeTab is kept as a variable
+    // (always "allocate" now) rather than ripped out everywhere, so the
+    // JSX below didn't need restructuring beyond removing the tab bar
+    // and the employees-only block.
+    const [activeTab] = useState<"allocate">("allocate");
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -627,37 +628,18 @@ export default function ManualAllocation() {
         }
     };
 
-    // ---- "Load Test Cases" button: asks the backend to create one dummy
-    // daily_work case per service for the current date (skipping services
-    // that already have one), so the allocate flow has something to test
-    // against without typing Daily Work batches in by hand. ----
-    const handleSeedDummyCases = async () => {
-        setSeedingCases(true);
-        setError("");
-        try {
-            const res = await authFetch(`${API_BASE}/api/daily-work/seed-dummy`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ date }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success)
-                throw new Error(json.message || "Failed to load test cases");
-            showToast(json.message || "Test cases loaded");
-            loadBatches();
-        } catch (err: any) {
-            setError(err.message || "Failed to load test cases");
-        } finally {
-            setSeedingCases(false);
-        }
-    };
+    // ---- (Load Test Cases / seed-dummy removed — batches now come only
+    // from real Daily Work entries, no dev/test seeding button on this
+    // page.) ----
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
             <div style={styles.topBar} />
 
             <div style={isMobile ? styles.pageMobile : styles.page}>
-                {/* ---- Header card with icon box + decorative illustration ---- */}
+                {/* ---- Header card — simplified: icon, title, one-line
+                    subtext. Illustration + tab switcher removed since
+                    there's only ever one view on this page now. ---- */}
                 <div style={isMobile ? styles.headerCardMobile : styles.headerCard}>
                     <div style={styles.headerLeft}>
                         <div style={styles.headerIconBox}>
@@ -667,60 +649,10 @@ export default function ManualAllocation() {
                             <h1 style={styles.title}>Today's Allocation</h1>
                             <p style={styles.headerSubtext}>
                                 Pick a date and product, then Smart Allocate or hand out quantities
-                                by hand — Present/Half/Leave decides who gets a share.
+                                by hand.
                             </p>
                         </div>
                     </div>
-                    {!isMobile && (
-                        <div style={styles.headerIllustration}>
-                            <HeaderIllustration />
-                        </div>
-                    )}
-                </div>
-
-                {/* ---- TABS + LOAD TEST CASES ----
-                    Tab switch and the seed button both operate on the
-                    shared date/product state above, so they sit outside
-                    either tab's own content and stay visible on both. */}
-                <div style={isMobile ? styles.tabBarRowMobile : styles.tabBarRow}>
-                    <div style={styles.tabBar}>
-                        <button
-                            style={{
-                                ...styles.tabBtn,
-                                ...(activeTab === "allocate" ? styles.tabBtnActive : {}),
-                            }}
-                            onClick={() => setActiveTab("allocate")}
-                            type="button"
-                        >
-                            <Box size={14} />
-                            Allocate
-                        </button>
-                        <button
-                            style={{
-                                ...styles.tabBtn,
-                                ...(activeTab === "employees" ? styles.tabBtnActive : {}),
-                            }}
-                            onClick={() => setActiveTab("employees")}
-                            type="button"
-                        >
-                            <Users size={14} />
-                            Employees
-                        </button>
-                    </div>
-                    <button
-                        style={{
-                            ...styles.loadTestCasesBtn,
-                            opacity: seedingCases ? 0.7 : 1,
-                            cursor: seedingCases ? "not-allowed" : "pointer",
-                        }}
-                        onClick={handleSeedDummyCases}
-                        disabled={seedingCases}
-                        type="button"
-                        title="Create one dummy case per service for the selected date, to test the allocation flow"
-                    >
-                        <Zap size={14} />
-                        {seedingCases ? "Loading..." : "Load Test Cases"}
-                    </button>
                 </div>
 
                 {error && (
@@ -1206,220 +1138,6 @@ export default function ManualAllocation() {
                         >
                             <Save size={16} />
                             {submitting ? "Saving..." : "Allocate & Save"}
-                        </button>
-                    </>
-                )}
-
-                {activeTab === "employees" && (
-                    <>
-                        {/* ---- EMPLOYEES TAB: everyone for the selected service,
-                    with their currently assigned qty for this case —
-                    editable here, saved through the same bulk-upsert call
-                    the Allocate tab's button uses. ---- */}
-                        <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
-                            <KpiCard
-                                icon={Users}
-                                label="Employees"
-                                subLabel={
-                                    selectedBatch?.productName
-                                        ? `For ${selectedBatch.productName}`
-                                        : "Select a service in Allocate tab"
-                                }
-                                value={filteredEmployees.length}
-                                color={BRAND.blue}
-                            />
-                            <KpiCard
-                                icon={CheckCircle2}
-                                label="Assigned"
-                                subLabel="Already allocated"
-                                value={allocatedQty}
-                                color={BRAND.lightBlue}
-                            />
-                            <KpiCard
-                                icon={AlertTriangle}
-                                label="Remaining"
-                                subLabel="Yet to allocate"
-                                value={remainingQty}
-                                color={remainingQty > 0 ? BRAND.amber : BRAND.green}
-                            />
-                        </div>
-
-                        <div style={styles.tableCard}>
-                            <table style={styles.table}>
-                                <colgroup>
-                                    <col style={{ width: isMobile ? 28 : 40 }} />
-                                    <col />
-                                    {!isMobile && <col style={{ width: "18%" }} />}
-                                    {!isMobile && <col style={{ width: "18%" }} />}
-                                    <col style={{ width: isMobile ? 90 : 150 }} />
-                                </colgroup>
-                                <thead>
-                                    <tr style={styles.theadRow}>
-                                        <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
-                                        <th style={styles.th}>Employee Name</th>
-                                        {!isMobile && <th style={styles.th}>Dept</th>}
-                                        {!isMobile && <th style={styles.th}>Team</th>}
-                                        <th
-                                            style={{
-                                                ...styles.th,
-                                                textAlign: "right",
-                                                paddingRight: 18,
-                                            }}
-                                        >
-                                            Assigned Qty
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {loading ? (
-                                        <tr>
-                                            <td style={styles.emptyNote} colSpan={isMobile ? 3 : 5}>
-                                                Loading...
-                                            </td>
-                                        </tr>
-                                    ) : !productSelected ? (
-                                        <tr>
-                                            <td colSpan={isMobile ? 3 : 5}>
-                                                <div style={styles.emptyState}>
-                                                    <EmptyStateIcon />
-                                                    <span style={styles.emptyStateText}>
-                                                        Select a service in the Allocate tab to see
-                                                        its employees.
-                                                    </span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ) : filteredEmployees.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={isMobile ? 3 : 5}>
-                                                <div style={styles.emptyState}>
-                                                    <EmptyStateIcon />
-                                                    <span style={styles.emptyStateText}>
-                                                        No employees match your search.
-                                                    </span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        filteredEmployees.map((emp, idx) => {
-                                            const r = rows[emp.id] || {
-                                                status: "PRESENT" as RowStatus,
-                                                qty: 0,
-                                            };
-                                            const { bg, fg } = avatarColors(emp.name);
-                                            return (
-                                                <tr
-                                                    key={emp.id}
-                                                    style={{
-                                                        background:
-                                                            idx % 2 === 0 ? "#fff" : "#fafaff",
-                                                    }}
-                                                >
-                                                    <td
-                                                        style={{
-                                                            ...styles.td,
-                                                            paddingLeft: 18,
-                                                            fontSize: fontSize.sm,
-                                                            color: "#9ca3af",
-                                                        }}
-                                                    >
-                                                        {idx + 1}
-                                                    </td>
-                                                    <td style={styles.td}>
-                                                        <div
-                                                            style={{
-                                                                display: "flex",
-                                                                alignItems: "center",
-                                                                gap: 10,
-                                                                minWidth: 0,
-                                                            }}
-                                                        >
-                                                            <div
-                                                                style={{
-                                                                    ...styles.avatar,
-                                                                    background: bg,
-                                                                    color: fg,
-                                                                }}
-                                                            >
-                                                                {initials(emp.name)}
-                                                            </div>
-                                                            <div style={{ minWidth: 0 }}>
-                                                                <div style={styles.empName}>
-                                                                    {emp.name}
-                                                                </div>
-                                                                {emp.employeeCode && (
-                                                                    <div style={styles.empCode}>
-                                                                        {emp.employeeCode}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </td>
-                                                    {!isMobile && (
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                fontSize: fontSize.base,
-                                                                color: "#374151",
-                                                            }}
-                                                        >
-                                                            {emp.department || "-"}
-                                                        </td>
-                                                    )}
-                                                    {!isMobile && (
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                fontSize: fontSize.base,
-                                                                color: "#374151",
-                                                            }}
-                                                        >
-                                                            {emp.workedInTeams || "-"}
-                                                        </td>
-                                                    )}
-                                                    <td
-                                                        style={{
-                                                            ...styles.td,
-                                                            textAlign: "right",
-                                                            paddingRight: 18,
-                                                        }}
-                                                    >
-                                                        <input
-                                                            type="number"
-                                                            min={0}
-                                                            value={r.qty}
-                                                            onChange={(e) =>
-                                                                setQty(
-                                                                    emp.id,
-                                                                    Number(e.target.value) || 0
-                                                                )
-                                                            }
-                                                            style={{
-                                                                ...styles.qtyInput,
-                                                                textAlign: "right",
-                                                            }}
-                                                            disabled={!productSelected}
-                                                        />
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <button
-                            style={{
-                                ...styles.saveBtn,
-                                opacity: submitting || !productSelected ? 0.6 : 1,
-                                cursor: submitting || !productSelected ? "not-allowed" : "pointer",
-                            }}
-                            disabled={submitting || !productSelected}
-                            onClick={handleSaveAllocations}
-                        >
-                            <Save size={16} />
-                            {submitting ? "Saving..." : "Save Changes"}
                         </button>
                     </>
                 )}
