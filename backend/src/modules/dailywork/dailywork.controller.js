@@ -484,10 +484,173 @@ async function seedDummyCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/daily-work/bulk
+// body: { workDate, rows: [{ serviceName, quantity }] }
+//
+// Bulk version of createDailyWork for the "Log Production" form — lets
+// someone log today's quantity for many services (100+) in one Excel
+// upload instead of one dropdown submission per service. Each row is
+// matched against service_master by product_name (case-insensitive,
+// scoped to this organization). Anything not found is reported back as
+// "not listed" rather than created, exactly like the row-by-row bulk
+// upload pattern used for Products/Clients — one bad row never blocks
+// the rest of the sheet.
+// ------------------------------------------------------------
+async function bulkCreateDailyWork(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const { workDate, rows } = req.body;
+
+    if (!workDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "workDate is required" });
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No rows provided" });
+    }
+
+    // Load every service once up front instead of querying per row —
+    // 100+ rows would otherwise mean 100+ round trips just to resolve
+    // names to ids.
+    const { data: services, error: servicesError } = await supabase
+      .from("service_master")
+      .select("id, product_name")
+      .eq("organization_id", orgId);
+    if (servicesError) throw servicesError;
+
+    const serviceByName = new Map(
+      (services || []).map((s) => [
+        String(s.product_name || "")
+          .trim()
+          .toLowerCase(),
+        s,
+      ]),
+    );
+
+    // Existing (date, product) pairs for this org — same duplicate rule
+    // createDailyWork enforces one row at a time, checked in bulk here
+    // instead so a batch of 100 doesn't mean 100 duplicate-check queries.
+    const { data: existingBatches, error: existingError } = await supabase
+      .from("daily_work")
+      .select("product_id")
+      .eq("organization_id", orgId)
+      .eq("work_date", workDate);
+    if (existingError) throw existingError;
+
+    const alreadyLoggedProductIds = new Set(
+      (existingBatches || []).map((b) => b.product_id),
+    );
+
+    const results = [];
+    let createdCount = 0;
+    let failedCount = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index] || {};
+      const rowNumber = index + 2; // +2: header row + 1-indexing, matches the Products bulk pattern
+      const serviceNameRaw = String(row.serviceName || "").trim();
+      const identifier = serviceNameRaw || `Row ${rowNumber}`;
+
+      if (!serviceNameRaw) {
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: "Missing Service Name",
+        });
+        failedCount++;
+        continue;
+      }
+
+      const qty = Number(row.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: `Could not parse Quantity value: "${row.quantity}"`,
+        });
+        failedCount++;
+        continue;
+      }
+
+      const matchedService = serviceByName.get(serviceNameRaw.toLowerCase());
+      if (!matchedService) {
+        // This is the "not listed" case the person asked for — the
+        // service in the sheet doesn't exist in this org's service
+        // list, so nothing gets created for it.
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: `"${serviceNameRaw}" not listed`,
+        });
+        failedCount++;
+        continue;
+      }
+
+      if (alreadyLoggedProductIds.has(matchedService.id)) {
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: `A daily work batch for "${serviceNameRaw}" on this date already exists.`,
+        });
+        failedCount++;
+        continue;
+      }
+
+      const { error: insertError } = await supabase.from("daily_work").insert({
+        organization_id: orgId,
+        work_date: workDate,
+        product_id: matchedService.id,
+        total_qty: qty,
+        status: "PENDING",
+        created_by: req.user.userId,
+      });
+
+      if (insertError) {
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: insertError.message || "Failed to create this row.",
+        });
+        failedCount++;
+        continue;
+      }
+
+      // Mark this product as logged now so a later duplicate row in the
+      // SAME sheet (same service listed twice) is caught too, not just
+      // duplicates against pre-existing rows.
+      alreadyLoggedProductIds.add(matchedService.id);
+      results.push({ identifier, row: rowNumber, success: true });
+      createdCount++;
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        totalRows: rows.length,
+        createdCount,
+        failedCount,
+        results,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listDailyWork,
   getDailyWorkById,
   createDailyWork,
+  bulkCreateDailyWork,
   updateDailyWork,
   deleteDailyWork,
   seedDummyCases,

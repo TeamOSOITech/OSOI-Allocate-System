@@ -31,6 +31,7 @@ const { authenticate } = require("../../middlewares/auth");
 const { requirePermission } = require("../../middlewares/rbac");
 const { canAssignRole } = require("../../config/permissions");
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
+const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const router = express.Router();
 
@@ -109,27 +110,62 @@ function isValidPhone(phone) {
   return /^\d{10}$/.test(digitsOnly);
 }
 
-// NEW: Reporting Manager must be a real, existing user's email — and
-// that user must belong to the SAME organization as the person being
-// added. Prevents typos (silently storing a manager that doesn't exist)
-// and cross-tenant leakage (pointing at someone else's org).
+// ---------------------------------------------------------------------------
+// FIX: Reporting Manager must EITHER be a real existing user's email
+// (same org, from user_master), OR a name/email that was added via the
+// "+" control on Add User — which is persisted to the `reporting_managers`
+// table (see optionsRoutes.js -> POST /api/options).
+//
+// Previously this ONLY checked user_master, so anything added through the
+// "+" control (which the dropdown happily showed, and which WAS saved to
+// the DB) would still fail validation at submit time with "Reporting
+// manager ... was not found in your organization" — even though it really
+// was in the database, just in a different table. Now we check both,
+// user_master first (real users), then fall back to reporting_managers
+// (curated/manually-added names) if not found there.
+// ---------------------------------------------------------------------------
 async function validateReportingManager(email, organizationId) {
   if (!email) return { valid: true }; // optional field
 
   const normalized = normalizeEmail(email);
-  const { data, error } = await supabaseAdmin
+
+  // 1. Check real users first.
+  const { data: userMatch, error: userErr } = await supabaseAdmin
     .from("user_master")
     .select("Email")
     .eq("Email", normalized)
     .eq("organization_id", organizationId)
     .maybeSingle();
 
-  if (error) {
-    console.error("validateReportingManager lookup failed:", error);
+  if (userErr) {
+    console.error(
+      "validateReportingManager user_master lookup failed:",
+      userErr,
+    );
     return { valid: false, message: "Could not verify reporting manager." };
   }
 
-  if (!data) {
+  if (userMatch) return { valid: true };
+
+  // 2. Fall back to manually-added reporting managers (the "+" control on
+  // Add User writes here). Matched case-insensitively against `name`,
+  // since that table stores whatever raw value was typed in.
+  const { data: customMatch, error: customErr } = await supabaseAdmin
+    .from("reporting_managers")
+    .select("name")
+    .ilike("name", normalized)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (customErr) {
+    console.error(
+      "validateReportingManager reporting_managers lookup failed:",
+      customErr,
+    );
+    return { valid: false, message: "Could not verify reporting manager." };
+  }
+
+  if (!customMatch) {
     return {
       valid: false,
       message: `Reporting manager "${email}" was not found in your organization.`,
@@ -212,33 +248,6 @@ async function emailExists(email) {
  * NOTHING IS EMAILED. The admin UI is expected to display this link so it
  * can be copied and shared with the new user manually.
  */
-// Safety net for dob/doj: the frontend (adduser.tsx) now converts Excel
-// date cells to "YYYY-MM-DD" before sending, but this function is also
-// reachable from scripts/Postman directly (see comment below), so it
-// shouldn't trust the caller. A raw Excel serial number (e.g. "44688")
-// used to be passed straight to Postgres here and fail the whole insert
-// with "invalid input syntax for type date" — this converts it properly
-// instead, and drops anything unparseable to null rather than crashing.
-function normalizeDateInput(value) {
-  if (value === null || value === undefined || value === "") return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value; // already fine
-
-  // Bare number (or numeric string) left over from an Excel serial date
-  // that slipped through un-converted — same epoch SheetJS itself uses.
-  if (/^\d+(\.\d+)?$/.test(String(value).trim())) {
-    const serial = Number(value);
-    const epochMs = Date.UTC(1899, 11, 30);
-    const d = new Date(epochMs + serial * 24 * 60 * 60 * 1000);
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().slice(0, 10);
-    }
-    return null;
-  }
-
-  const parsed = new Date(value);
-  return isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
-}
-
 async function createUserAndGenerateResetLink({
   email,
   tempPassword,
@@ -279,8 +288,8 @@ async function createUserAndGenerateResetLink({
         "Last Name": metadata?.lastName || null,
         "Employee ID": metadata?.employeeId || null,
         Department: metadata?.department || null,
-        "Date of Birth": normalizeDateInput(metadata?.dob),
-        "Date of Joining": normalizeDateInput(metadata?.doj),
+        "Date of Birth": metadata?.dob || null,
+        "Date of Joining": metadata?.doj || null,
         "Reporting Manager": metadata?.reportingManager || null,
         "Worked In Teams": metadata?.workedInTeams || null,
         Designation: metadata?.designation || null,
@@ -313,7 +322,7 @@ async function createUserAndGenerateResetLink({
         type: "recovery",
         email,
         options: {
-          redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+          redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
         },
       });
     if (linkError) throw linkError;
@@ -420,7 +429,15 @@ router.post(
       // THIS caller's role is allowed to hand out. See ASSIGNABLE_ROLES
       // in config/permissions.js. Without this, any role holding
       // "users.onboard" could set role: "SUPER_ADMIN" and self-escalate.
-      const requestedRole = String(body.role).toUpperCase().trim();
+      //
+      // FIX: normalize spaces/dashes to underscores too (e.g. "TEAM
+      // MEMBER" -> "TEAM_MEMBER") — the frontend now does this on bulk
+      // uploads, but the backend must never rely on the frontend having
+      // done so (direct API calls, older cached frontend builds, etc).
+      const requestedRole = String(body.role)
+        .toUpperCase()
+        .trim()
+        .replace(/[\s\-]+/g, "_");
       if (!canAssignRole(req.user.role, requestedRole)) {
         return res.status(403).json({
           message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole}.`,
@@ -434,8 +451,8 @@ router.post(
         });
       }
 
-      // NEW: reporting manager, if provided, must be a real user in the
-      // same organization.
+      // NEW: reporting manager, if provided, must be a real user OR a
+      // manually-added entry, in the same organization.
       if (body.reportingManager) {
         const rmCheck = await validateReportingManager(
           body.reportingManager,
@@ -598,9 +615,13 @@ router.post(
         // SECURITY: same check as add-user — reject any row asking for a
         // role this caller isn't allowed to hand out, instead of trusting
         // whatever the Excel file says. See ASSIGNABLE_ROLES.
+        //
+        // FIX: normalize spaces/dashes to underscores too (e.g. "TEAM
+        // MEMBER" -> "TEAM_MEMBER") — same reasoning as add-user above.
         const requestedRole = String(rawUser.role || "")
           .toUpperCase()
-          .trim();
+          .trim()
+          .replace(/[\s\-]+/g, "_");
         if (!canAssignRole(req.user.role, requestedRole)) {
           results.push({
             email,
@@ -620,8 +641,8 @@ router.post(
           continue;
         }
 
-        // NEW: reporting manager, if provided, must be a real user in
-        // the same organization.
+        // NEW: reporting manager, if provided, must be a real user OR a
+        // manually-added entry, in the same organization.
         if (rawUser.reportingManager) {
           const rmCheck = await validateReportingManager(
             rawUser.reportingManager,

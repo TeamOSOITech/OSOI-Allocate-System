@@ -1,6 +1,5 @@
 const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
-const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const login = async (email, password) => {
   const { data: candidates, error: candidatesError } = await supabase
@@ -26,7 +25,14 @@ const login = async (email, password) => {
       password,
     });
 
-    console.log("Supabase Error:", error);
+    // FIX: this used to log unconditionally, including when error was
+    // null (i.e. sign-in succeeded) — the literal text "Supabase Error:"
+    // then got flagged/highlighted as an error line by log viewers,
+    // making a perfectly successful login look like a failure. Now only
+    // logs when there's an actual error to report.
+    if (error) {
+      console.log(`Sign-in attempt failed for ${loginEmail}:`, error.message);
+    }
 
     if (!error && data?.session) {
       authData = data;
@@ -129,7 +135,7 @@ const forgotPassword = async (email) => {
             type: "recovery",
             email: loginEmail,
             options: {
-              redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
+              redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
             },
           });
 

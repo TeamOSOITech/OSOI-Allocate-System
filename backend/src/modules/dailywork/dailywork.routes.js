@@ -6,6 +6,7 @@ const {
   listDailyWork,
   getDailyWorkById,
   createDailyWork,
+  bulkCreateDailyWork,
   updateDailyWork,
   deleteDailyWork,
   seedDummyCases,
@@ -24,6 +25,15 @@ router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   createDailyWork,
+);
+
+// Bulk version of the same create — one Excel upload with (Service Name,
+// Quantity) rows instead of one form submit per service. Literal path,
+// same permission as the single-row create above.
+router.post(
+  "/bulk",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  bulkCreateDailyWork,
 );
 
 // "Load Test Cases" button on the Allocation page — seeds one dummy
