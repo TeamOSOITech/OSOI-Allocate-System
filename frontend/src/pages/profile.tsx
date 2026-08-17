@@ -290,6 +290,13 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [submitError, setSubmitError] = useState<string | null>(null);
     const panelRef = useRef<HTMLDivElement>(null);
 
+    // ---- Bulk Submit (all pending tasks at once, one shared reason) ----
+    const [showBulkModal, setShowBulkModal] = useState(false);
+    const [bulkQtyById, setBulkQtyById] = useState<Record<string, string>>({});
+    const [bulkReason, setBulkReason] = useState("");
+    const [bulkSubmitting, setBulkSubmitting] = useState(false);
+    const [bulkError, setBulkError] = useState<string | null>(null);
+
     const cachedUser = (() => {
         try {
             return JSON.parse(localStorage.getItem("user") || "null");
@@ -474,6 +481,95 @@ export default function Profile({ onLogout }: ProfileProps) {
             setSubmitError(err?.message || "Failed to submit work");
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    // ---- Bulk Submit: every still-pending allocation for TODAY (the
+    // KPI cards above and this button both scope to "today" — pending
+    // work from past dates is handled per-row on the Past Allocation
+    // tab, same as before). ----
+    const pendingTodayAllocations = useMemo(
+        () =>
+            todaysAllocations.filter(
+                (a) => a.submitted_qty === null || a.submitted_qty === undefined
+            ),
+        [todaysAllocations]
+    );
+
+    const openBulkModal = () => {
+        const initial: Record<string, string> = {};
+        pendingTodayAllocations.forEach((a) => {
+            initial[a.id] = String(a.allocated_qty);
+        });
+        setBulkQtyById(initial);
+        setBulkReason("");
+        setBulkError(null);
+        setShowBulkModal(true);
+    };
+
+    const closeBulkModal = () => {
+        setShowBulkModal(false);
+        setBulkQtyById({});
+        setBulkReason("");
+        setBulkError(null);
+    };
+
+    const setBulkQty = (id: string, value: string) => {
+        setBulkQtyById((prev) => ({ ...prev, [id]: value }));
+    };
+
+    const handleBulkSubmit = async () => {
+        setBulkError(null);
+
+        const items = pendingTodayAllocations.map((a) => ({
+            id: a.id,
+            submittedQty: Number(bulkQtyById[a.id] ?? a.allocated_qty),
+        }));
+
+        for (const it of items) {
+            if (Number.isNaN(it.submittedQty) || it.submittedQty < 0) {
+                setBulkError("Enter a valid quantity for every task before submitting.");
+                return;
+            }
+        }
+        // Same rule as the single-item panel, just checked once up front
+        // for the whole batch since they all share one reason field.
+        const anyDiffers = items.some((it, i) => {
+            const original = pendingTodayAllocations[i]?.allocated_qty ?? 0;
+            return it.submittedQty !== original;
+        });
+        if (anyDiffers && !bulkReason.trim()) {
+            setBulkError(
+                "One or more quantities differ from what was allocated — please add a reason."
+            );
+            return;
+        }
+
+        setBulkSubmitting(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/allocations/bulk-submit`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items, reason: bulkReason.trim() || undefined }),
+            });
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Bulk submit failed");
+            }
+            const failed = (json.data?.results || []).filter((r: any) => !r.success);
+            if (failed.length > 0) {
+                setBulkError(
+                    `${failed.length} of ${items.length} task(s) could not be submitted — ${failed[0].message}`
+                );
+                await loadAll();
+                return;
+            }
+            closeBulkModal();
+            await loadAll();
+        } catch (err: any) {
+            setBulkError(err?.message || "Bulk submit failed");
+        } finally {
+            setBulkSubmitting(false);
         }
     };
 
@@ -778,14 +874,33 @@ export default function Profile({ onLogout }: ProfileProps) {
                         Past Allocation
                     </button>
                 </div>
-                <button
-                    type="button"
-                    className="pf-btn pf-btn-outline"
-                    style={styles.exportBtn}
-                    onClick={exportCsv}
-                >
-                    <DownloadIcon /> Export
-                </button>
+                <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                        type="button"
+                        className="pf-btn pf-btn-solid"
+                        style={{
+                            ...styles.exportBtn,
+                            background: GRADIENT,
+                            color: "#fff",
+                            border: "none",
+                            opacity: stats.pendingCount > 0 ? 1 : 0.5,
+                            cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
+                        }}
+                        onClick={openBulkModal}
+                        disabled={stats.pendingCount === 0}
+                    >
+                        <CheckIcon /> Bulk Submit
+                        {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
+                    </button>
+                    <button
+                        type="button"
+                        className="pf-btn pf-btn-outline"
+                        style={styles.exportBtn}
+                        onClick={exportCsv}
+                    >
+                        <DownloadIcon /> Export
+                    </button>
+                </div>
             </div>
 
             {/* ---- Filters ---- */}
@@ -867,6 +982,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </div>
                 ) : (
                     <table style={styles.table}>
+                        <colgroup>
+                            <col style={{ width: "4%" }} />
+                            <col style={{ width: "17%" }} />
+                            <col style={{ width: "21%" }} />
+                            <col style={{ width: "12%" }} />
+                            <col style={{ width: "14%" }} />
+                            <col style={{ width: "11%" }} />
+                            <col style={{ width: "11%" }} />
+                            <col style={{ width: "10%" }} />
+                        </colgroup>
                         <thead>
                             <tr>
                                 <th style={styles.th}>#</th>
@@ -1016,6 +1141,126 @@ export default function Profile({ onLogout }: ProfileProps) {
                     {submitting ? "Submitting…" : "Submit Work"}
                 </button>
             </div>
+
+            {/* ---- Bulk Submit modal ---- */}
+            {showBulkModal && (
+                <div style={styles.bulkOverlay} onClick={closeBulkModal}>
+                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.bulkModalHeader}>
+                            <div>
+                                <h3 style={styles.bulkModalTitle}>
+                                    Bulk Submit — Today's Pending Tasks
+                                </h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Review each task's quantity, then submit them all at once with a
+                                    shared reason.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                style={styles.closeBtn}
+                                onClick={closeBulkModal}
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.bulkTableWrap}>
+                            <table style={{ ...styles.table, tableLayout: "fixed" }}>
+                                <colgroup>
+                                    <col style={{ width: "34%" }} />
+                                    <col style={{ width: "22%" }} />
+                                    <col style={{ width: "44%" }} />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style={styles.th}>Task / Service</th>
+                                        <th style={styles.th}>Allocated Qty</th>
+                                        <th style={styles.th}>Qty to Submit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pendingTodayAllocations.map((a) => (
+                                        <tr key={a.id} style={styles.tr}>
+                                            <td
+                                                style={{
+                                                    ...styles.td,
+                                                    fontWeight: fontWeight.bold,
+                                                }}
+                                            >
+                                                {a.productName || "-"}
+                                            </td>
+                                            <td style={styles.td}>{a.allocated_qty}</td>
+                                            <td style={styles.td}>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    style={{ ...styles.textInput, width: 120 }}
+                                                    value={bulkQtyById[a.id] ?? ""}
+                                                    onChange={(e) =>
+                                                        setBulkQty(a.id, e.target.value)
+                                                    }
+                                                />
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div style={styles.bulkReasonRow}>
+                            <label style={styles.smallLabel}>
+                                Reason (required only if any quantity above differs from what was
+                                allocated)
+                            </label>
+                            <select
+                                style={styles.textInput}
+                                value={bulkReason}
+                                onChange={(e) => setBulkReason(e.target.value)}
+                            >
+                                <option value="">Select reason</option>
+                                {REASON_OPTIONS.map((r) => (
+                                    <option key={r} value={r}>
+                                        {r}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {bulkError && <p style={styles.rowError}>{bulkError}</p>}
+
+                        <div style={styles.bulkModalFooter}>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.bulkCancelBtn}
+                                onClick={closeBulkModal}
+                                disabled={bulkSubmitting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-solid"
+                                style={{
+                                    ...styles.submitBtn,
+                                    width: "auto",
+                                    flex: 1,
+                                    opacity: bulkSubmitting ? 0.6 : 1,
+                                    cursor: bulkSubmitting ? "not-allowed" : "pointer",
+                                }}
+                                onClick={handleBulkSubmit}
+                                disabled={bulkSubmitting}
+                            >
+                                {bulkSubmitting
+                                    ? "Submitting…"
+                                    : `Submit All (${pendingTodayAllocations.length})`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -1470,7 +1715,7 @@ function getStyles(
             boxShadow: CARD_SHADOW,
             overflowX: "auto",
         },
-        table: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
+        table: { width: "100%", borderCollapse: "collapse", minWidth: 720, tableLayout: "fixed" },
         th: {
             textAlign: "left",
             fontSize: fontSize.xs,
@@ -1479,6 +1724,8 @@ function getStyles(
             padding: "12px 14px",
             borderBottom: "1px solid #f1f1f1",
             whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
         },
         tr: {},
         td: {
@@ -1486,6 +1733,9 @@ function getStyles(
             color: "#3D4459",
             padding: "12px 14px",
             borderBottom: "1px solid #f6f6f9",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
         },
         statusDone: {
             fontSize: fontSize.xs,
@@ -1598,5 +1848,83 @@ function getStyles(
             fontWeight: fontWeight.medium,
         },
         smallMuted: { fontSize: fontSize.xs, color: "#9099AC" },
+
+        // ---- Bulk Submit modal ----
+        bulkOverlay: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+            padding: 16,
+        },
+        bulkModal: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            width: 640,
+            maxWidth: "100%",
+            maxHeight: "88vh",
+            overflowY: "auto",
+            boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+            padding: 24,
+        },
+        bulkModalHeader: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 12,
+            marginBottom: 16,
+        },
+        bulkModalTitle: {
+            margin: 0,
+            fontSize: fontSize.xl,
+            fontWeight: fontWeight.bold,
+            color: BRAND.blue,
+        },
+        bulkModalSubtitle: {
+            margin: "4px 0 0",
+            fontSize: fontSize.sm,
+            color: "#767F92",
+        },
+        closeBtn: {
+            width: 28,
+            height: 28,
+            flexShrink: 0,
+            borderRadius: radius.circle,
+            border: "none",
+            background: "#f1f5f9",
+            color: "#475569",
+            cursor: "pointer",
+            fontSize: fontSize.md,
+        },
+        bulkTableWrap: {
+            border: "1px solid #f1f1f5",
+            borderRadius: radius.md,
+            overflow: "hidden",
+            marginBottom: 16,
+        },
+        bulkReasonRow: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            marginBottom: 6,
+        },
+        bulkModalFooter: {
+            display: "flex",
+            gap: 10,
+            marginTop: 16,
+        },
+        bulkCancelBtn: {
+            flex: 1,
+            background: "#fff",
+            color: BRAND.blue,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.3)}`,
+            borderRadius: radius.md,
+            padding: "13px",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+        },
     };
 }
