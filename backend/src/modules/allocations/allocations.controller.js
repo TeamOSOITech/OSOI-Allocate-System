@@ -201,22 +201,87 @@ async function autoAllocate(req, res) {
     const baseQty = Math.floor(dailyWork.total_qty / presentCount);
     const remainder = dailyWork.total_qty - baseQty * presentCount;
 
-    const rows = presentRows.map((p, index) => ({
-      organization_id: req.user.organizationId,
-      daily_work_id: dailyWorkId,
-      employee_id: p.employee_id,
-      // First `remainder` employees (index 0, 1, 2...) get +1.
-      allocated_qty: baseQty + (index < remainder ? 1 : 0),
-      allocation_type: "AUTO",
-      status: "ASSIGNED",
-      created_by: req.user.userId,
-    }));
+    // ---- Carry forward yesterday's (or any earlier day's) leftover
+    // pending qty for the SAME product, for whichever of today's
+    // present employees still have it. An employee's backlog on this
+    // product is: allocated_qty - (submitted_qty || 0), summed across
+    // every earlier allocation of theirs on this product that (a) is
+    // still short and (b) hasn't already been rolled into a later
+    // allocation (carried_forward = false) — that flag is what stops
+    // the same backlog being added a second time on day 3, 4, etc.
+    // Only earlier batches of THIS product count; a different product
+    // does not bleed its backlog into this one.
+    const presentIds = presentRows.map((p) => p.employee_id);
+    const backlogByEmployee = {};
+    const carriedAllocationIds = [];
+
+    if (dailyWork.product_id) {
+      const { data: pastBatches, error: pastBatchError } = await supabase
+        .from("daily_work")
+        .select("id")
+        .eq("organization_id", req.user.organizationId)
+        .eq("product_id", dailyWork.product_id)
+        .lt("work_date", dailyWork.work_date);
+      if (pastBatchError) throw pastBatchError;
+
+      const pastBatchIds = (pastBatches || []).map((b) => b.id);
+      if (pastBatchIds.length > 0) {
+        const { data: pastAllocations, error: pastAllocError } = await supabase
+          .from("allocations")
+          .select("id, employee_id, allocated_qty, submitted_qty")
+          .in("daily_work_id", pastBatchIds)
+          .in("employee_id", presentIds)
+          .eq("carried_forward", false);
+        if (pastAllocError) throw pastAllocError;
+
+        for (const row of pastAllocations || []) {
+          const shortfall = row.allocated_qty - (row.submitted_qty ?? 0);
+          if (shortfall > 0) {
+            backlogByEmployee[row.employee_id] =
+              (backlogByEmployee[row.employee_id] || 0) + shortfall;
+            carriedAllocationIds.push(row.id);
+          }
+        }
+      }
+    }
+
+    const rows = presentRows.map((p, index) => {
+      const carriedInQty = backlogByEmployee[p.employee_id] || 0;
+      return {
+        organization_id: req.user.organizationId,
+        daily_work_id: dailyWorkId,
+        employee_id: p.employee_id,
+        // First `remainder` employees (index 0, 1, 2...) get +1, plus
+        // any backlog they're still owed on this product.
+        allocated_qty: baseQty + (index < remainder ? 1 : 0) + carriedInQty,
+        allocation_type: "AUTO",
+        status: "ASSIGNED",
+        created_by: req.user.userId,
+        carried_in_qty: carriedInQty,
+      };
+    });
 
     const { data: inserted, error: insertError } = await supabase
       .from("allocations")
       .insert(rows)
       .select();
     if (insertError) throw insertError;
+
+    // Now that the backlog has a new home, mark the old rows so a
+    // later batch of this product doesn't carry the same shortfall
+    // forward again.
+    if (carriedAllocationIds.length > 0) {
+      const { error: carryUpdateError } = await supabase
+        .from("allocations")
+        .update({ carried_forward: true })
+        .in("id", carriedAllocationIds);
+      if (carryUpdateError) throw carryUpdateError;
+    }
+
+    const totalCarriedIn = Object.values(backlogByEmployee).reduce(
+      (s, v) => s + v,
+      0,
+    );
 
     res.status(201).json({
       success: true,
@@ -229,6 +294,7 @@ async function autoAllocate(req, res) {
           employeesWithExtraUnit: remainder,
           allocatedQty: dailyWork.total_qty, // always fully allocated now
           pendingQty: 0,
+          carriedInQty: totalCarriedIn,
         },
       },
     });
@@ -679,7 +745,7 @@ async function submitAllocationWork(req, res) {
 
 // ------------------------------------------------------------
 // PATCH /api/allocations/bulk-submit
-// body: { items: [{ id, submittedQty }, ...], reason }
+// body: { items: [{ id, submittedQty, reason }, ...] }
 //
 // NEW: profile.tsx's "Bulk Submit" panel — lets an employee submit
 // several still-pending allocations in one go instead of opening the
@@ -690,16 +756,17 @@ async function submitAllocationWork(req, res) {
 // result list back (same tolerant-batch shape as the bulk-upload
 // endpoints elsewhere in this app).
 //
-// The reason is shared across the whole batch by design (that's the
-// point of this endpoint) — it's required if ANY item in the batch
-// has a submittedQty that differs from its own allocated_qty, and is
-// applied only to the items that actually differ (items that match
+// Each item carries its own reason — different tasks can have
+// different reasons. A reason is required only for an item whose
+// submittedQty differs from its own allocated_qty; items that match
 // their allocated_qty exactly are stored with no reason, same as the
-// single-item endpoint).
+// single-item endpoint. For backward compatibility, a legacy
+// top-level `reason` is used as a fallback for any item that didn't
+// send its own.
 // ------------------------------------------------------------
 async function bulkSubmitAllocationWork(req, res) {
   try {
-    const { items, reason } = req.body;
+    const { items, reason: legacyBatchReason } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res
@@ -751,8 +818,10 @@ async function bulkSubmitAllocationWork(req, res) {
         continue;
       }
 
+      const itemReason = (item.reason ?? legacyBatchReason ?? "").trim();
+
       const differs = submittedQty !== existing.allocated_qty;
-      if (differs && !(reason || "").trim()) {
+      if (differs && !itemReason) {
         results.push({
           id: item.id,
           success: false,
@@ -766,7 +835,7 @@ async function bulkSubmitAllocationWork(req, res) {
         .from("allocations")
         .update({
           submitted_qty: submittedQty,
-          submission_reason: differs ? reason.trim() : null,
+          submission_reason: differs ? itemReason : null,
           submitted_at: new Date().toISOString(),
           status: "COMPLETED",
         })
