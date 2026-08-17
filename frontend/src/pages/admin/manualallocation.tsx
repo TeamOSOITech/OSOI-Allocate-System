@@ -260,7 +260,7 @@ type Employee = {
     name: string;
     employeeCode: string | null;
     department: string | null;
-    workedInTeams: string | null;
+    team: string | null;
 };
 
 type RowStatus = "PRESENT" | "HALF" | "LEAVE";
@@ -410,13 +410,12 @@ export default function ManualAllocation() {
     // ---- filtered employee list: Team dropdown narrows first, then the
     // single search box matches name, department, team, product, or status ----
     const teams = useMemo(
-        () =>
-            Array.from(new Set(employees.map((e) => e.workedInTeams).filter(Boolean))) as string[],
+        () => Array.from(new Set(employees.map((e) => e.team).filter(Boolean))) as string[],
         [employees]
     );
     const filteredEmployees = useMemo(() => {
         let list = employees;
-        if (teamFilter) list = list.filter((e) => e.workedInTeams === teamFilter);
+        if (teamFilter) list = list.filter((e) => e.team === teamFilter);
 
         const q = searchText.trim().toLowerCase();
         if (!q) return list;
@@ -426,7 +425,7 @@ export default function ManualAllocation() {
                 e.name,
                 e.employeeCode,
                 e.department,
-                e.workedInTeams,
+                e.team,
                 selectedBatch?.productName,
                 STATUS_META[status]?.label,
             ]
@@ -578,7 +577,7 @@ export default function ManualAllocation() {
                 emp.name,
                 emp.employeeCode || "",
                 emp.department || "",
-                emp.workedInTeams || "",
+                emp.team || "",
                 STATUS_META[r.status].label,
                 String(r.qty),
             ];
@@ -594,7 +593,7 @@ export default function ManualAllocation() {
     // selected case via bulk-upsert, replacing whatever was saved before). ----
     const handleSaveAllocations = async () => {
         if (!selectedBatch) {
-            setError('Select a specific product (not "All") before saving.');
+            setError('Select a specific service (not "All") before saving.');
             return;
         }
         const rowsPayload = filteredEmployees.map((emp) => {
@@ -648,7 +647,7 @@ export default function ManualAllocation() {
                         <div>
                             <h1 style={styles.title}>Today's Allocation</h1>
                             <p style={styles.headerSubtext}>
-                                Pick a date and product, then Smart Allocate or hand out quantities
+                                Pick a date and service, then Smart Allocate or hand out quantities
                                 by hand.
                             </p>
                         </div>
@@ -679,14 +678,14 @@ export default function ManualAllocation() {
                             </div>
                             <div style={styles.filterField}>
                                 <label style={styles.label}>
-                                    <Box size={12} color={BRAND.blue} /> Product
+                                    <Box size={12} color={BRAND.blue} /> Service
                                 </label>
                                 <select
                                     value={productId}
                                     onChange={(e) => setProductId(e.target.value)}
                                     style={styles.select}
                                 >
-                                    <option value="">All Products</option>
+                                    <option value="">All Services</option>
                                     {products.map((p) => (
                                         <option key={p.id} value={p.id}>
                                             {p.product_name}
@@ -719,7 +718,7 @@ export default function ManualAllocation() {
                                     type="text"
                                     value={searchText}
                                     onChange={(e) => setSearchText(e.target.value)}
-                                    placeholder="Search by name, department, team, product or status..."
+                                    placeholder="Search by name, department, team, service or status..."
                                     style={styles.select}
                                 />
                             </div>
@@ -727,9 +726,20 @@ export default function ManualAllocation() {
 
                         {!productSelected && (
                             <p style={styles.allNote}>
-                                <AlertTriangle size={12} color={BRAND.amber} /> "All Products" is
-                                summary-only. Select one product to run Smart Allocation, Manual
+                                <AlertTriangle size={12} color={BRAND.amber} /> "All Services" is
+                                summary-only. Select one service to run Smart Allocation, Manual
                                 Edit, or Allocate &amp; Save.
+                            </p>
+                        )}
+
+                        {productSelected && !loading && !selectedBatch && (
+                            <p style={styles.allNote}>
+                                <AlertTriangle size={12} color={BRAND.amber} /> No Daily Work has
+                                been logged for{" "}
+                                {products.find((p) => String(p.id) === String(productId))
+                                    ?.product_name || "this service"}{" "}
+                                on {date}. Log today's quantity on the Daily Work page first — until
+                                then this table has no batch to allocate against.
                             </p>
                         )}
                     </div>
@@ -844,7 +854,7 @@ export default function ManualAllocation() {
                                         <th style={styles.th}>Employee Name</th>
                                         {!isMobile && <th style={styles.th}>Dept</th>}
                                         {!isMobile && <th style={styles.th}>Team</th>}
-                                        {!isMobile && <th style={styles.th}>Product</th>}
+                                        {!isMobile && <th style={styles.th}>Service</th>}
                                         <th style={styles.th}>Status</th>
                                         <th style={{ ...styles.th, textAlign: "right" }}>
                                             Allocated Qty
@@ -865,7 +875,7 @@ export default function ManualAllocation() {
                                                 <div style={styles.emptyState}>
                                                     <EmptyStateIcon />
                                                     <span style={styles.emptyStateText}>
-                                                        Select a product above to see the employee
+                                                        Select a service above to see the employee
                                                         list.
                                                     </span>
                                                 </div>
@@ -961,7 +971,7 @@ export default function ManualAllocation() {
                                                                 color: "#374151",
                                                             }}
                                                         >
-                                                            {emp.workedInTeams || "-"}
+                                                            {emp.team || "-"}
                                                         </td>
                                                     )}
                                                     {!isMobile && (
