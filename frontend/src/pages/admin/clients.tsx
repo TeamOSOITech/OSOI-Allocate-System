@@ -930,6 +930,44 @@ export default function Clients() {
         });
     };
 
+    // NEW: "Select All" checkbox above the Services list — toggles every
+    // product on/off in one click. If everything is already selected, it
+    // clears the list; otherwise it selects every product, keeping the
+    // amount already typed for any product that was already checked (only
+    // newly-added ones start with an empty amount).
+    const toggleAllProducts = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
+    ) => {
+        setFormState((prev) => {
+            const allSelected =
+                products.length > 0 &&
+                products.every((p) =>
+                    prev.productRates.some((r) => Number(r.productId) === Number(p.id))
+                );
+
+            if (allSelected) {
+                return { ...prev, productRates: [] };
+            }
+
+            const existingByProductId = new Map(
+                prev.productRates.map((r) => [Number(r.productId), r])
+            );
+
+            return {
+                ...prev,
+                productRates: products.map(
+                    (p) =>
+                        existingByProductId.get(Number(p.id)) || {
+                            productId: p.id,
+                            amount: "",
+                            currency: prev.currency,
+                        }
+                ),
+            };
+        });
+    };
+
     const updateProductRate = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
@@ -948,99 +986,141 @@ export default function Clients() {
     const renderProductPicker = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
-    ) => (
-        <div style={{ gridColumn: "1 / -1" }}>
-            <label style={styles.formLabel}>Services</label>
-            {products.length === 0 ? (
-                <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                    No products yet — add one from the Products page first.
-                </p>
-            ) : (
+    ) => {
+        // Used to drive the Select All checkbox's checked/indeterminate state.
+        const allSelected =
+            products.length > 0 &&
+            products.every((p) =>
+                formState.productRates.some((r) => Number(r.productId) === Number(p.id))
+            );
+        const someSelected = formState.productRates.length > 0 && !allSelected;
+
+        return (
+            <div style={{ gridColumn: "1 / -1" }}>
                 <div
-                    className="cl-scroll-area"
                     style={{
                         display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                        maxHeight: 220,
-                        overflowY: "auto",
-                        border: "1px solid #e4e9f2",
-                        borderRadius: radius.sm,
-                        padding: "10px 12px",
-                        background: "#fafbfc",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: 6,
                     }}
                 >
-                    {products.map((p) => {
-                        const rate = formState.productRates.find(
-                            (r) => Number(r.productId) === Number(p.id)
-                        );
-                        const checked = !!rate;
-                        return (
-                            <div
-                                key={p.id}
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    flexWrap: "wrap",
+                    <label style={{ ...styles.formLabel, margin: 0 }}>Services</label>
+                    {products.length > 0 && (
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                fontSize: fontSize.sm,
+                                fontWeight: fontWeight.medium,
+                                color: "var(--brand-blue)",
+                                cursor: "pointer",
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={(el) => {
+                                    if (el) el.indeterminate = someSelected;
                                 }}
-                            >
-                                <label
+                                onChange={() => toggleAllProducts(formState, setFormState)}
+                            />
+                            Select All
+                        </label>
+                    )}
+                </div>
+                {products.length === 0 ? (
+                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                        No products yet — add one from the Products page first.
+                    </p>
+                ) : (
+                    <div
+                        className="cl-scroll-area"
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            maxHeight: 220,
+                            overflowY: "auto",
+                            border: "1px solid #e4e9f2",
+                            borderRadius: radius.sm,
+                            padding: "10px 12px",
+                            background: "#fafbfc",
+                        }}
+                    >
+                        {products.map((p) => {
+                            const rate = formState.productRates.find(
+                                (r) => Number(r.productId) === Number(p.id)
+                            );
+                            const checked = !!rate;
+                            return (
+                                <div
+                                    key={p.id}
                                     style={{
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        fontSize: fontSize.sm,
-                                        color: "#16233c",
-                                        cursor: "pointer",
-                                        minWidth: 160,
-                                        flex: "1 1 160px",
+                                        flexWrap: "wrap",
                                     }}
                                 >
-                                    <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() =>
-                                            toggleProductId(formState, setFormState, p.id)
-                                        }
-                                    />
-                                    {p.product_name}
-                                </label>
-                                {checked && (
-                                    // FIX: currency used to repeat as a badge next to EVERY
-                                    // checked service — moved to a single "Unit" field up top
-                                    // (next to Status) instead, since it's the same currency
-                                    // for all services on this client/subclient. Each row now
-                                    // only needs the Amount.
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        placeholder="Amount"
-                                        value={rate?.amount ?? ""}
-                                        onChange={(e) =>
-                                            updateProductRate(
-                                                formState,
-                                                setFormState,
-                                                p.id,
-                                                "amount",
-                                                e.target.value
-                                            )
-                                        }
+                                    <label
                                         style={{
-                                            ...styles.formInput,
-                                            width: 110,
-                                            padding: "6px 8px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            fontSize: fontSize.sm,
+                                            color: "#16233c",
+                                            cursor: "pointer",
+                                            minWidth: 160,
+                                            flex: "1 1 160px",
                                         }}
-                                    />
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-    );
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() =>
+                                                toggleProductId(formState, setFormState, p.id)
+                                            }
+                                        />
+                                        {p.product_name}
+                                    </label>
+                                    {checked && (
+                                        // FIX: currency used to repeat as a badge next to EVERY
+                                        // checked service — moved to a single "Unit" field up top
+                                        // (next to Status) instead, since it's the same currency
+                                        // for all services on this client/subclient. Each row now
+                                        // only needs the Amount.
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="Amount"
+                                            value={rate?.amount ?? ""}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "amount",
+                                                    e.target.value
+                                                )
+                                            }
+                                            style={{
+                                                ...styles.formInput,
+                                                width: 110,
+                                                padding: "6px 8px",
+                                            }}
+                                        />
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 
