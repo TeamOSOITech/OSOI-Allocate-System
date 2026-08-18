@@ -164,9 +164,11 @@ const parseTimeTaken = (raw) => {
 };
 
 // Bulk upload sheet no longer needs Client / Subclient columns — a product
-// is standalone. Only "Service Name" and "Time Taken" are read now.
-// (Teams aren't part of the bulk sheet yet — bulk-created products start
-// with an empty teams list and can be tagged afterwards from Edit.)
+// is standalone. "Service Name" and "Time Taken" are required; "Teams" is
+// an optional, comma-separated column (e.g. "Tech, SD") so a service can
+// be assigned to multiple teams straight from the sheet instead of every
+// bulk-created service starting with an empty teams list that had to be
+// tagged manually afterwards from Edit.
 //
 // NOTE: bulk upload is NOT approval-gated — it's intentionally not routed
 // through approvalGate() in products.routes.js, so it always creates
@@ -192,6 +194,50 @@ const bulkUploadProducts = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Excel file is empty" });
+    }
+
+    // Load this org's known teams ONCE up front (same source as the
+    // Teams multi-select on the Add/Edit Service form — see
+    // teams.service.js's getAllTeams) instead of querying per row.
+    // Case-insensitive lookup so "tech" in the sheet still matches a
+    // team stored as "Tech".
+    const { data: orgTeams, error: teamsError } = await supabase
+      .from("teams")
+      .select("name")
+      .eq("organization_id", orgId)
+      .or("hidden.is.null,hidden.eq.false");
+    if (teamsError) throw teamsError;
+
+    const teamNameByLower = new Map(
+      (orgTeams || []).map((t) => [
+        String(t.name || "")
+          .trim()
+          .toLowerCase(),
+        t.name,
+      ]),
+    );
+
+    // Splits a "Teams" cell like "Tech, SD" into ["Tech","SD"], validates
+    // every piece against teamNameByLower, and returns either the
+    // resolved (correctly-cased) team names or a list of anything not
+    // recognized so the caller can fail that row with a clear reason.
+    function resolveTeamsCell(raw) {
+      const trimmed = (raw || "").toString().trim();
+      if (!trimmed) return { teams: [], unknown: [] };
+
+      const pieces = trimmed
+        .split(/[,;]/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      const teams = [];
+      const unknown = [];
+      for (const piece of pieces) {
+        const match = teamNameByLower.get(piece.toLowerCase());
+        if (match) teams.push(match);
+        else unknown.push(piece);
+      }
+      return { teams, unknown };
     }
 
     const results = [];
@@ -238,9 +284,25 @@ const bulkUploadProducts = async (req, res) => {
         continue;
       }
 
+      // NEW: optional Teams column — "Tech, SD" etc. Every team named
+      // must already exist for this org (same rule as the employee bulk
+      // upload's Teams check); an unrecognized team fails the row rather
+      // than silently being dropped or auto-created.
+      const { teams, unknown: unknownTeams } = resolveTeamsCell(row["Teams"]);
+      if (unknownTeams.length > 0) {
+        results.push({
+          identifier,
+          row: rowNumber,
+          success: false,
+          message: `Team(s) not listed: ${unknownTeams.join(", ")}`,
+        });
+        failedCount++;
+        continue;
+      }
+
       try {
         await productService.createProduct(
-          { product_name, time_taken, time_unit },
+          { product_name, time_taken, time_unit, teams },
           orgId,
         );
         results.push({ identifier, row: rowNumber, success: true });
