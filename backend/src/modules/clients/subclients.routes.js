@@ -393,21 +393,6 @@ router.get("/bulk/template", async (req, res) => {
         secondaryContactEmail: "priya.singh@acmenorth.com",
         secondaryContactPhone: "+91 98765 43212",
       },
-      {
-        clientName: "Acme Corp",
-        subclientName: "Acme South",
-        country: "India",
-        subclientStatus: "Active",
-        website: "https://acmesouth.com",
-        mainEmail: "hello@acmesouth.com",
-        mainPhone: "+91 98765 43220",
-        primaryContactName: "Anil Mehta",
-        primaryContactEmail: "anil.mehta@acmesouth.com",
-        primaryContactPhone: "+91 98765 43221",
-        secondaryContactName: "",
-        secondaryContactEmail: "",
-        secondaryContactPhone: "",
-      },
     ]);
 
     sheet.views = [{ state: "frozen", ySplit: 1 }];
