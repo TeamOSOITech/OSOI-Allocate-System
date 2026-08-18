@@ -806,17 +806,12 @@ export default function ManualAllocation() {
                     subtext. Illustration + tab switcher removed since
                     there's only ever one view on this page now. ---- */}
                 <div style={isMobile ? styles.headerCardMobile : styles.headerCard}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIconBox}>
-                            <CalendarCheck size={22} color={BRAND.blue} />
-                        </div>
-                        <div>
-                            <h1 style={styles.title}>Today's Allocation</h1>
-                            <p style={styles.headerSubtext}>
-                                Pick a date and service, then Smart Allocate or hand out quantities
-                                by hand.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.title}>Today's Allocation</h1>
+                        <p style={styles.headerSubtext}>
+                            Pick a date and service, then Smart Allocate or hand out quantities by
+                            hand.
+                        </p>
                     </div>
                 </div>
 
@@ -1442,17 +1437,6 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         marginBottom: 14,
-    },
-    headerLeft: { display: "flex", gap: 16, alignItems: "flex-start" },
-    headerIconBox: {
-        width: 46,
-        height: 46,
-        borderRadius: radius.md,
-        background: "rgba(var(--brand-blue-rgb), 0.1)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
     },
     title: {
         fontSize: fontSize["5xl"],

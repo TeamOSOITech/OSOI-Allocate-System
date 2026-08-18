@@ -131,6 +131,7 @@ export default function History() {
     const [error, setError] = useState("");
     const [truncated, setTruncated] = useState(false);
     const [page, setPage] = useState(1);
+    const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
 
     // ---- load filter dropdown options once ----
     useEffect(() => {
@@ -323,17 +324,12 @@ export default function History() {
             <div style={styles.contentBody}>
                 {/* Header */}
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i className="ti ti-history" style={{ fontSize: fontSize["4xl"] }} />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>History</h1>
-                            <p style={styles.headerSubtext}>
-                                Every allocation, filterable by employee, service, client,
-                                subclient, date, and status.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>History</h1>
+                        <p style={styles.headerSubtext}>
+                            Every allocation, filterable by employee, service, client, subclient,
+                            date, and status.
+                        </p>
                     </div>
                     <button type="button" style={styles.exportBtn} onClick={exportCsv}>
                         <i className="ti ti-download" style={{ fontSize: fontSize.md }} />
@@ -508,15 +504,15 @@ export default function History() {
                                 <col style={{ width: "13%" }} />
                             </colgroup>
                             <thead>
-                                <tr>
+                                <tr style={styles.theadRow}>
                                     <th style={styles.th}>Date</th>
                                     <th style={styles.th}>Employee</th>
                                     <th style={styles.th}>Team</th>
                                     <th style={styles.th}>Service</th>
                                     <th style={styles.th}>Client</th>
                                     <th style={styles.th}>Subclient</th>
-                                    <th style={styles.th}>Allocated</th>
-                                    <th style={styles.th}>Submitted</th>
+                                    <th style={styles.thNumeric}>Allocated</th>
+                                    <th style={styles.thNumeric}>Submitted</th>
                                     <th style={styles.th}>Status</th>
                                     <th style={styles.th}>Reason</th>
                                 </tr>
@@ -544,9 +540,16 @@ export default function History() {
                                     pagedRows.map((r, idx) => (
                                         <tr
                                             key={r.id}
+                                            onMouseEnter={() => setHoveredRowId(r.id)}
+                                            onMouseLeave={() => setHoveredRowId(null)}
                                             style={{
                                                 ...styles.tr,
-                                                background: idx % 2 === 0 ? "#fff" : "#fafbff",
+                                                background:
+                                                    hoveredRowId === r.id
+                                                        ? "#eef2ff"
+                                                        : idx % 2 === 0
+                                                          ? "#fff"
+                                                          : "#fafbff",
                                             }}
                                         >
                                             <td style={styles.td}>
@@ -572,8 +575,8 @@ export default function History() {
                                                     ? r.subclients.map((s) => s.name).join(", ")
                                                     : "-"}
                                             </td>
-                                            <td style={styles.td}>{r.allocatedQty}</td>
-                                            <td style={styles.td}>
+                                            <td style={styles.tdNumeric}>{r.allocatedQty}</td>
+                                            <td style={styles.tdNumeric}>
                                                 {r.submittedQty === null ? "-" : r.submittedQty}
                                             </td>
                                             <td style={styles.td}>
@@ -584,6 +587,13 @@ export default function History() {
                                                             : styles.pillPending
                                                     }
                                                 >
+                                                    <span
+                                                        style={
+                                                            r.status === "COMPLETED"
+                                                                ? styles.pillDotDone
+                                                                : styles.pillDotPending
+                                                        }
+                                                    />
                                                     {r.status === "COMPLETED"
                                                         ? "Completed"
                                                         : "Pending"}
@@ -700,23 +710,13 @@ const styles: Record<string, CSSProperties> = {
         flexWrap: "wrap",
     },
     headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
-    headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
-    headerIcon: {
-        width: 42,
-        height: 42,
-        borderRadius: radius.md,
-        background: GRADIENT,
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        flexShrink: 0,
+        textAlign: "left",
     },
     headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
 
@@ -817,26 +817,63 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: radius.lg,
         overflow: "hidden",
-        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
+        border: "1px solid #eef0f7",
+        boxShadow: "0 2px 8px rgba(30,27,75,0.05)",
     },
     tableScroll: { overflowX: "auto" },
     table: { width: "100%", borderCollapse: "collapse", minWidth: 960, tableLayout: "fixed" },
+    // Gradient now lives on `theadRow` so it sweeps once across the
+    // whole header instead of restarting inside every <th>.
+    theadRow: {
+        background: GRADIENT,
+    },
     th: {
         textAlign: "left",
         fontSize: fontSize.xs,
         color: "#e0e7ff",
         fontWeight: fontWeight.semibold,
-        padding: "10px 14px",
-        background: GRADIENT,
+        textTransform: "uppercase",
+        letterSpacing: "0.4px",
+        padding: "13px 14px",
+        background: "transparent",
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
     },
-    tr: {},
+    // Same as `th` but right-aligned — used for numeric columns
+    // (Allocated / Submitted) so headers line up with the digits below.
+    thNumeric: {
+        textAlign: "right",
+        fontSize: fontSize.xs,
+        color: "#e0e7ff",
+        fontWeight: fontWeight.semibold,
+        textTransform: "uppercase",
+        letterSpacing: "0.4px",
+        padding: "13px 14px",
+        background: "transparent",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    tr: { transition: "background 0.12s ease" },
     td: {
+        textAlign: "left",
         fontSize: fontSize.base,
         color: "#374151",
-        padding: "10px 14px",
+        padding: "12px 14px",
+        borderBottom: "1px solid #f1f1f7",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    // Pairs with `thNumeric` — keeps Allocated/Submitted values
+    // aligned under their right-aligned headers.
+    tdNumeric: {
+        textAlign: "right",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
+        color: "#374151",
+        padding: "12px 14px",
         borderBottom: "1px solid #f1f1f7",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -847,7 +884,8 @@ const styles: Record<string, CSSProperties> = {
     pillDone: {
         display: "inline-flex",
         alignItems: "center",
-        padding: "3px 10px",
+        gap: "5px",
+        padding: "4px 11px",
         borderRadius: radius.pill,
         background: withAlphaVar("green", 0.14),
         color: BRAND.green,
@@ -857,12 +895,27 @@ const styles: Record<string, CSSProperties> = {
     pillPending: {
         display: "inline-flex",
         alignItems: "center",
-        padding: "3px 10px",
+        gap: "5px",
+        padding: "4px 11px",
         borderRadius: radius.pill,
         background: "#fef3e2",
         color: "#B45309",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
+    },
+    pillDotDone: {
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: BRAND.green,
+        flexShrink: 0,
+    },
+    pillDotPending: {
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: "#B45309",
+        flexShrink: 0,
     },
 
     tableFooter: {

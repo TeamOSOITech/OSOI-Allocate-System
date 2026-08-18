@@ -219,16 +219,11 @@ export default function QC() {
         <div style={styles.root}>
             {/* ---- header ---- */}
             <div style={styles.headerRow}>
-                <div style={styles.headerLeft}>
-                    <div style={styles.headerIconBox}>
-                        <ShieldCheck size={22} color={BRAND.blue} />
-                    </div>
-                    <div>
-                        <h1 style={styles.title}>Quality Scores</h1>
-                        <p style={styles.subtitle}>
-                            Record pass/fail counts and a quality score per employee and service.
-                        </p>
-                    </div>
+                <div>
+                    <h1 style={styles.title}>Quality Scores</h1>
+                    <p style={styles.subtitle}>
+                        Record pass/fail counts and a quality score per employee and service.
+                    </p>
                 </div>
             </div>
 
@@ -424,31 +419,18 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             alignItems: "center",
             justifyContent: "space-between",
         },
-        headerLeft: {
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-        },
-        headerIconBox: {
-            width: 44,
-            height: 44,
-            borderRadius: radius.md,
-            background: withAlpha(BRAND.blue, 0.08),
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-        },
         title: {
             margin: 0,
             fontSize: fontSize["4xl"],
             fontWeight: fontWeight.bold,
             color: "#17181C",
+            textAlign: "left",
         },
         subtitle: {
             margin: "4px 0 0",
             fontSize: fontSize.base,
             color: "#767F92",
+            textAlign: "left",
         },
         summaryRow: {
             display: "flex",

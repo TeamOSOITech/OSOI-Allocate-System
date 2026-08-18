@@ -30,6 +30,79 @@ type ProductRate = {
 
 const CURRENCY_OPTIONS = ["USD", "GBP", "INR", "EUR", "AUD", "CAD"];
 
+// NEW: default currency for a newly-added service rate is derived from
+// the Client/Subclient's own Country field — e.g. Country "USA" defaults
+// the amount's currency to USD instead of always defaulting to USD
+// regardless of country. Country is free-typed (not a fixed dropdown), so
+// this matches common spellings/abbreviations case-insensitively rather
+// than requiring an exact country code. Anything unrecognized falls back
+// to USD, same as the previous hardcoded behavior — this only changes
+// the default; the currency dropdown next to each rate can still always
+// be changed by hand afterward.
+const COUNTRY_CURRENCY_MAP: Record<string, string> = {
+    usa: "USD",
+    "united states": "USD",
+    "united states of america": "USD",
+    us: "USD",
+    uk: "GBP",
+    "united kingdom": "GBP",
+    britain: "GBP",
+    "great britain": "GBP",
+    england: "GBP",
+    india: "INR",
+    bharat: "INR",
+    canada: "CAD",
+    australia: "AUD",
+    germany: "EUR",
+    france: "EUR",
+    spain: "EUR",
+    italy: "EUR",
+    netherlands: "EUR",
+    ireland: "EUR",
+    portugal: "EUR",
+    belgium: "EUR",
+    austria: "EUR",
+};
+
+function currencyForCountry(country: string | null | undefined): string {
+    if (!country) return "USD";
+    const key = country.trim().toLowerCase();
+    return COUNTRY_CURRENCY_MAP[key] || "USD";
+}
+
+// NEW: there is only ONE currency per client/subclient now, driven
+// entirely by its Country field — not a per-service dropdown anymore.
+// Whenever Country changes (typed by the person, at any point — before
+// or after services are already checked), every already-selected
+// service's rate is re-stamped with the new currency so the whole form
+// always stays consistent with the current Country value.
+function withCountryUpdate<
+    T extends { country: string; currency: string; productRates: ProductRate[] },
+>(form: T, newCountry: string): T {
+    const currency = currencyForCountry(newCountry);
+    return {
+        ...form,
+        country: newCountry,
+        currency,
+        productRates: form.productRates.map((r) => ({ ...r, currency })),
+    };
+}
+
+// NEW: manual override for the Unit dropdown — same idea as
+// withCountryUpdate, but triggered by the person picking a currency
+// directly instead of it being inferred from Country. Every already-
+// selected service's rate is re-stamped to match, same as before.
+function withCurrencyUpdate<T extends { currency: string; productRates: ProductRate[] }>(
+    form: T,
+    newCurrency: string
+): T {
+    return {
+        ...form,
+        currency: newCurrency,
+        productRates: form.productRates.map((r) => ({ ...r, currency: newCurrency })),
+    };
+}
+
 type Client = {
     id: number;
     name: string;
@@ -313,6 +386,11 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
+        // NEW: single currency ("Unit") for the whole client/subclient —
+        // defaults from Country but can be manually overridden via the
+        // Unit dropdown. Applied to every service rate below, instead of
+        // each service carrying its own separate currency.
+        currency: "USD",
         // REVERSED MAPPING: [{ productId, amount, currency }] for each
         // Product this Client/Subclient uses, at this client/subclient's
         // own rate.
@@ -556,6 +634,13 @@ export default function Clients() {
         secondaryContactName: data.secondaryContactName || "",
         secondaryContactEmail: data.secondaryContactEmail || "",
         secondaryContactPhone: data.secondaryContactPhone || "",
+        // Existing saved rates may already carry their own currency (from
+        // before this became a single "Unit" per client/subclient) — use
+        // whatever the first one has as the starting Unit value, falling
+        // back to the country-derived default if there are no rates yet.
+        currency:
+            (data.productRates && data.productRates[0]?.currency) ||
+            currencyForCountry(data.country),
         productRates: data.productRates || [],
     });
 
@@ -834,7 +919,13 @@ export default function Clients() {
                 ...prev,
                 productRates: has
                     ? prev.productRates.filter((r) => Number(r.productId) !== Number(productId))
-                    : [...prev.productRates, { productId, amount: "", currency: "USD" }],
+                    : [
+                          ...prev.productRates,
+                          // Uses this form's single Unit/currency (see emptyForm.currency,
+                          // withCountryUpdate, withCurrencyUpdate) — same currency for
+                          // every service, not picked per-service anymore.
+                          { productId, amount: "", currency: prev.currency },
+                      ],
             };
         });
     };
@@ -916,52 +1007,32 @@ export default function Clients() {
                                     {p.product_name}
                                 </label>
                                 {checked && (
-                                    <>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            placeholder="Amount"
-                                            value={rate?.amount ?? ""}
-                                            onChange={(e) =>
-                                                updateProductRate(
-                                                    formState,
-                                                    setFormState,
-                                                    p.id,
-                                                    "amount",
-                                                    e.target.value
-                                                )
-                                            }
-                                            style={{
-                                                ...styles.formInput,
-                                                width: 110,
-                                                padding: "6px 8px",
-                                            }}
-                                        />
-                                        <select
-                                            value={rate?.currency || "USD"}
-                                            onChange={(e) =>
-                                                updateProductRate(
-                                                    formState,
-                                                    setFormState,
-                                                    p.id,
-                                                    "currency",
-                                                    e.target.value
-                                                )
-                                            }
-                                            style={{
-                                                ...styles.formInput,
-                                                width: 90,
-                                                padding: "6px 8px",
-                                            }}
-                                        >
-                                            {CURRENCY_OPTIONS.map((c) => (
-                                                <option key={c} value={c}>
-                                                    {c}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </>
+                                    // FIX: currency used to repeat as a badge next to EVERY
+                                    // checked service — moved to a single "Unit" field up top
+                                    // (next to Status) instead, since it's the same currency
+                                    // for all services on this client/subclient. Each row now
+                                    // only needs the Amount.
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="Amount"
+                                        value={rate?.amount ?? ""}
+                                        onChange={(e) =>
+                                            updateProductRate(
+                                                formState,
+                                                setFormState,
+                                                p.id,
+                                                "amount",
+                                                e.target.value
+                                            )
+                                        }
+                                        style={{
+                                            ...styles.formInput,
+                                            width: 110,
+                                            padding: "6px 8px",
+                                        }}
+                                    />
                                 )}
                             </div>
                         );
@@ -2134,7 +2205,7 @@ export default function Clients() {
                                     style={styles.formInput}
                                     value={addForm.country}
                                     onChange={(e) =>
-                                        setAddForm({ ...addForm, country: e.target.value })
+                                        setAddForm(withCountryUpdate(addForm, e.target.value))
                                     }
                                     placeholder="e.g. India"
                                 />
@@ -2178,6 +2249,28 @@ export default function Clients() {
                                 >
                                     <option value="Active">Active</option>
                                     <option value="Inactive">Inactive</option>
+                                </select>
+                            </div>
+
+                            {/* NEW: Unit (currency) — shown ONCE here, not per-service
+                                anymore. Defaults from Country above (see
+                                currencyForCountry/withCountryUpdate) but can be changed by
+                                hand — picking a different Unit re-stamps every already-
+                                selected service below to match (withCurrencyUpdate). */}
+                            <div>
+                                <label style={styles.formLabel}>Unit</label>
+                                <select
+                                    style={styles.formInput}
+                                    value={addForm.currency}
+                                    onChange={(e) =>
+                                        setAddForm(withCurrencyUpdate(addForm, e.target.value))
+                                    }
+                                >
+                                    {CURRENCY_OPTIONS.map((c) => (
+                                        <option key={c} value={c}>
+                                            {c}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
 
@@ -2243,7 +2336,7 @@ export default function Clients() {
                                     style={styles.formInput}
                                     value={editForm.country}
                                     onChange={(e) =>
-                                        setEditForm({ ...editForm, country: e.target.value })
+                                        setEditForm(withCountryUpdate(editForm, e.target.value))
                                     }
                                     placeholder="e.g. India"
                                 />
@@ -2286,6 +2379,28 @@ export default function Clients() {
                                 >
                                     <option value="Active">Active</option>
                                     <option value="Inactive">Inactive</option>
+                                </select>
+                            </div>
+
+                            {/* NEW: Unit (currency) — shown ONCE here, not per-service
+                                anymore. Defaults from Country above (see
+                                currencyForCountry/withCountryUpdate) but can be changed by
+                                hand — picking a different Unit re-stamps every already-
+                                selected service below to match (withCurrencyUpdate). */}
+                            <div>
+                                <label style={styles.formLabel}>Unit</label>
+                                <select
+                                    style={styles.formInput}
+                                    value={editForm.currency}
+                                    onChange={(e) =>
+                                        setEditForm(withCurrencyUpdate(editForm, e.target.value))
+                                    }
+                                >
+                                    {CURRENCY_OPTIONS.map((c) => (
+                                        <option key={c} value={c}>
+                                            {c}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
 

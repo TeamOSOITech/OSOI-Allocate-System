@@ -512,8 +512,14 @@ const styles: Record<string, CSSProperties> = {
         gap: 12,
         marginBottom: 20,
     },
-    title: { fontSize: fontSize["5xl"], fontWeight: fontWeight.bold, color: "#1a1a2e", margin: 0 },
-    subtitle: { fontSize: fontSize.base, color: "#6b7280", marginTop: 6 },
+    title: {
+        fontSize: fontSize["5xl"],
+        fontWeight: fontWeight.bold,
+        color: "#1a1a2e",
+        margin: 0,
+        textAlign: "left",
+    },
+    subtitle: { fontSize: fontSize.base, color: "#6b7280", marginTop: 6, textAlign: "left" },
     headerActions: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
     rangeBadge: {
         display: "flex",

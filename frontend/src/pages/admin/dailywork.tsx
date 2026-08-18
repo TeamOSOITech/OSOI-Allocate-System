@@ -385,21 +385,13 @@ export default function DailyWork() {
             <div style={styles.contentBody}>
                 {/* Header row: icon + title + breadcrumb */}
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-clipboard-plus"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>Daily Work</h1>
-                            <p style={styles.headerSubtext}>
-                                Log today's total quantity received per service — this is the pool
-                                that Smart Auto Allocation and Manual Allocation split across
-                                present employees.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>Daily Work</h1>
+                        <p style={styles.headerSubtext}>
+                            Log today's total quantity received per service — this is the pool that
+                            Smart Auto Allocation and Manual Allocation split across present
+                            employees.
+                        </p>
                     </div>
 
                     {!isMobile && (
@@ -1064,23 +1056,12 @@ const styles: Record<string, CSSProperties> = {
 
     headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
     headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
-    headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
-    headerIcon: {
-        width: 42,
-        height: 42,
-        borderRadius: radius.md,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        flexShrink: 0,
         textAlign: "left",
     },
     headerSubtext: {

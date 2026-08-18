@@ -616,6 +616,22 @@ const Products = () => {
         });
     };
 
+    // NEW: "Select All" toggle at the top of the Teams checkbox panel —
+    // ticks every known team in one click instead of clicking each one
+    // individually. Acts as a toggle: if everything is already selected,
+    // clicking it again clears the selection; otherwise it selects all.
+    const toggleAllTeams = (
+        formState: ProductForm,
+        setFormState: (updater: (prev: ProductForm) => ProductForm) => void,
+        allTeamNames: string[]
+    ) => {
+        setFormState((prev) => {
+            const allSelected =
+                allTeamNames.length > 0 && allTeamNames.every((name) => prev.teams.includes(name));
+            return { ...prev, teams: allSelected ? [] : [...allTeamNames] };
+        });
+    };
+
     // Shared form fieldset used by both Add and Edit modals so the two
     // never drift out of parity.
     const renderProductFieldset = (
@@ -771,6 +787,40 @@ const Products = () => {
                                     boxShadow: "0 4px 12px rgba(16, 24, 40, 0.08)",
                                 }}
                             >
+                                {/* Select All — ticks/clears every team in one click. Kept
+                                    visually distinct (bold + separator) from the individual
+                                    team rows below it. */}
+                                <label
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        fontSize: fontSize.sm,
+                                        fontWeight: fontWeight.semibold,
+                                        color: "var(--brand-blue)",
+                                        cursor: "pointer",
+                                        paddingBottom: 6,
+                                        marginBottom: 4,
+                                        borderBottom: "1px solid #e4e9f2",
+                                    }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={
+                                            teamsList.length > 0 &&
+                                            teamsList.every((t) => formState.teams.includes(t.name))
+                                        }
+                                        onChange={() =>
+                                            toggleAllTeams(
+                                                formState,
+                                                setFormState,
+                                                teamsList.map((t) => t.name)
+                                            )
+                                        }
+                                    />
+                                    Select All
+                                </label>
+
                                 {teamsList.map((t) => (
                                     <label
                                         key={t.id}

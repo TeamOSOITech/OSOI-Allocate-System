@@ -213,20 +213,12 @@ export default function Dashboard({ user }: DashboardProps) {
                 {/* Page header: icon badge + title + subtitle, same layout as
                     dailywork.tsx / employees.tsx page headers. */}
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-layout-dashboard"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>Dashboard</h1>
-                            <p style={styles.headerSubtext}>
-                                Welcome, <strong>{user?.name || user?.role}</strong> — here's
-                                today's snapshot.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>Dashboard</h1>
+                        <p style={styles.headerSubtext}>
+                            Welcome, <strong>{user?.name || user?.role}</strong> — here's today's
+                            snapshot.
+                        </p>
                     </div>
                     <div style={styles.dateBadge}>
                         <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
@@ -469,19 +461,6 @@ function getStyles(BRAND: {
 
         headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
         headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
-        headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
-        headerIcon: {
-            width: 44,
-            height: 44,
-            minWidth: 44,
-            borderRadius: radius.md,
-            background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-        },
 
         pageTitle: {
             margin: 0,
@@ -619,6 +598,7 @@ function getStyles(BRAND: {
             borderBottom: "2px solid #eef0f3",
         },
         td: {
+            textAlign: "left",
             fontSize: fontSize.base,
             color: "#16233a",
             padding: "12px",

@@ -240,6 +240,9 @@ export default function Employees() {
 
     const [search, setSearch] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("All");
+    // Grid/list toggle — same pattern as the Clients and Products (Services)
+    // pages, so switching between admin pages feels consistent.
+    const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
@@ -600,6 +603,38 @@ export default function Employees() {
                                 </option>
                             ))}
                         </select>
+
+                        {!isMobile && (
+                            <div style={styles.viewToggle}>
+                                <button
+                                    type="button"
+                                    onClick={() => setViewMode("grid")}
+                                    style={{
+                                        ...styles.viewToggleBtn,
+                                        ...(viewMode === "grid" ? styles.viewToggleBtnActive : {}),
+                                    }}
+                                    aria-label="Grid view"
+                                    title="Grid view"
+                                >
+                                    <i
+                                        className="ti ti-layout-grid"
+                                        style={{ fontSize: fontSize.lg }}
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setViewMode("list")}
+                                    style={{
+                                        ...styles.viewToggleBtn,
+                                        ...(viewMode === "list" ? styles.viewToggleBtnActive : {}),
+                                    }}
+                                    aria-label="List view"
+                                    title="List view"
+                                >
+                                    <i className="ti ti-list" style={{ fontSize: fontSize.lg }} />
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {!loading && !error && (
@@ -674,6 +709,188 @@ export default function Employees() {
                                 <p style={styles.emptyText}>
                                     Try a different name, team, or department.
                                 </p>
+                            </div>
+                        ) : viewMode === "list" && !isMobile ? (
+                            // ---- List view — same table pattern/alignment as
+                            // Clients and Products (Services): sticky header,
+                            // fixed column widths via <colgroup>, one row per
+                            // record, right-aligned action icons.
+                            <div style={styles.tableWrap}>
+                                <table className="cl-table" style={styles.table}>
+                                    <colgroup>
+                                        <col style={{ width: "22%" }} />
+                                        <col style={{ width: "11%" }} />
+                                        <col style={{ width: "13%" }} />
+                                        <col style={{ width: "11%" }} />
+                                        <col style={{ width: "13%" }} />
+                                        <col style={{ width: "9%" }} />
+                                        <col style={{ width: "13%" }} />
+                                        <col style={{ width: "8%" }} />
+                                    </colgroup>
+                                    <thead>
+                                        <tr>
+                                            <th style={styles.th}>Employee</th>
+                                            <th style={styles.th}>Emp Code</th>
+                                            <th style={styles.th}>Department</th>
+                                            <th style={styles.th}>Team</th>
+                                            <th style={styles.th}>Role</th>
+                                            <th style={styles.th}>Status</th>
+                                            <th style={styles.th}>Email</th>
+                                            <th style={{ ...styles.th, textAlign: "left" }}>
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredEmployees.map((emp) => {
+                                            const avatar = getAvatarColors(emp.name);
+                                            return (
+                                                <tr
+                                                    key={emp.id}
+                                                    className="cl-row"
+                                                    style={{
+                                                        ...styles.tr,
+                                                        boxShadow: `inset 3px 0 0 0 ${avatar.accent}`,
+                                                    }}
+                                                >
+                                                    <td style={styles.td}>
+                                                        <div style={styles.tdNameCell}>
+                                                            {emp.photoUrl ? (
+                                                                <img
+                                                                    src={emp.photoUrl}
+                                                                    alt={emp.name}
+                                                                    style={styles.avatarSm}
+                                                                />
+                                                            ) : (
+                                                                <div
+                                                                    style={{
+                                                                        ...styles.avatarSm,
+                                                                        background: avatar.bg,
+                                                                        color: avatar.text,
+                                                                    }}
+                                                                >
+                                                                    {getInitials(emp.name)}
+                                                                </div>
+                                                            )}
+                                                            <div
+                                                                style={{
+                                                                    display: "flex",
+                                                                    flexDirection: "column",
+                                                                    minWidth: 0,
+                                                                }}
+                                                            >
+                                                                <span style={styles.tdNameText}>
+                                                                    {emp.name}
+                                                                </span>
+                                                                <span style={styles.tdMuted}>
+                                                                    {emp.designation}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={styles.tdMuted}>
+                                                            {emp.employeeCode || "—"}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={styles.tdMuted}>
+                                                            {emp.department || "—"}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={styles.tdMuted}>
+                                                            {emp.team || "—"}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={styles.tdMuted}>
+                                                            {formatRoleLabel(emp.role)}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span
+                                                            style={{
+                                                                ...styles.statusPillTable,
+                                                                color:
+                                                                    emp.status !== "Inactive"
+                                                                        ? "#0f8a78"
+                                                                        : "#6b7280",
+                                                                background:
+                                                                    emp.status !== "Inactive"
+                                                                        ? "#e1f7f3"
+                                                                        : "#f1f0f5",
+                                                            }}
+                                                        >
+                                                            <span style={styles.statusDotTable} />
+                                                            {emp.status}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={styles.tdContactLine}>
+                                                            <i
+                                                                className="ti ti-mail"
+                                                                style={{ fontSize: fontSize.sm }}
+                                                            />
+                                                            {emp.email}
+                                                        </span>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={styles.tdActions}>
+                                                            <button
+                                                                type="button"
+                                                                className="cl-view-btn"
+                                                                style={styles.viewDetailsBtnTable}
+                                                                onClick={() => openProfile(emp)}
+                                                                title="View profile"
+                                                            >
+                                                                View
+                                                            </button>
+                                                            {canEditEmployee(emp) && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn"
+                                                                    style={styles.iconBtnTable}
+                                                                    aria-label={`Edit ${emp.name}`}
+                                                                    title="Edit employee"
+                                                                    onClick={() => handleEdit(emp)}
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-pencil"
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
+                                                                    />
+                                                                </button>
+                                                            )}
+                                                            {canDeleteEmployee(emp) && (
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-icon-btn-danger"
+                                                                    style={
+                                                                        styles.iconBtnDangerTable
+                                                                    }
+                                                                    aria-label={`Delete ${emp.name}`}
+                                                                    title="Delete employee"
+                                                                    onClick={() =>
+                                                                        handleDelete(emp)
+                                                                    }
+                                                                >
+                                                                    <i
+                                                                        className="ti ti-trash"
+                                                                        style={{
+                                                                            fontSize: fontSize.base,
+                                                                        }}
+                                                                    />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
                             </div>
                         ) : (
                             <div style={isMobile ? styles.cardGridMobile : styles.cardGrid}>
@@ -1470,7 +1687,185 @@ const styles: Record<string, CSSProperties> = {
         transition: "border-color .15s ease",
     },
 
+    viewToggle: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        background: "#fafbfc",
+        border: "1px solid #dbe6f0",
+        borderRadius: radius.md,
+        padding: 4,
+        flexShrink: 0,
+    },
+    viewToggleBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 32,
+        height: 32,
+        border: "none",
+        background: "transparent",
+        borderRadius: radius.sm,
+        color: "#7d90a6",
+        cursor: "pointer",
+    },
+    viewToggleBtnActive: {
+        background: "#e7ecf8",
+        color: "var(--brand-blue)",
+    },
+
     scrollArea: { flex: 1, minHeight: 0 },
+
+    // ---- Table (list view) — mirrors the Clients/Products table styling
+    // so switching between admin pages stays visually aligned. ----
+    tableWrap: {
+        background: "#fff",
+        border: "1px solid #dfeaf5",
+        borderRadius: radius.lg,
+        boxShadow: "0 4px 16px rgba(var(--brand-blue-rgb),.06)",
+        overflowX: "auto",
+    },
+    table: {
+        width: "100%",
+        borderCollapse: "separate",
+        borderSpacing: 0,
+        fontSize: fontSize.base,
+        tableLayout: "fixed",
+    },
+    th: {
+        textAlign: "left",
+        padding: "15px 18px",
+        boxSizing: "border-box",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.bold,
+        color: "var(--brand-blue)",
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        borderBottom: "2px solid #dfeaf5",
+        background: "linear-gradient(180deg, #f3f7fd, #eef3fb)",
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+    },
+    tr: {
+        borderBottom: "1px solid #eef3f8",
+        transition: "background .12s ease",
+    },
+    td: {
+        padding: "14px 18px",
+        boxSizing: "border-box",
+        verticalAlign: "middle",
+        textAlign: "left",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    tdNameCell: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 10,
+        minWidth: 0,
+    },
+    avatarSm: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 34,
+        height: 34,
+        borderRadius: radius.circle,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        flexShrink: 0,
+        objectFit: "cover",
+        border: "2px solid #fff",
+        boxShadow: "0 0 0 1px #e5edf7",
+    },
+    tdNameText: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#16233a",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    tdMuted: {
+        fontSize: fontSize.sm,
+        color: "#5a6c85",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    tdContactLine: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 6,
+        fontSize: fontSize.sm,
+        color: "#3b4a63",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    tdActions: { display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8 },
+    statusPillTable: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.semibold,
+        padding: "3px 10px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+        width: "fit-content",
+    },
+    statusDotTable: {
+        width: 6,
+        height: 6,
+        borderRadius: radius.circle,
+        background: "currentColor",
+        flexShrink: 0,
+    },
+    viewDetailsBtnTable: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        border: "none",
+        background: "transparent",
+        color: "var(--brand-blue)",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        padding: 0,
+    },
+    iconBtnTable: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 30,
+        height: 30,
+        borderRadius: radius.sm,
+        border: "1px solid #d8e3fa",
+        background: "#eef2fc",
+        color: "var(--brand-blue)",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease, color .15s ease",
+    },
+    iconBtnDangerTable: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 30,
+        height: 30,
+        borderRadius: radius.sm,
+        border: "1px solid #fee2e2",
+        background: "#fef2f2",
+        color: "#dc2626",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease",
+    },
 
     cardGrid: {
         display: "grid",
