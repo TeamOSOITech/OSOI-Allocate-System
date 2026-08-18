@@ -75,6 +75,38 @@ async function getDailyWorkMap(dailyWorkIds) {
 }
 
 // ------------------------------------------------------------
+// Given a list of user_master IDs (employee_id and/or created_by from
+// allocations rows), fetch each one's team ("Worked In Teams") and
+// display name in ONE query — used to fill in the Profile page's
+// "Team" and "Allocated By" columns, which the allocations table
+// itself doesn't store (same manual-join pattern as getDailyWorkMap,
+// since there's no DB-level FK for PostgREST to embed through).
+// ------------------------------------------------------------
+async function getUserInfoMap(userIds) {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from("user_master")
+    .select('"Auth User Id", "First Name", "Last Name", "Worked In Teams"')
+    .in("Auth User Id", uniqueIds);
+  if (error) {
+    console.error("Failed to fetch user_master for allocations:", error);
+    return {};
+  }
+
+  return data.reduce((acc, u) => {
+    const firstName = u["First Name"] ?? "";
+    const lastName = u["Last Name"] ?? "";
+    acc[u["Auth User Id"]] = {
+      name: `${firstName} ${lastName}`.trim() || null,
+      team: u["Worked In Teams"] ?? null,
+    };
+    return acc;
+  }, {});
+}
+
+// ------------------------------------------------------------
 // GET /api/allocations?dailyWorkId=...&employeeId=...
 //
 // employeeId lets the Profile page pull "my allocations" (today's +
@@ -113,11 +145,19 @@ async function listAllocations(req, res) {
     const dailyWorkMap = await getDailyWorkMap(
       (data || []).map((a) => a.daily_work_id),
     );
+    // Team comes from the allocated employee's own profile; "Allocated
+    // By" comes from whoever's user_master row matches created_by —
+    // both looked up together in one batched query.
+    const userInfoMap = await getUserInfoMap(
+      (data || []).flatMap((a) => [a.employee_id, a.created_by]),
+    );
     const enriched = (data || []).map((a) => ({
       ...a,
       workDate: dailyWorkMap[a.daily_work_id]?.workDate || null,
       productName: dailyWorkMap[a.daily_work_id]?.productName || null,
       batchTotalQty: dailyWorkMap[a.daily_work_id]?.totalQty ?? null,
+      team: userInfoMap[a.employee_id]?.team || null,
+      allocatedByName: userInfoMap[a.created_by]?.name || null,
     }));
 
     res.json({ success: true, data: enriched });
