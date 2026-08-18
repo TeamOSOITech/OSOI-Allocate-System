@@ -3,6 +3,7 @@ const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
 const {
   listAllocations,
+  getAllocationHistory,
   autoAllocate,
   manualAllocate,
   selfAllocate,
@@ -15,6 +16,18 @@ const {
 } = require("./allocations.controller");
 
 router.use(authenticate);
+
+// History page — manager/admin-only (same permission as the Reports
+// "team" endpoint). Literal path, placed before "/" so there's no
+// ambiguity with the generic list route below.
+router.get(
+  "/history",
+  requireAnyPermission(
+    "materialisation.view.team",
+    "reports.materialisation.view.org",
+  ),
+  getAllocationHistory,
+);
 
 // Viewing allocations — any authenticated user (an employee needs to
 // see their own row; managers need to see everyone's).

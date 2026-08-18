@@ -107,6 +107,190 @@ async function getUserInfoMap(userIds) {
 }
 
 // ------------------------------------------------------------
+// GET /api/allocations/history
+// query: ?dateFrom&dateTo&employeeId&productId&clientId&subclientId&status
+//
+// NEW: powers the History page — one filterable view across every
+// allocation (employee-wise, service-wise, client-wise, subclient-
+// wise, date-wise, completed/pending). Manager/admin-only (same
+// permission as the Reports "team" endpoint), unlike listAllocations
+// above which any employee can call for their own rows.
+//
+// Client/subclient are NOT columns on daily_work or allocations —
+// a service (service_master row) is linked to clients/subclients via
+// the client_products / subclient_products join tables (and a single
+// service CAN be linked to more than one client, per the reversed-
+// rate-mapping design in products.service.js). So filtering by
+// client/subclient here means "this row's service is linked to that
+// client/subclient", resolved via those join tables rather than a
+// direct foreign key on the allocation itself.
+// ------------------------------------------------------------
+async function getAllocationHistory(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const {
+      dateFrom,
+      dateTo,
+      employeeId,
+      productId,
+      clientId,
+      subclientId,
+      status,
+    } = req.query;
+
+    // ---- daily_work rows in range (date + service filters apply here) ----
+    let dwQuery = supabase
+      .from("daily_work")
+      .select("id, work_date, product_id")
+      .eq("organization_id", orgId);
+    if (dateFrom) dwQuery = dwQuery.gte("work_date", dateFrom);
+    if (dateTo) dwQuery = dwQuery.lte("work_date", dateTo);
+    if (productId) dwQuery = dwQuery.eq("product_id", productId);
+
+    const { data: dwRows, error: dwError } = await dwQuery;
+    if (dwError) throw dwError;
+
+    const dailyWorkIds = (dwRows || []).map((d) => d.id);
+    if (dailyWorkIds.length === 0) {
+      return res.json({ success: true, data: [], meta: { truncated: false } });
+    }
+
+    // ---- allocations for those batches (employee filter applies here) ----
+    let allocQuery = supabase
+      .from("allocations")
+      .select("*")
+      .eq("organization_id", orgId)
+      .in("daily_work_id", dailyWorkIds)
+      .order("created_at", { ascending: false });
+    if (employeeId) allocQuery = allocQuery.eq("employee_id", employeeId);
+
+    const { data: allocations, error: allocError } = await allocQuery;
+    if (allocError) throw allocError;
+
+    let rows = allocations || [];
+    if (status === "completed") {
+      rows = rows.filter(
+        (a) => a.submitted_qty !== null && a.submitted_qty !== undefined,
+      );
+    } else if (status === "pending") {
+      rows = rows.filter(
+        (a) => a.submitted_qty === null || a.submitted_qty === undefined,
+      );
+    }
+
+    // Safety cap — this is a history/export view, not a live dashboard,
+    // so a wide/unfiltered date range shouldn't be able to pull an
+    // unbounded number of rows into memory in one request. The frontend
+    // shows a "showing latest N of M — narrow your filters" note when
+    // this trips.
+    const HISTORY_ROW_CAP = 5000;
+    const totalMatched = rows.length;
+    const truncated = totalMatched > HISTORY_ROW_CAP;
+    rows = rows.slice(0, HISTORY_ROW_CAP);
+
+    // ---- enrichment: product/date, employee/team, allocated-by ----
+    const dailyWorkMap = await getDailyWorkMap(
+      rows.map((a) => a.daily_work_id),
+    );
+    const userInfoMap = await getUserInfoMap(
+      rows.flatMap((a) => [a.employee_id, a.created_by]),
+    );
+
+    // ---- client/subclient linkage per service (manual join — same
+    // pattern as getDailyWorkMap/getUserInfoMap above, avoids relying
+    // on an untested PostgREST embedded-select relationship name). ----
+    const [
+      { data: clientLinks },
+      { data: clientRows },
+      { data: subclientLinks },
+      { data: subclientRows },
+    ] = await Promise.all([
+      supabase
+        .from("client_products")
+        .select("product_id, client_id")
+        .eq("organization_id", orgId),
+      supabase.from("clients").select("id, name").eq("organization_id", orgId),
+      supabase
+        .from("subclient_products")
+        .select("product_id, subclient_id")
+        .eq("organization_id", orgId),
+      supabase
+        .from("subclients")
+        .select("id, name")
+        .eq("organization_id", orgId),
+    ]);
+
+    const clientNameById = new Map(
+      (clientRows || []).map((c) => [c.id, c.name]),
+    );
+    const subclientNameById = new Map(
+      (subclientRows || []).map((s) => [s.id, s.name]),
+    );
+
+    const clientsByProduct = new Map();
+    (clientLinks || []).forEach((l) => {
+      const name = clientNameById.get(l.client_id);
+      if (!name) return;
+      const list = clientsByProduct.get(l.product_id) || [];
+      list.push({ id: l.client_id, name });
+      clientsByProduct.set(l.product_id, list);
+    });
+
+    const subclientsByProduct = new Map();
+    (subclientLinks || []).forEach((l) => {
+      const name = subclientNameById.get(l.subclient_id);
+      if (!name) return;
+      const list = subclientsByProduct.get(l.product_id) || [];
+      list.push({ id: l.subclient_id, name });
+      subclientsByProduct.set(l.product_id, list);
+    });
+
+    let enriched = rows.map((a) => {
+      const dw = dailyWorkMap[a.daily_work_id];
+      const svcId = dw?.productId ?? null;
+      const isCompleted =
+        a.submitted_qty !== null && a.submitted_qty !== undefined;
+      return {
+        id: a.id,
+        workDate: dw?.workDate || null,
+        serviceId: svcId,
+        serviceName: dw?.productName || null,
+        employeeId: a.employee_id,
+        employeeName: userInfoMap[a.employee_id]?.name || null,
+        team: userInfoMap[a.employee_id]?.team || null,
+        allocatedByName: userInfoMap[a.created_by]?.name || null,
+        allocatedQty: a.allocated_qty,
+        submittedQty: a.submitted_qty,
+        status: isCompleted ? "COMPLETED" : "PENDING",
+        submissionReason: a.submission_reason || null,
+        submittedAt: a.submitted_at || null,
+        clients: clientsByProduct.get(svcId) || [],
+        subclients: subclientsByProduct.get(svcId) || [],
+      };
+    });
+
+    if (clientId) {
+      enriched = enriched.filter((r) =>
+        r.clients.some((c) => String(c.id) === String(clientId)),
+      );
+    }
+    if (subclientId) {
+      enriched = enriched.filter((r) =>
+        r.subclients.some((s) => String(s.id) === String(subclientId)),
+      );
+    }
+
+    return res.json({
+      success: true,
+      data: enriched,
+      meta: { truncated, totalMatched },
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
 // GET /api/allocations?dailyWorkId=...&employeeId=...
 //
 // employeeId lets the Profile page pull "my allocations" (today's +
@@ -1039,6 +1223,7 @@ async function selfAllocate(req, res) {
 
 module.exports = {
   listAllocations,
+  getAllocationHistory,
   autoAllocate,
   manualAllocate,
   selfAllocate,
