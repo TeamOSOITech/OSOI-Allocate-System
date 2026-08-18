@@ -34,6 +34,7 @@ const SelfAllocation = lazy(() => import("./pages/selfallocation"));
 const QC = lazy(() => import("./pages/admin/qc"));
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
+const History = lazy(() => import("./pages/admin/history"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
 // Backend base URL, same source every other page uses for API calls.
@@ -420,14 +421,17 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         {/* REMOVED: /workinprogress, /admin, /tasks routes — they
                     pointed at pages/workinprogress.tsx, which has been
                     deleted, and none of them are linked from the sidebar
-                    anymore either. /billing and /history below still are,
-                    so those keep a lightweight inline placeholder instead. */}
+                    anymore either. /billing below still is, so that one
+                    keeps a lightweight inline placeholder. History is now
+                    a real page — see pages/admin/history.tsx — filterable
+                    by employee/service/client/subclient/date/status,
+                    backed by GET /api/allocations/history. */}
                         <Route
                             path="/history"
                             element={
-                                <PrivateRoute>
+                                <PrivateRoute requiredRole="SUPER_ADMIN">
                                     <AppLayout onLogout={handleLogout}>
-                                        <ComingSoon title="History" />
+                                        <History />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

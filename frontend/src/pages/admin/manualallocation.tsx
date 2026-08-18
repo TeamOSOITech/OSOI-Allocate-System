@@ -6,15 +6,22 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
 
+// THEME FIX: these three used to be fixed hex values, so this page
+// never reacted when someone changed the app's theme color in
+// Settings — every other page that reads var(--brand-blue) etc.
+// (clients.tsx, dailywork.tsx, products.tsx) already does, and
+// ThemeContext keeps these CSS variables in sync with the active
+// palette on <html>, so pointing at them here makes this page pick
+// up the same live color changes automatically.
 const BRAND = {
-    blue: "#204297",
-    lightBlue: "#08A1CE",
-    green: "#2EBBA8",
+    blue: "var(--brand-blue)",
+    lightBlue: "var(--brand-light-blue)",
+    green: "var(--brand-green)",
     amber: "#F59E0B",
     red: "#DC2626",
     grey: "#9CA3AF",
 };
-const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
+const GRADIENT = "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))";
 
 function withAlpha(hex: string, alpha: number) {
     const n = parseInt(hex.slice(1), 16);
@@ -170,7 +177,14 @@ function HeaderIllustration() {
             <circle cx="12" cy="60" r="1.6" fill="#FBBF24" opacity="0.7" />
             <circle cx="96" cy="66" r="2" fill={BRAND.lightBlue} opacity="0.5" />
 
-            <rect x="30" y="16" width="52" height="46" rx="8" fill={withAlpha(BRAND.blue, 0.08)} />
+            <rect
+                x="30"
+                y="16"
+                width="52"
+                height="46"
+                rx="8"
+                fill="rgba(var(--brand-blue-rgb), 0.08)"
+            />
             <rect x="30" y="16" width="52" height="14" rx="8" fill={BRAND.blue} />
             <rect x="40" y="6" width="4" height="14" rx="2" fill={BRAND.blue} />
             <rect x="68" y="6" width="4" height="14" rx="2" fill={BRAND.blue} />
@@ -183,7 +197,7 @@ function HeaderIllustration() {
                         width="6"
                         height="6"
                         rx="1.5"
-                        fill={withAlpha(BRAND.blue, 0.18)}
+                        fill="rgba(var(--brand-blue-rgb), 0.18)"
                     />
                 ))
             )}
@@ -208,11 +222,18 @@ function HeaderIllustration() {
 function EmptyStateIcon() {
     return (
         <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
-            <circle cx="28" cy="28" r="28" fill={withAlpha(BRAND.blue, 0.06)} />
-            <rect x="14" y="24" width="28" height="16" rx="3" fill={withAlpha(BRAND.blue, 0.12)} />
+            <circle cx="28" cy="28" r="28" fill="rgba(var(--brand-blue-rgb), 0.06)" />
+            <rect
+                x="14"
+                y="24"
+                width="28"
+                height="16"
+                rx="3"
+                fill="rgba(var(--brand-blue-rgb), 0.12)"
+            />
             <path
                 d="M14 28h8l2 4h8l2-4h8"
-                stroke={withAlpha(BRAND.blue, 0.35)}
+                stroke="rgba(var(--brand-blue-rgb), 0.35)"
                 strokeWidth="2"
                 fill="none"
             />
@@ -1427,7 +1448,7 @@ const styles: Record<string, CSSProperties> = {
         width: 46,
         height: 46,
         borderRadius: radius.md,
-        background: withAlpha(BRAND.blue, 0.1),
+        background: "rgba(var(--brand-blue-rgb), 0.1)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1498,7 +1519,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 8,
         background: "#fff",
         color: BRAND.blue,
-        border: `1px dashed ${withAlpha(BRAND.blue, 0.4)}`,
+        border: `1px dashed rgba(var(--brand-blue-rgb), 0.4)`,
         borderRadius: radius.xl,
         padding: "10px 18px",
         fontSize: fontSize.base,
@@ -1650,7 +1671,7 @@ const styles: Record<string, CSSProperties> = {
         padding: "11px 20px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        boxShadow: `0 4px 14px ${withAlpha(BRAND.blue, 0.3)}`,
+        boxShadow: `0 4px 14px rgba(var(--brand-blue-rgb), 0.3)`,
     },
     manualBtn: {
         display: "flex",
@@ -1658,7 +1679,7 @@ const styles: Record<string, CSSProperties> = {
         gap: 8,
         background: "#fff",
         color: BRAND.blue,
-        border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+        border: `1px solid rgba(var(--brand-blue-rgb), 0.25)`,
         borderRadius: radius.pill,
         padding: "11px 20px",
         fontSize: fontSize.base,
@@ -1850,7 +1871,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#fff",
         fontWeight: fontWeight.semibold,
         fontSize: fontSize.md,
-        boxShadow: `0 6px 18px ${withAlpha(BRAND.blue, 0.3)}`,
+        boxShadow: `0 6px 18px rgba(var(--brand-blue-rgb), 0.3)`,
     },
 
     toast: {
@@ -1893,7 +1914,7 @@ const styles: Record<string, CSSProperties> = {
         width: 56,
         height: 56,
         borderRadius: radius.circle,
-        background: withAlpha(BRAND.green, 0.12),
+        background: "rgba(var(--brand-green-rgb), 0.12)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
