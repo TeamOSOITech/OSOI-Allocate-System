@@ -266,6 +266,48 @@ type Employee = {
 type RowStatus = "PRESENT" | "HALF" | "LEAVE";
 type RowState = { status: RowStatus; qty: number };
 
+// ---- unsaved-draft persistence ----
+// Problem this fixes: running "Smart Allocation" fills in qty per
+// employee, but nothing is actually saved to the server until the
+// "Allocate & Save" button is clicked. Navigating to another page and
+// back used to unmount this whole component, so all that unsaved state
+// (React state, in memory only) was lost — everything came back blank.
+// localStorage survives navigation/unmount, so a draft is written on
+// every change and restored on return, per daily-work batch (never mixed
+// across different services/dates). It's cleared once the allocation is
+// actually saved (no longer "unsaved"), or when the person hits Clear.
+const DRAFT_PREFIX = "manualalloc_draft_";
+
+function draftKey(batchId: string) {
+    return `${DRAFT_PREFIX}${batchId}`;
+}
+
+function loadDraft(batchId: string): Record<string, RowState> | null {
+    try {
+        const raw = localStorage.getItem(draftKey(batchId));
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+function saveDraft(batchId: string, rows: Record<string, RowState>) {
+    try {
+        localStorage.setItem(draftKey(batchId), JSON.stringify(rows));
+    } catch {
+        // localStorage unavailable/full — draft persistence just won't
+        // work this time, not worth surfacing an error for.
+    }
+}
+
+function clearDraft(batchId: string) {
+    try {
+        localStorage.removeItem(draftKey(batchId));
+    } catch {
+        // ignore
+    }
+}
+
 const STATUS_META: Record<RowStatus, { label: string; color: string; icon: typeof Box }> = {
     PRESENT: { label: "Present", color: BRAND.green, icon: CheckCircle2 },
     HALF: { label: "Half", color: BRAND.amber, icon: Clock },
@@ -306,12 +348,33 @@ export default function ManualAllocation() {
     const isMobile = useIsMobile();
 
     // ---- filter bar state ----
-    const [date, setDate] = useState(todayStr());
+    // FIX: date + selected service used to reset to defaults ("" / today)
+    // on every visit, since they were plain useState with no persistence.
+    // That meant even though the row-level draft (qty per employee) was
+    // being restored correctly, the page showed the empty "Select a
+    // service above" state instead — because nothing had re-selected the
+    // service that draft belongs to. Restoring the last-used date/service
+    // from localStorage here means the row draft's own restore logic
+    // (further down) actually gets a chance to run.
+    const [date, setDate] = useState(
+        () => localStorage.getItem("manualalloc_last_date") || todayStr()
+    );
     const [products, setProducts] = useState<Product[]>([]);
-    const [productId, setProductId] = useState(""); // "" = All
+    const [productId, setProductId] = useState(
+        () => localStorage.getItem("manualalloc_last_productId") || ""
+    ); // "" = All
     const [searchText, setSearchText] = useState("");
     const [teamFilter, setTeamFilter] = useState("");
     const [filtersOpen, setFiltersOpen] = useState(true);
+
+    // Keep localStorage in sync so the NEXT visit restores this same
+    // date/service instead of resetting to today/"All".
+    useEffect(() => {
+        localStorage.setItem("manualalloc_last_date", date);
+    }, [date]);
+    useEffect(() => {
+        localStorage.setItem("manualalloc_last_productId", productId);
+    }, [productId]);
 
     // ---- data ----
     const [batchesForDate, setBatchesForDate] = useState<DailyWorkBatch[]>([]);
@@ -450,12 +513,14 @@ export default function ManualAllocation() {
 
         (async () => {
             let previous: Record<string, RowState> = {};
+            let hasServerSave = false;
             try {
                 const res = await authFetch(
                     `${API_BASE}/api/allocations?dailyWorkId=${selectedBatch.id}`
                 );
                 const json = await res.json();
-                if (res.ok && json.success) {
+                if (res.ok && json.success && (json.data || []).length > 0) {
+                    hasServerSave = true;
                     (json.data || []).forEach((a: any) => {
                         const status: RowStatus = ["PRESENT", "HALF", "LEAVE"].includes(a.status)
                             ? a.status
@@ -464,17 +529,32 @@ export default function ManualAllocation() {
                     });
                 }
             } catch {
-                // no previous save — fall through to defaults below
+                // no previous save — fall through to draft/defaults below
             }
+
+            // Only fall back to an unsaved local draft when nothing has
+            // actually been saved to the server yet — a real save is
+            // always the source of truth over a stale draft.
+            const draft = hasServerSave ? null : loadDraft(selectedBatch.id);
 
             const next: Record<string, RowState> = {};
             filteredEmployees.forEach((emp) => {
-                next[emp.id] = previous[emp.id] || { status: "PRESENT", qty: 0 };
+                next[emp.id] = previous[emp.id] || draft?.[emp.id] || { status: "PRESENT", qty: 0 };
             });
             setRows(next);
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedBatch?.id]);
+
+    // Persist the draft on every change (Smart Allocation, manual qty
+    // edits, status clicks) so it survives navigating away and back.
+    // Skipped on the very first render for a batch (rows still empty
+    // object before the load effect above populates it) to avoid
+    // clobbering a just-restored draft with {} for one tick.
+    useEffect(() => {
+        if (!selectedBatch || Object.keys(rows).length === 0) return;
+        saveDraft(selectedBatch.id, rows);
+    }, [rows, selectedBatch]);
 
     // ---- KPI numbers ----
     const totalQty = useMemo(() => {
@@ -619,12 +699,31 @@ export default function ManualAllocation() {
             if (!res.ok || !json.success)
                 throw new Error(json.message || "Failed to save allocation");
             showToast("Allocation Saved");
+            // Now officially saved on the server — the local draft's job
+            // is done, drop it so a stale draft never shadows real saved
+            // data on a future visit.
+            clearDraft(selectedBatch.id);
             loadBatches();
         } catch (err: any) {
             setError(err.message || "Failed to save allocation");
         } finally {
             setSubmitting(false);
         }
+    };
+
+    // ---- CLEAR — resets every visible row back to Present / qty 0 and
+    // drops the unsaved draft for this batch. Doesn't touch anything
+    // already saved on the server; that's only removed by actually
+    // saving over it (handleSaveAllocations above).
+    const handleClearAllocation = () => {
+        if (!selectedBatch) return;
+        const next: Record<string, RowState> = {};
+        filteredEmployees.forEach((emp) => {
+            next[emp.id] = { status: "PRESENT", qty: 0 };
+        });
+        setRows(next);
+        clearDraft(selectedBatch.id);
+        setError("");
     };
 
     // ---- (Load Test Cases / seed-dummy removed — batches now come only
@@ -806,6 +905,23 @@ export default function ManualAllocation() {
                                 >
                                     <Edit3 size={14} />
                                     Manual Edit: {manualEdit ? "ON" : "OFF"}
+                                </button>
+                                {/* Clears every filled-in qty on screen (and the
+                                    saved-locally draft) back to zero — for
+                                    starting over, not for undoing an already-saved
+                                    allocation. */}
+                                <button
+                                    style={{
+                                        ...styles.clearBtn,
+                                        opacity: productSelected ? 1 : 0.5,
+                                        cursor: productSelected ? "pointer" : "not-allowed",
+                                    }}
+                                    disabled={!productSelected}
+                                    onClick={handleClearAllocation}
+                                    title="Clear all quantities on screen"
+                                >
+                                    <i className="ti ti-eraser" style={{ fontSize: 14 }} />
+                                    Clear
                                 </button>
                             </div>
                             {!isMobile && (
@@ -1473,6 +1589,18 @@ const styles: Record<string, CSSProperties> = {
         background: withAlpha(BRAND.amber, 0.12),
         border: `1px solid ${BRAND.amber}`,
         color: BRAND.amber,
+    },
+    clearBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#fff",
+        color: BRAND.red,
+        border: `1px solid ${withAlpha(BRAND.red, 0.3)}`,
+        borderRadius: radius.pill,
+        padding: "11px 20px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
     },
     iconTextBtn: {
         display: "flex",

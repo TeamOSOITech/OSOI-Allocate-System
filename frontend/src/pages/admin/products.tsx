@@ -199,7 +199,13 @@ const GLOBAL_CSS = `
 // template), so a future rename can't make them drift out of sync again.
 const PRODUCT_NAME_COLUMN = "Service Name";
 const TIME_TAKEN_COLUMN = "Time Taken";
+// NEW: optional Teams column — comma-separated team names (e.g.
+// "Tech, SD") so a service can be assigned to multiple teams right from
+// the bulk sheet, instead of every bulk-created service starting with an
+// empty teams list that had to be tagged manually afterwards from Edit.
+const TEAMS_COLUMN = "Teams";
 const BULK_REQUIRED_COLUMNS_TEXT = `${PRODUCT_NAME_COLUMN}, ${TIME_TAKEN_COLUMN}`;
+const BULK_OPTIONAL_COLUMNS_TEXT = `${TEAMS_COLUMN} (comma-separated, e.g. "Tech, SD" — each team must already exist)`;
 
 const Products = () => {
     // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
@@ -518,6 +524,7 @@ const Products = () => {
             {
                 [PRODUCT_NAME_COLUMN]: "Inventory Sync",
                 [TIME_TAKEN_COLUMN]: "2 hours",
+                [TEAMS_COLUMN]: teamsList[0]?.name || "",
             },
         ];
 
@@ -1447,6 +1454,10 @@ const Products = () => {
                         <div style={styles.bulkInfoBox}>
                             <span style={styles.bulkInfoLabel}>Required columns</span>
                             <p style={styles.bulkInfoText}>{BULK_REQUIRED_COLUMNS_TEXT}</p>
+                            <span style={{ ...styles.bulkInfoLabel, marginTop: 10 }}>
+                                Optional column
+                            </span>
+                            <p style={styles.bulkInfoText}>{BULK_OPTIONAL_COLUMNS_TEXT}</p>
                         </div>
 
                         <div style={styles.bulkUploadRow}>
