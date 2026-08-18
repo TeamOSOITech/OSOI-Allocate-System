@@ -1,8 +1,9 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Header from "./components/header";
 import Sidebar from "./components/sidebar";
 import { ThemeProvider } from "./context/themecontext";
+import { authFetch } from "./utils/authFetch";
 
 // FIX (loading time): every page below was imported eagerly, so a user
 // landing on /login downloaded the JS for every admin page too —
@@ -148,6 +149,33 @@ const ComingSoon = ({ title }) => (
 const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
     const user = JSON.parse(localStorage.getItem("user") || "null");
+
+    // The login response doesn't include a profile photo — that only
+    // lives on the employee record (user_master.photo_url). Fetch it
+    // once here so the header's avatar can show the logged-in user's
+    // actual picture instead of always falling back to initials.
+    const [photoUrl, setPhotoUrl] = useState(null);
+    useEffect(() => {
+        const myId = user?.id || user?.userId;
+        if (!myId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_URL}/api/employees/${myId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) setPhotoUrl(data?.photoUrl || null);
+            } catch {
+                // no photo yet, or request failed — header just falls
+                // back to initials, nothing further to do here.
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.id, user?.userId]);
+
     return (
         // Outer shell locked to exactly the viewport height, with overflow
         // hidden — the shell itself can NEVER scroll, no matter what.
@@ -173,6 +201,7 @@ const AppLayout = ({ children, onLogout }) => {
                             ? `${user.firstName} ${user.lastName || ""}`.trim()
                             : user?.email || ""
                     }
+                    photoUrl={photoUrl}
                     onLogout={onLogout}
                 />
             </div>

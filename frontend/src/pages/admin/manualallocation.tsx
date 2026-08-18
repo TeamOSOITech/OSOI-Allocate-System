@@ -380,6 +380,11 @@ export default function ManualAllocation() {
     const [batchesForDate, setBatchesForDate] = useState<DailyWorkBatch[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [rows, setRows] = useState<Record<string, RowState>>({});
+    // NEW: snapshot of what's actually persisted on the server for the
+    // currently selected batch — used only to detect whether `rows` has
+    // changed since the last successful save, so "Allocate & Save" can
+    // be disabled when there's genuinely nothing new to save.
+    const [savedRows, setSavedRows] = useState<Record<string, RowState>>({});
 
     // ---- ui state ----
     const [manualEdit, setManualEdit] = useState(false);
@@ -387,6 +392,14 @@ export default function ManualAllocation() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [toast, setToast] = useState("");
+    // NEW: centered success popup shown after "Allocate & Save" — the
+    // small corner toast alone was too easy to miss, so a proper modal
+    // (matching the AddUser page's success modal pattern) confirms the
+    // save with the product name and total quantity allocated.
+    const [saveSuccess, setSaveSuccess] = useState<{
+        productName: string;
+        totalQty: number;
+    } | null>(null);
     const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -542,6 +555,12 @@ export default function ManualAllocation() {
                 next[emp.id] = previous[emp.id] || draft?.[emp.id] || { status: "PRESENT", qty: 0 };
             });
             setRows(next);
+            // Baseline = exactly what the server has right now (empty if
+            // nothing's been saved for this batch yet). A restored draft
+            // is intentionally NOT folded in here — a draft is by
+            // definition unsaved, so it should show up as a change
+            // against this baseline and keep the save button enabled.
+            setSavedRows(previous);
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedBatch?.id]);
@@ -668,6 +687,21 @@ export default function ManualAllocation() {
 
     const productSelected = !!productId;
 
+    // NEW: is there any actual change between the live `rows` and the
+    // last-saved `savedRows` baseline? Compares status+qty for every
+    // currently-visible employee — a missing row on either side is
+    // treated as the default (Present / qty 0) so a freshly-loaded batch
+    // with nothing entered isn't considered "dirty".
+    const isDirty = useMemo(() => {
+        if (!selectedBatch) return false;
+        const defaultRow: RowState = { status: "PRESENT", qty: 0 };
+        return filteredEmployees.some((emp) => {
+            const current = rows[emp.id] || defaultRow;
+            const saved = savedRows[emp.id] || defaultRow;
+            return current.status !== saved.status || current.qty !== saved.qty;
+        });
+    }, [rows, savedRows, filteredEmployees, selectedBatch]);
+
     // ---- SAVE (shared by Tab 1's "Allocate & Save" button and Tab 2's
     // "Save Changes" button — both write the whole visible table for the
     // selected case via bulk-upsert, replacing whatever was saved before). ----
@@ -699,6 +733,18 @@ export default function ManualAllocation() {
             if (!res.ok || !json.success)
                 throw new Error(json.message || "Failed to save allocation");
             showToast("Allocation Saved");
+            // NEW: centered success popup — total qty is the sum of every
+            // row just saved, regardless of status (Present/Half/Leave),
+            // since that's exactly what was written to the server.
+            const totalQty = rowsPayload.reduce((sum, r) => sum + (r.allocatedQty || 0), 0);
+            setSaveSuccess({
+                productName: selectedBatch.productName || "this service",
+                totalQty,
+            });
+            // NEW: `rows` is now exactly what's saved on the server — move
+            // the baseline forward so the button goes back to disabled
+            // until something actually changes again.
+            setSavedRows(rows);
             // Now officially saved on the server — the local draft's job
             // is done, drop it so a stale draft never shadows real saved
             // data on a future visit.
@@ -1252,18 +1298,28 @@ export default function ManualAllocation() {
                             </table>
                         </div>
 
-                        {/* ---- 6. BOTTOM BUTTON ---- */}
+                        {/* ---- 6. BOTTOM BUTTON ----
+                    Disabled once everything visible matches what's
+                    already saved (isDirty === false) — re-enables the
+                    instant any row's status/qty changes, even by 1. */}
                         <button
                             style={{
                                 ...styles.saveBtn,
-                                opacity: submitting || !productSelected ? 0.6 : 1,
-                                cursor: submitting || !productSelected ? "not-allowed" : "pointer",
+                                opacity: submitting || !productSelected || !isDirty ? 0.6 : 1,
+                                cursor:
+                                    submitting || !productSelected || !isDirty
+                                        ? "not-allowed"
+                                        : "pointer",
                             }}
-                            disabled={submitting || !productSelected}
+                            disabled={submitting || !productSelected || !isDirty}
                             onClick={handleSaveAllocations}
                         >
                             <Save size={16} />
-                            {submitting ? "Saving..." : "Allocate & Save"}
+                            {submitting
+                                ? "Saving..."
+                                : !isDirty && productSelected
+                                  ? "Saved"
+                                  : "Allocate & Save"}
                         </button>
                     </>
                 )}
@@ -1272,6 +1328,29 @@ export default function ManualAllocation() {
                     <div style={styles.toast}>
                         <CheckCircle2 size={16} color="#fff" />
                         {toast}
+                    </div>
+                )}
+
+                {/* ---- centered success popup after Allocate & Save ---- */}
+                {saveSuccess && (
+                    <div style={styles.overlay} onClick={() => setSaveSuccess(null)}>
+                        <div style={styles.successModal} onClick={(e) => e.stopPropagation()}>
+                            <div style={styles.successIcon}>
+                                <CheckCircle2 size={30} color={BRAND.green} />
+                            </div>
+                            <h3 style={styles.successTitle}>Allocation Successful</h3>
+                            <p style={styles.successText}>
+                                {saveSuccess.totalQty} unit(s) allocated for{" "}
+                                <strong>{saveSuccess.productName}</strong>.
+                            </p>
+                            <button
+                                style={styles.successBtn}
+                                onClick={() => setSaveSuccess(null)}
+                                type="button"
+                            >
+                                OK
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
@@ -1789,5 +1868,56 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.medium,
         boxShadow: "0 4px 14px rgba(0,0,0,0.2)",
         zIndex: 1000,
+    },
+
+    // ---- centered success popup (Allocate & Save) ----
+    overlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        zIndex: 1100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    successModal: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: 32,
+        width: 360,
+        maxWidth: "90vw",
+        textAlign: "center",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+    },
+    successIcon: {
+        width: 56,
+        height: 56,
+        borderRadius: radius.circle,
+        background: withAlpha(BRAND.green, 0.12),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        margin: "0 auto 16px",
+    },
+    successTitle: {
+        margin: "0 0 8px",
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    successText: {
+        margin: "0 0 24px",
+        fontSize: fontSize.md,
+        color: "#767F92",
+    },
+    successBtn: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.sm,
+        padding: "10px 32px",
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
     },
 };

@@ -215,6 +215,11 @@ const UserIcon = () => (
         <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
     </Icon>
 );
+const ShieldIcon = () => (
+    <Icon>
+        <path d="M12 2 4 5v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V5Z" />
+    </Icon>
+);
 const CameraIcon = () => (
     <Icon size={13}>
         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z" />
@@ -685,19 +690,10 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const exportCsv = () => {
-        const header = [
-            "#",
-            "Product",
-            "Description",
-            "Team",
-            "Allocated By",
-            "Allocated Qty",
-            "Status",
-        ];
+        const header = ["#", "Product", "Team", "Allocated By", "Allocated Qty", "Status"];
         const rows = filteredRows.map((a, i) => [
             i + 1,
             a.productName || "-",
-            a.description || "-",
             a.team || "-",
             a.allocatedByName || "-",
             a.allocated_qty,
@@ -755,9 +751,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <span style={styles.name}>{loading ? "Loading..." : name}</span>
                                 <span style={styles.activePill}>Active</span>
                             </div>
-                            <span style={styles.roleBadge}>
-                                {(role || "-").toString().toUpperCase()}
-                            </span>
                             {uploadingPhoto && (
                                 <div style={styles.smallMuted}>Uploading photo…</div>
                             )}
@@ -793,6 +786,12 @@ export default function Profile({ onLogout }: ProfileProps) {
 
                 <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
                     <div style={styles.identityColumn}>
+                        <InfoIconRow
+                            icon={<ShieldIcon />}
+                            label="Role"
+                            value={(role || "-").toString().toUpperCase()}
+                            styles={styles}
+                        />
                         <div style={styles.contactRow}>
                             <span style={styles.contactIcon}>
                                 <MailIcon />
@@ -1027,12 +1026,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <table style={styles.table}>
                         <colgroup>
                             <col style={{ width: "4%" }} />
+                            <col style={{ width: "22%" }} />
+                            <col style={{ width: "14%" }} />
                             <col style={{ width: "16%" }} />
-                            <col style={{ width: "18%" }} />
-                            <col style={{ width: "10%" }} />
                             <col style={{ width: "12%" }} />
-                            <col style={{ width: "10%" }} />
-                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "12%" }} />
                             <col style={{ width: "10%" }} />
                             <col style={{ width: "10%" }} />
                         </colgroup>
@@ -1040,7 +1038,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             <tr>
                                 <th style={styles.th}>#</th>
                                 <th style={styles.th}>Task / Service</th>
-                                <th style={styles.th}>Description</th>
                                 <th style={styles.th}>Team</th>
                                 <th style={styles.th}>Allocated By</th>
                                 <th style={styles.th}>Allocated Qty</th>
@@ -1062,7 +1059,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         <td style={{ ...styles.td, fontWeight: fontWeight.bold }}>
                                             {a.productName || "-"}
                                         </td>
-                                        <td style={styles.td}>{a.description || "-"}</td>
                                         <td style={styles.td}>{a.team || "-"}</td>
                                         <td style={styles.td}>{a.allocatedByName || "-"}</td>
                                         <td style={{ ...styles.td, whiteSpace: "normal" }}>
@@ -1610,17 +1606,6 @@ function getStyles(
             padding: "2px 9px",
             borderRadius: radius.pill,
         },
-        roleBadge: {
-            display: "inline-block",
-            marginTop: 4,
-            fontSize: fontSize.xs,
-            fontWeight: fontWeight.semibold,
-            color: "#fff",
-            background: GRADIENT,
-            padding: "3px 10px",
-            borderRadius: radius.pill,
-            letterSpacing: 0.3,
-        },
         // Matches Add User's `styles.templateBtn` — white bg, brand text,
         // tinted border, semibold weight, pill-ish radius.
         editProfileBtn: {
@@ -1849,6 +1834,7 @@ function getStyles(
         },
         tr: {},
         td: {
+            textAlign: "left",
             fontSize: fontSize.base,
             color: "#3D4459",
             padding: "12px 14px",
