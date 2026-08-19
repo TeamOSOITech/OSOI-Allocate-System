@@ -274,6 +274,16 @@ export default function Employees() {
     const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
     const [deleting, setDeleting] = useState(false);
 
+    // NEW: multi-select bulk delete — same pattern as Clients/Products.
+    // Selection is a plain Set<number> of employee ids. Only ids the
+    // current role is actually allowed to delete (canDeleteEmployee) are
+    // ever added, so "Select all" never tries to check a box the row
+    // doesn't even render.
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [bulkDeleteError, setBulkDeleteError] = useState("");
+
     const apiBase = import.meta.env.VITE_API_URL;
 
     // COOKIE-AUTH: this page used to build its own Authorization header
@@ -479,6 +489,90 @@ export default function Employees() {
         }
     };
 
+    // ---- Multi-select delete handlers ----
+    // Reuses the exact same DELETE /api/employees/:id endpoint as the
+    // single-row delete above — no new backend route needed — just fired
+    // once per selected id.
+
+    const toggleSelected = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    // "Select all" toggles every row CURRENTLY VISIBLE (i.e. matching the
+    // active search/department filters) — not the whole unfiltered
+    // dataset — and only rows this role is actually allowed to delete.
+    const toggleSelectAllVisible = (visibleIds: number[]) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+            if (allSelected) {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.delete(id));
+                return next;
+            }
+            return new Set([...prev, ...visibleIds]);
+        });
+    };
+
+    const clearSelection = () => setSelectedIds(new Set());
+
+    const openBulkDeleteConfirm = () => {
+        setBulkDeleteError("");
+        setBulkDeleteOpen(true);
+    };
+
+    const closeBulkDeleteConfirm = () => {
+        if (bulkDeleting) return;
+        setBulkDeleteOpen(false);
+        setBulkDeleteError("");
+    };
+
+    const handleBulkDeleteConfirm = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        setBulkDeleteError("");
+
+        const ids = Array.from(selectedIds);
+        const failures: string[] = [];
+
+        // Sequential, not Promise.all — a burst of simultaneous deletes
+        // against the same org's rows is more likely to trip rate limits
+        // or row-lock contention than a few hundred ms of extra time is
+        // worth here. Each failure is collected (by id) instead of
+        // aborting the whole batch, so one bad row doesn't block the
+        // rest from being deleted.
+        for (const id of ids) {
+            try {
+                const response = await authFetch(`${apiBase}/api/employees/${id}`, {
+                    method: "DELETE",
+                });
+                if (!response.ok) {
+                    const data = await response.json().catch(() => null);
+                    failures.push(`#${id}: ${data?.message || "Failed to delete"}`);
+                }
+            } catch (err: any) {
+                failures.push(`#${id}: ${err?.message || "Something went wrong"}`);
+            }
+        }
+
+        await fetchEmployees();
+        setSelectedIds(new Set());
+        setBulkDeleting(false);
+
+        if (failures.length > 0) {
+            setBulkDeleteError(
+                `${ids.length - failures.length} of ${ids.length} deleted. ` +
+                    `${failures.length} failed:\n${failures.join("\n")}`
+            );
+        } else {
+            setBulkDeleteOpen(false);
+        }
+    };
+
     const departments = useMemo(
         () => Array.from(new Set(employees.map((e) => e.department).filter(Boolean))).sort(),
         [employees]
@@ -536,6 +630,16 @@ export default function Employees() {
             return matchesSearch && matchesDepartment;
         });
     }, [employees, search, departmentFilter]);
+
+    // Ids eligible for bulk selection: currently visible (matches
+    // search/department filters) AND this role is actually allowed to
+    // delete them. Used to drive the header/bulk-bar "select all".
+    const selectableVisibleIds = useMemo(
+        () => filteredEmployees.filter((e) => canDeleteEmployee(e)).map((e) => e.id),
+        [filteredEmployees, role]
+    );
+    const allVisibleSelected =
+        selectableVisibleIds.length > 0 && selectableVisibleIds.every((id) => selectedIds.has(id));
 
     // What the drawer should display: live edits while editing, otherwise
     // the selected employee as-is.
@@ -644,6 +748,48 @@ export default function Employees() {
                         </span>
                     )}
 
+                    {/* NEW: bulk-select action bar — appears as soon as at least
+                        one row is checked, so with a long list you only ever
+                        have to check one box before "Select all" is right
+                        there instead of clicking through every row. */}
+                    {!loading && !error && selectedIds.size > 0 && (
+                        <div style={styles.bulkBar}>
+                            <span style={styles.bulkBarText}>
+                                {selectedIds.size} employee
+                                {selectedIds.size > 1 ? "s" : ""} selected
+                            </span>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {!allVisibleSelected && selectableVisibleIds.length > 1 && (
+                                    <button
+                                        type="button"
+                                        style={styles.bulkBarClearBtn}
+                                        onClick={() => toggleSelectAllVisible(selectableVisibleIds)}
+                                    >
+                                        Select all {selectableVisibleIds.length}
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarClearBtn}
+                                    onClick={clearSelection}
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarDeleteBtn}
+                                    onClick={openBulkDeleteConfirm}
+                                >
+                                    <i
+                                        className="ti ti-trash"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
+                                    Delete Selected
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Cards */}
                     <div style={styles.scrollArea}>
                         {loading ? (
@@ -718,6 +864,9 @@ export default function Employees() {
                             <div style={styles.tableWrap}>
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
+                                        {selectableVisibleIds.length > 0 && (
+                                            <col style={{ width: "36px" }} />
+                                        )}
                                         <col style={{ width: "22%" }} />
                                         <col style={{ width: "11%" }} />
                                         <col style={{ width: "13%" }} />
@@ -729,6 +878,20 @@ export default function Employees() {
                                     </colgroup>
                                     <thead>
                                         <tr>
+                                            {selectableVisibleIds.length > 0 && (
+                                                <th style={{ ...styles.th, width: 36 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label="Select all"
+                                                        checked={allVisibleSelected}
+                                                        onChange={() =>
+                                                            toggleSelectAllVisible(
+                                                                selectableVisibleIds
+                                                            )
+                                                        }
+                                                    />
+                                                </th>
+                                            )}
                                             <th style={styles.th}>Employee</th>
                                             <th style={styles.th}>Emp Code</th>
                                             <th style={styles.th}>Department</th>
@@ -753,6 +916,25 @@ export default function Employees() {
                                                         boxShadow: `inset 3px 0 0 0 ${avatar.accent}`,
                                                     }}
                                                 >
+                                                    {selectableVisibleIds.length > 0 && (
+                                                        <td
+                                                            style={styles.td}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            {canDeleteEmployee(emp) && (
+                                                                <input
+                                                                    type="checkbox"
+                                                                    aria-label={`Select ${emp.name}`}
+                                                                    checked={selectedIds.has(
+                                                                        emp.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelected(emp.id)
+                                                                    }
+                                                                />
+                                                            )}
+                                                        </td>
+                                                    )}
                                                     <td style={styles.td}>
                                                         <div style={styles.tdNameCell}>
                                                             {emp.photoUrl ? (
@@ -902,6 +1084,7 @@ export default function Employees() {
                                             className="emp-card"
                                             style={{
                                                 ...styles.card,
+                                                position: "relative",
                                                 borderTopColor: avatar.accent,
                                                 animationDelay: `${Math.min(idx, 11) * 25}ms`,
                                             }}
@@ -945,6 +1128,18 @@ export default function Employees() {
 
                                                 <div style={styles.cardTopRight}>
                                                     <div style={styles.cardTopRightIcons}>
+                                                        {canDeleteEmployee(emp) && (
+                                                            <input
+                                                                type="checkbox"
+                                                                aria-label={`Select ${emp.name}`}
+                                                                checked={selectedIds.has(emp.id)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onChange={() =>
+                                                                    toggleSelected(emp.id)
+                                                                }
+                                                                style={styles.cardCheckboxInline}
+                                                            />
+                                                        )}
                                                         <button
                                                             type="button"
                                                             className="emp-expand-btn"
@@ -1504,11 +1699,120 @@ export default function Employees() {
                     </div>
                 </div>
             )}
+
+            {/* Bulk delete confirmation modal */}
+            {bulkDeleteOpen && (
+                <div style={styles.modalOverlay}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalIcon}>
+                            <i className="ti ti-trash" />
+                        </div>
+                        <h3
+                            style={{
+                                margin: "0 0 6px",
+                                fontSize: fontSize.xl,
+                                fontWeight: fontWeight.bold,
+                                color: "#16233a",
+                            }}
+                        >
+                            Delete {selectedIds.size} employee
+                            {selectedIds.size > 1 ? "s" : ""}?
+                        </h3>
+                        <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
+                            Are you sure you want to remove {selectedIds.size} selected employee
+                            {selectedIds.size > 1 ? "s" : ""}? Once deleted, their records can't be
+                            recovered.
+                        </p>
+                        {bulkDeleteError && (
+                            <p
+                                style={{
+                                    margin: "10px 0 0",
+                                    fontSize: fontSize.sm,
+                                    color: "#b91c1c",
+                                    whiteSpace: "pre-line",
+                                    textAlign: "left",
+                                }}
+                            >
+                                {bulkDeleteError}
+                            </p>
+                        )}
+                        <div style={styles.modalButtons}>
+                            <button
+                                type="button"
+                                style={styles.cancelButton}
+                                onClick={closeBulkDeleteConfirm}
+                                disabled={bulkDeleting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.deleteButton,
+                                    opacity: bulkDeleting ? 0.7 : 1,
+                                    cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                }}
+                                onClick={handleBulkDeleteConfirm}
+                                disabled={bulkDeleting}
+                            >
+                                {bulkDeleting ? "Deleting..." : `Delete ${selectedIds.size}`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
 const styles: Record<string, CSSProperties> = {
+    // NEW: multi-select bulk-delete bar + card checkbox.
+    bulkBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
+        background: "#FEF2F2",
+        border: "1px solid #FECACA",
+        borderRadius: 10,
+        padding: "10px 16px",
+        margin: "10px 0 0",
+    },
+    bulkBarText: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#991B1B",
+    },
+    bulkBarClearBtn: {
+        background: "#fff",
+        color: "#6b7280",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "7px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+    },
+    bulkBarDeleteBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#DC2626",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "7px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    cardCheckboxInline: {
+        width: 15,
+        height: 15,
+        cursor: "pointer",
+        marginRight: 2,
+    },
     root: {
         display: "flex",
         width: "100%",

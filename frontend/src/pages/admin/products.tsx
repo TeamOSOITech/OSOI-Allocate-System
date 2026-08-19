@@ -451,6 +451,16 @@ export default function Clients() {
     const pageClients = filteredClients;
     const pageSubclients = filteredSubclients;
 
+    // NEW: ids of whichever tab is active, currently visible under the
+    // active search/status/country filters — used to drive the bulk-bar
+    // "Select all" convenience button (both grid/card view and list view).
+    const currentVisibleIds = useMemo(
+        () => (activeTab === "client" ? pageClients : pageSubclients).map((row) => row.id),
+        [activeTab, pageClients, pageSubclients]
+    );
+    const allVisibleSelected =
+        currentVisibleIds.length > 0 && currentVisibleIds.every((id) => selectedIds.has(id));
+
     const tabCounts: Record<TabKey, number> = {
         client: clients.length,
         subclient: subclients.length,
@@ -1411,7 +1421,16 @@ export default function Clients() {
                                 {selectedIds.size} {activeTab === "client" ? "client" : "subclient"}
                                 {selectedIds.size > 1 ? "s" : ""} selected
                             </span>
-                            <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {!allVisibleSelected && currentVisibleIds.length > 1 && (
+                                    <button
+                                        type="button"
+                                        style={styles.bulkBarClearBtn}
+                                        onClick={() => toggleSelectAllVisible(currentVisibleIds)}
+                                    >
+                                        Select all {currentVisibleIds.length}
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     style={styles.bulkBarClearBtn}
