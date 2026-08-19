@@ -2,6 +2,7 @@ const fs = require("fs");
 const xlsx = require("xlsx");
 const productService = require("./products.service");
 const supabase = require("../../config/supabaseClient");
+const { getAllTeams } = require("../teams/teams.service");
 
 // APPROVAL: merges any PENDING SERVICE_* approval requests into the
 // normal product list so the person who just submitted one sees it right
@@ -196,17 +197,13 @@ const bulkUploadProducts = async (req, res) => {
         .json({ success: false, message: "Excel file is empty" });
     }
 
-    // Load this org's known teams ONCE up front (same source as the
-    // Teams multi-select on the Add/Edit Service form — see
-    // teams.service.js's getAllTeams) instead of querying per row.
-    // Case-insensitive lookup so "tech" in the sheet still matches a
-    // team stored as "Tech".
-    const { data: orgTeams, error: teamsError } = await supabase
-      .from("teams")
-      .select("name")
-      .eq("organization_id", orgId)
-      .or("hidden.is.null,hidden.eq.false");
-    if (teamsError) throw teamsError;
+    // Load this org's known teams ONCE up front — reuses getAllTeams()
+    // directly so this list is IDENTICAL to what the Add/Edit Service
+    // form's Teams multi-select shows (curated `teams` table rows PLUS
+    // any team name already in use on an employee's "Worked In Teams"
+    // field — see teams.service.js). Querying the `teams` table alone
+    // here used to accept fewer names than the dropdown actually offers.
+    const orgTeams = await getAllTeams(orgId);
 
     const teamNameByLower = new Map(
       (orgTeams || []).map((t) => [
