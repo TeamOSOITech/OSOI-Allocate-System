@@ -283,6 +283,9 @@ export default function Employees() {
     const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
     const [bulkDeleting, setBulkDeleting] = useState(false);
     const [bulkDeleteError, setBulkDeleteError] = useState("");
+    // NEW: checkboxes for bulk delete stay hidden until "Select" is
+    // switched on, instead of sitting on every row/card all the time.
+    const [isSelectMode, setIsSelectMode] = useState(false);
 
     const apiBase = import.meta.env.VITE_API_URL;
 
@@ -520,6 +523,13 @@ export default function Employees() {
 
     const clearSelection = () => setSelectedIds(new Set());
 
+    // Toggles select-mode on/off. Always clears any existing selection so
+    // turning it off (or back on) starts from a clean slate.
+    const toggleSelectMode = () => {
+        setIsSelectMode((prev) => !prev);
+        setSelectedIds(new Set());
+    };
+
     const openBulkDeleteConfirm = () => {
         setBulkDeleteError("");
         setBulkDeleteOpen(true);
@@ -570,6 +580,7 @@ export default function Employees() {
             );
         } else {
             setBulkDeleteOpen(false);
+            setIsSelectMode(false);
         }
     };
 
@@ -708,6 +719,27 @@ export default function Employees() {
                             ))}
                         </select>
 
+                        {/* NEW: "Select" toggle — checkboxes for bulk delete only show
+                            once this is switched on, instead of sitting on every
+                            row/card all the time. Tapping it again exits select mode
+                            and clears whatever was checked. */}
+                        {selectableVisibleIds.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={toggleSelectMode}
+                                style={{
+                                    ...styles.selectModeBtn,
+                                    ...(isSelectMode ? styles.selectModeBtnActive : {}),
+                                }}
+                            >
+                                <i
+                                    className={isSelectMode ? "ti ti-x" : "ti ti-checkbox"}
+                                    style={{ fontSize: fontSize.md }}
+                                />
+                                {isSelectMode ? "Cancel" : "Select"}
+                            </button>
+                        )}
+
                         {!isMobile && (
                             <div style={styles.viewToggle}>
                                 <button
@@ -752,7 +784,7 @@ export default function Employees() {
                         one row is checked, so with a long list you only ever
                         have to check one box before "Select all" is right
                         there instead of clicking through every row. */}
-                    {!loading && !error && selectedIds.size > 0 && (
+                    {!loading && !error && isSelectMode && selectedIds.size > 0 && (
                         <div style={styles.bulkBar}>
                             <span style={styles.bulkBarText}>
                                 {selectedIds.size} employee
@@ -864,7 +896,7 @@ export default function Employees() {
                             <div style={styles.tableWrap}>
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
-                                        {selectableVisibleIds.length > 0 && (
+                                        {isSelectMode && selectableVisibleIds.length > 0 && (
                                             <col style={{ width: "36px" }} />
                                         )}
                                         <col style={{ width: "22%" }} />
@@ -878,7 +910,7 @@ export default function Employees() {
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            {selectableVisibleIds.length > 0 && (
+                                            {isSelectMode && selectableVisibleIds.length > 0 && (
                                                 <th style={{ ...styles.th, width: 36 }}>
                                                     <input
                                                         type="checkbox"
@@ -916,25 +948,26 @@ export default function Employees() {
                                                         boxShadow: `inset 3px 0 0 0 ${avatar.accent}`,
                                                     }}
                                                 >
-                                                    {selectableVisibleIds.length > 0 && (
-                                                        <td
-                                                            style={styles.td}
-                                                            onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                            {canDeleteEmployee(emp) && (
-                                                                <input
-                                                                    type="checkbox"
-                                                                    aria-label={`Select ${emp.name}`}
-                                                                    checked={selectedIds.has(
-                                                                        emp.id
-                                                                    )}
-                                                                    onChange={() =>
-                                                                        toggleSelected(emp.id)
-                                                                    }
-                                                                />
-                                                            )}
-                                                        </td>
-                                                    )}
+                                                    {isSelectMode &&
+                                                        selectableVisibleIds.length > 0 && (
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                {canDeleteEmployee(emp) && (
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        aria-label={`Select ${emp.name}`}
+                                                                        checked={selectedIds.has(
+                                                                            emp.id
+                                                                        )}
+                                                                        onChange={() =>
+                                                                            toggleSelected(emp.id)
+                                                                        }
+                                                                    />
+                                                                )}
+                                                            </td>
+                                                        )}
                                                     <td style={styles.td}>
                                                         <div style={styles.tdNameCell}>
                                                             {emp.photoUrl ? (
@@ -1128,7 +1161,7 @@ export default function Employees() {
 
                                                 <div style={styles.cardTopRight}>
                                                     <div style={styles.cardTopRightIcons}>
-                                                        {canDeleteEmployee(emp) && (
+                                                        {isSelectMode && canDeleteEmployee(emp) && (
                                                             <input
                                                                 type="checkbox"
                                                                 aria-label={`Select ${emp.name}`}
@@ -2000,6 +2033,28 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.md,
         padding: 4,
         flexShrink: 0,
+    },
+    // NEW: "Select" toggle button — switches bulk-select mode on/off so the
+    // per-row/card checkboxes aren't shown all the time by default.
+    selectModeBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#fafbfc",
+        border: "1px solid #dbe6f0",
+        borderRadius: radius.md,
+        padding: "8px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "#3b4a63",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    selectModeBtnActive: {
+        background: "#e7ecf8",
+        color: "var(--brand-blue)",
+        border: "1px solid var(--brand-blue)",
     },
     viewToggleBtn: {
         display: "flex",

@@ -424,6 +424,17 @@ export default function Clients() {
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState("");
 
+    // ---- Bulk-select / bulk-delete state ----
+    // Checkboxes stay hidden until "Select" is switched on, then apply to
+    // whichever tab (Client/Subclient) is currently active. Reuses the same
+    // DELETE /:id endpoint as the single-delete flow above, one request per
+    // selected row, instead of a separate bulk-delete backend route.
+    const [isSelectMode, setIsSelectMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [bulkDeleteError, setBulkDeleteError] = useState("");
+
     // ---- Bulk upload state ----
     // Bulk upload now lives inside its own modal (opened via the "Bulk
     // Upload" button) instead of firing immediately off a hidden file
@@ -479,6 +490,10 @@ export default function Clients() {
         setSearch("");
         setStatusFilter("All");
         setCountryFilter("All");
+        // Bulk selection is per-tab (Client ids and Subclient ids can
+        // overlap), so switching tabs clears it and exits select mode.
+        setSelectedIds(new Set());
+        setIsSelectMode(false);
     }, [activeTab]);
 
     // Country filter options now come from whichever dataset is active, since
@@ -528,6 +543,97 @@ export default function Clients() {
     };
 
     const tabLabel = activeTab === "client" ? "Client" : "Subclient";
+
+    // Whichever list is on-screen for the active tab — used by the
+    // bulk-select bar and the table/card checkboxes.
+    const currentPageRows: { id: number; name: string }[] =
+        activeTab === "client" ? pageClients : pageSubclients;
+
+    const allVisibleSelected =
+        currentPageRows.length > 0 && currentPageRows.every((r) => selectedIds.has(r.id));
+
+    const toggleSelectOne = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        setSelectedIds((prev) => {
+            if (allVisibleSelected) return new Set();
+            return new Set(currentPageRows.map((r) => r.id));
+        });
+    };
+
+    const toggleSelectMode = () => {
+        setIsSelectMode((prev) => !prev);
+        setSelectedIds(new Set());
+    };
+
+    const openBulkDeleteConfirm = () => {
+        setBulkDeleteError("");
+        setShowBulkDeleteConfirm(true);
+    };
+
+    const closeBulkDeleteConfirm = () => {
+        setShowBulkDeleteConfirm(false);
+        setBulkDeleteError("");
+    };
+
+    const handleBulkDeleteConfirm = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        setBulkDeleteError("");
+
+        const endpoint = BULK_ENDPOINT_MAP[activeTab];
+        const ids = Array.from(selectedIds);
+        const outcomes = await Promise.allSettled(
+            ids.map(async (id) => {
+                const res = await authFetch(`${apiBase}/api/${endpoint}/${id}`, {
+                    method: "DELETE",
+                });
+                const json = await res.json().catch(() => null);
+                if (!res.ok || json?.success === false) {
+                    throw new Error(json?.message || "Failed to delete");
+                }
+                return res.status; // 200/204 = deleted now, 202 = sent for approval
+            })
+        );
+
+        const failedCount = outcomes.filter((o) => o.status === "rejected").length;
+        const pendingApprovalCount = outcomes.filter(
+            (o) => o.status === "fulfilled" && o.value === 202
+        ).length;
+
+        if (pendingApprovalCount > 0) {
+            setApprovalNotice(
+                `${pendingApprovalCount} of ${ids.length} submitted for approval — waiting on your reporting manager.`
+            );
+        } else {
+            setApprovalNotice(null);
+        }
+
+        if (failedCount > 0) {
+            setBulkDeleteError(
+                `${failedCount} of ${ids.length} could not be deleted. The rest were processed.`
+            );
+        }
+
+        await fetchAll();
+        setSelectedIds(new Set());
+        setBulkDeleting(false);
+
+        // Only auto-close (and exit select mode) on a clean sweep — leave
+        // the modal open showing the error if something failed, so it
+        // isn't missed.
+        if (failedCount === 0) {
+            setShowBulkDeleteConfirm(false);
+            setIsSelectMode(false);
+        }
+    };
 
     const openAddModal = () => {
         setAddForm({ ...emptyForm });
@@ -1534,6 +1640,27 @@ export default function Clients() {
                             ))}
                         </select>
 
+                        {/* NEW: "Select" toggle — checkboxes for bulk delete only show
+                            once this is switched on, instead of sitting on every
+                            row/card all the time. Tapping it again exits select mode
+                            and clears whatever was checked. */}
+                        {canManage && currentPageRows.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={toggleSelectMode}
+                                style={{
+                                    ...styles.selectModeBtn,
+                                    ...(isSelectMode ? styles.selectModeBtnActive : {}),
+                                }}
+                            >
+                                <i
+                                    className={isSelectMode ? "ti ti-x" : "ti ti-checkbox"}
+                                    style={{ fontSize: fontSize.md }}
+                                />
+                                {isSelectMode ? "Cancel" : "Select"}
+                            </button>
+                        )}
+
                         {!isMobile && (
                             <div style={styles.viewToggle}>
                                 <button
@@ -1567,6 +1694,40 @@ export default function Clients() {
                         )}
                     </div>
 
+                    {/* NEW: bulk-select bar — a single "Select All" checkbox plus a
+                        "Delete Selected (N)" button that appears once at least one
+                        row is checked. Only shown once "Select" mode is on. */}
+                    {canManage && isSelectMode && currentPageRows.length > 0 && (
+                        <div style={styles.bulkSelectBar}>
+                            <label style={styles.bulkSelectAllLabel}>
+                                <input
+                                    type="checkbox"
+                                    checked={allVisibleSelected}
+                                    onChange={toggleSelectAll}
+                                />
+                                {allVisibleSelected ? "Deselect All" : "Select All"}
+                                {selectedIds.size > 0 && (
+                                    <span style={styles.bulkSelectCount}>
+                                        {selectedIds.size} selected
+                                    </span>
+                                )}
+                            </label>
+                            {selectedIds.size > 0 && (
+                                <button
+                                    type="button"
+                                    style={styles.bulkDeleteBtn}
+                                    onClick={openBulkDeleteConfirm}
+                                >
+                                    <i
+                                        className="ti ti-trash"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
+                                    Delete Selected ({selectedIds.size})
+                                </button>
+                            )}
+                        </div>
+                    )}
+
                     {/* Cards / Table — scrollable area that fills remaining height.
                         The scrollbar (and scroll behavior) only kicks in once content
                         actually exceeds the available space; short lists sit flush
@@ -1599,6 +1760,9 @@ export default function Clients() {
                                     keeps both tables visually and structurally aligned. */}
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
+                                        {canManage && isSelectMode && (
+                                            <col style={{ width: "36px" }} />
+                                        )}
                                         <col style={{ width: "15%" }} />
                                         <col style={{ width: "11%" }} />
                                         <col style={{ width: "9%" }} />
@@ -1610,6 +1774,16 @@ export default function Clients() {
                                     </colgroup>
                                     <thead>
                                         <tr>
+                                            {canManage && isSelectMode && (
+                                                <th style={{ ...styles.th, textAlign: "center" }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={allVisibleSelected}
+                                                        onChange={toggleSelectAll}
+                                                        aria-label={`Select all ${activeTab}s`}
+                                                    />
+                                                </th>
+                                            )}
                                             <th style={styles.th}>
                                                 {activeTab === "client" ? "Client" : "Subclient"}
                                             </th>
@@ -1645,6 +1819,26 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
+                                                        {canManage && isSelectMode && (
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    textAlign: "center",
+                                                                }}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedIds.has(
+                                                                        client.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelectOne(client.id)
+                                                                    }
+                                                                    aria-label={`Select ${client.name}`}
+                                                                />
+                                                            </td>
+                                                        )}
                                                         <td style={styles.td}>
                                                             <span style={styles.tdNameText}>
                                                                 {client.name}
@@ -1810,6 +2004,26 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
+                                                        {canManage && isSelectMode && (
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    textAlign: "center",
+                                                                }}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedIds.has(
+                                                                        sub.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelectOne(sub.id)
+                                                                    }
+                                                                    aria-label={`Select ${sub.name}`}
+                                                                />
+                                                            </td>
+                                                        )}
                                                         <td style={styles.td}>
                                                             <span style={styles.tdNameText}>
                                                                 {sub.name}
@@ -1967,10 +2181,24 @@ export default function Clients() {
                                                 className="cl-card"
                                                 style={{
                                                     ...styles.card,
+                                                    position: "relative",
                                                     border: `1px solid ${avatar.solid}40`,
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
+                                                {/* NEW: top-right select checkbox for bulk
+                                                    delete — only shown once "Select" mode is
+                                                    switched on. */}
+                                                {canManage && isSelectMode && (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedIds.has(client.id)}
+                                                        onChange={() => toggleSelectOne(client.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        aria-label={`Select ${client.name}`}
+                                                        style={styles.cardSelectCheckbox}
+                                                    />
+                                                )}
                                                 <div style={styles.cardHeaderSimple}>
                                                     <div
                                                         style={{
@@ -2063,10 +2291,24 @@ export default function Clients() {
                                                 className="cl-card"
                                                 style={{
                                                     ...styles.card,
+                                                    position: "relative",
                                                     border: `1px solid ${avatar.solid}40`,
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
+                                                {/* NEW: top-right select checkbox for bulk
+                                                    delete — only shown once "Select" mode is
+                                                    switched on. */}
+                                                {canManage && isSelectMode && (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedIds.has(sub.id)}
+                                                        onChange={() => toggleSelectOne(sub.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        aria-label={`Select ${sub.name}`}
+                                                        style={styles.cardSelectCheckbox}
+                                                    />
+                                                )}
                                                 <div style={styles.cardHeaderSimple}>
                                                     <div
                                                         style={{
@@ -2647,6 +2889,70 @@ export default function Clients() {
                 </div>
             )}
 
+            {/* Bulk delete confirmation modal */}
+            {showBulkDeleteConfirm && (
+                <div style={styles.overlay}>
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>
+                                Delete {selectedIds.size} {tabLabel.toLowerCase()}
+                                {selectedIds.size === 1 ? "" : "s"}?
+                            </h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeBulkDeleteConfirm}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to remove {selectedIds.size} selected{" "}
+                                {tabLabel.toLowerCase()}
+                                {selectedIds.size === 1 ? "" : "s"}? Once deleted, they can't be
+                                recovered.
+                            </p>
+
+                            {bulkDeleteError && <p style={styles.formError}>{bulkDeleteError}</p>}
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={closeBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.addSubmitBtn,
+                                        flex: 1,
+                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        opacity: bulkDeleting ? 0.7 : 1,
+                                        cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={handleBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    {bulkDeleting ? "Deleting..." : `Delete ${selectedIds.size}`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal layout
                 (title/subtitle, required-columns callout, Choose File row with
                 an explicit Upload button, then a "X created · Y failed"
@@ -3041,6 +3347,79 @@ const styles: Record<string, CSSProperties> = {
     viewToggleBtnActive: {
         background: "#e7ecf8",
         color: "var(--brand-blue)",
+    },
+
+    // NEW: "Select" toggle button — switches bulk-select mode on/off so the
+    // per-row/card checkboxes aren't shown all the time by default.
+    selectModeBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "8px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "#3b4a63",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    selectModeBtnActive: {
+        background: "#e7ecf8",
+        color: "var(--brand-blue)",
+        border: "1px solid var(--brand-blue)",
+    },
+    // NEW: bulk-select bar (Select All + Delete Selected) shown above the
+    // list/grid, and the top-right checkbox placed on each card.
+    bulkSelectBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+        flexShrink: 0,
+    },
+    bulkSelectAllLabel: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: "#3b4a63",
+        cursor: "pointer",
+    },
+    bulkSelectCount: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "var(--brand-blue)",
+        background: "color-mix(in srgb, var(--brand-light-blue) 14%, white)",
+        padding: "3px 10px",
+        borderRadius: 999,
+    },
+    bulkDeleteBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.md,
+        padding: "9px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        boxShadow: "0 6px 14px rgba(220,38,38,0.25)",
+        whiteSpace: "nowrap",
+    },
+    cardSelectCheckbox: {
+        position: "absolute",
+        top: 13,
+        right: 13,
+        width: 16,
+        height: 16,
+        cursor: "pointer",
     },
 
     // Scrollable: fills remaining vertical space in contentBody and only

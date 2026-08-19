@@ -253,6 +253,9 @@ const Products = () => {
     // NEW: multi-select for bulk delete — set of currently-checked service
     // ids, plus the confirm-modal + in-flight state for the bulk action.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    // NEW: bulk-select is now opt-in — checkboxes stay hidden until the user
+    // taps "Select", instead of every row/card showing a checkbox by default.
+    const [isSelectMode, setIsSelectMode] = useState(false);
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
     const [bulkDeleting, setBulkDeleting] = useState(false);
     const [bulkDeleteError, setBulkDeleteError] = useState("");
@@ -534,6 +537,13 @@ const Products = () => {
     const allVisibleSelected =
         filteredProducts.length > 0 && filteredProducts.every((p) => selectedIds.has(p.id));
 
+    // Toggles select-mode on/off. Always clears any existing selection so
+    // turning it off (or back on) starts from a clean slate.
+    const toggleSelectMode = () => {
+        setIsSelectMode((prev) => !prev);
+        setSelectedIds(new Set());
+    };
+
     const toggleSelectAll = () => {
         setSelectedIds((prev) => {
             if (allVisibleSelected) return new Set();
@@ -595,6 +605,7 @@ const Products = () => {
         // the error if something failed, so it isn't missed.
         if (failedCount === 0) {
             setShowBulkDeleteConfirm(false);
+            setIsSelectMode(false);
         }
     };
 
@@ -1098,6 +1109,27 @@ const Products = () => {
                             />
                         </div>
 
+                        {/* NEW: "Select" toggle — checkboxes for bulk delete only show
+                            once this is switched on, instead of sitting on every row/card
+                            all the time. Tapping it again exits select mode and clears
+                            whatever was checked. */}
+                        {canManage && filteredProducts.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={toggleSelectMode}
+                                style={{
+                                    ...styles.selectModeBtn,
+                                    ...(isSelectMode ? styles.selectModeBtnActive : {}),
+                                }}
+                            >
+                                <i
+                                    className={isSelectMode ? "ti ti-x" : "ti ti-checkbox"}
+                                    style={{ fontSize: fontSize.md }}
+                                />
+                                {isSelectMode ? "Cancel" : "Select"}
+                            </button>
+                        )}
+
                         {!isMobile && (
                             <div style={styles.viewToggle}>
                                 <button
@@ -1136,7 +1168,7 @@ const Products = () => {
                         service is checked, so deleting many services doesn't mean
                         clicking the trash icon one row/card at a time. canManage-gated
                         same as every other delete affordance on this page. */}
-                    {canManage && filteredProducts.length > 0 && (
+                    {canManage && isSelectMode && filteredProducts.length > 0 && (
                         <div style={styles.bulkSelectBar}>
                             <label style={styles.bulkSelectAllLabel}>
                                 <input
@@ -1188,14 +1220,20 @@ const Products = () => {
                             <div style={styles.tableWrap}>
                                 <table className="pr-table" style={styles.table}>
                                     <colgroup>
-                                        {canManage && <col style={{ width: "36px" }} />}
-                                        <col style={{ width: canManage ? "38%" : "40%" }} />
+                                        {canManage && isSelectMode && (
+                                            <col style={{ width: "36px" }} />
+                                        )}
+                                        <col
+                                            style={{
+                                                width: canManage && isSelectMode ? "38%" : "40%",
+                                            }}
+                                        />
                                         <col style={{ width: "30%" }} />
                                         <col style={{ width: "30%" }} />
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            {canManage && (
+                                            {canManage && isSelectMode && (
                                                 <th style={{ ...styles.th, textAlign: "center" }}>
                                                     <input
                                                         type="checkbox"
@@ -1224,7 +1262,7 @@ const Products = () => {
                                                         boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                     }}
                                                 >
-                                                    {canManage && (
+                                                    {canManage && isSelectMode && (
                                                         <td
                                                             style={{
                                                                 ...styles.td,
@@ -1338,8 +1376,9 @@ const Products = () => {
                                             }}
                                         >
                                             {/* NEW: top-right select checkbox for bulk delete —
-                                                same placement as the Clients page card. */}
-                                            {canManage && (
+                                                same placement as the Clients page card. Only
+                                                shown once "Select" mode is switched on. */}
+                                            {canManage && isSelectMode && (
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedIds.has(p.id)}
@@ -2026,6 +2065,29 @@ const styles: Record<string, CSSProperties> = {
     viewToggleBtnActive: {
         background: "#e7ecf8",
         color: "var(--brand-blue)",
+    },
+
+    // NEW: "Select" toggle button — switches bulk-select mode on/off so the
+    // per-row/card checkboxes aren't shown all the time by default.
+    selectModeBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#fafbfc",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "8px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "#3b4a63",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    selectModeBtnActive: {
+        background: "#e7ecf8",
+        color: "var(--brand-blue)",
+        border: "1px solid var(--brand-blue)",
     },
 
     // Scrollable: fills remaining vertical space in contentBody and only
