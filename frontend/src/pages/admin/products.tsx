@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
-import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const MOBILE_BREAKPOINT = 768;
@@ -18,72 +17,73 @@ function useIsMobile() {
     return isMobile;
 }
 
-// Backend base URL. Hardcoded rather than read from process.env because
-// that lookup doesn't resolve to anything meaningful in the browser bundle
-// unless your build tool is specifically configured to inline it.
-// Change this if your backend runs on a different host/port.
-// FIX: this was hardcoded to "http://localhost:3001", so the DEPLOYED
-// (Vercel) frontend was trying to call the user's OWN machine's
-// localhost instead of the real deployed backend — which obviously
-// never connects, and looks exactly like a network/cold-start failure.
-// Every other page uses import.meta.env.VITE_API_URL; this one just
-// never got updated to match.
-const API_BASE = import.meta.env.VITE_API_URL;
-const ENDPOINT = `${API_BASE}/api/products`;
+type EntityStatus = "Active" | "Inactive";
 
-// REVERSED MAPPING: a Product is now a standalone catalog entry. It no
-// longer carries a client/subclient on itself — Clients and Subclients
-// each pick which Products they use (see the Clients page instead).
-type Product = {
-    id: string;
+// REVERSED MAPPING: the rate for a linked product is per Client/Subclient,
+// not fixed on the product itself — same product can cost differently for
+// a different client.
+type ProductRate = {
+    productId: number;
+    amount: number | string | null;
+    currency: string;
+};
+
+const CURRENCY_OPTIONS = ["USD", "GBP", "INR", "EUR", "AUD", "CAD"];
+
+type Client = {
+    id: number;
+    name: string;
+    country: string | null;
+    status: EntityStatus;
+    subclients: number;
+    branches: number;
+    users: number;
+    website: string | null;
+    mainEmail: string | null;
+    mainPhone: string | null;
+    primaryContactName: string | null;
+    primaryContactEmail: string | null;
+    primaryContactPhone: string | null;
+    secondaryContactName: string | null;
+    secondaryContactEmail: string | null;
+    secondaryContactPhone: string | null;
+    // REVERSED MAPPING: which Products this Client is linked to, via the
+    // client_products junction table — each with its own amount/currency.
+    productRates?: ProductRate[];
+    products?: { id: number; product_name: string }[];
+};
+
+// Subclients now carry the same Primary/Secondary contact fields as Clients
+// so both entities are viewable, editable, and exportable with parity.
+type SubclientRow = {
+    id: number;
+    name: string;
+    clientId: number;
+    clientName: string;
+    country: string | null;
+    status: EntityStatus;
+    branches: number;
+    users: number;
+    website: string | null;
+    mainEmail: string | null;
+    mainPhone: string | null;
+    primaryContactName: string | null;
+    primaryContactEmail: string | null;
+    primaryContactPhone: string | null;
+    secondaryContactName: string | null;
+    secondaryContactEmail: string | null;
+    secondaryContactPhone: string | null;
+    // REVERSED MAPPING: which Products this Subclient is linked to, via the
+    // subclient_products junction table — each with its own amount/currency.
+    productRates?: ProductRate[];
+    products?: { id: number; product_name: string }[];
+};
+
+// A Product is now a standalone catalog entry (see products.tsx) — Clients
+// and Subclients each pick which ones they use.
+type ProductOption = {
+    id: number;
     product_name: string;
-    time_taken: string;
-    time_unit: string;
-    // NEW: which team(s) this service is tagged with — optional, purely
-    // informational, same team names as the Teams dropdown on the Add
-    // User / Employees pages.
-    teams?: string[];
-    created_at?: string;
-    updated_at?: string;
-};
-
-type ProductForm = {
-    product_name: string;
-    time_taken: string;
-    time_unit: string;
-    teams: string[];
-};
-
-const emptyForm: ProductForm = {
-    product_name: "",
-    time_taken: "",
-    time_unit: "",
-    teams: [],
-};
-
-// Shape returned by GET /api/teams — same shape used on the Employees
-// page's Team dropdown.
-type Team = { id: string; name: string };
-
-type DeleteTarget = { id: string; name: string };
-
-// Matches the ACTUAL shape returned by
-// backend/src/modules/products/products.controller.js's
-// bulkUploadProducts: { success, data: { totalRows, createdCount,
-// failedCount, results } }. This previously didn't match at all
-// (expected `created`/`rowErrors` keys that the backend never sends),
-// so the results panel always rendered blank/undefined even on a
-// fully successful upload.
-type BulkResult = {
-    totalRows: number;
-    createdCount: number;
-    failedCount: number;
-    results: {
-        identifier: string;
-        row: number;
-        success: boolean;
-        message?: string;
-    }[];
 };
 
 const AVATAR_PALETTE = [
@@ -98,59 +98,118 @@ const AVATAR_PALETTE = [
 ];
 
 function getInitials(name: string) {
-    const trimmed = (name || "").trim();
-    if (!trimmed) return "?";
-    const parts = trimmed.split(/\s+/);
+    const parts = name.trim().split(/\s+/);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function getAvatarColors(name: string) {
     let hash = 0;
-    const key = name || "";
-    for (let i = 0; i < key.length; i++) hash = key.charCodeAt(i) + ((hash << 5) - hash);
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
-// Formats a time value with its unit for display, e.g. "20 min" / "2 hr".
-// Falls back to "—" when either piece is missing.
-function formatTimeTaken(value?: string | number | null, unit?: string | null) {
-    if (value === null || value === undefined || value === "") return "—";
-    const unitLabel = unit === "hours" ? "hr" : unit === "minutes" ? "min" : "";
-    return unitLabel ? `${value} ${unitLabel}` : `${value}`;
+// Normalizes a raw website value (e.g. "acme.com" or "www.acme.com") into a
+// safe, absolute href so it always opens correctly in a new tab, regardless
+// of whether the user typed a protocol when entering it in the form.
+function toSafeHref(raw: string) {
+    const trimmed = raw.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
 }
+
+// Small reusable clickable-website renderer used in both the card view and
+// the details modal. Falls back to a plain "—" when no website is set, and
+// never throws on malformed input — worst case it just builds a best-effort
+// https:// link.
+function WebsiteLink({ website, style }: { website: string | null; style?: CSSProperties }) {
+    if (!website || !website.trim()) {
+        return <span style={style}>—</span>;
+    }
+    return (
+        <a
+            href={toSafeHref(website)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...style, color: "var(--brand-light-blue)", textDecoration: "none" }}
+            onClick={(e) => e.stopPropagation()}
+            title={website}
+        >
+            {website}
+        </a>
+    );
+}
+
+type TabKey = "client" | "subclient";
+
+type ViewDetailsTarget =
+    { type: "client"; data: Client } | { type: "subclient"; data: SubclientRow };
+
+// Row-level bulk result, one entry per row in the uploaded sheet — whether
+// that row succeeded or failed — so the modal can render a full list
+// exactly like the "Bulk Add Users" page does.
+type BulkRowResult = {
+    row: number;
+    identifier: string;
+    status: "created" | "failed";
+    message?: string;
+};
+
+type BulkResult = {
+    totalRows: number;
+    createdCount: number;
+    failedCount: number;
+    results: BulkRowResult[];
+};
+
+type DeleteTarget = {
+    type: TabKey;
+    id: number;
+    name: string;
+};
+
+// Maps the active tab to the corresponding API resource path used by the
+// bulk template/upload endpoints on the backend.
+const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
+    client: "clients",
+    subclient: "subclients",
+};
 
 // Injected once — inline style objects can't express :hover/:focus, so the
 // handful of interactive/motion rules live here instead of duplicating them
-// as onMouseEnter/onMouseLeave handlers everywhere. Mirrors the Clients page
-// one-for-one so both entities read as the same product.
+// as onMouseEnter/onMouseLeave handlers everywhere.
 //
 // All brand colors below reference the CSS custom properties set on
-// <html> by ThemeProvider (--brand-blue / --brand-light-blue and their
-// *-rgb counterparts for rgba() shadows), so this page follows whichever
-// theme color is selected, same as Clients/Add User.
+// <html> by ThemeProvider (--brand-blue / --brand-light-blue / --brand-green
+// / their *-rgb counterparts for rgba() shadows), so this entire page — the
+// tabs, table hover state, tooltips, and the Sample Sheet / Bulk Upload
+// affordances — automatically follows whichever theme color is selected
+// from the header's "Theme color" picker, instead of being pinned to one
+// fixed palette.
 const GLOBAL_CSS = `
-.pr-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
-.pr-card:hover {
+.cl-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.cl-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb),.12);
+  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb), .12);
   border-color: #cfe0f5;
 }
-.pr-row:nth-child(even) { background: #fbfcfe; }
-.pr-row { box-shadow: inset 3px 0 0 0 transparent; }
-.pr-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 var(--brand-light-blue); }
-.pr-view-btn:hover { text-decoration: underline; }
-.pr-view-btn-filled:hover { filter: brightness(1.06); transform: translateY(-1px); }
-.pr-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: var(--brand-blue); transform: translateY(-1px); }
-.pr-icon-btn-danger:hover { background: #fee2e2; border-color: #fecaca; transform: translateY(-1px); }
-.pr-table thead th:first-child { border-top-left-radius: 16px; }
-.pr-table thead th:last-child { border-top-right-radius: 16px; }
+.cl-row:nth-child(even) { background: #fbfcfe; }
+.cl-row { box-shadow: inset 3px 0 0 0 transparent; }
+.cl-row:hover { background: #f0f6fd; box-shadow: inset 3px 0 0 0 var(--brand-light-blue); }
+.cl-view-btn:hover { text-decoration: underline; }
+.cl-view-btn-filled:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.cl-icon-btn:hover { background: #eef4fb; border-color: #cfe0f5; color: var(--brand-blue); transform: translateY(-1px); }
+.cl-icon-btn-danger:hover { background: #fee2e2; border-color: #fecaca; transform: translateY(-1px); }
+.cl-tab-btn:hover { border-color: #cfe0f5; color: var(--brand-blue); }
+.cl-table thead th:first-child { border-top-left-radius: 16px; }
+.cl-table thead th:last-child { border-top-right-radius: 16px; }
 
-/* Tooltip used on the Sample Sheet / Bulk Upload buttons so hover clearly
-   communicates the download/upload is an Excel (.xlsx) file. Colors match
-   this page's brand gradient (tabs, Add button, filled View button). */
-.pr-tooltip-wrap { position: relative; display: inline-flex; }
-.pr-tooltip-wrap .pr-tooltip-bubble {
+/* Tooltip used on the Sample Sheet button so hover clearly communicates
+   that the download is an Excel (.xlsx) template for bulk upload. Colors
+   follow the active theme gradient (same one used on tabs, Add button, and
+   the filled View Details button), rather than a fixed palette. */
+.cl-tooltip-wrap { position: relative; display: inline-flex; }
+.cl-tooltip-wrap .cl-tooltip-bubble {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
@@ -167,9 +226,9 @@ const GLOBAL_CSS = `
   pointer-events: none;
   transition: opacity .15s ease, transform .15s ease;
   z-index: 20;
-  box-shadow: 0 8px 20px rgba(var(--brand-blue-rgb),.35);
+  box-shadow: 0 8px 20px rgba(var(--brand-blue-rgb), .35);
 }
-.pr-tooltip-wrap .pr-tooltip-bubble::after {
+.cl-tooltip-wrap .cl-tooltip-bubble::after {
   content: "";
   position: absolute;
   bottom: 100%;
@@ -178,7 +237,7 @@ const GLOBAL_CSS = `
   border: 5px solid transparent;
   border-bottom-color: var(--brand-light-blue);
 }
-.pr-tooltip-wrap:hover .pr-tooltip-bubble {
+.cl-tooltip-wrap:hover .cl-tooltip-bubble {
   opacity: 1;
   visibility: visible;
   transform: translateX(-50%) translateY(0);
@@ -186,32 +245,32 @@ const GLOBAL_CSS = `
 
 /* Custom slim scrollbar for the list/grid area so it reads as a native
    overflow container rather than the page itself growing. */
-.pr-scroll-area::-webkit-scrollbar { width: 8px; }
-.pr-scroll-area::-webkit-scrollbar-track { background: transparent; }
-.pr-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
-.pr-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+.cl-scroll-area::-webkit-scrollbar { width: 8px; }
+.cl-scroll-area::-webkit-scrollbar-track { background: transparent; }
+.cl-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
+.cl-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+
+/* Bulk upload results list scrollbar (Bulk Add Users style) */
+.cl-results-list::-webkit-scrollbar { width: 8px; }
+.cl-results-list::-webkit-scrollbar-track { background: transparent; }
+.cl-results-list::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
+.cl-results-list::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
+
+/* Tabs wrap onto a second line instead of getting clipped by the page's
+   overflow:hidden shell on narrow phone widths — this is what was hiding
+   the "Subclient" tab on mobile before. */
+@media (max-width: 480px) {
+  .cl-tab-btn { padding: 9px 14px !important; font-size: 13px !important; }
+}
 `;
 
-// Columns required in the bulk-upload sheet, shown in the modal's info
-// callout and used to build the downloadable sample sheet client-side.
-// FIX: text and column keys must always match — kept as one constant
-// instead of two separate hardcoded strings (info callout vs. XLSX
-// template), so a future rename can't make them drift out of sync again.
-const PRODUCT_NAME_COLUMN = "Service Name";
-const TIME_TAKEN_COLUMN = "Time Taken";
-// NEW: optional Teams column — comma-separated team names (e.g.
-// "Tech, SD") so a service can be assigned to multiple teams right from
-// the bulk sheet, instead of every bulk-created service starting with an
-// empty teams list that had to be tagged manually afterwards from Edit.
-const TEAMS_COLUMN = "Teams";
-const BULK_REQUIRED_COLUMNS_TEXT = `${PRODUCT_NAME_COLUMN}, ${TIME_TAKEN_COLUMN}`;
-const BULK_OPTIONAL_COLUMNS_TEXT = `${TEAMS_COLUMN} (comma-separated, e.g. "Tech, SD" — each team must already exist)`;
+export default function Clients() {
+    const isMobile = useIsMobile();
 
-const Products = () => {
     // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
-    // for /api/products — hide the buttons for anyone who'd just get a
-    // 403 from clicking them (Phase 5: hide create actions from every
-    // role except the ones actually allowed).
+    // for both /api/clients and /api/subclients — hide the buttons for
+    // anyone who'd just get a 403 from clicking them (Phase 5: hide
+    // create actions from every role except the ones actually allowed).
     let currentUser: { role?: string } | null = null;
     try {
         const userStr = localStorage.getItem("user");
@@ -223,19 +282,45 @@ const Products = () => {
         (currentUser?.role || "").toUpperCase()
     );
 
-    const isMobile = useIsMobile();
+    const [activeTab, setActiveTab] = useState<TabKey>("client");
+    const [search, setSearch] = useState("");
+    const [statusFilter, setStatusFilter] = useState("All");
+    const [countryFilter, setCountryFilter] = useState("All");
+    const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
-    const [products, setProducts] = useState<Product[]>([]);
+    const [clients, setClients] = useState<Client[]>([]);
+    const [subclients, setSubclients] = useState<SubclientRow[]>([]);
+    const [products, setProducts] = useState<ProductOption[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
-    const [search, setSearch] = useState("");
-    const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+    const [viewDetails, setViewDetails] = useState<ViewDetailsTarget | null>(null);
 
-    const [viewDetails, setViewDetails] = useState<Product | null>(null);
+    // Shared shape for both Client and Subclient Add/Edit forms so both
+    // entities can carry Country / Website / Main Email / Main Phone /
+    // Primary Contact / Secondary Contact fields identically.
+    const emptyForm = {
+        name: "",
+        country: "",
+        status: "Active" as EntityStatus,
+        clientId: "",
+        website: "",
+        mainEmail: "",
+        mainPhone: "",
+        primaryContactName: "",
+        primaryContactEmail: "",
+        primaryContactPhone: "",
+        secondaryContactName: "",
+        secondaryContactEmail: "",
+        secondaryContactPhone: "",
+        // REVERSED MAPPING: [{ productId, amount, currency }] for each
+        // Product this Client/Subclient uses, at this client/subclient's
+        // own rate.
+        productRates: [] as ProductRate[],
+    };
 
     const [showAddModal, setShowAddModal] = useState(false);
-    const [addForm, setAddForm] = useState<ProductForm>({ ...emptyForm });
+    const [addForm, setAddForm] = useState({ ...emptyForm });
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
 
@@ -244,112 +329,138 @@ const Products = () => {
     // for approval instead of applying immediately) — see approvalGate.js.
     const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
-    const [editTarget, setEditTarget] = useState<Product | null>(null);
-    const [editForm, setEditForm] = useState<ProductForm>({ ...emptyForm });
+    // ---- Edit state ----
+    const [editTarget, setEditTarget] = useState<ViewDetailsTarget | null>(null);
+    const [editForm, setEditForm] = useState({ ...emptyForm });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState("");
 
+    // ---- Delete state ----
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState("");
 
-    // NEW: Teams for the Add/Edit forms' Teams dropdown — same source as
-    // the Employees page (GET /api/teams). If this org hasn't created any
-    // teams yet, teamsList stays empty and the field shows "Not found."
-    const [teamsList, setTeamsList] = useState<Team[]>([]);
-    const [teamsLoading, setTeamsLoading] = useState(true);
-
-    // Collapsed-by-default "Select Team" dropdown state, shared by the Add
-    // and Edit modals (they're never mounted at the same time).
-    const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
-    const teamDropdownRef = useRef<HTMLDivElement | null>(null);
+    // NEW: multi-select delete — a set of selected row ids for whichever
+    // tab is active. Cleared whenever the tab changes so a Client
+    // selection never accidentally carries over and gets applied to
+    // Subclients (or vice versa).
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [bulkDeleteError, setBulkDeleteError] = useState("");
 
     // ---- Bulk upload state ----
     // Bulk upload now lives inside its own modal (opened via the "Bulk
     // Upload" button) instead of firing immediately off a hidden file
     // input, matching the Add User page's "Bulk Add Users" modal pattern:
-    // required-columns callout -> Choose File -> explicit Upload button.
+    // required-columns callout -> Choose File -> explicit Upload button ->
+    // full created/failed row-by-row results list.
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
     const [bulkError, setBulkError] = useState("");
 
-    const fetchProducts = async () => {
+    const apiBase = import.meta.env.VITE_API_URL;
+
+    const fetchAll = async () => {
         setLoading(true);
         setError("");
         try {
-            const res = await authFetch(ENDPOINT, {
-                headers: { "Content-Type": "application/json" },
-            });
-            const json = await res.json();
-            if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to load services");
+            const [clientsRes, subclientsRes, productsRes] = await Promise.all([
+                authFetch(`${apiBase}/api/clients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/products`, { cache: "no-store" }),
+            ]);
+
+            if (!clientsRes.ok) throw new Error("Failed to load clients");
+            if (!subclientsRes.ok) throw new Error("Failed to load subclients");
+
+            setClients(await clientsRes.json());
+            setSubclients(await subclientsRes.json());
+
+            // Products endpoint isn't critical to render this page, so a
+            // failure here shouldn't block Clients/Subclients from showing —
+            // it would just mean the "Products" picker in Add/Edit is empty.
+            if (productsRes.ok) {
+                const productsJson = await productsRes.json();
+                setProducts(productsJson?.data || []);
             }
-            setProducts(json.data || []);
         } catch (err: any) {
-            setError(err.message);
+            setError(err?.message || "Something went wrong loading data.");
         } finally {
             setLoading(false);
         }
     };
 
-    // NEW: Non-critical — if this fails or returns nothing, the Teams
-    // field just shows "Not found." instead of blocking Add/Edit.
-    const fetchTeams = async () => {
-        setTeamsLoading(true);
-        try {
-            const res = await authFetch(`${API_BASE}/api/teams`, { cache: "no-store" });
-            if (!res.ok) return;
-            const json = await res.json();
-            setTeamsList(json?.data || []);
-        } catch {
-            // silent — non-critical
-        } finally {
-            setTeamsLoading(false);
-        }
+    useEffect(() => {
+        fetchAll();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [apiBase]);
+
+    // Reset filters when switching tabs so stale country selections from one
+    // dataset don't carry into another.
+    useEffect(() => {
+        setSearch("");
+        setStatusFilter("All");
+        setCountryFilter("All");
+        // NEW: clear any multi-select selection too — a Client's numeric
+        // id could collide with an unrelated Subclient's id, so a
+        // selection must never survive a tab switch.
+        setSelectedIds(new Set());
+    }, [activeTab]);
+
+    // Country filter options now come from whichever dataset is active, since
+    // Subclients carry their own Country field too (same as Clients).
+    const countries = useMemo(() => {
+        const source = activeTab === "client" ? clients : subclients;
+        return Array.from(new Set(source.map((c) => c.country).filter(Boolean) as string[])).sort();
+    }, [clients, subclients, activeTab]);
+
+    const matchesCommonFilters = (name: string, status: EntityStatus) => {
+        const matchesSearch = name.toLowerCase().includes(search.trim().toLowerCase());
+        const matchesStatus = statusFilter === "All" || status === statusFilter;
+        return matchesSearch && matchesStatus;
     };
 
-    useEffect(() => {
-        fetchProducts();
-        fetchTeams();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    // Close the Teams dropdown panel when clicking anywhere outside it.
-    // FIX: this used to listen on "mousedown". That fires and collapses the
-    // dropdown (shrinking the modal) BEFORE the click's mouseup happens, so
-    // if you were clicking the Save button while the dropdown was open, the
-    // button would shift position mid-click and the click would miss it —
-    // you'd have to click twice (once to close the dropdown, once more to
-    // actually hit Save). Listening on "click" instead means any button's
-    // own onClick (e.g. Save) fires first during bubbling, and only then
-    // does this outside-click check run and close the dropdown.
-    useEffect(() => {
-        if (!teamDropdownOpen) return;
-        const handleClickOutside = (e: MouseEvent) => {
-            if (teamDropdownRef.current && !teamDropdownRef.current.contains(e.target as Node)) {
-                setTeamDropdownOpen(false);
-            }
-        };
-        document.addEventListener("click", handleClickOutside);
-        return () => document.removeEventListener("click", handleClickOutside);
-    }, [teamDropdownOpen]);
-
-    const filteredProducts = useMemo(
+    const filteredClients = useMemo(
         () =>
-            products.filter((p) =>
-                (p.product_name || "").toLowerCase().includes(search.trim().toLowerCase())
-            ),
-        [products, search]
+            clients.filter((c) => {
+                const matchesCountry = countryFilter === "All" || c.country === countryFilter;
+                return matchesCommonFilters(c.name, c.status) && matchesCountry;
+            }),
+        [clients, search, statusFilter, countryFilter]
     );
 
-    // ---- Add handlers ----
+    const filteredSubclients = useMemo(
+        () =>
+            subclients.filter((s) => {
+                const matchesCountry = countryFilter === "All" || s.country === countryFilter;
+                return matchesCommonFilters(s.name, s.status) && matchesCountry;
+            }),
+        [subclients, search, statusFilter, countryFilter]
+    );
+
+    const currentFilteredLength =
+        activeTab === "client" ? filteredClients.length : filteredSubclients.length;
+
+    // No pagination anymore — the full filtered set renders inside a
+    // scrollable container. The container only shows a scrollbar (and
+    // scrolls) when the content actually overflows its available height;
+    // short lists sit flush with no scroll affordance at all.
+    const pageClients = filteredClients;
+    const pageSubclients = filteredSubclients;
+
+    const tabCounts: Record<TabKey, number> = {
+        client: clients.length,
+        subclient: subclients.length,
+    };
+
+    const tabLabel = activeTab === "client" ? "Client" : "Subclient";
 
     const openAddModal = () => {
         setAddForm({ ...emptyForm });
         setAddError("");
-        setTeamDropdownOpen(false);
         setShowAddModal(true);
     };
 
@@ -360,42 +471,73 @@ const Products = () => {
 
     const handleAddSubmit = async () => {
         setAddError("");
-        if (!addForm.product_name.trim()) {
-            setAddError("Service name is required.");
+
+        if (!addForm.name.trim()) {
+            setAddError(`${tabLabel} name is required.`);
             return;
         }
-        if (!addForm.time_unit) {
-            setAddError("Please select a unit (Minutes or Hours) for Time Taken.");
+        if (activeTab !== "client" && !addForm.clientId) {
+            setAddError("Client is required.");
             return;
         }
 
         setAddSubmitting(true);
         try {
-            const res = await authFetch(ENDPOINT, {
+            let url = "";
+            let body: Record<string, unknown> = {
+                name: addForm.name.trim(),
+                status: addForm.status,
+                country: addForm.country || null,
+                website: addForm.website || null,
+                mainEmail: addForm.mainEmail || null,
+                mainPhone: addForm.mainPhone || null,
+                primaryContactName: addForm.primaryContactName || null,
+                primaryContactEmail: addForm.primaryContactEmail || null,
+                primaryContactPhone: addForm.primaryContactPhone || null,
+                secondaryContactName: addForm.secondaryContactName || null,
+                secondaryContactEmail: addForm.secondaryContactEmail || null,
+                secondaryContactPhone: addForm.secondaryContactPhone || null,
+                // REVERSED MAPPING: this Client/Subclient links to these
+                // existing Products (picked in the form below).
+                productRates: addForm.productRates,
+            };
+
+            if (activeTab === "client") {
+                url = `${apiBase}/api/clients`;
+            } else {
+                url = `${apiBase}/api/subclients`;
+                body.clientId = Number(addForm.clientId);
+            }
+
+            const response = await authFetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(addForm),
+                body: JSON.stringify(body),
             });
-            const json = await res.json();
-            if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to create service");
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                const base = data?.message || `Failed to create ${tabLabel.toLowerCase()}`;
+                throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
             // NEW: 202 = a Process Lead's request went to their reporting
             // manager for approval instead of being created immediately —
-            // see approvalGate.js.
-            if (res.status === 202) {
+            // see approvalGate.js. Surface that clearly instead of letting
+            // it look like a normal, already-applied create.
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
                 setApprovalNotice(
-                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
                 );
             } else {
                 setApprovalNotice(null);
             }
 
-            await fetchProducts();
+            await fetchAll();
             setShowAddModal(false);
         } catch (err: any) {
-            setAddError(err.message || "Something went wrong.");
+            setAddError(err?.message || "Something went wrong.");
         } finally {
             setAddSubmitting(false);
         }
@@ -403,16 +545,53 @@ const Products = () => {
 
     // ---- Edit handlers ----
 
-    const openEditModal = (product: Product) => {
+    // FIX: this used to populate the Edit form straight from `target.data`
+    // — whatever was already sitting in the `clients`/`subclients` list
+    // state. If that list snapshot was even slightly stale (e.g. taken
+    // right after a product was linked elsewhere, or before this page's
+    // last fetchAll landed), the Products picker would render with
+    // nothing checked even though the link genuinely exists in the DB.
+    // Now it re-fetches that single record fresh from the backend first,
+    // so the Edit form — including productRates — always reflects exactly
+    // what's in the database at the moment you open it. Falls back to the
+    // list data only if that fetch fails, so Edit still opens.
+    const buildEditForm = (data: Client | SubclientRow, type: "client" | "subclient") => ({
+        name: data.name,
+        country: data.country || "",
+        status: data.status,
+        clientId: type === "client" ? "" : String((data as SubclientRow).clientId),
+        website: data.website || "",
+        mainEmail: data.mainEmail || "",
+        mainPhone: data.mainPhone || "",
+        primaryContactName: data.primaryContactName || "",
+        primaryContactEmail: data.primaryContactEmail || "",
+        primaryContactPhone: data.primaryContactPhone || "",
+        secondaryContactName: data.secondaryContactName || "",
+        secondaryContactEmail: data.secondaryContactEmail || "",
+        secondaryContactPhone: data.secondaryContactPhone || "",
+        productRates: data.productRates || [],
+    });
+
+    const openEditModal = async (target: ViewDetailsTarget) => {
         setEditError("");
-        setEditForm({
-            product_name: product.product_name || "",
-            time_taken: product.time_taken || "",
-            time_unit: product.time_unit || "",
-            teams: product.teams || [],
-        });
-        setTeamDropdownOpen(false);
-        setEditTarget(product);
+        // Open immediately with whatever we already have, so the modal
+        // doesn't sit blank while the fresh fetch is in flight...
+        setEditForm(buildEditForm(target.data, target.type));
+        setEditTarget(target);
+
+        // ...then swap in the freshly-fetched record as soon as it lands.
+        try {
+            const endpoint =
+                target.type === "client"
+                    ? `${apiBase}/api/clients/${target.data.id}`
+                    : `${apiBase}/api/subclients/${target.data.id}`;
+            const res = await authFetch(endpoint, { cache: "no-store" });
+            if (!res.ok) return; // keep the fallback data already set above
+            const fresh = await res.json();
+            setEditForm(buildEditForm(fresh, target.type));
+        } catch {
+            // Network hiccup — the fallback data set above is still valid.
+        }
     };
 
     const closeEditModal = () => {
@@ -423,41 +602,71 @@ const Products = () => {
     const handleEditSubmit = async () => {
         if (!editTarget) return;
         setEditError("");
-        if (!editForm.product_name.trim()) {
-            setEditError("Service name is required.");
+
+        const editTabLabel = editTarget.type === "client" ? "Client" : "Subclient";
+
+        if (!editForm.name.trim()) {
+            setEditError(`${editTabLabel} name is required.`);
             return;
         }
-        if (!editForm.time_unit) {
-            setEditError("Please select a unit (Minutes or Hours) for Time Taken.");
+        if (editTarget.type !== "client" && !editForm.clientId) {
+            setEditError("Client is required.");
             return;
         }
 
         setEditSubmitting(true);
         try {
-            const res = await authFetch(`${ENDPOINT}/${editTarget.id}`, {
+            let url = "";
+            let body: Record<string, unknown> = {
+                name: editForm.name.trim(),
+                status: editForm.status,
+                country: editForm.country || null,
+                website: editForm.website || null,
+                mainEmail: editForm.mainEmail || null,
+                mainPhone: editForm.mainPhone || null,
+                primaryContactName: editForm.primaryContactName || null,
+                primaryContactEmail: editForm.primaryContactEmail || null,
+                primaryContactPhone: editForm.primaryContactPhone || null,
+                secondaryContactName: editForm.secondaryContactName || null,
+                secondaryContactEmail: editForm.secondaryContactEmail || null,
+                secondaryContactPhone: editForm.secondaryContactPhone || null,
+                productRates: editForm.productRates,
+            };
+
+            if (editTarget.type === "client") {
+                url = `${apiBase}/api/clients/${editTarget.data.id}`;
+            } else {
+                url = `${apiBase}/api/subclients/${editTarget.data.id}`;
+                body.clientId = Number(editForm.clientId);
+            }
+
+            const response = await authFetch(url, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editForm),
+                body: JSON.stringify(body),
             });
-            const json = await res.json();
-            if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to update service");
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                const base = data?.message || `Failed to update ${editTabLabel.toLowerCase()}`;
+                throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
             // NEW: 202 = this edit went to the reporting manager for
             // approval instead of applying immediately — see approvalGate.js.
-            if (res.status === 202) {
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
                 setApprovalNotice(
-                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
                 );
             } else {
                 setApprovalNotice(null);
             }
 
-            await fetchProducts();
+            await fetchAll();
             setEditTarget(null);
         } catch (err: any) {
-            setEditError(err.message || "Something went wrong.");
+            setEditError(err?.message || "Something went wrong.");
         } finally {
             setEditSubmitting(false);
         }
@@ -465,9 +674,9 @@ const Products = () => {
 
     // ---- Delete handlers ----
 
-    const openDeleteConfirm = (id: string, name: string) => {
+    const openDeleteConfirm = (type: TabKey, id: number, name: string) => {
         setDeleteError("");
-        setDeleteTarget({ id, name });
+        setDeleteTarget({ type, id, name });
     };
 
     const closeDeleteConfirm = () => {
@@ -479,65 +688,168 @@ const Products = () => {
         if (!deleteTarget) return;
         setDeleting(true);
         setDeleteError("");
+
         try {
-            const res = await authFetch(`${ENDPOINT}/${deleteTarget.id}`, {
+            const endpoint = BULK_ENDPOINT_MAP[deleteTarget.type];
+            const response = await authFetch(`${apiBase}/api/${endpoint}/${deleteTarget.id}`, {
                 method: "DELETE",
             });
-            const json = await res.json();
-            if (!res.ok || json.success === false) {
-                throw new Error(json.message || "Failed to delete service");
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                throw new Error(data?.message || "Failed to delete");
             }
 
             // NEW: 202 = this delete went to the reporting manager for
             // approval instead of applying immediately — see approvalGate.js.
-            // Don't remove the row locally in that case; it's still there
-            // until an Ops Manager approves it. Re-fetch instead of the
-            // previous local-filter so both paths always reflect the
-            // server's actual state.
-            if (res.status === 202) {
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
                 setApprovalNotice(
-                    json?.message || "Submitted for approval — waiting on your reporting manager."
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
                 );
             } else {
                 setApprovalNotice(null);
             }
-            await fetchProducts();
+
+            await fetchAll();
             setDeleteTarget(null);
         } catch (err: any) {
-            setDeleteError(err.message || "Something went wrong.");
+            setDeleteError(err?.message || "Something went wrong.");
         } finally {
             setDeleting(false);
         }
     };
 
-    // ---- Bulk upload handlers ----
+    // ---- Multi-select delete handlers ----
+    // Selection is a plain Set<number> of ids, scoped to whichever tab is
+    // active (cleared on tab switch above). Reuses the exact same DELETE
+    // endpoint as the single-row delete — no new backend route needed —
+    // just fired once per selected id.
 
-    // FIX: the sample sheet button previously called
-    // `${ENDPOINT}/bulk/template?format=xlsx`, which 404s ("Cannot GET
-    // /api/products/bulk/template") because that route doesn't exist on
-    // the backend. Rather than depend on a backend endpoint, the template
-    // is now generated entirely client-side with the `xlsx` package —
-    // same approach already used by the Add User page's "Sample Sheet"
-    // button — so the download works with zero backend changes.
-    const handleDownloadTemplate = () => {
-        const templateData = [
-            {
-                [PRODUCT_NAME_COLUMN]: "Inventory Sync",
-                [TIME_TAKEN_COLUMN]: "2 hours",
-                [TEAMS_COLUMN]: teamsList[0]?.name || "",
-            },
-        ];
-
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Services");
-        XLSX.writeFile(workbook, "bulk_add_services_template.xlsx");
+    const toggleSelected = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     };
 
-    // Bulk upload now lives in its own modal (matching the Add User page's
-    // "Bulk Add Users" modal) instead of firing immediately off a hidden
-    // file input: choosing a file just stages it, and the actual POST only
-    // happens once "Upload & Create Services" is clicked.
+    // "Select all" toggles every row CURRENTLY VISIBLE on screen (i.e.
+    // matching the active search/status/country filters) — not the
+    // entire unfiltered dataset, so it behaves the way people expect
+    // from a filtered table.
+    const toggleSelectAllVisible = (visibleIds: number[]) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+            if (allSelected) {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.delete(id));
+                return next;
+            }
+            return new Set([...prev, ...visibleIds]);
+        });
+    };
+
+    const clearSelection = () => setSelectedIds(new Set());
+
+    const openBulkDeleteConfirm = () => {
+        setBulkDeleteError("");
+        setBulkDeleteOpen(true);
+    };
+
+    const closeBulkDeleteConfirm = () => {
+        setBulkDeleteOpen(false);
+        setBulkDeleteError("");
+    };
+
+    const handleBulkDeleteConfirm = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        setBulkDeleteError("");
+
+        const endpoint = BULK_ENDPOINT_MAP[activeTab];
+        const ids = Array.from(selectedIds);
+        const failures: string[] = [];
+
+        // Sequential, not Promise.all — a burst of simultaneous deletes
+        // against the same org's rows is more likely to trip rate limits
+        // or row-lock contention than a few hundred ms of extra time is
+        // worth here. Each failure is collected (by id) instead of
+        // aborting the whole batch, so one bad row doesn't block the rest
+        // from being deleted.
+        for (const id of ids) {
+            try {
+                const response = await authFetch(`${apiBase}/api/${endpoint}/${id}`, {
+                    method: "DELETE",
+                });
+                if (!response.ok && response.status !== 202) {
+                    const data = await response.json().catch(() => null);
+                    failures.push(`#${id}: ${data?.message || "Failed to delete"}`);
+                }
+            } catch (err: any) {
+                failures.push(`#${id}: ${err?.message || "Something went wrong"}`);
+            }
+        }
+
+        await fetchAll();
+        setSelectedIds(new Set());
+        setBulkDeleting(false);
+
+        if (failures.length > 0) {
+            setBulkDeleteError(
+                `${ids.length - failures.length} of ${ids.length} deleted. ` +
+                    `${failures.length} failed:\n${failures.join("\n")}`
+            );
+        } else {
+            setBulkDeleteOpen(false);
+        }
+    };
+
+    // ---- Bulk upload handlers (tied to whichever tab is active) ----
+    // Template is always served/generated as an .xlsx workbook by the backend.
+    // NOTE: the Subclient template's header row must mirror the Client
+    // template's header row (Name, Country, Status, Website, Main Email,
+    // Main Phone, Primary/Secondary Contact fields) plus the Subclient-only
+    // Client lookup column. That parity lives in the backend template
+    // generator for /api/subclients/bulk/template — not in this file.
+
+    // FIX: window.open() was hitting this endpoint as a bare, unauthenticated
+    // browser navigation, so the backend saw no Authorization header and
+    // rejected it with "No token provided" — even though every other call on
+    // this page correctly goes through authFetch. Downloading via authFetch
+    // (blob response) attaches the same auth token as everything else, then
+    // we trigger the save manually via a temporary <a download> link.
+    const handleDownloadTemplate = async () => {
+        const endpoint = BULK_ENDPOINT_MAP[activeTab];
+        try {
+            const res = await authFetch(`${apiBase}/api/${endpoint}/bulk/template?format=xlsx`, {
+                method: "GET",
+            });
+            if (!res.ok) throw new Error("Failed to download template");
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${tabLabel}_bulk_upload_template.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            alert("Could not download the sample sheet. Please try again.");
+        }
+    };
+
+    // Required-columns copy shown inside the Bulk Upload modal, mirroring
+    // the info callout on the Add User page's "Bulk Add Users" modal.
+    // Subclients carry one extra lookup column (Client) that Clients don't.
+    const bulkRequiredColumnsText =
+        activeTab === "client"
+            ? "Name, Country, Status, Website, Main Email, Main Phone, Primary Contact Name, Primary Contact Email, Primary Contact Phone, Secondary Contact Name, Secondary Contact Email, Secondary Contact Phone"
+            : "Name, Client, Country, Status, Website, Main Email, Main Phone, Primary Contact Name, Primary Contact Email, Primary Contact Phone, Secondary Contact Name, Secondary Contact Email, Secondary Contact Phone";
+
     const openBulkModal = () => {
         setBulkFile(null);
         setBulkResult(null);
@@ -570,10 +882,11 @@ const Products = () => {
         setBulkResult(null);
 
         try {
+            const endpoint = BULK_ENDPOINT_MAP[activeTab];
             const formData = new FormData();
             formData.append("file", bulkFile);
 
-            const response = await authFetch(`${ENDPOINT}/bulk/upload`, {
+            const response = await authFetch(`${apiBase}/api/${endpoint}/bulk/upload`, {
                 method: "POST",
                 body: formData,
             });
@@ -584,13 +897,12 @@ const Products = () => {
                 throw new Error(data?.message || "Bulk upload failed");
             }
 
-            // FIX: backend responds with { success, data: {...} } — this was
-            // storing the WHOLE envelope as bulkResult instead of unwrapping
-            // `data.data`, so every field the results panel reads
-            // (totalRows/createdCount/results) was undefined regardless of
-            // whether the upload actually succeeded.
-            setBulkResult(data?.data as BulkResult);
-            await fetchProducts();
+            // Backend is expected to return: { totalRows, createdCount,
+            // failedCount, results: [{ row, identifier, status, message? }] }
+            // so every row — created AND failed — can be listed in the UI,
+            // matching the "Bulk Add Users" results list.
+            setBulkResult(data as BulkResult);
+            await fetchAll();
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong during bulk upload.");
         } finally {
@@ -598,255 +910,274 @@ const Products = () => {
         }
     };
 
-    // Toggles one team name in/out of a form's `teams` array — shared by
-    // both Add and Edit via the fieldset below.
-    const toggleTeam = (
-        formState: ProductForm,
-        setFormState: (updater: (prev: ProductForm) => ProductForm) => void,
-        teamName: string
+    // REVERSED MAPPING: shared "which Products does this Client/Subclient
+    // use, and at what rate" picker, used by both Add and Edit forms, for
+    // both tabs. The rate (amount + currency) lives on the link, not on
+    // the product, since the same product can cost differently per client.
+    //
+    // FIX: Supabase/PostgREST doesn't always return a bigint id as the
+    // same JS type in every response (e.g. plain `number` from
+    // /api/products vs a value that round-tripped through JSON as a
+    // `string` from the client/subclient detail endpoint). A strict `===`
+    // then silently never matches, so a previously-saved product shows as
+    // unchecked even though the link genuinely exists in the DB. Comparing
+    // via Number(...) on both sides makes the match type-independent.
+    const toggleProductId = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
+        productId: number
     ) => {
         setFormState((prev) => {
-            const exists = prev.teams.includes(teamName);
+            const has = prev.productRates.some((r) => Number(r.productId) === Number(productId));
             return {
                 ...prev,
-                teams: exists
-                    ? prev.teams.filter((t) => t !== teamName)
-                    : [...prev.teams, teamName],
+                productRates: has
+                    ? prev.productRates.filter((r) => Number(r.productId) !== Number(productId))
+                    : [...prev.productRates, { productId, amount: "", currency: "USD" }],
             };
         });
     };
 
-    // NEW: "Select All" toggle at the top of the Teams checkbox panel —
-    // ticks every known team in one click instead of clicking each one
-    // individually. Acts as a toggle: if everything is already selected,
-    // clicking it again clears the selection; otherwise it selects all.
-    const toggleAllTeams = (
-        formState: ProductForm,
-        setFormState: (updater: (prev: ProductForm) => ProductForm) => void,
-        allTeamNames: string[]
+    const updateProductRate = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
+        productId: number,
+        field: "amount" | "currency",
+        value: string
     ) => {
-        setFormState((prev) => {
-            const allSelected =
-                allTeamNames.length > 0 && allTeamNames.every((name) => prev.teams.includes(name));
-            return { ...prev, teams: allSelected ? [] : [...allTeamNames] };
-        });
+        setFormState((prev) => ({
+            ...prev,
+            productRates: prev.productRates.map((r) =>
+                Number(r.productId) === Number(productId) ? { ...r, [field]: value } : r
+            ),
+        }));
     };
 
-    // Shared form fieldset used by both Add and Edit modals so the two
-    // never drift out of parity.
-    const renderProductFieldset = (
-        formState: ProductForm,
-        setFormState: (updater: (prev: ProductForm) => ProductForm) => void
+    const renderProductPicker = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
     ) => (
-        <>
-            <div>
-                <label style={styles.formLabel}>Service Name</label>
-                <input
-                    style={styles.formInput}
-                    value={formState.product_name}
-                    onChange={(e) =>
-                        setFormState((prev) => ({ ...prev, product_name: e.target.value }))
-                    }
-                    placeholder="e.g. Inventory Sync"
-                />
-            </div>
-            <div>
-                <label style={styles.formLabel}>Time Taken</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                    <input
-                        style={{ ...styles.formInput, flex: 1 }}
-                        value={formState.time_taken}
-                        onChange={(e) =>
-                            setFormState((prev) => ({ ...prev, time_taken: e.target.value }))
-                        }
-                        placeholder="e.g. 20"
-                        type="number"
-                        min="0"
-                    />
-                    <select
-                        style={{ ...styles.formInput, flex: 1 }}
-                        value={formState.time_unit}
-                        onChange={(e) =>
-                            setFormState((prev) => ({ ...prev, time_unit: e.target.value }))
-                        }
-                        required
-                    >
-                        <option value="" disabled>
-                            Select unit
-                        </option>
-                        <option value="minutes">Minutes</option>
-                        <option value="hours">Hours</option>
-                    </select>
-                </div>
-            </div>
-
-            {/* NEW: Teams — collapsed "Select Team" dropdown, multi-select via
-                checkboxes in the expanded panel (same pattern as the Products
-                picker on the Clients page). If this org hasn't created any
-                teams yet, shows "Not found." instead.
-
-                FIX: the expanded checkbox panel used to be `position: absolute`,
-                which floated it OVER the rest of the modal (including the
-                Save/Add button) instead of pushing content down. That made the
-                submit button invisible/unreachable whenever the dropdown was
-                open. It's now `position: relative` so it sits inline in normal
-                document flow — opening it pushes the button down instead of
-                covering it, and the modal (which already scrolls) handles any
-                extra height. */}
-            <div style={{ gridColumn: "1 / -1", position: "relative" }} ref={teamDropdownRef}>
-                <label style={styles.formLabel}>Teams</label>
-
-                {teamsLoading ? (
-                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                        Loading teams…
-                    </p>
-                ) : teamsList.length === 0 ? (
-                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                        Not found.
-                    </p>
-                ) : (
-                    <>
-                        {/* Collapsed control — click to open/close the panel */}
-                        <div
-                            onClick={() => setTeamDropdownOpen((prev) => !prev)}
-                            style={{
-                                ...styles.formInput,
-                                display: "flex",
-                                alignItems: "center",
-                                flexWrap: "wrap",
-                                gap: 6,
-                                cursor: "pointer",
-                                minHeight: 20,
-                            }}
-                        >
-                            {formState.teams.length === 0 ? (
-                                <span style={{ color: "#8b96a8" }}>Select Team</span>
-                            ) : (
-                                formState.teams.map((t) => (
-                                    <span
-                                        key={t}
-                                        style={{
-                                            display: "inline-flex",
-                                            alignItems: "center",
-                                            gap: 4,
-                                            background:
-                                                "color-mix(in srgb, var(--brand-light-blue) 14%, white)",
-                                            color: "var(--brand-blue)",
-                                            fontSize: fontSize.xs,
-                                            fontWeight: fontWeight.medium,
-                                            padding: "2px 8px",
-                                            borderRadius: 999,
-                                        }}
-                                    >
-                                        {t}
-                                        <span
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                toggleTeam(formState, setFormState, t);
-                                            }}
-                                            style={{
-                                                cursor: "pointer",
-                                                fontWeight: fontWeight.bold,
-                                            }}
-                                        >
-                                            ×
-                                        </span>
-                                    </span>
-                                ))
-                            )}
-                            <span
-                                style={{
-                                    marginLeft: "auto",
-                                    color: "#8b96a8",
-                                    fontSize: fontSize.xs,
-                                }}
-                            >
-                                {teamDropdownOpen ? "▲" : "▼"}
-                            </span>
-                        </div>
-
-                        {/* Expanded checkbox panel — now inline (position: relative)
-                            instead of absolute, so it pushes the rest of the form
-                            (including the Save/Add button) down instead of
-                            floating over it. */}
-                        {teamDropdownOpen && (
+        <div style={{ gridColumn: "1 / -1" }}>
+            <label style={styles.formLabel}>Services</label>
+            {products.length === 0 ? (
+                <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                    No products yet — add one from the Products page first.
+                </p>
+            ) : (
+                <div
+                    className="cl-scroll-area"
+                    style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        border: "1px solid #e4e9f2",
+                        borderRadius: radius.sm,
+                        padding: "10px 12px",
+                        background: "#fafbfc",
+                    }}
+                >
+                    {products.map((p) => {
+                        const rate = formState.productRates.find(
+                            (r) => Number(r.productId) === Number(p.id)
+                        );
+                        const checked = !!rate;
+                        return (
                             <div
+                                key={p.id}
                                 style={{
-                                    position: "relative",
-                                    zIndex: 5,
-                                    marginTop: 4,
                                     display: "flex",
-                                    flexDirection: "column",
-                                    gap: 6,
-                                    maxHeight: 200,
-                                    overflowY: "auto",
-                                    border: "1px solid #e4e9f2",
-                                    borderRadius: radius.sm,
-                                    padding: "10px 12px",
-                                    background: "#fff",
-                                    boxShadow: "0 4px 12px rgba(16, 24, 40, 0.08)",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    flexWrap: "wrap",
                                 }}
                             >
-                                {/* Select All — ticks/clears every team in one click. Kept
-                                    visually distinct (bold + separator) from the individual
-                                    team rows below it. */}
                                 <label
                                     style={{
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
                                         fontSize: fontSize.sm,
-                                        fontWeight: fontWeight.semibold,
-                                        color: "var(--brand-blue)",
+                                        color: "#16233c",
                                         cursor: "pointer",
-                                        paddingBottom: 6,
-                                        marginBottom: 4,
-                                        borderBottom: "1px solid #e4e9f2",
+                                        minWidth: 160,
+                                        flex: "1 1 160px",
                                     }}
                                 >
                                     <input
                                         type="checkbox"
-                                        checked={
-                                            teamsList.length > 0 &&
-                                            teamsList.every((t) => formState.teams.includes(t.name))
-                                        }
+                                        checked={checked}
                                         onChange={() =>
-                                            toggleAllTeams(
-                                                formState,
-                                                setFormState,
-                                                teamsList.map((t) => t.name)
-                                            )
+                                            toggleProductId(formState, setFormState, p.id)
                                         }
                                     />
-                                    Select All
+                                    {p.product_name}
                                 </label>
-
-                                {teamsList.map((t) => (
-                                    <label
-                                        key={t.id}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            fontSize: fontSize.sm,
-                                            color: "#16233c",
-                                            cursor: "pointer",
-                                        }}
-                                    >
+                                {checked && (
+                                    <>
                                         <input
-                                            type="checkbox"
-                                            checked={formState.teams.includes(t.name)}
-                                            onChange={() =>
-                                                toggleTeam(formState, setFormState, t.name)
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="Amount"
+                                            value={rate?.amount ?? ""}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "amount",
+                                                    e.target.value
+                                                )
                                             }
+                                            style={{
+                                                ...styles.formInput,
+                                                width: 110,
+                                                padding: "6px 8px",
+                                            }}
                                         />
-                                        {t.name}
-                                    </label>
-                                ))}
+                                        <select
+                                            value={rate?.currency || "USD"}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "currency",
+                                                    e.target.value
+                                                )
+                                            }
+                                            style={{
+                                                ...styles.formInput,
+                                                width: 90,
+                                                padding: "6px 8px",
+                                            }}
+                                        >
+                                            {CURRENCY_OPTIONS.map((c) => (
+                                                <option key={c} value={c}>
+                                                    {c}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </>
+                                )}
                             </div>
-                        )}
-                    </>
-                )}
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+
+    const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
+
+    // Shared Company Info + Primary/Secondary Contact fieldset renderer used by
+    // both the Add and Edit forms, and for both Client and Subclient tabs, so
+    // the two entity types never drift out of parity again.
+    const renderContactFieldset = (
+        formState: typeof emptyForm,
+        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
+    ) => (
+        <>
+            <div style={styles.formSectionLabel}>Company Information</div>
+            <div>
+                <label style={styles.formLabel}>Website</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.website}
+                    onChange={(e) => setFormState((prev) => ({ ...prev, website: e.target.value }))}
+                    placeholder="e.g. https://acme.com"
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Main Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.mainEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, mainEmail: e.target.value }))
+                    }
+                    placeholder="e.g. hello@acme.com"
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Main Contact Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.mainPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, mainPhone: e.target.value }))
+                    }
+                    placeholder="e.g. +91 98765 43210"
+                />
+            </div>
+
+            <div style={styles.formSectionLabel}>Primary Contact Person</div>
+            <div>
+                <label style={styles.formLabel}>Name</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.primaryContactName}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactName: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.primaryContactEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactEmail: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Phone Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.primaryContactPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, primaryContactPhone: e.target.value }))
+                    }
+                />
+            </div>
+
+            <div style={styles.formSectionLabel}>Secondary Contact Person</div>
+            <div>
+                <label style={styles.formLabel}>Name</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.secondaryContactName}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactName: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Email</label>
+                <input
+                    style={styles.formInput}
+                    type="email"
+                    value={formState.secondaryContactEmail}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactEmail: e.target.value }))
+                    }
+                />
+            </div>
+            <div>
+                <label style={styles.formLabel}>Phone Number</label>
+                <input
+                    style={styles.formInput}
+                    value={formState.secondaryContactPhone}
+                    onChange={(e) =>
+                        setFormState((prev) => ({ ...prev, secondaryContactPhone: e.target.value }))
+                    }
+                />
             </div>
         </>
     );
@@ -893,25 +1224,49 @@ const Products = () => {
                         </div>
                     )}
 
-                    {/* Page title */}
-                    {!isMobile && <h2 style={styles.pageTitle}>Services</h2>}
+                    {/* Tabs — flexWrap so on very narrow phones "Subclient" wraps to
+                        its own line instead of being clipped by the mobile shell's
+                        overflow:hidden, and stays reachable/tappable either way. */}
+                    <div style={isMobile ? styles.tabRowMobile : styles.tabRow}>
+                        <button
+                            type="button"
+                            className="cl-tab-btn"
+                            onClick={() => setActiveTab("client")}
+                            style={{
+                                ...styles.tabBtn,
+                                ...(activeTab === "client" ? styles.tabBtnActive : {}),
+                            }}
+                        >
+                            Client ({tabCounts.client})
+                        </button>
+                        <button
+                            type="button"
+                            className="cl-tab-btn"
+                            onClick={() => setActiveTab("subclient")}
+                            style={{
+                                ...styles.tabBtn,
+                                ...(activeTab === "subclient" ? styles.tabBtnActive : {}),
+                            }}
+                        >
+                            Subclient ({tabCounts.subclient})
+                        </button>
+                    </div>
 
                     {/* Header row */}
                     {!isMobile && (
                         <div style={styles.headerRow}>
                             <p style={styles.headerSubtext}>
-                                View, add, edit or remove Services from the system.
+                                View, add, edit or remove{" "}
+                                {activeTab === "client" ? "Clients" : "Subclients"} from the system.
                             </p>
 
                             <div style={styles.headerActions}>
-                                {/* FIX: Sample Sheet was NOT gated behind canManage, unlike
-                                    Bulk Upload and Add Service right below it — so
-                                    view-only roles (Vertical Head, Team Member) could see
-                                    and download a bulk-upload template for an action they
-                                    have no permission to perform. Now consistent with the
-                                    other two buttons. */}
+                                {/* Sample sheet is only useful for bulk-uploading, which
+                                    itself is gated behind canManage — Team Member /
+                                    Vertical Head (view-only) have no use for a template
+                                    they can't upload, so hide it for them too. */}
                                 {canManage && (
-                                    <span className="pr-tooltip-wrap">
+                                    <span className="cl-tooltip-wrap">
                                         <button
                                             style={styles.secondaryBtn}
                                             type="button"
@@ -923,7 +1278,7 @@ const Products = () => {
                                             />
                                             Sample Sheet
                                         </button>
-                                        <span className="pr-tooltip-bubble">
+                                        <span className="cl-tooltip-bubble">
                                             Sample sheet for bulk upload (.xlsx)
                                         </span>
                                     </span>
@@ -933,7 +1288,7 @@ const Products = () => {
                                     page's "Bulk Add Users" modal) instead of firing an
                                     upload the instant a file is chosen. */}
                                 {canManage && (
-                                    <span className="pr-tooltip-wrap">
+                                    <span className="cl-tooltip-wrap">
                                         <button
                                             type="button"
                                             style={styles.secondaryBtn}
@@ -945,8 +1300,9 @@ const Products = () => {
                                             />
                                             Bulk Upload
                                         </button>
-                                        <span className="pr-tooltip-bubble">
-                                            Upload services from an Excel (.xlsx) file
+                                        <span className="cl-tooltip-bubble">
+                                            Upload {tabLabel.toLowerCase()}s from an Excel (.xlsx)
+                                            file
                                         </span>
                                     </span>
                                 )}
@@ -956,40 +1312,16 @@ const Products = () => {
                                         style={styles.addBtn}
                                         type="button"
                                         onClick={openAddModal}
-                                        title="Add a new service"
+                                        title={`Add a new ${tabLabel.toLowerCase()}`}
                                     >
                                         <i
                                             className="ti ti-plus"
                                             style={{ fontSize: fontSize.md }}
                                         />
-                                        Add Service
+                                        Add {tabLabel}
                                     </button>
                                 )}
                             </div>
-                        </div>
-                    )}
-
-                    {isMobile && (
-                        <div style={styles.headerRowMobile}>
-                            <h2 style={styles.pageTitle}>Services</h2>
-                            {canManage && (
-                                <button
-                                    style={styles.addBtn}
-                                    type="button"
-                                    onClick={openAddModal}
-                                    title="Add a new service"
-                                >
-                                    <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
-                                    Add
-                                </button>
-                            )}
-                        </div>
-                    )}
-
-                    {error && (
-                        <div style={styles.errorBanner}>
-                            <i className="ti ti-alert-circle" style={{ fontSize: fontSize.lg }} />
-                            {error}
                         </div>
                     )}
 
@@ -1003,11 +1335,38 @@ const Products = () => {
                             />
                             <input
                                 style={styles.searchInput}
-                                placeholder="Search services..."
+                                placeholder={`Search ${activeTab}s...`}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
+
+                        <select
+                            style={styles.filterSelect}
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            aria-label="Status"
+                        >
+                            <option value="All">Status: All</option>
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                        </select>
+
+                        {/* Country filter now applies to both tabs since Subclients
+                            carry a Country field too, same as Clients. */}
+                        <select
+                            style={styles.filterSelect}
+                            value={countryFilter}
+                            onChange={(e) => setCountryFilter(e.target.value)}
+                            aria-label="Country"
+                        >
+                            <option value="All">Country: All</option>
+                            {countries.map((c) => (
+                                <option key={c} value={c}>
+                                    {c}
+                                </option>
+                            ))}
+                        </select>
 
                         {!isMobile && (
                             <div style={styles.viewToggle}>
@@ -1042,206 +1401,703 @@ const Products = () => {
                         )}
                     </div>
 
+                    {/* NEW: bulk-select action bar — only shown once at least one
+                        row is checked, and only for roles that can manage/delete
+                        (canManage). Delete button is guarded by its own confirm
+                        modal below, same as the single-row delete flow. */}
+                    {canManage && selectedIds.size > 0 && (
+                        <div style={styles.bulkBar}>
+                            <span style={styles.bulkBarText}>
+                                {selectedIds.size} {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""} selected
+                            </span>
+                            <div style={{ display: "flex", gap: 8 }}>
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarClearBtn}
+                                    onClick={clearSelection}
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarDeleteBtn}
+                                    onClick={openBulkDeleteConfirm}
+                                >
+                                    <i
+                                        className="ti ti-trash"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
+                                    Delete Selected
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Cards / Table — scrollable area that fills remaining height.
                         The scrollbar (and scroll behavior) only kicks in once content
                         actually exceeds the available space; short lists sit flush
-                        with no scrollbar at all. No pagination controls. */}
-                    <div className="pr-scroll-area" style={styles.scrollArea}>
+                        with no scrollbar at all. No pagination controls anymore. */}
+                    <div className="cl-scroll-area" style={styles.scrollArea}>
                         {loading ? (
                             <div style={styles.emptyState}>
                                 <p style={styles.emptyText}>Loading…</p>
                             </div>
-                        ) : filteredProducts.length === 0 ? (
+                        ) : error ? (
                             <div style={styles.emptyState}>
                                 <i
-                                    className="ti ti-package"
+                                    className="ti ti-alert-circle"
+                                    style={{ fontSize: fontSize["7xl"], color: "#dc2626" }}
+                                />
+                                <p style={{ ...styles.emptyText, color: "#dc2626" }}>{error}</p>
+                            </div>
+                        ) : currentFilteredLength === 0 ? (
+                            <div style={styles.emptyState}>
+                                <i
+                                    className="ti ti-users"
                                     style={{ fontSize: fontSize["7xl"], color: "#9fd6e6" }}
                                 />
-                                <p style={styles.emptyText}>No services match your filters.</p>
+                                <p style={styles.emptyText}>No {activeTab}s match your filters.</p>
                             </div>
                         ) : viewMode === "list" ? (
                             <div style={styles.tableWrap}>
-                                <table className="pr-table" style={styles.table}>
+                                {/* Column layout is identical for Client and Subclient: only
+                                    the 2nd column header/value differs (Country vs Client). This
+                                    keeps both tables visually and structurally aligned. */}
+                                <table className="cl-table" style={styles.table}>
                                     <colgroup>
-                                        <col style={{ width: "40%" }} />
-                                        <col style={{ width: "30%" }} />
-                                        <col style={{ width: "30%" }} />
+                                        {canManage && <col style={{ width: "36px" }} />}
+                                        <col style={{ width: "15%" }} />
+                                        <col style={{ width: "11%" }} />
+                                        <col style={{ width: "9%" }} />
+                                        <col style={{ width: "9%" }} />
+                                        <col style={{ width: "16%" }} />
+                                        <col style={{ width: "13%" }} />
+                                        <col style={{ width: "15%" }} />
+                                        <col style={{ width: "12%" }} />
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            <th style={styles.th}>Service</th>
-                                            <th style={styles.th}>Time Taken</th>
+                                            {canManage && (
+                                                <th style={{ ...styles.th, width: 36 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label="Select all"
+                                                        checked={
+                                                            currentFilteredLength > 0 &&
+                                                            (activeTab === "client"
+                                                                ? pageClients
+                                                                : pageSubclients
+                                                            ).every((row) =>
+                                                                selectedIds.has(row.id)
+                                                            )
+                                                        }
+                                                        onChange={() =>
+                                                            toggleSelectAllVisible(
+                                                                (activeTab === "client"
+                                                                    ? pageClients
+                                                                    : pageSubclients
+                                                                ).map((row) => row.id)
+                                                            )
+                                                        }
+                                                    />
+                                                </th>
+                                            )}
+                                            <th style={styles.th}>
+                                                {activeTab === "client" ? "Client" : "Subclient"}
+                                            </th>
+                                            <th style={styles.th}>
+                                                {activeTab === "client" ? "Country" : "Client"}
+                                            </th>
+                                            <th style={styles.th}>Status</th>
+                                            <th style={{ ...styles.th, textAlign: "center" }}>
+                                                {activeTab === "client" ? "Subclients" : "Branches"}
+                                            </th>
+                                            <th style={styles.th}>
+                                                {activeTab === "client"
+                                                    ? "Client Email"
+                                                    : "Subclient Email"}
+                                            </th>
+                                            <th style={styles.th}>Contact Number</th>
+                                            <th style={styles.th}>Primary Contact Person</th>
                                             <th style={{ ...styles.th, textAlign: "left" }}>
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredProducts.map((p) => {
-                                            const avatar = getAvatarColors(p.product_name);
-                                            return (
-                                                <tr
-                                                    key={p.id}
-                                                    className="pr-row"
-                                                    style={{
-                                                        ...styles.tr,
-                                                        boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
-                                                    }}
-                                                >
-                                                    <td style={styles.td}>
-                                                        <span style={styles.tdNameText}>
-                                                            {p.product_name}
-                                                        </span>
-                                                    </td>
-                                                    <td style={styles.td}>
-                                                        <span style={styles.tdContactLine}>
-                                                            <i
-                                                                className="ti ti-clock"
-                                                                style={{ fontSize: fontSize.sm }}
-                                                            />
-                                                            {formatTimeTaken(
-                                                                p.time_taken,
-                                                                p.time_unit
-                                                            )}
-                                                        </span>
-                                                    </td>
-                                                    <td style={styles.td}>
-                                                        <div style={styles.tdActions}>
-                                                            <button
-                                                                type="button"
-                                                                className="pr-view-btn"
-                                                                style={styles.viewDetailsBtn}
-                                                                onClick={() => setViewDetails(p)}
-                                                                title="View details"
+                                        {activeTab === "client" &&
+                                            pageClients.map((client) => {
+                                                const avatar = getAvatarColors(client.name);
+                                                return (
+                                                    <tr
+                                                        key={client.id}
+                                                        className="cl-row"
+                                                        style={{
+                                                            ...styles.tr,
+                                                            boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
+                                                        }}
+                                                    >
+                                                        {canManage && (
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
                                                             >
-                                                                View
-                                                            </button>
-                                                            {/* FIX: same as clients.tsx — Edit/Delete
-                                                                were always rendered regardless of role,
-                                                                so Team Member / Vertical Head (view-only)
-                                                                could see and click them and get a 403.
-                                                                Gated behind canManage now. */}
-                                                            {canManage && (
-                                                                <button
-                                                                    type="button"
-                                                                    className="pr-icon-btn"
-                                                                    style={styles.iconBtn}
-                                                                    aria-label="Edit"
-                                                                    title="Edit service"
-                                                                    onClick={() => openEditModal(p)}
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-pencil"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
-                                                            )}
-                                                            {canManage && (
-                                                                <button
-                                                                    type="button"
-                                                                    className="pr-icon-btn-danger"
-                                                                    style={styles.iconBtnDanger}
-                                                                    aria-label="Delete"
-                                                                    title="Delete service"
-                                                                    onClick={() =>
-                                                                        openDeleteConfirm(
-                                                                            p.id,
-                                                                            p.product_name
-                                                                        )
+                                                                <input
+                                                                    type="checkbox"
+                                                                    aria-label={`Select ${client.name}`}
+                                                                    checked={selectedIds.has(
+                                                                        client.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelected(client.id)
                                                                     }
+                                                                />
+                                                            </td>
+                                                        )}
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdNameText}>
+                                                                {client.name}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdMuted}>
+                                                                {client.country || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.statusPill,
+                                                                    ...(client.status === "Active"
+                                                                        ? styles.statusPillActive
+                                                                        : styles.statusPillInactive),
+                                                                }}
+                                                            >
+                                                                <span style={styles.statusDot} />
+                                                                {client.status}
+                                                            </span>
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                textAlign: "center",
+                                                                fontWeight: fontWeight.semibold,
+                                                                color: "#16233c",
+                                                            }}
+                                                        >
+                                                            {client.subclients}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-mail"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />
+                                                                {client.mainEmail || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-phone"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />
+                                                                {client.mainPhone || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                {client.primaryContactName ? (
+                                                                    <>
+                                                                        <i
+                                                                            className="ti ti-user"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.sm,
+                                                                            }}
+                                                                        />
+                                                                        {client.primaryContactName}
+                                                                    </>
+                                                                ) : (
+                                                                    <span style={styles.tdMuted}>
+                                                                        —
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <div style={styles.tdActions}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-view-btn"
+                                                                    style={styles.viewDetailsBtn}
+                                                                    onClick={() =>
+                                                                        setViewDetails({
+                                                                            type: "client",
+                                                                            data: client,
+                                                                        })
+                                                                    }
+                                                                    title="View details"
                                                                 >
-                                                                    <i
-                                                                        className="ti ti-trash"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
+                                                                    View
                                                                 </button>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
+                                                                {/* FIX: Edit/Delete were always rendered
+                                                                    regardless of role — Team Member /
+                                                                    Vertical Head (view-only per the backend's
+                                                                    authorize("SUPER_ADMIN"/etc.) gate) could
+                                                                    see and click these, only to get a 403
+                                                                    from the API. Now hidden entirely for
+                                                                    anyone canManage doesn't cover, matching
+                                                                    the same gate already used for the Add
+                                                                    button above. */}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn"
+                                                                        style={styles.iconBtn}
+                                                                        aria-label="Edit"
+                                                                        title="Edit client"
+                                                                        onClick={() =>
+                                                                            openEditModal({
+                                                                                type: "client",
+                                                                                data: client,
+                                                                            })
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-pencil"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn-danger"
+                                                                        style={styles.iconBtnDanger}
+                                                                        aria-label="Delete"
+                                                                        title="Delete client"
+                                                                        onClick={() =>
+                                                                            openDeleteConfirm(
+                                                                                "client",
+                                                                                client.id,
+                                                                                client.name
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-trash"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+
+                                        {activeTab === "subclient" &&
+                                            pageSubclients.map((sub) => {
+                                                const avatar = getAvatarColors(sub.name);
+                                                return (
+                                                    <tr
+                                                        key={sub.id}
+                                                        className="cl-row"
+                                                        style={{
+                                                            ...styles.tr,
+                                                            boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
+                                                        }}
+                                                    >
+                                                        {canManage && (
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    aria-label={`Select ${sub.name}`}
+                                                                    checked={selectedIds.has(
+                                                                        sub.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelected(sub.id)
+                                                                    }
+                                                                />
+                                                            </td>
+                                                        )}
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdNameText}>
+                                                                {sub.name}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdMuted}>
+                                                                {sub.clientName}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.statusPill,
+                                                                    ...(sub.status === "Active"
+                                                                        ? styles.statusPillActive
+                                                                        : styles.statusPillInactive),
+                                                                }}
+                                                            >
+                                                                <span style={styles.statusDot} />
+                                                                {sub.status}
+                                                            </span>
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                textAlign: "center",
+                                                                fontWeight: fontWeight.semibold,
+                                                                color: "#16233c",
+                                                            }}
+                                                        >
+                                                            {sub.branches}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-mail"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />
+                                                                {sub.mainEmail || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                <i
+                                                                    className="ti ti-phone"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />
+                                                                {sub.mainPhone || "—"}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={styles.tdContactLine}>
+                                                                {sub.primaryContactName ? (
+                                                                    <>
+                                                                        <i
+                                                                            className="ti ti-user"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.sm,
+                                                                            }}
+                                                                        />
+                                                                        {sub.primaryContactName}
+                                                                    </>
+                                                                ) : (
+                                                                    <span style={styles.tdMuted}>
+                                                                        —
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <div style={styles.tdActions}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="cl-view-btn"
+                                                                    style={styles.viewDetailsBtn}
+                                                                    onClick={() =>
+                                                                        setViewDetails({
+                                                                            type: "subclient",
+                                                                            data: sub,
+                                                                        })
+                                                                    }
+                                                                    title="View details"
+                                                                >
+                                                                    View
+                                                                </button>
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn"
+                                                                        style={styles.iconBtn}
+                                                                        aria-label="Edit"
+                                                                        title="Edit subclient"
+                                                                        onClick={() =>
+                                                                            openEditModal({
+                                                                                type: "subclient",
+                                                                                data: sub,
+                                                                            })
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-pencil"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                                {canManage && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="cl-icon-btn-danger"
+                                                                        style={styles.iconBtnDanger}
+                                                                        aria-label="Delete"
+                                                                        title="Delete subclient"
+                                                                        onClick={() =>
+                                                                            openDeleteConfirm(
+                                                                                "subclient",
+                                                                                sub.id,
+                                                                                sub.name
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-trash"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
                                     </tbody>
                                 </table>
                             </div>
                         ) : (
                             <div style={isMobile ? styles.cardGridMobile : styles.cardGrid}>
-                                {filteredProducts.map((p) => {
-                                    const avatar = getAvatarColors(p.product_name);
-                                    return (
-                                        <div
-                                            key={p.id}
-                                            className="pr-card"
-                                            style={{
-                                                ...styles.card,
-                                                border: `1px solid ${avatar.solid}40`,
-                                                borderTop: `3px solid ${avatar.solid}`,
-                                            }}
-                                        >
-                                            <div style={styles.cardHeaderSimple}>
-                                                <div
-                                                    style={{
-                                                        ...styles.avatar,
-                                                        background: `linear-gradient(135deg, ${avatar.from}, ${avatar.to})`,
-                                                        color: "#fff",
-                                                    }}
-                                                >
-                                                    {getInitials(p.product_name)}
-                                                </div>
-                                                <div style={styles.cardNameBlockSimple}>
-                                                    <span style={styles.cardName}>
-                                                        {p.product_name}
-                                                    </span>
-                                                    <span
+                                {activeTab === "client" &&
+                                    pageClients.map((client) => {
+                                        const avatar = getAvatarColors(client.name);
+                                        return (
+                                            <div
+                                                key={client.id}
+                                                className="cl-card"
+                                                style={{
+                                                    ...styles.card,
+                                                    position: "relative",
+                                                    border: `1px solid ${avatar.solid}40`,
+                                                    borderTop: `3px solid ${avatar.solid}`,
+                                                }}
+                                            >
+                                                {canManage && (
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Select ${client.name}`}
+                                                        checked={selectedIds.has(client.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onChange={() => toggleSelected(client.id)}
+                                                        style={styles.cardCheckbox}
+                                                    />
+                                                )}
+                                                <div style={styles.cardHeaderSimple}>
+                                                    <div
                                                         style={{
-                                                            ...styles.cardCountBadge,
-                                                            background: `${avatar.solid}1A`,
-                                                            color: avatar.solid,
+                                                            ...styles.avatar,
+                                                            background: `linear-gradient(135deg, ${avatar.from}, ${avatar.to})`,
+                                                            color: "#fff",
                                                         }}
                                                     >
-                                                        {p.time_unit === "hours"
-                                                            ? "Hourly"
-                                                            : "Per minute"}
-                                                    </span>
+                                                        {getInitials(client.name)}
+                                                    </div>
+                                                    <div style={styles.cardNameBlockSimple}>
+                                                        <span style={styles.cardName}>
+                                                            {client.name}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                ...styles.cardCountBadge,
+                                                                background: `${avatar.solid}1A`,
+                                                                color: avatar.solid,
+                                                            }}
+                                                        >
+                                                            {client.subclients} Subclients
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                            </div>
 
-                                            <div style={styles.cardSimpleInfoRows}>
-                                                <div style={styles.cardSimpleInfoRow}>
+                                                <div style={styles.cardSimpleInfoRows}>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-world"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <WebsiteLink
+                                                            website={client.website}
+                                                            style={styles.cardSimpleInfoValue}
+                                                        />
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-mail"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {client.mainEmail || "—"}
+                                                        </span>
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-phone"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {client.mainPhone || "—"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="cl-view-btn-filled"
+                                                    style={{
+                                                        ...styles.viewDetailsBtnFilled,
+                                                        background: `${avatar.solid}14`,
+                                                        color: avatar.solid,
+                                                        boxShadow: "none",
+                                                    }}
+                                                    onClick={() =>
+                                                        setViewDetails({
+                                                            type: "client",
+                                                            data: client,
+                                                        })
+                                                    }
+                                                >
                                                     <i
-                                                        className="ti ti-clock"
-                                                        style={styles.cardInfoIcon}
+                                                        className="ti ti-eye"
+                                                        style={{ fontSize: fontSize.md }}
                                                     />
-                                                    <span style={styles.cardSimpleInfoValue}>
-                                                        {formatTimeTaken(p.time_taken, p.time_unit)}
-                                                    </span>
-                                                </div>
+                                                    View Details
+                                                </button>
                                             </div>
+                                        );
+                                    })}
 
-                                            <button
-                                                type="button"
-                                                className="pr-view-btn-filled"
+                                {activeTab === "subclient" &&
+                                    pageSubclients.map((sub) => {
+                                        const avatar = getAvatarColors(sub.name);
+                                        return (
+                                            <div
+                                                key={sub.id}
+                                                className="cl-card"
                                                 style={{
-                                                    ...styles.viewDetailsBtnFilled,
-                                                    background: `${avatar.solid}14`,
-                                                    color: avatar.solid,
-                                                    boxShadow: "none",
+                                                    ...styles.card,
+                                                    position: "relative",
+                                                    border: `1px solid ${avatar.solid}40`,
+                                                    borderTop: `3px solid ${avatar.solid}`,
                                                 }}
-                                                onClick={() => setViewDetails(p)}
                                             >
-                                                <i
-                                                    className="ti ti-eye"
-                                                    style={{ fontSize: fontSize.md }}
-                                                />
-                                                View Details
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                                {canManage && (
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Select ${sub.name}`}
+                                                        checked={selectedIds.has(sub.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onChange={() => toggleSelected(sub.id)}
+                                                        style={styles.cardCheckbox}
+                                                    />
+                                                )}
+                                                <div style={styles.cardHeaderSimple}>
+                                                    <div
+                                                        style={{
+                                                            ...styles.avatar,
+                                                            background: `linear-gradient(135deg, ${avatar.from}, ${avatar.to})`,
+                                                            color: "#fff",
+                                                        }}
+                                                    >
+                                                        {getInitials(sub.name)}
+                                                    </div>
+                                                    <div style={styles.cardNameBlockSimple}>
+                                                        <span style={styles.cardName}>
+                                                            {sub.name}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                ...styles.cardCountBadge,
+                                                                background: `${avatar.solid}1A`,
+                                                                color: avatar.solid,
+                                                            }}
+                                                        >
+                                                            {sub.branches} Branches
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <div style={styles.cardSimpleInfoRows}>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-world"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <WebsiteLink
+                                                            website={sub.website}
+                                                            style={styles.cardSimpleInfoValue}
+                                                        />
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-mail"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {sub.mainEmail || "—"}
+                                                        </span>
+                                                    </div>
+                                                    <div style={styles.cardSimpleInfoRow}>
+                                                        <i
+                                                            className="ti ti-phone"
+                                                            style={styles.cardInfoIcon}
+                                                        />
+                                                        <span style={styles.cardSimpleInfoValue}>
+                                                            {sub.mainPhone || "—"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="cl-view-btn-filled"
+                                                    style={{
+                                                        ...styles.viewDetailsBtnFilled,
+                                                        background: `${avatar.solid}14`,
+                                                        color: avatar.solid,
+                                                        boxShadow: "none",
+                                                    }}
+                                                    onClick={() =>
+                                                        setViewDetails({
+                                                            type: "subclient",
+                                                            data: sub,
+                                                        })
+                                                    }
+                                                >
+                                                    <i
+                                                        className="ti ti-eye"
+                                                        style={{ fontSize: fontSize.md }}
+                                                    />
+                                                    View Details
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
                             </div>
                         )}
                     </div>
@@ -1250,10 +2106,10 @@ const Products = () => {
 
             {/* View Details modal */}
             {viewDetails && (
-                <div style={styles.overlay} onClick={() => setViewDetails(null)}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>{viewDetails.product_name}</h3>
+                            <h3 style={styles.detailsTitle}>{viewDetails.data.name}</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={() => setViewDetails(null)}
@@ -1267,29 +2123,137 @@ const Products = () => {
 
                         <div style={styles.detailsBody}>
                             <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Time Taken</span>
-                                <span style={styles.detailsValue}>
-                                    {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
+                                <span style={styles.detailsLabel}>Status</span>
+                                <span
+                                    style={{
+                                        ...styles.statusPill,
+                                        ...(viewDetails.data.status === "Active"
+                                            ? styles.statusPillActive
+                                            : styles.statusPillInactive),
+                                    }}
+                                >
+                                    {viewDetails.data.status}
                                 </span>
                             </div>
 
+                            {/* Country now shown for both Client and Subclient details. */}
                             <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Teams</span>
+                                <span style={styles.detailsLabel}>Country</span>
                                 <span style={styles.detailsValue}>
-                                    {viewDetails.teams && viewDetails.teams.length > 0
-                                        ? viewDetails.teams.join(", ")
+                                    {viewDetails.data.country || "—"}
+                                </span>
+                            </div>
+
+                            {viewDetails.type === "client" && (
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Subclients</span>
+                                    <span style={styles.detailsValue}>
+                                        {viewDetails.data.subclients}
+                                    </span>
+                                </div>
+                            )}
+                            {viewDetails.type === "subclient" && (
+                                <>
+                                    <div style={styles.detailsRow}>
+                                        <span style={styles.detailsLabel}>Client</span>
+                                        <span style={styles.detailsValue}>
+                                            {viewDetails.data.clientName}
+                                        </span>
+                                    </div>
+                                    <div style={styles.detailsRow}>
+                                        <span style={styles.detailsLabel}>Branches</span>
+                                        <span style={styles.detailsValue}>
+                                            {viewDetails.data.branches}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+
+                            {/* REVERSED MAPPING: Products linked to this Client/Subclient */}
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Products</span>
+                                <span style={{ ...styles.detailsValue, textAlign: "right" }}>
+                                    {viewDetails.data.products && viewDetails.data.products.length
+                                        ? viewDetails.data.products
+                                              .map((p) => p.product_name)
+                                              .join(", ")
                                         : "—"}
                                 </span>
                             </div>
 
+                            {/* Company Info + Primary/Secondary Contact are identical for
+                                both Client and Subclient view modals. */}
+                            <div style={styles.detailsSectionLabel}>Company Information</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Website</span>
+                                <WebsiteLink
+                                    website={viewDetails.data.website}
+                                    style={styles.detailsValue}
+                                />
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.mainEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Contact Number</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.mainPhone || "—"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsSectionLabel}>Primary Contact</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Name</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactName || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Phone</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.primaryContactPhone || "—"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsSectionLabel}>Secondary Contact</div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Name</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactName || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Email</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactEmail || "—"}
+                                </span>
+                            </div>
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Phone</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.data.secondaryContactPhone || "—"}
+                                </span>
+                            </div>
+
                             <div style={styles.detailsModalFooter}>
-                                {/* FIX: same as clients.tsx — these View Details
-                                    modal Edit/Delete buttons were always rendered
-                                    regardless of role, so Team Member / Vertical
-                                    Head (view-only) could click them and only find
-                                    out via a backend "Access denied" on submit.
-                                    Gated behind canManage, matching the list-row
-                                    icons above. */}
+                                {/* FIX: these Edit/Delete buttons inside the View
+                                    Details modal were always rendered regardless
+                                    of role — Team Member / Vertical Head (view-only
+                                    access) could see and click them, only to get
+                                    "Access denied" from the backend on submit.
+                                    Gate them the same way as the list-row icons
+                                    above (canManage), so anyone without edit/delete
+                                    permission never sees affordances that are
+                                    guaranteed to fail. */}
                                 {canManage && (
                                     <button
                                         type="button"
@@ -1324,7 +2288,11 @@ const Products = () => {
                                             const target = viewDetails;
                                             setViewDetails(null);
                                             if (target) {
-                                                openDeleteConfirm(target.id, target.product_name);
+                                                openDeleteConfirm(
+                                                    target.type,
+                                                    target.data.id,
+                                                    target.data.name
+                                                );
                                             }
                                         }}
                                     >
@@ -1343,10 +2311,10 @@ const Products = () => {
 
             {/* Add modal */}
             {showAddModal && (
-                <div style={styles.overlay} onClick={closeAddModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Add Service</h3>
+                            <h3 style={styles.detailsTitle}>Add {tabLabel}</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeAddModal}
@@ -1359,7 +2327,80 @@ const Products = () => {
                         </div>
 
                         <div style={styles.addBody}>
-                            {renderProductFieldset(addForm, setAddForm)}
+                            <div>
+                                <label style={styles.formLabel}>Name</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={addForm.name}
+                                    onChange={(e) =>
+                                        setAddForm({ ...addForm, name: e.target.value })
+                                    }
+                                    placeholder={`e.g. ${
+                                        activeTab === "client" ? "Acme Corp" : "Barret and Co"
+                                    }`}
+                                />
+                            </div>
+
+                            {/* Country now shown for both Client and Subclient forms. */}
+                            <div>
+                                <label style={styles.formLabel}>Country</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={addForm.country}
+                                    onChange={(e) =>
+                                        setAddForm({ ...addForm, country: e.target.value })
+                                    }
+                                    placeholder="e.g. India"
+                                />
+                            </div>
+
+                            {/* Client lookup — required for Subclient */}
+                            {activeTab === "subclient" && (
+                                <div>
+                                    <label style={styles.formLabel}>Client</label>
+                                    <select
+                                        style={styles.formInput}
+                                        value={addForm.clientId}
+                                        onChange={(e) =>
+                                            setAddForm({
+                                                ...addForm,
+                                                clientId: e.target.value,
+                                            })
+                                        }
+                                    >
+                                        <option value="">Select Client</option>
+                                        {clients.map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label style={styles.formLabel}>Status</label>
+                                <select
+                                    style={styles.formInput}
+                                    value={addForm.status}
+                                    onChange={(e) =>
+                                        setAddForm({
+                                            ...addForm,
+                                            status: e.target.value as EntityStatus,
+                                        })
+                                    }
+                                >
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select>
+                            </div>
+
+                            {/* REVERSED MAPPING: pick which existing Products this
+                                Client/Subclient uses */}
+                            {renderProductPicker(addForm, setAddForm)}
+
+                            {/* Same fieldset for both Client and Subclient */}
+                            {renderContactFieldset(addForm, setAddForm)}
 
                             {addError && <p style={styles.formError}>{addError}</p>}
 
@@ -1373,7 +2414,7 @@ const Products = () => {
                                 onClick={handleAddSubmit}
                                 disabled={addSubmitting}
                             >
-                                {addSubmitting ? "Saving..." : "Add Service"}
+                                {addSubmitting ? "Saving..." : `Add ${tabLabel}`}
                             </button>
                         </div>
                     </div>
@@ -1382,10 +2423,10 @@ const Products = () => {
 
             {/* Edit modal */}
             {editTarget && (
-                <div style={styles.overlay} onClick={closeEditModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
-                            <h3 style={styles.detailsTitle}>Edit Service</h3>
+                            <h3 style={styles.detailsTitle}>Edit {editTabLabel}</h3>
                             <button
                                 style={styles.closeBtn}
                                 onClick={closeEditModal}
@@ -1398,7 +2439,76 @@ const Products = () => {
                         </div>
 
                         <div style={styles.addBody}>
-                            {renderProductFieldset(editForm, setEditForm)}
+                            <div>
+                                <label style={styles.formLabel}>Name</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={editForm.name}
+                                    onChange={(e) =>
+                                        setEditForm({ ...editForm, name: e.target.value })
+                                    }
+                                />
+                            </div>
+
+                            {/* Country now shown for both Client and Subclient forms. */}
+                            <div>
+                                <label style={styles.formLabel}>Country</label>
+                                <input
+                                    style={styles.formInput}
+                                    value={editForm.country}
+                                    onChange={(e) =>
+                                        setEditForm({ ...editForm, country: e.target.value })
+                                    }
+                                    placeholder="e.g. India"
+                                />
+                            </div>
+
+                            {editTarget.type === "subclient" && (
+                                <div>
+                                    <label style={styles.formLabel}>Client</label>
+                                    <select
+                                        style={styles.formInput}
+                                        value={editForm.clientId}
+                                        onChange={(e) =>
+                                            setEditForm({
+                                                ...editForm,
+                                                clientId: e.target.value,
+                                            })
+                                        }
+                                    >
+                                        <option value="">Select Client</option>
+                                        {clients.map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label style={styles.formLabel}>Status</label>
+                                <select
+                                    style={styles.formInput}
+                                    value={editForm.status}
+                                    onChange={(e) =>
+                                        setEditForm({
+                                            ...editForm,
+                                            status: e.target.value as EntityStatus,
+                                        })
+                                    }
+                                >
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select>
+                            </div>
+
+                            {/* REVERSED MAPPING: pick which existing Products this
+                                Client/Subclient uses */}
+                            {renderProductPicker(editForm, setEditForm)}
+
+                            {/* Same fieldset for both Client and Subclient */}
+                            {renderContactFieldset(editForm, setEditForm)}
 
                             {editError && <p style={styles.formError}>{editError}</p>}
 
@@ -1421,7 +2531,7 @@ const Products = () => {
 
             {/* Delete confirmation modal */}
             {deleteTarget && (
-                <div style={styles.overlay} onClick={closeDeleteConfirm}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Delete {deleteTarget.name}?</h3>
@@ -1438,8 +2548,8 @@ const Products = () => {
 
                         <div style={styles.detailsBody}>
                             <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
-                                Are you sure you want to remove this service? Once deleted, it can't
-                                be recovered.
+                                Are you sure you want to remove this {deleteTarget.type}? Once
+                                deleted, it can't be recovered.
                             </p>
 
                             {deleteError && <p style={styles.formError}>{deleteError}</p>}
@@ -1478,18 +2588,95 @@ const Products = () => {
                 </div>
             )}
 
-            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal on the
-                Add User page: title/subtitle, required-columns callout,
-                Choose File row, and an explicit Upload button, with
-                results/errors rendered inline below once a file is
-                submitted. */}
+            {/* NEW: bulk-delete confirmation modal — same visual pattern as
+                the single-row delete modal above, but for N selected rows
+                at once. Shows a per-row error summary if some deletes
+                failed (partial success), instead of just closing silently. */}
+            {bulkDeleteOpen && (
+                <div style={styles.overlay}>
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>
+                                Delete {selectedIds.size}{" "}
+                                {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""}?
+                            </h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeBulkDeleteConfirm}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to remove {selectedIds.size} selected{" "}
+                                {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""}? Once deleted, they can't be
+                                recovered.
+                            </p>
+
+                            {bulkDeleteError && (
+                                <p style={{ ...styles.formError, whiteSpace: "pre-line" }}>
+                                    {bulkDeleteError}
+                                </p>
+                            )}
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={closeBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.addSubmitBtn,
+                                        flex: 1,
+                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        opacity: bulkDeleting ? 0.7 : 1,
+                                        cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={handleBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    {bulkDeleting ? "Deleting..." : `Delete ${selectedIds.size}`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal layout
+                (title/subtitle, required-columns callout, Choose File row with
+                an explicit Upload button, then a "X created · Y failed"
+                summary followed by a full scrollable list of EVERY row) but
+                now themed with the app's brand palette (var(--brand-blue) /
+                var(--brand-light-blue)) instead of the old fixed purple, so it
+                matches whichever theme color is selected. Sample Sheet's
+                tooltip (in the header actions above) uses the same variables. */}
             {showBulkModal && (
-                <div style={styles.overlay} onClick={closeBulkModal}>
+                <div style={styles.overlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Bulk Add Services</h3>
+                            <h3 style={styles.bulkModalTitle}>
+                                Bulk {activeTab === "client" ? "Add Clients" : "Add Subclients"}
+                            </h3>
                             <p style={styles.bulkModalSubtitle}>
-                                Upload an Excel file to create multiple services at once
+                                Upload an Excel file to create multiple {activeTab}s at once
                             </p>
                             <button
                                 style={styles.closeBtn}
@@ -1503,11 +2690,7 @@ const Products = () => {
 
                         <div style={styles.bulkInfoBox}>
                             <span style={styles.bulkInfoLabel}>Required columns</span>
-                            <p style={styles.bulkInfoText}>{BULK_REQUIRED_COLUMNS_TEXT}</p>
-                            <span style={{ ...styles.bulkInfoLabel, marginTop: 10 }}>
-                                Optional column
-                            </span>
-                            <p style={styles.bulkInfoText}>{BULK_OPTIONAL_COLUMNS_TEXT}</p>
+                            <p style={styles.bulkInfoText}>{bulkRequiredColumnsText}</p>
                         </div>
 
                         <div style={styles.bulkUploadRow}>
@@ -1534,7 +2717,11 @@ const Products = () => {
                                     cursor: bulkUploading ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {bulkUploading ? "Uploading…" : "Upload & Create Services"}
+                                {bulkUploading
+                                    ? "Uploading…"
+                                    : `Upload & Create ${
+                                          activeTab === "client" ? "Clients" : "Subclients"
+                                      }`}
                             </button>
                         </div>
 
@@ -1548,41 +2735,60 @@ const Products = () => {
                             <div style={styles.resultsSection}>
                                 <div style={styles.resultsSummary}>
                                     <span style={styles.resultsSummaryText}>
-                                        <strong>{bulkResult.totalRows}</strong> total rows
-                                        {" · "}
-                                        <strong style={{ color: "#16a34a" }}>
+                                        <strong style={{ color: "#16233c" }}>
                                             {bulkResult.createdCount}
                                         </strong>{" "}
                                         created
-                                        {bulkResult.failedCount > 0 && (
-                                            <>
-                                                {" · "}
-                                                <strong style={{ color: "#dc2626" }}>
-                                                    {bulkResult.failedCount}
-                                                </strong>{" "}
-                                                failed
-                                            </>
-                                        )}
+                                        {" · "}
+                                        <strong
+                                            style={{
+                                                color:
+                                                    bulkResult.failedCount > 0
+                                                        ? "#dc2626"
+                                                        : "#16233c",
+                                            }}
+                                        >
+                                            {bulkResult.failedCount}
+                                        </strong>{" "}
+                                        failed
                                     </span>
                                 </div>
 
-                                {bulkResult.results && bulkResult.results.length > 0 && (
-                                    <div style={styles.resultsList}>
-                                        {bulkResult.results.map((r, idx) => (
-                                            <div
-                                                key={idx}
-                                                style={{
-                                                    fontSize: fontSize.sm,
-                                                    color: r.success ? "#16a34a" : "#dc2626",
-                                                    padding: "4px 0",
-                                                }}
-                                            >
-                                                Row {r.row} ({r.identifier}):{" "}
-                                                {r.success ? "Created" : r.message}
+                                <div className="cl-results-list" style={styles.resultsList}>
+                                    {bulkResult.results.map((r) => (
+                                        <div key={r.row} style={styles.resultRow}>
+                                            <div style={styles.resultRowLeft}>
+                                                <span style={styles.resultRowIdentifier}>
+                                                    {r.identifier}
+                                                </span>
+                                                {r.status === "failed" && r.message && (
+                                                    <span style={styles.resultRowSubtext}>
+                                                        {r.message}
+                                                    </span>
+                                                )}
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+                                            {r.status === "created" ? (
+                                                <span
+                                                    style={{
+                                                        ...styles.resultPill,
+                                                        ...styles.resultPillCreated,
+                                                    }}
+                                                >
+                                                    Created
+                                                </span>
+                                            ) : (
+                                                <span
+                                                    style={{
+                                                        ...styles.resultPill,
+                                                        ...styles.resultPillFailed,
+                                                    }}
+                                                >
+                                                    ✕ Failed
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
@@ -1590,11 +2796,57 @@ const Products = () => {
             )}
         </div>
     );
-};
-
-export default Products;
+}
 
 const styles: Record<string, CSSProperties> = {
+    // NEW: multi-select bulk-delete bar + card checkbox overlay.
+    bulkBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#FEF2F2",
+        border: "1px solid #FECACA",
+        borderRadius: 10,
+        padding: "10px 16px",
+        margin: "0 0 12px",
+    },
+    bulkBarText: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#991B1B",
+    },
+    bulkBarClearBtn: {
+        background: "#fff",
+        color: "#6b7280",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "7px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+    },
+    bulkBarDeleteBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#DC2626",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "7px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    cardCheckbox: {
+        position: "absolute",
+        top: 12,
+        right: 12,
+        width: 16,
+        height: 16,
+        cursor: "pointer",
+        zIndex: 2,
+    },
     root: {
         display: "flex",
         width: "100%",
@@ -1617,6 +2869,54 @@ const styles: Record<string, CSSProperties> = {
         position: "relative",
         overflow: "hidden",
     },
+
+    mobileTopbar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        padding: "12px 16px",
+        background: "#fff",
+        borderBottom: "1px solid #eee",
+        position: "sticky",
+        top: 0,
+        zIndex: 30,
+        boxSizing: "border-box",
+        width: "100%",
+    },
+    hamburgerBtn: {
+        border: "none",
+        background: "transparent",
+        fontSize: fontSize["3xl"],
+        cursor: "pointer",
+        padding: 4,
+    },
+    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#16233c" },
+    mobileActionGroup: { display: "flex", alignItems: "center", gap: 6 },
+    addBtnMobile: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 32,
+        height: 32,
+        borderRadius: radius.circle,
+        border: "none",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+        color: "#fff",
+        cursor: "pointer",
+    },
+    iconOnlyBtnMobile: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 32,
+        height: 32,
+        borderRadius: radius.circle,
+        border: "1px solid #cfe0f5",
+        background: "#fff",
+        color: "var(--brand-blue)",
+        cursor: "pointer",
+    },
     overlay: {
         position: "fixed",
         inset: 0,
@@ -1625,6 +2925,18 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+    },
+    sidebarDrawer: {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: "230px",
+        maxWidth: "80vw",
+        zIndex: 50,
+        transition: "transform 0.25s ease",
+        boxShadow: "2px 0 12px rgba(0,0,0,0.15)",
+        overflowY: "auto",
     },
 
     contentCol: {
@@ -1645,13 +2957,29 @@ const styles: Record<string, CSSProperties> = {
         gap: 14,
     },
 
-    pageTitle: {
-        margin: 0,
-        fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
-        color: "#17181C",
-        flexShrink: 0,
-        textAlign: "left",
+    tabRow: { display: "flex", gap: 8, flexShrink: 0 },
+    // Mobile: wraps to a second line and tightens padding on very narrow
+    // screens (see the @media rule in GLOBAL_CSS) instead of overflowing
+    // past the right edge, which is what was hiding the Subclient tab.
+    tabRowMobile: { display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" },
+    tabBtn: {
+        display: "flex",
+        alignItems: "center",
+        background: "#fff",
+        color: "#3b4a63",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "10px 18px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        transition: "border-color .15s ease, color .15s ease",
+    },
+    tabBtnActive: {
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
     },
 
     headerRow: {
@@ -1660,13 +2988,6 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "space-between",
         gap: 16,
         flexWrap: "wrap",
-        flexShrink: 0,
-    },
-    headerRowMobile: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
         flexShrink: 0,
     },
     headerSubtext: { margin: 0, fontSize: fontSize.base, color: "#7c8aa3" },
@@ -1702,20 +3023,8 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
-        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
         whiteSpace: "nowrap",
-    },
-
-    errorBanner: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: "#fdecea",
-        color: "#c0392b",
-        padding: "10px 14px",
-        borderRadius: radius.md,
-        fontSize: fontSize.base,
-        flexShrink: 0,
     },
 
     filterRow: {
@@ -1798,7 +3107,7 @@ const styles: Record<string, CSSProperties> = {
     // Scrollable: fills remaining vertical space in contentBody and only
     // scrolls (shows a scrollbar) once the rendered cards/rows exceed that
     // height. When there's little content, this behaves like a normal
-    // block with no scroll affordance.
+    // block with no scroll affordance at all.
     scrollArea: {
         flex: 1,
         minHeight: 0,
@@ -1836,6 +3145,15 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 4px 14px rgba(0,0,0,.04)",
         gap: 9,
     },
+    cardTop: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 10,
+        minHeight: 40,
+    },
+    // Simplified card header used in the original design: avatar, name, and
+    // a small tinted count badge underneath — no status pill, no icon actions.
     cardHeaderSimple: {
         display: "flex",
         alignItems: "flex-start",
@@ -1855,9 +3173,6 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.xl,
         whiteSpace: "nowrap",
         width: "fit-content",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        maxWidth: "100%",
     },
     cardSimpleInfoRows: {
         display: "flex",
@@ -1877,7 +3192,6 @@ const styles: Record<string, CSSProperties> = {
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
-    cardInfoIcon: { fontSize: fontSize.sm, color: "#a7b3c8", flexShrink: 0 },
     avatar: {
         display: "flex",
         alignItems: "center",
@@ -1889,6 +3203,17 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         flexShrink: 0,
     },
+    cardNameBlock: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        gap: 4,
+        minWidth: 0,
+        flex: "0 1 auto",
+        textAlign: "left",
+    },
+    cardNameRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap", minWidth: 0 },
     cardName: {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
@@ -1898,7 +3223,151 @@ const styles: Record<string, CSSProperties> = {
         textOverflow: "ellipsis",
         minWidth: 0,
     },
+    cardCountry: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: fontSize.sm,
+        color: "#7c8aa3",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        minWidth: 0,
+    },
+    cardLookup: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: fontSize.xs,
+        color: "var(--brand-light-blue)",
+        fontWeight: fontWeight.medium,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        minWidth: 0,
+    },
+    cardTopActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        flexShrink: 0,
+        marginLeft: "auto",
+    },
+    subclientsBox: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#eef1fb",
+        borderRadius: radius.md,
+        padding: "10px 14px",
+    },
+    subclientsBoxLeft: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "var(--brand-blue)",
+    },
+    cardContactRow: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: "10px 0 0",
+        borderTop: "1px solid #eef2f9",
+    },
+    cardContactItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.sm,
+        color: "#3b4a63",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    cardInfoRows: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 7,
+        paddingTop: 9,
+        borderTop: "1px solid #eef2f9",
+    },
+    cardInfoRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 6,
+        minWidth: 0,
+    },
+    cardInfoIcon: { fontSize: fontSize.sm, color: "#a7b3c8", flexShrink: 0 },
+    cardInfoLabel: {
+        fontSize: fontSize.xs,
+        color: "#8592a8",
+        fontWeight: fontWeight.regular,
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+    },
+    cardInfoColon: { fontSize: fontSize.xs, color: "#8592a8", flexShrink: 0 },
+    cardInfoValue: {
+        fontSize: fontSize.sm,
+        color: "#26314a",
+        fontWeight: fontWeight.medium,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    cardInfoValueTruncate: {
+        fontSize: fontSize.sm,
+        color: "#26314a",
+        fontWeight: fontWeight.medium,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        minWidth: 0,
+        flex: 1,
+    },
 
+    statusPill: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.semibold,
+        padding: "3px 10px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+        width: "fit-content",
+    },
+    statusDot: {
+        width: 6,
+        height: 6,
+        borderRadius: radius.circle,
+        background: "currentColor",
+        flexShrink: 0,
+    },
+    statusPillActive: { background: "#e1f7f3", color: "#0f8a78" },
+    statusPillInactive: { background: "#fee2e2", color: "#dc2626" },
+
+    statsRow: {
+        display: "flex",
+        alignItems: "center",
+        borderTop: "1px solid #eef2f9",
+        borderBottom: "1px solid #eef2f9",
+        padding: "12px 0",
+    },
+    statBlock: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 },
+    statDivider: { width: 1, alignSelf: "stretch", background: "#eef2f9" },
+    statLabel: { fontSize: fontSize.xs, color: "#7c8aa3" },
+    statValue: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, color: "#16233c" },
+
+    cardFooter: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingTop: 2,
+        marginTop: "auto",
+    },
     viewDetailsBtn: {
         display: "flex",
         alignItems: "center",
@@ -1925,8 +3394,9 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.md,
         padding: "11px 16px",
         cursor: "pointer",
-        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb),0.25)",
+        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb), 0.25)",
     },
+    cardActions: { display: "flex", alignItems: "center", gap: 8 },
     iconBtn: {
         display: "flex",
         alignItems: "center",
@@ -1940,6 +3410,19 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         transition: "background .15s ease, border-color .15s ease, color .15s ease",
     },
+    iconBtnGhost: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: radius.xs,
+        border: "1px solid #e4e9f2",
+        background: "#fafbfc",
+        color: "#7c8aa3",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease, color .15s ease",
+    },
     iconBtnDanger: {
         display: "flex",
         alignItems: "center",
@@ -1949,6 +3432,19 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.sm,
         border: "1px solid #fee2e2",
         background: "#fef2f2",
+        color: "#dc2626",
+        cursor: "pointer",
+        transition: "background .15s ease, border-color .15s ease",
+    },
+    iconBtnDangerGhost: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: radius.xs,
+        border: "1px solid #f8d7d7",
+        background: "#fdf4f4",
         color: "#dc2626",
         cursor: "pointer",
         transition: "background .15s ease, border-color .15s ease",
@@ -1999,6 +3495,26 @@ const styles: Record<string, CSSProperties> = {
         overflow: "hidden",
         textOverflow: "ellipsis",
     },
+    tdNameCell: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 10,
+        minWidth: 0,
+    },
+    avatarSm: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 34,
+        height: 34,
+        borderRadius: radius.circle,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        flexShrink: 0,
+        border: "2px solid #fff",
+        boxShadow: "0 0 0 1px #e5edf7",
+    },
     tdNameText: {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
@@ -2014,6 +3530,7 @@ const styles: Record<string, CSSProperties> = {
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
+    tdContactStack: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
     tdContactLine: {
         display: "flex",
         alignItems: "center",
@@ -2030,7 +3547,7 @@ const styles: Record<string, CSSProperties> = {
     detailsModal: {
         background: "#fff",
         borderRadius: radius.lg,
-        width: 480,
+        width: 560,
         maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
@@ -2039,7 +3556,7 @@ const styles: Record<string, CSSProperties> = {
     addModal: {
         background: "#fff",
         borderRadius: radius.lg,
-        width: 560,
+        width: 640,
         maxWidth: "94vw",
         maxHeight: "85vh",
         overflowY: "auto",
@@ -2085,6 +3602,16 @@ const styles: Record<string, CSSProperties> = {
     },
     detailsLabel: { fontSize: fontSize.sm, color: "#7c8aa3", fontWeight: fontWeight.medium },
     detailsValue: { fontSize: fontSize.base, color: "#16233c", fontWeight: fontWeight.medium },
+    detailsSectionLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "var(--brand-blue)",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginTop: 6,
+        paddingTop: 10,
+        borderTop: "1px solid #e5edf7",
+    },
     detailsModalFooter: {
         display: "flex",
         gap: 10,
@@ -2124,6 +3651,17 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         gridColumn: "1 / -1",
     },
+    formSectionLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "var(--brand-blue)",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginTop: 4,
+        paddingTop: 10,
+        borderTop: "1px solid #e5edf7",
+        gridColumn: "1 / -1",
+    },
     addSubmitBtn: {
         display: "flex",
         alignItems: "center",
@@ -2136,13 +3674,13 @@ const styles: Record<string, CSSProperties> = {
         padding: "12px 20px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
         gridColumn: "1 / -1",
     },
 
-    // ---- Bulk Upload modal (matches Add User's "Bulk Add Users" modal,
-    // now themed with the app's brand palette so it follows whichever
-    // color the person picks from the header's theme switcher). ----
+    // ---- Bulk Upload modal — now themed to match the rest of the page
+    // (brand blue/teal) instead of a fixed purple, so it follows whichever
+    // color the person picks from the header's theme switcher. ----
     bulkModal: {
         background: "#fff",
         borderRadius: radius.lg,
@@ -2229,13 +3767,48 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     resultsSection: { borderTop: "1px solid #f0f0f0", padding: "20px 28px 28px" },
-    resultsSummary: { marginBottom: 12 },
+    resultsSummary: { marginBottom: 14, textAlign: "center" },
     resultsSummaryText: { fontSize: fontSize.md, color: "#16233c" },
     resultsList: {
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        maxHeight: 260,
+        maxHeight: 320,
         overflowY: "auto",
     },
+    resultRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        background: "#fafafa",
+        border: "1px solid #f0f0f0",
+        borderRadius: radius.sm,
+        padding: "10px 14px",
+    },
+    resultRowLeft: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minWidth: 0,
+    },
+    resultRowIdentifier: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
+        color: "#16233c",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    resultRowSubtext: { fontSize: fontSize.sm, color: "#9ca3af" },
+    resultPill: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        padding: "4px 10px",
+        borderRadius: radius.xl,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    resultPillCreated: { background: "#e1f7f3", color: "#0f8a78" },
+    resultPillFailed: { background: "#fee2e2", color: "#dc2626" },
 };

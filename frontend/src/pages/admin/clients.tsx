@@ -30,79 +30,6 @@ type ProductRate = {
 
 const CURRENCY_OPTIONS = ["USD", "GBP", "INR", "EUR", "AUD", "CAD"];
 
-// NEW: default currency for a newly-added service rate is derived from
-// the Client/Subclient's own Country field — e.g. Country "USA" defaults
-// the amount's currency to USD instead of always defaulting to USD
-// regardless of country. Country is free-typed (not a fixed dropdown), so
-// this matches common spellings/abbreviations case-insensitively rather
-// than requiring an exact country code. Anything unrecognized falls back
-// to USD, same as the previous hardcoded behavior — this only changes
-// the default; the currency dropdown next to each rate can still always
-// be changed by hand afterward.
-const COUNTRY_CURRENCY_MAP: Record<string, string> = {
-    usa: "USD",
-    "united states": "USD",
-    "united states of america": "USD",
-    us: "USD",
-    uk: "GBP",
-    "united kingdom": "GBP",
-    britain: "GBP",
-    "great britain": "GBP",
-    england: "GBP",
-    india: "INR",
-    bharat: "INR",
-    canada: "CAD",
-    australia: "AUD",
-    germany: "EUR",
-    france: "EUR",
-    spain: "EUR",
-    italy: "EUR",
-    netherlands: "EUR",
-    ireland: "EUR",
-    portugal: "EUR",
-    belgium: "EUR",
-    austria: "EUR",
-};
-
-function currencyForCountry(country: string | null | undefined): string {
-    if (!country) return "USD";
-    const key = country.trim().toLowerCase();
-    return COUNTRY_CURRENCY_MAP[key] || "USD";
-}
-
-// NEW: there is only ONE currency per client/subclient now, driven
-// entirely by its Country field — not a per-service dropdown anymore.
-// Whenever Country changes (typed by the person, at any point — before
-// or after services are already checked), every already-selected
-// service's rate is re-stamped with the new currency so the whole form
-// always stays consistent with the current Country value.
-function withCountryUpdate<
-    T extends { country: string; currency: string; productRates: ProductRate[] },
->(form: T, newCountry: string): T {
-    const currency = currencyForCountry(newCountry);
-    return {
-        ...form,
-        country: newCountry,
-        currency,
-        productRates: form.productRates.map((r) => ({ ...r, currency })),
-    };
-}
-
-// NEW: manual override for the Unit dropdown — same idea as
-// withCountryUpdate, but triggered by the person picking a currency
-// directly instead of it being inferred from Country. Every already-
-// selected service's rate is re-stamped to match, same as before.
-function withCurrencyUpdate<T extends { currency: string; productRates: ProductRate[] }>(
-    form: T,
-    newCurrency: string
-): T {
-    return {
-        ...form,
-        currency: newCurrency,
-        productRates: form.productRates.map((r) => ({ ...r, currency: newCurrency })),
-    };
-}
-
 type Client = {
     id: number;
     name: string;
@@ -386,11 +313,6 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
-        // NEW: single currency ("Unit") for the whole client/subclient —
-        // defaults from Country but can be manually overridden via the
-        // Unit dropdown. Applied to every service rate below, instead of
-        // each service carrying its own separate currency.
-        currency: "USD",
         // REVERSED MAPPING: [{ productId, amount, currency }] for each
         // Product this Client/Subclient uses, at this client/subclient's
         // own rate.
@@ -417,6 +339,15 @@ export default function Clients() {
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState("");
+
+    // NEW: multi-select delete — a set of selected row ids for whichever
+    // tab is active. Cleared whenever the tab changes so a Client
+    // selection never accidentally carries over and gets applied to
+    // Subclients (or vice versa).
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [bulkDeleteError, setBulkDeleteError] = useState("");
 
     // ---- Bulk upload state ----
     // Bulk upload now lives inside its own modal (opened via the "Bulk
@@ -473,6 +404,10 @@ export default function Clients() {
         setSearch("");
         setStatusFilter("All");
         setCountryFilter("All");
+        // NEW: clear any multi-select selection too — a Client's numeric
+        // id could collide with an unrelated Subclient's id, so a
+        // selection must never survive a tab switch.
+        setSelectedIds(new Set());
     }, [activeTab]);
 
     // Country filter options now come from whichever dataset is active, since
@@ -634,13 +569,6 @@ export default function Clients() {
         secondaryContactName: data.secondaryContactName || "",
         secondaryContactEmail: data.secondaryContactEmail || "",
         secondaryContactPhone: data.secondaryContactPhone || "",
-        // Existing saved rates may already carry their own currency (from
-        // before this became a single "Unit" per client/subclient) — use
-        // whatever the first one has as the starting Unit value, falling
-        // back to the country-derived default if there are no rates yet.
-        currency:
-            (data.productRates && data.productRates[0]?.currency) ||
-            currencyForCountry(data.country),
         productRates: data.productRates || [],
     });
 
@@ -792,6 +720,92 @@ export default function Clients() {
         }
     };
 
+    // ---- Multi-select delete handlers ----
+    // Selection is a plain Set<number> of ids, scoped to whichever tab is
+    // active (cleared on tab switch above). Reuses the exact same DELETE
+    // endpoint as the single-row delete — no new backend route needed —
+    // just fired once per selected id.
+
+    const toggleSelected = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    // "Select all" toggles every row CURRENTLY VISIBLE on screen (i.e.
+    // matching the active search/status/country filters) — not the
+    // entire unfiltered dataset, so it behaves the way people expect
+    // from a filtered table.
+    const toggleSelectAllVisible = (visibleIds: number[]) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+            if (allSelected) {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.delete(id));
+                return next;
+            }
+            return new Set([...prev, ...visibleIds]);
+        });
+    };
+
+    const clearSelection = () => setSelectedIds(new Set());
+
+    const openBulkDeleteConfirm = () => {
+        setBulkDeleteError("");
+        setBulkDeleteOpen(true);
+    };
+
+    const closeBulkDeleteConfirm = () => {
+        setBulkDeleteOpen(false);
+        setBulkDeleteError("");
+    };
+
+    const handleBulkDeleteConfirm = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        setBulkDeleteError("");
+
+        const endpoint = BULK_ENDPOINT_MAP[activeTab];
+        const ids = Array.from(selectedIds);
+        const failures: string[] = [];
+
+        // Sequential, not Promise.all — a burst of simultaneous deletes
+        // against the same org's rows is more likely to trip rate limits
+        // or row-lock contention than a few hundred ms of extra time is
+        // worth here. Each failure is collected (by id) instead of
+        // aborting the whole batch, so one bad row doesn't block the rest
+        // from being deleted.
+        for (const id of ids) {
+            try {
+                const response = await authFetch(`${apiBase}/api/${endpoint}/${id}`, {
+                    method: "DELETE",
+                });
+                if (!response.ok && response.status !== 202) {
+                    const data = await response.json().catch(() => null);
+                    failures.push(`#${id}: ${data?.message || "Failed to delete"}`);
+                }
+            } catch (err: any) {
+                failures.push(`#${id}: ${err?.message || "Something went wrong"}`);
+            }
+        }
+
+        await fetchAll();
+        setSelectedIds(new Set());
+        setBulkDeleting(false);
+
+        if (failures.length > 0) {
+            setBulkDeleteError(
+                `${ids.length - failures.length} of ${ids.length} deleted. ` +
+                    `${failures.length} failed:\n${failures.join("\n")}`
+            );
+        } else {
+            setBulkDeleteOpen(false);
+        }
+    };
+
     // ---- Bulk upload handlers (tied to whichever tab is active) ----
     // Template is always served/generated as an .xlsx workbook by the backend.
     // NOTE: the Subclient template's header row must mirror the Client
@@ -919,51 +933,7 @@ export default function Clients() {
                 ...prev,
                 productRates: has
                     ? prev.productRates.filter((r) => Number(r.productId) !== Number(productId))
-                    : [
-                          ...prev.productRates,
-                          // Uses this form's single Unit/currency (see emptyForm.currency,
-                          // withCountryUpdate, withCurrencyUpdate) — same currency for
-                          // every service, not picked per-service anymore.
-                          { productId, amount: "", currency: prev.currency },
-                      ],
-            };
-        });
-    };
-
-    // NEW: "Select All" checkbox above the Services list — toggles every
-    // product on/off in one click. If everything is already selected, it
-    // clears the list; otherwise it selects every product, keeping the
-    // amount already typed for any product that was already checked (only
-    // newly-added ones start with an empty amount).
-    const toggleAllProducts = (
-        formState: typeof emptyForm,
-        setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
-    ) => {
-        setFormState((prev) => {
-            const allSelected =
-                products.length > 0 &&
-                products.every((p) =>
-                    prev.productRates.some((r) => Number(r.productId) === Number(p.id))
-                );
-
-            if (allSelected) {
-                return { ...prev, productRates: [] };
-            }
-
-            const existingByProductId = new Map(
-                prev.productRates.map((r) => [Number(r.productId), r])
-            );
-
-            return {
-                ...prev,
-                productRates: products.map(
-                    (p) =>
-                        existingByProductId.get(Number(p.id)) || {
-                            productId: p.id,
-                            amount: "",
-                            currency: prev.currency,
-                        }
-                ),
+                    : [...prev.productRates, { productId, amount: "", currency: "USD" }],
             };
         });
     };
@@ -986,111 +956,66 @@ export default function Clients() {
     const renderProductPicker = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
-    ) => {
-        // Used to drive the Select All checkbox's checked/indeterminate state.
-        const allSelected =
-            products.length > 0 &&
-            products.every((p) =>
-                formState.productRates.some((r) => Number(r.productId) === Number(p.id))
-            );
-        const someSelected = formState.productRates.length > 0 && !allSelected;
-
-        return (
-            <div style={{ gridColumn: "1 / -1" }}>
+    ) => (
+        <div style={{ gridColumn: "1 / -1" }}>
+            <label style={styles.formLabel}>Services</label>
+            {products.length === 0 ? (
+                <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
+                    No products yet — add one from the Products page first.
+                </p>
+            ) : (
                 <div
+                    className="cl-scroll-area"
                     style={{
                         display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginBottom: 6,
+                        flexDirection: "column",
+                        gap: 8,
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        border: "1px solid #e4e9f2",
+                        borderRadius: radius.sm,
+                        padding: "10px 12px",
+                        background: "#fafbfc",
                     }}
                 >
-                    <label style={{ ...styles.formLabel, margin: 0 }}>Services</label>
-                    {products.length > 0 && (
-                        <label
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                                fontSize: fontSize.sm,
-                                fontWeight: fontWeight.medium,
-                                color: "var(--brand-blue)",
-                                cursor: "pointer",
-                            }}
-                        >
-                            <input
-                                type="checkbox"
-                                checked={allSelected}
-                                ref={(el) => {
-                                    if (el) el.indeterminate = someSelected;
+                    {products.map((p) => {
+                        const rate = formState.productRates.find(
+                            (r) => Number(r.productId) === Number(p.id)
+                        );
+                        const checked = !!rate;
+                        return (
+                            <div
+                                key={p.id}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    flexWrap: "wrap",
                                 }}
-                                onChange={() => toggleAllProducts(formState, setFormState)}
-                            />
-                            Select All
-                        </label>
-                    )}
-                </div>
-                {products.length === 0 ? (
-                    <p style={{ fontSize: fontSize.sm, color: "#7c8aa3", margin: "4px 0 0" }}>
-                        No products yet — add one from the Products page first.
-                    </p>
-                ) : (
-                    <div
-                        className="cl-scroll-area"
-                        style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 8,
-                            maxHeight: 220,
-                            overflowY: "auto",
-                            border: "1px solid #e4e9f2",
-                            borderRadius: radius.sm,
-                            padding: "10px 12px",
-                            background: "#fafbfc",
-                        }}
-                    >
-                        {products.map((p) => {
-                            const rate = formState.productRates.find(
-                                (r) => Number(r.productId) === Number(p.id)
-                            );
-                            const checked = !!rate;
-                            return (
-                                <div
-                                    key={p.id}
+                            >
+                                <label
                                     style={{
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        flexWrap: "wrap",
+                                        fontSize: fontSize.sm,
+                                        color: "#16233c",
+                                        cursor: "pointer",
+                                        minWidth: 160,
+                                        flex: "1 1 160px",
                                     }}
                                 >
-                                    <label
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            fontSize: fontSize.sm,
-                                            color: "#16233c",
-                                            cursor: "pointer",
-                                            minWidth: 160,
-                                            flex: "1 1 160px",
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onChange={() =>
-                                                toggleProductId(formState, setFormState, p.id)
-                                            }
-                                        />
-                                        {p.product_name}
-                                    </label>
-                                    {checked && (
-                                        // FIX: currency used to repeat as a badge next to EVERY
-                                        // checked service — moved to a single "Unit" field up top
-                                        // (next to Status) instead, since it's the same currency
-                                        // for all services on this client/subclient. Each row now
-                                        // only needs the Amount.
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() =>
+                                            toggleProductId(formState, setFormState, p.id)
+                                        }
+                                    />
+                                    {p.product_name}
+                                </label>
+                                {checked && (
+                                    <>
                                         <input
                                             type="number"
                                             min="0"
@@ -1112,15 +1037,38 @@ export default function Clients() {
                                                 padding: "6px 8px",
                                             }}
                                         />
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
-        );
-    };
+                                        <select
+                                            value={rate?.currency || "USD"}
+                                            onChange={(e) =>
+                                                updateProductRate(
+                                                    formState,
+                                                    setFormState,
+                                                    p.id,
+                                                    "currency",
+                                                    e.target.value
+                                                )
+                                            }
+                                            style={{
+                                                ...styles.formInput,
+                                                width: 90,
+                                                padding: "6px 8px",
+                                            }}
+                                        >
+                                            {CURRENCY_OPTIONS.map((c) => (
+                                                <option key={c} value={c}>
+                                                    {c}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 
@@ -1453,6 +1401,39 @@ export default function Clients() {
                         )}
                     </div>
 
+                    {/* NEW: bulk-select action bar — only shown once at least one
+                        row is checked, and only for roles that can manage/delete
+                        (canManage). Delete button is guarded by its own confirm
+                        modal below, same as the single-row delete flow. */}
+                    {canManage && selectedIds.size > 0 && (
+                        <div style={styles.bulkBar}>
+                            <span style={styles.bulkBarText}>
+                                {selectedIds.size} {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""} selected
+                            </span>
+                            <div style={{ display: "flex", gap: 8 }}>
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarClearBtn}
+                                    onClick={clearSelection}
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    style={styles.bulkBarDeleteBtn}
+                                    onClick={openBulkDeleteConfirm}
+                                >
+                                    <i
+                                        className="ti ti-trash"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
+                                    Delete Selected
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Cards / Table — scrollable area that fills remaining height.
                         The scrollbar (and scroll behavior) only kicks in once content
                         actually exceeds the available space; short lists sit flush
@@ -1485,6 +1466,7 @@ export default function Clients() {
                                     keeps both tables visually and structurally aligned. */}
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
+                                        {canManage && <col style={{ width: "36px" }} />}
                                         <col style={{ width: "15%" }} />
                                         <col style={{ width: "11%" }} />
                                         <col style={{ width: "9%" }} />
@@ -1496,6 +1478,31 @@ export default function Clients() {
                                     </colgroup>
                                     <thead>
                                         <tr>
+                                            {canManage && (
+                                                <th style={{ ...styles.th, width: 36 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label="Select all"
+                                                        checked={
+                                                            currentFilteredLength > 0 &&
+                                                            (activeTab === "client"
+                                                                ? pageClients
+                                                                : pageSubclients
+                                                            ).every((row) =>
+                                                                selectedIds.has(row.id)
+                                                            )
+                                                        }
+                                                        onChange={() =>
+                                                            toggleSelectAllVisible(
+                                                                (activeTab === "client"
+                                                                    ? pageClients
+                                                                    : pageSubclients
+                                                                ).map((row) => row.id)
+                                                            )
+                                                        }
+                                                    />
+                                                </th>
+                                            )}
                                             <th style={styles.th}>
                                                 {activeTab === "client" ? "Client" : "Subclient"}
                                             </th>
@@ -1531,6 +1538,23 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
+                                                        {canManage && (
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    aria-label={`Select ${client.name}`}
+                                                                    checked={selectedIds.has(
+                                                                        client.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelected(client.id)
+                                                                    }
+                                                                />
+                                                            </td>
+                                                        )}
                                                         <td style={styles.td}>
                                                             <span style={styles.tdNameText}>
                                                                 {client.name}
@@ -1696,6 +1720,23 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
+                                                        {canManage && (
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    aria-label={`Select ${sub.name}`}
+                                                                    checked={selectedIds.has(
+                                                                        sub.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelected(sub.id)
+                                                                    }
+                                                                />
+                                                            </td>
+                                                        )}
                                                         <td style={styles.td}>
                                                             <span style={styles.tdNameText}>
                                                                 {sub.name}
@@ -1853,10 +1894,21 @@ export default function Clients() {
                                                 className="cl-card"
                                                 style={{
                                                     ...styles.card,
+                                                    position: "relative",
                                                     border: `1px solid ${avatar.solid}40`,
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
+                                                {canManage && (
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Select ${client.name}`}
+                                                        checked={selectedIds.has(client.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onChange={() => toggleSelected(client.id)}
+                                                        style={styles.cardCheckbox}
+                                                    />
+                                                )}
                                                 <div style={styles.cardHeaderSimple}>
                                                     <div
                                                         style={{
@@ -1949,10 +2001,21 @@ export default function Clients() {
                                                 className="cl-card"
                                                 style={{
                                                     ...styles.card,
+                                                    position: "relative",
                                                     border: `1px solid ${avatar.solid}40`,
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
+                                                {canManage && (
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Select ${sub.name}`}
+                                                        checked={selectedIds.has(sub.id)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onChange={() => toggleSelected(sub.id)}
+                                                        style={styles.cardCheckbox}
+                                                    />
+                                                )}
                                                 <div style={styles.cardHeaderSimple}>
                                                     <div
                                                         style={{
@@ -2285,7 +2348,7 @@ export default function Clients() {
                                     style={styles.formInput}
                                     value={addForm.country}
                                     onChange={(e) =>
-                                        setAddForm(withCountryUpdate(addForm, e.target.value))
+                                        setAddForm({ ...addForm, country: e.target.value })
                                     }
                                     placeholder="e.g. India"
                                 />
@@ -2329,28 +2392,6 @@ export default function Clients() {
                                 >
                                     <option value="Active">Active</option>
                                     <option value="Inactive">Inactive</option>
-                                </select>
-                            </div>
-
-                            {/* NEW: Unit (currency) — shown ONCE here, not per-service
-                                anymore. Defaults from Country above (see
-                                currencyForCountry/withCountryUpdate) but can be changed by
-                                hand — picking a different Unit re-stamps every already-
-                                selected service below to match (withCurrencyUpdate). */}
-                            <div>
-                                <label style={styles.formLabel}>Unit</label>
-                                <select
-                                    style={styles.formInput}
-                                    value={addForm.currency}
-                                    onChange={(e) =>
-                                        setAddForm(withCurrencyUpdate(addForm, e.target.value))
-                                    }
-                                >
-                                    {CURRENCY_OPTIONS.map((c) => (
-                                        <option key={c} value={c}>
-                                            {c}
-                                        </option>
-                                    ))}
                                 </select>
                             </div>
 
@@ -2416,7 +2457,7 @@ export default function Clients() {
                                     style={styles.formInput}
                                     value={editForm.country}
                                     onChange={(e) =>
-                                        setEditForm(withCountryUpdate(editForm, e.target.value))
+                                        setEditForm({ ...editForm, country: e.target.value })
                                     }
                                     placeholder="e.g. India"
                                 />
@@ -2459,28 +2500,6 @@ export default function Clients() {
                                 >
                                     <option value="Active">Active</option>
                                     <option value="Inactive">Inactive</option>
-                                </select>
-                            </div>
-
-                            {/* NEW: Unit (currency) — shown ONCE here, not per-service
-                                anymore. Defaults from Country above (see
-                                currencyForCountry/withCountryUpdate) but can be changed by
-                                hand — picking a different Unit re-stamps every already-
-                                selected service below to match (withCurrencyUpdate). */}
-                            <div>
-                                <label style={styles.formLabel}>Unit</label>
-                                <select
-                                    style={styles.formInput}
-                                    value={editForm.currency}
-                                    onChange={(e) =>
-                                        setEditForm(withCurrencyUpdate(editForm, e.target.value))
-                                    }
-                                >
-                                    {CURRENCY_OPTIONS.map((c) => (
-                                        <option key={c} value={c}>
-                                            {c}
-                                        </option>
-                                    ))}
                                 </select>
                             </div>
 
@@ -2562,6 +2581,78 @@ export default function Clients() {
                                     disabled={deleting}
                                 >
                                     {deleting ? "Deleting..." : "Delete"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* NEW: bulk-delete confirmation modal — same visual pattern as
+                the single-row delete modal above, but for N selected rows
+                at once. Shows a per-row error summary if some deletes
+                failed (partial success), instead of just closing silently. */}
+            {bulkDeleteOpen && (
+                <div style={styles.overlay}>
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>
+                                Delete {selectedIds.size}{" "}
+                                {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""}?
+                            </h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeBulkDeleteConfirm}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to remove {selectedIds.size} selected{" "}
+                                {activeTab === "client" ? "client" : "subclient"}
+                                {selectedIds.size > 1 ? "s" : ""}? Once deleted, they can't be
+                                recovered.
+                            </p>
+
+                            {bulkDeleteError && (
+                                <p style={{ ...styles.formError, whiteSpace: "pre-line" }}>
+                                    {bulkDeleteError}
+                                </p>
+                            )}
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={closeBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.addSubmitBtn,
+                                        flex: 1,
+                                        background: "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                        opacity: bulkDeleting ? 0.7 : 1,
+                                        cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={handleBulkDeleteConfirm}
+                                    disabled={bulkDeleting}
+                                >
+                                    {bulkDeleting ? "Deleting..." : `Delete ${selectedIds.size}`}
                                 </button>
                             </div>
                         </div>
@@ -2708,6 +2799,54 @@ export default function Clients() {
 }
 
 const styles: Record<string, CSSProperties> = {
+    // NEW: multi-select bulk-delete bar + card checkbox overlay.
+    bulkBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#FEF2F2",
+        border: "1px solid #FECACA",
+        borderRadius: 10,
+        padding: "10px 16px",
+        margin: "0 0 12px",
+    },
+    bulkBarText: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#991B1B",
+    },
+    bulkBarClearBtn: {
+        background: "#fff",
+        color: "#6b7280",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "7px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+    },
+    bulkBarDeleteBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#DC2626",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        padding: "7px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    cardCheckbox: {
+        position: "absolute",
+        top: 12,
+        right: 12,
+        width: 16,
+        height: 16,
+        cursor: "pointer",
+        zIndex: 2,
+    },
     root: {
         display: "flex",
         width: "100%",
