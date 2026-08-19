@@ -425,29 +425,31 @@ export default function ProductionReports() {
                 </div>
             </div>
 
-            {/* Decorative footer wave */}
-            <svg
-                style={styles.wave}
-                viewBox="0 0 1440 160"
-                preserveAspectRatio="none"
-                xmlns="http://www.w3.org/2000/svg"
-            >
-                <path
-                    d="M0,96 C240,32 480,144 720,96 C960,48 1200,128 1440,80 L1440,160 L0,160 Z"
-                    fill="url(#waveGradient)"
-                    opacity="0.35"
-                />
-                <path
-                    d="M0,128 C240,80 480,160 720,120 C960,80 1200,150 1440,110 L1440,160 L0,160 Z"
-                    fill="url(#waveGradient)"
-                />
-                <defs>
-                    <linearGradient id="waveGradient" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor={BRAND.blue} />
-                        <stop offset="100%" stopColor={BRAND.lightBlue} />
-                    </linearGradient>
-                </defs>
-            </svg>
+            {/* Decorative footer wave — only shown when there's no content (empty state) */}
+            {!loading && filtered.length === 0 && (
+                <svg
+                    style={styles.wave}
+                    viewBox="0 0 1440 160"
+                    preserveAspectRatio="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <path
+                        d="M0,96 C240,32 480,144 720,96 C960,48 1200,128 1440,80 L1440,160 L0,160 Z"
+                        fill="url(#waveGradient)"
+                        opacity="0.35"
+                    />
+                    <path
+                        d="M0,128 C240,80 480,160 720,120 C960,80 1200,150 1440,110 L1440,160 L0,160 Z"
+                        fill="url(#waveGradient)"
+                    />
+                    <defs>
+                        <linearGradient id="waveGradient" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor={BRAND.blue} />
+                            <stop offset="100%" stopColor={BRAND.lightBlue} />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            )}
         </div>
     );
 }
