@@ -255,38 +255,38 @@ export default function Header({
                                             const palette = THEMES[key];
                                             const active = themeName === key;
                                             return (
-                                                <button
-                                                    key={key}
-                                                    type="button"
-                                                    title={palette.label}
-                                                    onClick={() => {
-                                                        setThemeName(key);
-                                                        closeMenu();
-                                                    }}
-                                                    style={{
-                                                        ...styles.swatchBtn,
-                                                        background: `linear-gradient(135deg, ${palette.lightBlue}, ${palette.blue})`,
-                                                        boxShadow: active
-                                                            ? `0 0 0 2px #fff, 0 0 0 4px ${palette.blue}`
-                                                            : "none",
-                                                    }}
-                                                >
-                                                    {active && (
-                                                        <i
-                                                            className="ti ti-check"
-                                                            style={{ color: "#fff", fontSize: 14 }}
-                                                        />
-                                                    )}
-                                                </button>
+                                                <div key={key} style={styles.swatchCell}>
+                                                    <button
+                                                        type="button"
+                                                        title={palette.label}
+                                                        onClick={() => {
+                                                            setThemeName(key);
+                                                            closeMenu();
+                                                        }}
+                                                        style={{
+                                                            ...styles.swatchBtn,
+                                                            background: `linear-gradient(135deg, ${palette.lightBlue}, ${palette.blue})`,
+                                                            boxShadow: active
+                                                                ? `0 0 0 2px #fff, 0 0 0 4px ${palette.blue}`
+                                                                : "none",
+                                                        }}
+                                                    >
+                                                        {active && (
+                                                            <i
+                                                                className="ti ti-check"
+                                                                style={{
+                                                                    color: "#fff",
+                                                                    fontSize: 14,
+                                                                }}
+                                                            />
+                                                        )}
+                                                    </button>
+                                                    <span style={styles.swatchLabel}>
+                                                        {palette.label}
+                                                    </span>
+                                                </div>
                                             );
                                         })}
-                                    </div>
-                                    <div style={styles.swatchLabels}>
-                                        {(Object.keys(THEMES) as ThemeName[]).map((key) => (
-                                            <span key={key} style={styles.swatchLabel}>
-                                                {THEMES[key].label}
-                                            </span>
-                                        ))}
                                     </div>
                                 </>
                             )}
@@ -575,7 +575,17 @@ function getStyles(BRAND: {
             display: "grid",
             gridTemplateColumns: "repeat(4, 1fr)",
             gap: 10,
-            padding: "4px 10px 2px",
+            padding: "4px 10px 6px",
+        },
+        // Each color + its name now live in the same grid cell (stacked
+        // vertically), so the label is always directly under its own
+        // swatch — no matter how many colors there are or how the grid
+        // wraps, instead of two separate grids that could drift apart.
+        swatchCell: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
         },
         swatchBtn: {
             width: 36,
@@ -586,12 +596,6 @@ function getStyles(BRAND: {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-        },
-        swatchLabels: {
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 10,
-            padding: "4px 10px 6px",
         },
         swatchLabel: {
             fontSize: 10,
