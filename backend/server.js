@@ -196,6 +196,12 @@ app.use(
   "/api/daily-work",
   loadRoute("dailywork", "./src/modules/dailywork/dailywork.routes"),
 );
+// NEW: "Case Register" — second tab on the Daily Work page. Separate
+// module/table entirely (service_cases), untouched dailywork.routes.js.
+app.use(
+  "/api/service-cases",
+  loadRoute("servicecases", "./src/modules/servicecases/servicecases.routes"),
+);
 app.use(
   "/api/attendance",
   loadRoute("attendance", "./src/modules/attendance/attendance.routes"),

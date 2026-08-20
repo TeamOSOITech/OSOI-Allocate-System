@@ -1,0 +1,28 @@
+// src/modules/servicecases/servicecases.routes.js
+//
+// "Case Register" tab (second tab on the Daily Work page). Same
+// permission gate as Daily Work itself (tasks.allocate.team/org), since
+// this is logically the same "log today's work" action, just producing
+// individual case rows instead of one batch row.
+
+const express = require("express");
+const router = express.Router();
+const { authenticate } = require("../../middlewares/auth");
+const { requireAnyPermission } = require("../../middlewares/rbac");
+const { listServiceCases, createServiceCases, deleteServiceCase } = require("./servicecases.controller");
+
+router.use(authenticate);
+
+router.get("/", listServiceCases);
+router.post(
+  "/",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  createServiceCases,
+);
+router.delete(
+  "/:id",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  deleteServiceCase,
+);
+
+module.exports = router;

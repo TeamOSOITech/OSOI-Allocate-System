@@ -1,110 +1,39 @@
 // src/modules/employees/employees.controller.js
 //
-// Uses your existing Supabase client from src/config/supabaseClient.js
-//
-// ASSUMED table: "user_master"
-// ACTUAL primary key column: "Auth User Id" (uuid)
+// Req/res handling for the employees module. All Supabase/DB work and
+// row-mapping live in employees.service.js — this file orchestrates:
+// read the request, run permission checks, call the service, shape the
+// response.
 
-const supabase = require("../../config/supabaseClient");
 const {
   canAssignRole,
   canEditTargetRole,
   canDeleteTargetRole,
 } = require("../../config/permissions");
-
-function mapRow(row) {
-  const firstName = row["First Name"] ?? "";
-  const lastName = row["Last Name"] ?? "";
-  return {
-    id: row["Auth User Id"],
-    employeeCode: row["Employee ID"] ?? null,
-    name: `${firstName} ${lastName}`.trim(),
-    email: row["Email"] ?? null,
-    role: row["Role"] ?? null, // needed so pages can filter by role (e.g. Reporting Manager dropdown = Process Leads)
-    designation: row["Designation"] ?? null,
-    department: row["Department"] ?? null,
-    reportingManager: row["Reporting Manager"] ?? null,
-    joiningDate: row["Date of Joining"] ?? null,
-    dateOfBirth: row["Date of Birth"] ?? null,
-    // FIX: frontend (employees.tsx) sends/reads this field as "team", not
-    // "workedInTeams" — that name mismatch is why Team silently failed to
-    // save and always came back empty after refresh.
-    team: row["Worked In Teams"] ?? null,
-    photoUrl: row.photo_url ?? null,
-    status: "Active",
-  };
-}
-
-function normalizeEmail(email) {
-  return (email || "").toString().trim().toLowerCase();
-}
-
-// NEW: Reporting Manager must be a real, existing user's email — and
-// that user must belong to the SAME organization as the employee being
-// edited. Mirrors the same check used at user-creation time
-// (userRoutes.js's validateReportingManager) so the rule holds
-// consistently whether a manager is set at signup or via later edit.
-async function validateReportingManager(email, organizationId) {
-  if (!email) return { valid: true }; // optional field
-
-  const normalized = normalizeEmail(email);
-  const { data, error } = await supabase
-    .from("user_master")
-    .select("Email")
-    .eq("Email", normalized)
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("validateReportingManager lookup failed:", error);
-    return { valid: false, message: "Could not verify reporting manager." };
-  }
-
-  if (!data) {
-    return {
-      valid: false,
-      message: `Reporting manager "${email}" was not found in your organization.`,
-    };
-  }
-
-  return { valid: true };
-}
+const employeesService = require("./employees.service");
 
 async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
 
-  const { data, error } = await supabase
-    .from("user_master")
-    .select("*")
-    .eq("organization_id", orgId)
-    .order("First Name", { ascending: true });
-
-  if (error) {
+  try {
+    const employees = await employeesService.fetchAllEmployees(orgId);
+    res.json(employees);
+  } catch (error) {
     console.error("Failed to fetch user_master:", error);
-    return res.status(500).json({ error: "Failed to load employees" });
+    res.status(500).json({ error: "Failed to load employees" });
   }
-
-  const employees = (data || []).map(mapRow);
-  res.json(employees);
 }
 
 async function getEmployeeById(req, res) {
   const { id } = req.params;
   const orgId = req.user.organizationId;
 
-  const { data, error } = await supabase
-    .from("user_master")
-    .select("*")
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId)
-    .single();
-
-  if (error) {
-    console.error("Failed to fetch employee:", error);
+  const employee = await employeesService.fetchEmployeeById(id, orgId);
+  if (!employee) {
     return res.status(404).json({ error: "Employee not found" });
   }
 
-  res.json(mapRow(data));
+  res.json(employee);
 }
 
 async function updateEmployee(req, res) {
@@ -120,21 +49,17 @@ async function updateEmployee(req, res) {
   // See EDITABLE_TARGET_ROLES in src/config/permissions.js — this is
   // the single source of truth for that matrix, kept in sync with the
   // frontend's mirror in employees.tsx (canEditEmployee).
-  const { data: targetRow, error: targetLookupError } = await supabase
-    .from("user_master")
-    .select('"Role"')
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId)
-    .maybeSingle();
-
-  if (targetLookupError) {
-    console.error("Failed to look up target employee role:", targetLookupError);
+  let targetRole;
+  try {
+    targetRole = await employeesService.fetchTargetRole(id, orgId);
+  } catch (error) {
+    console.error("Failed to look up target employee role:", error);
     return res.status(500).json({ error: "Failed to update employee" });
   }
-  if (!targetRow) {
+  if (targetRole === undefined) {
     return res.status(404).json({ error: "Employee not found" });
   }
-  if (!canEditTargetRole(req.user.role, targetRow["Role"])) {
+  if (!canEditTargetRole(req.user.role, targetRole)) {
     return res.status(403).json({
       error: "You don't have permission to edit this employee.",
     });
@@ -144,7 +69,7 @@ async function updateEmployee(req, res) {
   // the same organization. Checked before building updatePayload so a
   // bad value never reaches the DB write.
   if (body.reportingManager !== undefined && body.reportingManager) {
-    const rmCheck = await validateReportingManager(
+    const rmCheck = await employeesService.validateReportingManager(
       body.reportingManager,
       orgId,
     );
@@ -211,24 +136,20 @@ async function updateEmployee(req, res) {
     return res.status(400).json({ error: "No valid fields to update" });
   }
 
-  const { data, error } = await supabase
-    .from("user_master")
-    .update(updatePayload)
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId)
-    .select()
-    .single();
-
-  if (error) {
+  try {
+    const updated = await employeesService.updateEmployeeRow(
+      id,
+      orgId,
+      updatePayload,
+    );
+    if (!updated) {
+      return res.status(404).json({ error: "Employee not found" });
+    }
+    res.json(updated);
+  } catch (error) {
     console.error("Failed to update employee:", error);
-    return res.status(500).json({ error: "Failed to update employee" });
+    res.status(500).json({ error: "Failed to update employee" });
   }
-
-  if (!data) {
-    return res.status(404).json({ error: "Employee not found" });
-  }
-
-  res.json(mapRow(data));
 }
 
 async function deleteEmployee(req, res) {
@@ -243,38 +164,29 @@ async function deleteEmployee(req, res) {
   // returns false for it, blocking delete regardless of the target's
   // role. Also enforces the target-role hierarchy for Ops Manager
   // (can't delete another Ops Manager / Audit Manager / Super Admin).
-  const { data: targetRow, error: targetLookupError } = await supabase
-    .from("user_master")
-    .select('"Role"')
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId)
-    .maybeSingle();
-
-  if (targetLookupError) {
-    console.error("Failed to look up target employee role:", targetLookupError);
+  let targetRole;
+  try {
+    targetRole = await employeesService.fetchTargetRole(id, orgId);
+  } catch (error) {
+    console.error("Failed to look up target employee role:", error);
     return res.status(500).json({ error: "Failed to delete employee" });
   }
-  if (!targetRow) {
+  if (targetRole === undefined) {
     return res.status(404).json({ error: "Employee not found" });
   }
-  if (!canDeleteTargetRole(req.user.role, targetRow["Role"])) {
+  if (!canDeleteTargetRole(req.user.role, targetRole)) {
     return res.status(403).json({
       error: "You don't have permission to delete this employee.",
     });
   }
 
-  const { error } = await supabase
-    .from("user_master")
-    .delete()
-    .eq("Auth User Id", id)
-    .eq("organization_id", orgId);
-
-  if (error) {
+  try {
+    await employeesService.deleteEmployeeRow(id, orgId);
+    res.json({ success: true });
+  } catch (error) {
     console.error("Failed to delete employee:", error);
-    return res.status(500).json({ error: "Failed to delete employee" });
+    res.status(500).json({ error: "Failed to delete employee" });
   }
-
-  res.json({ success: true });
 }
 
 module.exports = {

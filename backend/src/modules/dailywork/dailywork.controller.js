@@ -5,61 +5,10 @@
 // baad me SmartAutoAllocation / Manual Allocation present employees
 // me split karte hain.
 //
-// Table: daily_work(id, organization_id, work_date, product_id,
-//                    total_qty, status, created_by, created_at)
-//
-// NOTE: product_id -> products.id ka embedded Supabase select
-// (".select('*, products(product_name)')") FAIL hota hai jab tak DB
-// me ek actual foreign key constraint na ho — PostgREST apna
-// "schema cache" isi constraint se banata hai. Migration se guarantee
-// nahi tha ki FK bana hi hoga, isliye yahan product name manually,
-// alag query se, application code me hi join kiya ja raha hai —
-// isse FK exist kare ya na kare, dono cases me kaam karega.
-//
-// Har query req.user.organizationId se scoped hai — same tenant
-// enforcement pattern jo modules/allocations/allocations.controller.js
-// use karta hai.
+// Req/res handling only — all Supabase/DB access lives in
+// dailywork.service.js. Wired up by dailywork.routes.js.
 
-const supabase = require("../../config/supabaseClient");
-
-// ------------------------------------------------------------
-// Given a list of daily_work rows, fetch matching product names in
-// ONE extra query and return a { [productId]: productName } map.
-// ------------------------------------------------------------
-async function getProductNameMap(productIds) {
-  const uniqueIds = [...new Set(productIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from("service_master")
-    .select("id, product_name")
-    .in("id", uniqueIds);
-
-  if (error) {
-    console.error("Failed to fetch product names:", error);
-    return {};
-  }
-
-  return (data || []).reduce((acc, p) => {
-    acc[p.id] = p.product_name;
-    return acc;
-  }, {});
-}
-
-function mapRow(row, extra = {}) {
-  return {
-    id: row.id,
-    workDate: row.work_date,
-    productId: row.product_id,
-    productName: extra.productName ?? null,
-    totalQty: row.total_qty,
-    status: row.status,
-    createdBy: row.created_by,
-    createdAt: row.created_at,
-    allocatedQty: extra.allocatedQty,
-    pendingQty: extra.pendingQty,
-  };
-}
+const dailyWorkService = require("./dailywork.service");
 
 // ------------------------------------------------------------
 // GET /api/daily-work?date=YYYY-MM-DD
@@ -70,43 +19,22 @@ function mapRow(row, extra = {}) {
 async function listDailyWork(req, res) {
   try {
     const { date } = req.query;
+    const orgId = req.user.organizationId;
 
-    let query = supabase
-      .from("daily_work")
-      .select("*")
-      .eq("organization_id", req.user.organizationId)
-      .order("work_date", { ascending: false });
+    const batches = await dailyWorkService.fetchDailyWorkBatches(orgId, date);
 
-    if (date) {
-      query = query.eq("work_date", date);
-    }
-
-    const { data: batches, error } = await query;
-    if (error) throw error;
-
-    const ids = (batches || []).map((b) => b.id);
-    const productNames = await getProductNameMap(
-      (batches || []).map((b) => b.product_id),
+    const ids = batches.map((b) => b.id);
+    const productNames = await dailyWorkService.getProductNameMap(
+      batches.map((b) => b.product_id),
+    );
+    const allocatedByBatch = await dailyWorkService.fetchAllocatedByBatch(
+      orgId,
+      ids,
     );
 
-    let allocatedByBatch = {};
-    if (ids.length > 0) {
-      const { data: allocRows, error: allocError } = await supabase
-        .from("allocations")
-        .select("daily_work_id, allocated_qty")
-        .eq("organization_id", req.user.organizationId)
-        .in("daily_work_id", ids);
-      if (allocError) throw allocError;
-
-      allocatedByBatch = (allocRows || []).reduce((acc, r) => {
-        acc[r.daily_work_id] = (acc[r.daily_work_id] || 0) + r.allocated_qty;
-        return acc;
-      }, {});
-    }
-
-    const data = (batches || []).map((b) => {
+    const data = batches.map((b) => {
       const allocatedQty = allocatedByBatch[b.id] || 0;
-      return mapRow(b, {
+      return dailyWorkService.mapRow(b, {
         productName: productNames[b.product_id] || null,
         allocatedQty,
         pendingQty: b.total_qty - allocatedQty,
@@ -125,25 +53,22 @@ async function listDailyWork(req, res) {
 async function getDailyWorkById(req, res) {
   try {
     const { id } = req.params;
+    const orgId = req.user.organizationId;
 
-    const { data, error } = await supabase
-      .from("daily_work")
-      .select("*")
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .single();
-
-    if (error || !data) {
+    const data = await dailyWorkService.fetchDailyWorkById(id, orgId);
+    if (!data) {
       return res
         .status(404)
         .json({ success: false, message: "Daily work batch not found" });
     }
 
-    const productNames = await getProductNameMap([data.product_id]);
+    const productNames = await dailyWorkService.getProductNameMap([
+      data.product_id,
+    ]);
 
     res.json({
       success: true,
-      data: mapRow(data, {
+      data: dailyWorkService.mapRow(data, {
         productName: productNames[data.product_id] || null,
       }),
     });
@@ -159,6 +84,7 @@ async function getDailyWorkById(req, res) {
 async function createDailyWork(req, res) {
   try {
     const { workDate, productId, totalQty } = req.body;
+    const orgId = req.user.organizationId;
 
     if (!workDate || !productId || totalQty === undefined) {
       return res.status(400).json({
@@ -175,15 +101,12 @@ async function createDailyWork(req, res) {
       });
     }
 
-    const { data: dup, error: dupError } = await supabase
-      .from("daily_work")
-      .select("id")
-      .eq("organization_id", req.user.organizationId)
-      .eq("work_date", workDate)
-      .eq("product_id", productId)
-      .limit(1);
-    if (dupError) throw dupError;
-    if (dup && dup.length > 0) {
+    const isDuplicate = await dailyWorkService.findDuplicateBatch(
+      orgId,
+      workDate,
+      productId,
+    );
+    if (isDuplicate) {
       return res.status(409).json({
         success: false,
         message:
@@ -191,26 +114,22 @@ async function createDailyWork(req, res) {
       });
     }
 
-    const { data, error } = await supabase
-      .from("daily_work")
-      .insert({
-        organization_id: req.user.organizationId,
-        work_date: workDate,
-        product_id: productId,
-        total_qty: qty,
-        status: "PENDING",
-        created_by: req.user.userId,
-      })
-      .select("*")
-      .single();
+    const data = await dailyWorkService.insertDailyWork({
+      organization_id: orgId,
+      work_date: workDate,
+      product_id: productId,
+      total_qty: qty,
+      status: "PENDING",
+      created_by: req.user.userId,
+    });
 
-    if (error) throw error;
-
-    const productNames = await getProductNameMap([data.product_id]);
+    const productNames = await dailyWorkService.getProductNameMap([
+      data.product_id,
+    ]);
 
     res.status(201).json({
       success: true,
-      data: mapRow(data, {
+      data: dailyWorkService.mapRow(data, {
         productName: productNames[data.product_id] || null,
         allocatedQty: 0,
         pendingQty: data.total_qty,
@@ -229,15 +148,10 @@ async function updateDailyWork(req, res) {
   try {
     const { id } = req.params;
     const { workDate, productId, totalQty } = req.body;
+    const orgId = req.user.organizationId;
 
-    const { data: existing, error: fetchError } = await supabase
-      .from("daily_work")
-      .select("id, total_qty")
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .single();
-
-    if (fetchError || !existing) {
+    const existing = await dailyWorkService.fetchDailyWorkForUpdate(id, orgId);
+    if (!existing) {
       return res
         .status(404)
         .json({ success: false, message: "Daily work batch not found" });
@@ -257,17 +171,7 @@ async function updateDailyWork(req, res) {
         });
       }
 
-      const { data: allocRows, error: allocError } = await supabase
-        .from("allocations")
-        .select("allocated_qty")
-        .eq("organization_id", req.user.organizationId)
-        .eq("daily_work_id", id);
-      if (allocError) throw allocError;
-
-      alreadyAllocated = (allocRows || []).reduce(
-        (sum, r) => sum + r.allocated_qty,
-        0,
-      );
+      alreadyAllocated = await dailyWorkService.fetchAllocatedSum(orgId, id);
 
       if (qty < alreadyAllocated) {
         return res.status(409).json({
@@ -285,21 +189,19 @@ async function updateDailyWork(req, res) {
         .json({ success: false, message: "No valid fields to update" });
     }
 
-    const { data, error } = await supabase
-      .from("daily_work")
-      .update(updatePayload)
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .select("*")
-      .single();
+    const data = await dailyWorkService.updateDailyWorkRow(
+      id,
+      orgId,
+      updatePayload,
+    );
 
-    if (error) throw error;
-
-    const productNames = await getProductNameMap([data.product_id]);
+    const productNames = await dailyWorkService.getProductNameMap([
+      data.product_id,
+    ]);
 
     res.json({
       success: true,
-      data: mapRow(data, {
+      data: dailyWorkService.mapRow(data, {
         productName: productNames[data.product_id] || null,
         allocatedQty: alreadyAllocated,
         pendingQty: data.total_qty - alreadyAllocated,
@@ -316,16 +218,10 @@ async function updateDailyWork(req, res) {
 async function deleteDailyWork(req, res) {
   try {
     const { id } = req.params;
+    const orgId = req.user.organizationId;
 
-    const { data: allocRows, error: allocError } = await supabase
-      .from("allocations")
-      .select("id")
-      .eq("organization_id", req.user.organizationId)
-      .eq("daily_work_id", id)
-      .limit(1);
-    if (allocError) throw allocError;
-
-    if (allocRows && allocRows.length > 0) {
+    const hasAllocations = await dailyWorkService.hasAllocations(orgId, id);
+    if (hasAllocations) {
       return res.status(409).json({
         success: false,
         message:
@@ -333,13 +229,7 @@ async function deleteDailyWork(req, res) {
       });
     }
 
-    const { error } = await supabase
-      .from("daily_work")
-      .delete()
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId);
-
-    if (error) throw error;
+    await dailyWorkService.deleteDailyWorkRow(id, orgId);
 
     res.json({ success: true, message: "Daily work batch deleted" });
   } catch (err) {
@@ -370,12 +260,7 @@ async function seedDummyCases(req, res) {
     const orgId = req.user.organizationId;
     const workDate = req.body?.date || new Date().toISOString().slice(0, 10);
 
-    const { data: productsList, error: productsError } = await supabase
-      .from("service_master")
-      .select("id, product_name")
-      .eq("organization_id", orgId);
-    if (productsError) throw productsError;
-
+    const productsList = await dailyWorkService.fetchServicesForOrg(orgId);
     if (!productsList || productsList.length === 0) {
       return res.status(400).json({
         success: false,
@@ -384,15 +269,9 @@ async function seedDummyCases(req, res) {
       });
     }
 
-    const { data: existingBatches, error: existingError } = await supabase
-      .from("daily_work")
-      .select("product_id")
-      .eq("organization_id", orgId)
-      .eq("work_date", workDate);
-    if (existingError) throw existingError;
-    const alreadyHasCase = new Set(
-      (existingBatches || []).map((b) => b.product_id),
-    );
+    const existingProductIds =
+      await dailyWorkService.fetchExistingBatchProductIds(orgId, workDate);
+    const alreadyHasCase = new Set(existingProductIds);
 
     const toCreate = productsList.filter((p) => !alreadyHasCase.has(p.id));
     const newRows = toCreate.map((p) => ({
@@ -404,35 +283,20 @@ async function seedDummyCases(req, res) {
       created_by: req.user.userId,
     }));
 
-    let inserted = [];
-    if (newRows.length > 0) {
-      const { data, error } = await supabase
-        .from("daily_work")
-        .insert(newRows)
-        .select("*");
-      if (error) throw error;
-      inserted = data || [];
-    }
+    const inserted = await dailyWorkService.insertDailyWorkRows(newRows);
 
     // Seed attendance too, but only if this date has none at all yet —
     // never touch a date someone has already marked for real.
     let attendanceSeeded = false;
-    const { data: existingAttendance, error: attCheckError } = await supabase
-      .from("attendance")
-      .select("id")
-      .eq("organization_id", orgId)
-      .eq("attendance_date", workDate)
-      .limit(1);
-    if (attCheckError) throw attCheckError;
+    const attendanceExists = await dailyWorkService.hasAttendanceForDate(
+      orgId,
+      workDate,
+    );
 
-    if (!existingAttendance || existingAttendance.length === 0) {
-      const { data: employeeRows, error: empError } = await supabase
-        .from("user_master")
-        .select("*")
-        .eq("organization_id", orgId);
-      if (empError) throw empError;
+    if (!attendanceExists) {
+      const employeeRows = await dailyWorkService.fetchEmployeesForOrg(orgId);
 
-      const attRows = (employeeRows || [])
+      const attRows = employeeRows
         .map((e) => e["Auth User Id"])
         .filter(Boolean)
         .map((employeeId) => ({
@@ -444,10 +308,7 @@ async function seedDummyCases(req, res) {
         }));
 
       if (attRows.length > 0) {
-        const { error: attInsertError } = await supabase
-          .from("attendance")
-          .upsert(attRows, { onConflict: "employee_id,attendance_date" });
-        if (attInsertError) throw attInsertError;
+        await dailyWorkService.upsertAttendanceRows(attRows);
         attendanceSeeded = true;
       }
     }
@@ -458,7 +319,7 @@ async function seedDummyCases(req, res) {
     }, {});
 
     const data = inserted.map((row) =>
-      mapRow(row, {
+      dailyWorkService.mapRow(row, {
         productName: productNames[row.product_id] || null,
         allocatedQty: 0,
         pendingQty: row.total_qty,
@@ -516,14 +377,9 @@ async function bulkCreateDailyWork(req, res) {
     // Load every service once up front instead of querying per row —
     // 100+ rows would otherwise mean 100+ round trips just to resolve
     // names to ids.
-    const { data: services, error: servicesError } = await supabase
-      .from("service_master")
-      .select("id, product_name")
-      .eq("organization_id", orgId);
-    if (servicesError) throw servicesError;
-
+    const services = await dailyWorkService.fetchServicesForOrg(orgId);
     const serviceByName = new Map(
-      (services || []).map((s) => [
+      services.map((s) => [
         String(s.product_name || "")
           .trim()
           .toLowerCase(),
@@ -534,16 +390,9 @@ async function bulkCreateDailyWork(req, res) {
     // Existing (date, product) pairs for this org — same duplicate rule
     // createDailyWork enforces one row at a time, checked in bulk here
     // instead so a batch of 100 doesn't mean 100 duplicate-check queries.
-    const { data: existingBatches, error: existingError } = await supabase
-      .from("daily_work")
-      .select("product_id")
-      .eq("organization_id", orgId)
-      .eq("work_date", workDate);
-    if (existingError) throw existingError;
-
-    const alreadyLoggedProductIds = new Set(
-      (existingBatches || []).map((b) => b.product_id),
-    );
+    const existingProductIds =
+      await dailyWorkService.fetchExistingBatchProductIds(orgId, workDate);
+    const alreadyLoggedProductIds = new Set(existingProductIds);
 
     const results = [];
     let createdCount = 0;
@@ -604,7 +453,7 @@ async function bulkCreateDailyWork(req, res) {
         continue;
       }
 
-      const { error: insertError } = await supabase.from("daily_work").insert({
+      const insertError = await dailyWorkService.insertSingleDailyWorkRow({
         organization_id: orgId,
         work_date: workDate,
         product_id: matchedService.id,
