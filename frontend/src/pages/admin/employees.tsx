@@ -1794,6 +1794,34 @@ export default function Employees() {
                     </div>
                 </div>
             )}
+
+            {/* Decorative footer wave — same treatment as Production Reports:
+                visible only when there's no data to show, hidden as soon as
+                the list/grid has rows to fill the space instead. */}
+            {!loading && !error && filteredEmployees.length === 0 && (
+                <svg
+                    style={styles.wave}
+                    viewBox="0 0 1440 160"
+                    preserveAspectRatio="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <path
+                        d="M0,96 C240,32 480,144 720,96 C960,48 1200,128 1440,80 L1440,160 L0,160 Z"
+                        fill="url(#emp-waveGradient)"
+                        opacity="0.35"
+                    />
+                    <path
+                        d="M0,128 C240,80 480,160 720,120 C960,80 1200,150 1440,110 L1440,160 L0,160 Z"
+                        fill="url(#emp-waveGradient)"
+                    />
+                    <defs>
+                        <linearGradient id="emp-waveGradient" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="var(--brand-blue)" />
+                            <stop offset="100%" stopColor="var(--brand-light-blue)" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            )}
         </div>
     );
 }
@@ -1849,18 +1877,26 @@ const styles: Record<string, CSSProperties> = {
     root: {
         display: "flex",
         width: "100%",
-        height: "100vh",
+        // Was 100vh, which is the FULL device viewport — but this root
+        // renders inside AppLayout's <main>, which only gets the leftover
+        // space below the header. Claiming 100vh made the root taller
+        // than the space actually visible, so the last ~header-height
+        // sliver (where the empty-state footer wave sits) needed a
+        // scroll to reach even when nothing was really overflowing.
+        // 100% fits exactly inside <main> instead.
+        height: "100%",
         flex: 1,
         minHeight: 0,
         background: "#eff4fa",
         fontFamily: fontFamily.base,
+        position: "relative",
         overflow: "hidden",
     },
     rootMobile: {
         display: "flex",
         flexDirection: "column",
         flex: 1,
-        height: "100vh",
+        height: "100%",
         minHeight: 0,
         width: "100%",
         background: "#eff4fa",
@@ -1921,8 +1957,29 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         overflow: "hidden",
         minHeight: 0,
+        position: "relative",
+        zIndex: 1,
     },
-    contentColMobile: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" },
+    contentColMobile: {
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+        position: "relative",
+        zIndex: 1,
+    },
+    // Decorative footer wave — only rendered when the list is empty (see
+    // JSX), so it doesn't compete with a populated table/grid for space.
+    wave: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: "100%",
+        height: 140,
+        zIndex: 0,
+        pointerEvents: "none",
+    },
     contentBody: {
         display: "flex",
         flexDirection: "column",

@@ -101,11 +101,11 @@ const Login = () => {
                     break;
 
                 case "VERTICAL_HEAD":
-                    window.location.href = "/workinprogress";
+                    window.location.href = "/profile";
                     break;
 
                 case "TEAM_MEMBER":
-                    window.location.href = "/products";
+                    window.location.href = "/profile";
                     break;
 
                 default:

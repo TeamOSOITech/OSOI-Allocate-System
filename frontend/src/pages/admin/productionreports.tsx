@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { useTheme } from "../../context/themecontext";
 
 // NOTE: this is a NEW page, separate from pages/admin/reportdashboard.tsx
 // (which already exists, is wired to /report and /reportdashboard, and
@@ -16,14 +17,9 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
 
-const BRAND = {
-    blue: "#204297",
-    lightBlue: "#08A1CE",
-    green: "#2EBBA8",
-    amber: "#F59E0B",
-    red: "#DC2626",
-};
-const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`; // matches Products/Clients/Landing gradient exactly
+// NOTE: blue/lightBlue/green come from the active theme color (useTheme(),
+// set inside the component below) — amber/red are accent colors that stay
+// fixed across every theme (kept out of ThemePalette on purpose).
 
 // --- Minimal inline icon set (no external icon library required) ---
 type IconProps = { size?: number; color?: string; style?: CSSProperties };
@@ -184,6 +180,17 @@ const DEFAULT_TO = todayStr();
 
 export default function ProductionReports() {
     const isMobile = useIsMobile();
+    const { colors: themeColors } = useTheme();
+    const BRAND = {
+        blue: themeColors.blue,
+        lightBlue: themeColors.lightBlue,
+        green: themeColors.green,
+        amber: "#F59E0B",
+        red: "#DC2626",
+    };
+    // Same gradient recipe used on Products/Clients/Landing/History — now
+    // sourced from the active theme instead of a hardcoded blue.
+    const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
     const [batches, setBatches] = useState<DailyWorkBatch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -267,6 +274,7 @@ export default function ProductionReports() {
                         <button
                             style={{
                                 ...styles.exportButton,
+                                background: GRADIENT,
                                 opacity: filtered.length === 0 ? 0.6 : 1,
                             }}
                             disabled={filtered.length === 0}
@@ -338,6 +346,8 @@ export default function ProductionReports() {
                     <button
                         style={{
                             ...styles.clearButton,
+                            borderColor: BRAND.lightBlue,
+                            color: BRAND.lightBlue,
                             opacity: filtersActive ? 1 : 0.5,
                             cursor: filtersActive ? "pointer" : "default",
                         }}
@@ -350,13 +360,13 @@ export default function ProductionReports() {
                 </div>
 
                 <div style={styles.tableCard}>
-                    <div style={styles.tableHeadRow}>
-                        <span style={{ width: 100 }}>Date</span>
-                        <span style={{ flex: 1 }}>Product</span>
-                        <span style={{ width: 80, textAlign: "right" }}>Total</span>
-                        <span style={{ width: 90, textAlign: "right" }}>Allocated</span>
-                        <span style={{ width: 80, textAlign: "right" }}>Pending</span>
-                        <span style={{ width: 100, textAlign: "right" }}>Status</span>
+                    <div style={{ ...styles.tableHeadRow, background: GRADIENT }}>
+                        <span>Date</span>
+                        <span>Product</span>
+                        <span style={{ textAlign: "right" }}>Total</span>
+                        <span style={{ textAlign: "right" }}>Allocated</span>
+                        <span style={{ textAlign: "right" }}>Pending</span>
+                        <span style={{ textAlign: "right" }}>Status</span>
                     </div>
                     {loading ? (
                         <div style={styles.emptyState}>
@@ -372,15 +382,21 @@ export default function ProductionReports() {
                     ) : (
                         filtered.map((b) => (
                             <div key={b.id} style={styles.tableRow}>
-                                <span style={{ width: 100, fontSize: fontSize.base }}>
+                                <span style={{ fontSize: fontSize.base }}>
                                     {formatDisplayDate(b.workDate)}
                                 </span>
-                                <span style={{ flex: 1, fontSize: fontSize.base }}>
+                                <span
+                                    style={{
+                                        fontSize: fontSize.base,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
                                     {b.productName || "-"}
                                 </span>
                                 <span
                                     style={{
-                                        width: 80,
                                         textAlign: "right",
                                         fontSize: fontSize.base,
                                     }}
@@ -389,7 +405,6 @@ export default function ProductionReports() {
                                 </span>
                                 <span
                                     style={{
-                                        width: 90,
                                         textAlign: "right",
                                         fontSize: fontSize.base,
                                         color: BRAND.green,
@@ -400,7 +415,6 @@ export default function ProductionReports() {
                                 </span>
                                 <span
                                     style={{
-                                        width: 80,
                                         textAlign: "right",
                                         fontSize: fontSize.base,
                                         color: BRAND.amber,
@@ -411,7 +425,6 @@ export default function ProductionReports() {
                                 </span>
                                 <span
                                     style={{
-                                        width: 100,
                                         textAlign: "right",
                                         fontSize: fontSize.sm,
                                         color: "#6b7280",
@@ -425,7 +438,9 @@ export default function ProductionReports() {
                 </div>
             </div>
 
-            {/* Decorative footer wave — only shown when there's no content (empty state) */}
+            {/* Decorative footer wave — visible only when there's no data
+                to show; hidden as soon as the table has rows, same rule
+                as Services/Clients/Employees. */}
             {!loading && filtered.length === 0 && (
                 <svg
                     style={styles.wave}
@@ -539,7 +554,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: GRADIENT,
+        // background is set inline from the active theme's GRADIENT
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
@@ -550,7 +565,7 @@ const styles: Record<string, CSSProperties> = {
     },
     errorBanner: {
         background: "#FEF2F2",
-        color: BRAND.red,
+        color: "#DC2626",
         border: "1px solid #FECACA",
         borderRadius: radius.sm,
         padding: "10px 14px",
@@ -629,9 +644,8 @@ const styles: Record<string, CSSProperties> = {
         gap: 7,
         padding: "9px 16px",
         borderRadius: radius.sm,
-        border: `1px solid ${BRAND.lightBlue}`,
+        border: "1px solid transparent", // borderColor set inline from the active theme
         background: "#fff",
-        color: BRAND.lightBlue,
         fontWeight: fontWeight.medium,
         fontSize: fontSize.sm,
     },
@@ -641,18 +655,28 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         overflow: "hidden",
     },
+    // Grid (not flex) on purpose: with flex + one flex:1 column, the
+    // Product cell grows to soak up every leftover pixel on wide screens,
+    // shoving Total/Allocated/Pending/Status into a huge empty gap on the
+    // right. A fixed column template keeps that gap small and consistent
+    // no matter how wide the page gets. Column widths must match between
+    // tableHeadRow and tableRow so header/data line up.
     tableHeadRow: {
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "100px minmax(140px, 1.4fr) 90px 100px 90px 100px",
+        columnGap: 12,
         padding: "12px 20px",
-        background: "#f9fafb",
+        // background set inline (theme GRADIENT) — matches header styling on other pages
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#6b7280",
+        color: "#eaf2ff",
         textTransform: "uppercase",
         letterSpacing: 0.3,
     },
     tableRow: {
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "100px minmax(140px, 1.4fr) 90px 100px 90px 100px",
+        columnGap: 12,
         padding: "12px 20px",
         borderTop: "1px solid #f1f1f1",
         alignItems: "center",
