@@ -462,9 +462,10 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         },
         pageTitle: {
             margin: 0,
-            fontSize: fontSize["4xl"],
+            fontSize: fontSize["5xl"],
             fontWeight: fontWeight.bold,
             color: "#17181C",
+            textAlign: "left",
         },
         headerSubtext: {
             margin: "4px 0 0",

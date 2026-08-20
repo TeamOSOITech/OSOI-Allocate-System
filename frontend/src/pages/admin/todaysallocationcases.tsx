@@ -406,54 +406,49 @@ export default function TodaysAllocationCases({
                                     </span>
                                 </span>
                                 <span style={styles.colAssign}>
-                                    <div style={styles.assignCol}>
-                                        <select
-                                            style={styles.assignSelect}
-                                            value={
-                                                pendingSelection[c.id] ??
-                                                (c.assignedEmployeeId || "")
-                                            }
-                                            disabled={allocatingId === c.id}
-                                            onChange={(e) =>
-                                                setPendingSelection((prev) => ({
-                                                    ...prev,
-                                                    [c.id]: e.target.value,
-                                                }))
-                                            }
-                                        >
-                                            <option value="">Unallocated</option>
-                                            {employees.map((emp) => (
-                                                <option key={emp.id} value={emp.id}>
-                                                    {emp.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            type="button"
-                                            style={{
-                                                ...styles.allocateRowBtn,
-                                                opacity: allocatingId === c.id ? 0.6 : 1,
-                                            }}
-                                            disabled={
-                                                allocatingId === c.id ||
-                                                (pendingSelection[c.id] ??
-                                                    (c.assignedEmployeeId || "")) ===
-                                                    (c.assignedEmployeeId || "")
-                                            }
-                                            onClick={() =>
-                                                handleManualAllocate(
-                                                    c.id,
-                                                    pendingSelection[c.id] ?? ""
-                                                )
-                                            }
-                                        >
-                                            <i className="ti ti-check" />
-                                            {allocatingId === c.id ? "Saving…" : "Allocate"}
-                                        </button>
-                                    </div>
+                                    <select
+                                        style={styles.assignSelect}
+                                        value={
+                                            pendingSelection[c.id] ?? (c.assignedEmployeeId || "")
+                                        }
+                                        disabled={allocatingId === c.id || bulkSaving}
+                                        onChange={(e) =>
+                                            setPendingSelection((prev) => ({
+                                                ...prev,
+                                                [c.id]: e.target.value,
+                                            }))
+                                        }
+                                    >
+                                        <option value="">Unallocated</option>
+                                        {employees.map((emp) => (
+                                            <option key={emp.id} value={emp.id}>
+                                                {emp.name}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </span>
                             </div>
                         ))
+                    )}
+                    {!loading && cases.length > 0 && (
+                        <div style={styles.bulkAllocateRow}>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.allocateAllBtn,
+                                    opacity: bulkSaving || changedCaseIds.length === 0 ? 0.6 : 1,
+                                }}
+                                disabled={bulkSaving || changedCaseIds.length === 0}
+                                onClick={handleAllocateAll}
+                            >
+                                <i className="ti ti-check" />
+                                {bulkSaving
+                                    ? "Allocating…"
+                                    : changedCaseIds.length > 0
+                                      ? `Allocate (${changedCaseIds.length})`
+                                      : "Allocate"}
+                            </button>
+                        </div>
                     )}
                     <div style={styles.paginationRow}>
                         <button
@@ -598,22 +593,26 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         background: "#fafafa",
     },
-    // NEW: dropdown + "Allocate" button stacked in the same cell — the
-    // button only appears usable (non-disabled) once the dropdown's
-    // value actually differs from what's saved, so a no-op click can't
-    // fire a request.
-    assignCol: { display: "flex", flexDirection: "column", gap: 6, alignItems: "stretch" },
-    allocateRowBtn: {
+    // Single "Allocate" button below the whole list — saves every row
+    // whose dropdown selection differs from what's saved, in one click,
+    // instead of a button per row.
+    bulkAllocateRow: {
+        display: "flex",
+        justifyContent: "flex-end",
+        padding: "14px 20px",
+        borderTop: "1px solid #f1f1f1",
+    },
+    allocateAllBtn: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: 5,
-        padding: "6px 10px",
-        borderRadius: radius.sm,
+        gap: 6,
+        padding: "9px 20px",
+        borderRadius: radius.md,
         border: "none",
         background: GRADIENT,
         color: "#fff",
-        fontSize: fontSize.xs,
+        fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
     },
