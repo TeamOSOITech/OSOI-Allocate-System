@@ -9,7 +9,13 @@ const express = require("express");
 const router = express.Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
-const { listServiceCases, createServiceCases, deleteServiceCase } = require("./servicecases.controller");
+const {
+  listServiceCases,
+  createServiceCases,
+  deleteServiceCase,
+  allocateServiceCase,
+  autoAllocateServiceCases,
+} = require("./servicecases.controller");
 
 router.use(authenticate);
 
@@ -18,6 +24,19 @@ router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   createServiceCases,
+);
+// NEW: Today's Allocation — Cases tab (manual, one case) + Employees tab
+// flow (smart/auto, many cases at once). Literal path "/auto-allocate"
+// registered before "/:id/allocate" so it can never be shadowed.
+router.post(
+  "/auto-allocate",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  autoAllocateServiceCases,
+);
+router.patch(
+  "/:id/allocate",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  allocateServiceCase,
 );
 router.delete(
   "/:id",

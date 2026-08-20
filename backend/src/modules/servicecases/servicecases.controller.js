@@ -56,6 +56,45 @@ async function getProductNameMap(productIds, organizationId) {
 }
 
 // ------------------------------------------------------------
+// NEW: Today's Allocation — "Cases" + "Employees" tabs.
+//
+// Cases created here (service_cases) can now be ALLOCATED to an
+// employee, either one at a time (manual, from the Cases tab's per-row
+// dropdown) or all at once (auto/smart, splitting every still-PENDING
+// case for a service as evenly as possible across whoever is marked
+// PRESENT for the day on the Employees tab — same `attendance` table
+// Daily Work's Smart Allocation already reads).
+//
+// Requires two new columns on service_cases (see migration note below):
+//   assigned_employee_id  uuid, nullable, references user_master
+//   allocation_status     text, default 'PENDING' ('PENDING' | 'ALLOCATED')
+//   allocated_at          timestamptz, nullable
+// ------------------------------------------------------------
+
+// Same manual-join pattern as allocations.controller.js's getUserInfoMap
+// — user_master has no PostgREST FK relationship set up for service_cases
+// to embed through, so names are fetched separately and merged in code.
+async function getEmployeeNameMap(employeeIds, organizationId) {
+  const uniqueIds = [...new Set(employeeIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("user_master")
+    .select('"Auth User Id", "First Name", "Last Name"')
+    .eq("organization_id", organizationId)
+    .in("Auth User Id", uniqueIds);
+  if (error) {
+    console.error("Failed to fetch user_master for service cases:", error);
+    return {};
+  }
+  return (data || []).reduce((acc, u) => {
+    const firstName = u["First Name"] ?? "";
+    const lastName = u["Last Name"] ?? "";
+    acc[u["Auth User Id"]] = `${firstName} ${lastName}`.trim() || null;
+    return acc;
+  }, {});
+}
+
+// ------------------------------------------------------------
 // GET /api/service-cases
 // Query params:
 //   productId  (optional) — filter to one service
@@ -91,6 +130,15 @@ async function listServiceCases(req, res) {
     if (req.query.productId) {
       query = query.eq("product_id", req.query.productId);
     }
+    // NEW: Cases tab filters — same work_date the Employees tab marks
+    // attendance for, and allocation_status so "show only unallocated"
+    // works without pulling every case ever logged.
+    if (req.query.workDate) {
+      query = query.eq("work_date", req.query.workDate);
+    }
+    if (req.query.allocationStatus) {
+      query = query.eq("allocation_status", req.query.allocationStatus);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;
@@ -98,6 +146,10 @@ async function listServiceCases(req, res) {
     const rows = data || [];
     const productMap = await getProductNameMap(
       rows.map((r) => r.product_id),
+      req.user.organizationId,
+    );
+    const employeeMap = await getEmployeeNameMap(
+      rows.map((r) => r.assigned_employee_id),
       req.user.organizationId,
     );
 
@@ -109,6 +161,10 @@ async function listServiceCases(req, res) {
       workDate: r.work_date,
       sequenceNumber: r.sequence_number,
       createdAt: r.created_at,
+      assignedEmployeeId: r.assigned_employee_id || null,
+      assignedEmployeeName: employeeMap[r.assigned_employee_id] || null,
+      allocationStatus: r.allocation_status || "PENDING",
+      allocatedAt: r.allocated_at || null,
     }));
 
     res.json({
@@ -248,8 +304,183 @@ async function deleteServiceCase(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/allocate
+// body: { employeeId }  — employeeId: null/"" un-allocates the case
+// back to PENDING; any other value must be a real user_master row in
+// this org (checked below) and assigns the case to them.
+//
+// This is the "Cases" tab's per-row manual allocate dropdown.
+// ------------------------------------------------------------
+async function allocateServiceCase(req, res) {
+  try {
+    const { id } = req.params;
+    const employeeId = req.body.employeeId || null;
+
+    if (employeeId) {
+      const { data: emp, error: empError } = await supabase
+        .from("user_master")
+        .select('"Auth User Id"')
+        .eq("Auth User Id", employeeId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (empError) throw empError;
+      if (!emp) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Employee not found" });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        assigned_employee_id: employeeId,
+        allocation_status: employeeId ? "ALLOCATED" : "PENDING",
+        allocated_at: employeeId ? new Date().toISOString() : null,
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    const employeeMap = await getEmployeeNameMap(
+      [data.assigned_employee_id],
+      req.user.organizationId,
+    );
+
+    res.json({
+      success: true,
+      message: employeeId
+        ? `${data.case_number} allocated.`
+        : `${data.case_number} un-allocated.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        assignedEmployeeId: data.assigned_employee_id || null,
+        assignedEmployeeName: employeeMap[data.assigned_employee_id] || null,
+        allocationStatus: data.allocation_status || "PENDING",
+        allocatedAt: data.allocated_at || null,
+      },
+    });
+  } catch (err) {
+    console.error("allocateServiceCase error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /api/service-cases/auto-allocate
+// body: { productId, workDate, employeeIds: [...] }
+//
+// "Smart Allocation" for the Cases tab: takes every still-PENDING case
+// for the given service+date and splits them as evenly as possible,
+// round-robin, across the given employee list — the same people marked
+// PRESENT on the Employees tab. Case #1 to employee #1, #2 to #2, ...
+// wrapping back to #1 once the employee list is exhausted, so counts
+// differ by at most 1 across employees.
+// ------------------------------------------------------------
+async function autoAllocateServiceCases(req, res) {
+  try {
+    const { productId, workDate } = req.body;
+    const employeeIds = Array.isArray(req.body.employeeIds)
+      ? [...new Set(req.body.employeeIds.filter(Boolean))]
+      : [];
+
+    if (!productId || !workDate) {
+      return res.status(400).json({
+        success: false,
+        message: "productId and workDate are required",
+      });
+    }
+    if (employeeIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "No employees selected — mark at least one employee Present on the Employees tab first.",
+      });
+    }
+
+    const { data: pendingCases, error } = await supabase
+      .from("service_cases")
+      .select("id, case_number, sequence_number")
+      .eq("organization_id", req.user.organizationId)
+      .eq("product_id", productId)
+      .eq("work_date", workDate)
+      .eq("allocation_status", "PENDING")
+      .order("sequence_number", { ascending: true });
+    if (error) throw error;
+
+    if (!pendingCases || pendingCases.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No pending cases to allocate for this service/date.",
+      });
+    }
+
+    const now = new Date().toISOString();
+    const updates = pendingCases.map((c, idx) => ({
+      id: c.id,
+      caseNumber: c.case_number,
+      employeeId: employeeIds[idx % employeeIds.length],
+    }));
+
+    // Supabase JS has no bulk "update many rows with different values"
+    // in one call, so this fires one update per case — fine at the
+    // scale a single day's case list runs at (Daily Work caps a single
+    // submission at 2000 cases).
+    await Promise.all(
+      updates.map((u) =>
+        supabase
+          .from("service_cases")
+          .update({
+            assigned_employee_id: u.employeeId,
+            allocation_status: "ALLOCATED",
+            allocated_at: now,
+          })
+          .eq("id", u.id)
+          .eq("organization_id", req.user.organizationId),
+      ),
+    );
+
+    const employeeMap = await getEmployeeNameMap(
+      employeeIds,
+      req.user.organizationId,
+    );
+    // Per-employee summary — how many cases + which case numbers each
+    // employee ended up with, so the UI can show it right after running
+    // Smart Allocation without a second fetch.
+    const perEmployee = employeeIds.map((empId) => {
+      const cases = updates.filter((u) => u.employeeId === empId);
+      return {
+        employeeId: empId,
+        employeeName: employeeMap[empId] || null,
+        caseCount: cases.length,
+        caseNumbers: cases.map((c) => c.caseNumber),
+      };
+    });
+
+    res.json({
+      success: true,
+      message: `${updates.length} case(s) allocated across ${employeeIds.length} employee(s).`,
+      data: { allocatedCount: updates.length, perEmployee },
+    });
+  } catch (err) {
+    console.error("autoAllocateServiceCases error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
   deleteServiceCase,
+  allocateServiceCase,
+  autoAllocateServiceCases,
 };
