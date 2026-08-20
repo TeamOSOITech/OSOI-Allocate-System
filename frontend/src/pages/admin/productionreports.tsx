@@ -530,10 +530,10 @@ const styles: Record<string, CSSProperties> = {
         marginBottom: 20,
     },
     title: {
+        margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
-        color: "#1a1a2e",
-        margin: 0,
+        color: "#17181C",
         textAlign: "left",
     },
     subtitle: { fontSize: fontSize.base, color: "#6b7280", marginTop: 6, textAlign: "left" },

@@ -3,6 +3,10 @@ import type { CSSProperties, FormEvent } from "react";
 import { authFetch } from "../../utils/authFetch";
 import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+// NEW: second tab on this page — "Case Register". Completely separate
+// component/file/backend module; nothing below this import touches the
+// existing Daily Work logic or JSX.
+import ServiceCases from "./servicecases";
 
 const MOBILE_BREAKPOINT = 768;
 const PAGE_SIZE = 7;
@@ -55,6 +59,12 @@ function formatDisplayDate(iso: string) {
 
 export default function DailyWork() {
     const isMobile = useIsMobile();
+
+    // NEW: tab switcher for this page — "daily" (default, 100% unchanged
+    // original behavior below) vs "cases" (new Case Register tab). Kept
+    // as the very first piece of state so it's obvious at a glance that
+    // nothing else on this page was touched to add it.
+    const [mainTab, setMainTab] = useState<"daily" | "cases">("daily");
 
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
@@ -378,586 +388,660 @@ export default function DailyWork() {
     };
 
     return (
-        <div style={isMobile ? styles.rootMobile : styles.root}>
-            {/* Top gradient accent bar */}
-            <div style={styles.topBar} />
+        <>
+            {/* NEW: tab bar — Tab 1 is the exact original Daily Work page
+                (nothing inside it was changed), Tab 2 is the new Case
+                Register. */}
+            <div style={styles.mainTabBar}>
+                <button
+                    type="button"
+                    style={{
+                        ...styles.mainTabBtn,
+                        ...(mainTab === "daily" ? styles.mainTabBtnActive : {}),
+                    }}
+                    onClick={() => setMainTab("daily")}
+                >
+                    <i className="ti ti-clipboard-plus" style={{ fontSize: fontSize.md }} />
+                    Daily Work
+                </button>
+                <button
+                    type="button"
+                    style={{
+                        ...styles.mainTabBtn,
+                        ...(mainTab === "cases" ? styles.mainTabBtnActive : {}),
+                    }}
+                    onClick={() => setMainTab("cases")}
+                >
+                    <i className="ti ti-list-numbers" style={{ fontSize: fontSize.md }} />
+                    Case Register
+                </button>
+            </div>
 
-            <div style={styles.contentBody}>
-                {/* Header row: icon + title + breadcrumb */}
-                <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                    <div>
-                        <h1 style={styles.pageTitle}>Daily Work</h1>
-                        <p style={styles.headerSubtext}>
-                            Log today's total quantity received per service — this is the pool that
-                            Smart Auto Allocation and Manual Allocation split across present
-                            employees.
-                        </p>
+            {mainTab === "cases" ? (
+                <ServiceCases />
+            ) : (
+                <div style={isMobile ? styles.rootMobile : styles.root}>
+                    {/* Top gradient accent bar */}
+                    <div style={styles.topBar} />
+
+                    <div style={styles.contentBody}>
+                        {/* Header row: icon + title + breadcrumb */}
+                        <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
+                            <div style={styles.headerLeft}>
+                                <div style={styles.headerIcon}>
+                                    <i
+                                        className="ti ti-clipboard-plus"
+                                        style={{ fontSize: fontSize["4xl"] }}
+                                    />
+                                </div>
+                                <div>
+                                    <h1 style={styles.pageTitle}>Daily Work</h1>
+                                    <p style={styles.headerSubtext}>
+                                        Log today's total quantity received per service — this is
+                                        the pool that Smart Auto Allocation and Manual Allocation
+                                        split across present employees.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {!isMobile && (
+                                <div style={styles.breadcrumb}>
+                                    <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
+                                    <span style={styles.breadcrumbSep}>/</span>
+                                    <span style={styles.breadcrumbItem}>Dashboard</span>
+                                    <span style={styles.breadcrumbSep}>/</span>
+                                    <span style={styles.breadcrumbActive}>Daily Work</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* KPI cards */}
+                        <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
+                            <KpiCard
+                                icon="ti ti-package"
+                                iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
+                                label="Services"
+                                value={products.length}
+                                footer="Total Services"
+                                dotColor="var(--brand-blue)"
+                            />
+                            <KpiCard
+                                icon="ti ti-users"
+                                iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
+                                label="Allocated"
+                                value={totalAllocated}
+                                footer="Total Allocated"
+                                dotColor="var(--brand-light-blue)"
+                            />
+                            <KpiCard
+                                icon="ti ti-check"
+                                iconBg="linear-gradient(135deg, #34d399, #059669)"
+                                label="Pending"
+                                value={totalPending}
+                                footer="Total Pending"
+                                dotColor="#059669"
+                            />
+                            <KpiCard
+                                icon="ti ti-users-group"
+                                iconBg="linear-gradient(135deg, #c084fc, #9333ea)"
+                                label="Employees"
+                                value={employeeCount ?? "-"}
+                                footer="Total Employees"
+                                dotColor="#9333ea"
+                            />
+                        </div>
+
+                        <div style={isMobile ? styles.contentRowMobile : styles.contentRow}>
+                            {/* Form panel */}
+                            <div style={styles.formPanel}>
+                                <div style={styles.formPanelHeader}>
+                                    <i className="ti ti-edit" style={{ fontSize: fontSize.xl }} />
+                                    <span style={{ flex: 1 }}>Log Production</span>
+                                    {/* Bulk upload: log many services' quantity for the same
+                                date in one Excel file instead of one dropdown submit
+                                per service — useful once there are 50-100+ services. */}
+                                    <button
+                                        type="button"
+                                        onClick={downloadBulkTemplate}
+                                        style={styles.headerGhostBtn}
+                                        title="Sample sheet for bulk upload (.xlsx)"
+                                    >
+                                        <i
+                                            className="ti ti-file-spreadsheet"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowBulkModal(true)}
+                                        style={styles.headerGhostBtn}
+                                        title="Bulk upload quantities from Excel"
+                                    >
+                                        <i
+                                            className="ti ti-upload"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                    </button>
+                                </div>
+
+                                <form onSubmit={handleSubmit} style={styles.form}>
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i
+                                                className="ti ti-calendar"
+                                                style={styles.labelIcon}
+                                            />
+                                            Date
+                                        </span>
+                                        <input
+                                            type="date"
+                                            value={workDate}
+                                            onChange={(e) => setWorkDate(e.target.value)}
+                                            style={styles.input}
+                                            required
+                                        />
+                                    </label>
+
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i className="ti ti-package" style={styles.labelIcon} />
+                                            Service
+                                        </span>
+                                        <select
+                                            value={productId}
+                                            onChange={(e) => setProductId(e.target.value)}
+                                            style={styles.input}
+                                            required
+                                            disabled={productsLoading}
+                                        >
+                                            <option value="">
+                                                {productsLoading
+                                                    ? "Loading services..."
+                                                    : "Select a service"}
+                                            </option>
+                                            {products.map((p) => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.product_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i className="ti ti-hash" style={styles.labelIcon} />
+                                            Total Quantity
+                                        </span>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            value={totalQty}
+                                            onChange={(e) => setTotalQty(e.target.value)}
+                                            style={styles.input}
+                                            placeholder="e.g. 500"
+                                            required
+                                        />
+                                    </label>
+
+                                    {formError && (
+                                        <div style={styles.formError}>
+                                            <i
+                                                className="ti ti-alert-triangle"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            {formError}
+                                        </div>
+                                    )}
+                                    {formSuccess && (
+                                        <div style={styles.formSuccess}>
+                                            <i
+                                                className="ti ti-circle-check"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            {formSuccess}
+                                        </div>
+                                    )}
+
+                                    <button
+                                        type="submit"
+                                        style={styles.submitBtn}
+                                        disabled={submitting}
+                                    >
+                                        <i
+                                            className="ti ti-device-floppy"
+                                            style={{ fontSize: fontSize.lg }}
+                                        />
+                                        {submitting ? "Saving..." : "Save Daily Work"}
+                                    </button>
+                                </form>
+                            </div>
+
+                            {/* Table panel */}
+                            <div style={styles.listPanel}>
+                                <div style={styles.listPanelHeader}>
+                                    <div style={styles.listPanelTitle}>
+                                        <i
+                                            className="ti ti-chart-bar"
+                                            style={{ fontSize: fontSize.xl }}
+                                        />
+                                        <span>Today's Production</span>
+                                    </div>
+                                    <div style={styles.listPanelHeaderRight}>
+                                        <div style={styles.searchBox}>
+                                            <i
+                                                className="ti ti-search"
+                                                style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
+                                            />
+                                            <input
+                                                type="text"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                placeholder="Search service, date, qty..."
+                                                style={styles.searchInput}
+                                            />
+                                        </div>
+                                        <div style={styles.dateBadge}>
+                                            <i
+                                                className="ti ti-calendar"
+                                                style={{ fontSize: fontSize.sm }}
+                                            />
+                                            {formatDisplayDate(todayStr())}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style={styles.tableScroll}>
+                                    <div style={styles.tableHead}>
+                                        <span style={{ ...styles.tableHeadLabel, flex: 1.1 }}>
+                                            Date
+                                        </span>
+                                        <span style={{ ...styles.tableHeadLabel, flex: 1.6 }}>
+                                            Service
+                                        </span>
+                                        <span style={styles.tableHeadLabel}>Total</span>
+                                        <span style={styles.tableHeadLabel}>Allocated</span>
+                                        <span style={styles.tableHeadLabel}>Pending</span>
+                                        <span
+                                            style={{
+                                                ...styles.tableHeadLabel,
+                                                flex: 0.8,
+                                                textAlign: "right",
+                                            }}
+                                        >
+                                            Actions
+                                        </span>
+                                    </div>
+
+                                    <div style={styles.tableBody}>
+                                        {batchesLoading ? (
+                                            <div style={styles.emptyState}>
+                                                Loading daily work...
+                                            </div>
+                                        ) : batchesError ? (
+                                            <div style={styles.emptyState}>{batchesError}</div>
+                                        ) : pagedBatches.length === 0 ? (
+                                            <div style={styles.emptyState}>
+                                                {searchQuery
+                                                    ? "No matching records found."
+                                                    : "No daily work logged yet."}
+                                            </div>
+                                        ) : (
+                                            pagedBatches.map((b, idx) => (
+                                                <div
+                                                    key={b.id}
+                                                    style={{
+                                                        ...styles.tableRow,
+                                                        background:
+                                                            idx % 2 === 0 ? "#fff" : "#fafaff",
+                                                    }}
+                                                >
+                                                    <span style={{ flex: 1.1 }}>
+                                                        {formatDisplayDate(b.workDate)}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            flex: 1.6,
+                                                            fontWeight: fontWeight.medium,
+                                                            color: "#312e81",
+                                                        }}
+                                                    >
+                                                        {b.productName || "-"}
+                                                    </span>
+                                                    <span style={{ flex: 1 }}>
+                                                        <Pill value={b.totalQty} tone="blue" />
+                                                    </span>
+                                                    <span style={{ flex: 1 }}>
+                                                        <Pill value={b.allocatedQty} tone="green" />
+                                                    </span>
+                                                    <span style={{ flex: 1 }}>
+                                                        <Pill
+                                                            value={b.pendingQty}
+                                                            tone={
+                                                                b.pendingQty > 0 ? "amber" : "teal"
+                                                            }
+                                                        />
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            flex: 0.8,
+                                                            display: "flex",
+                                                            justifyContent: "flex-end",
+                                                            gap: "6px",
+                                                        }}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openEditModal(b)}
+                                                            style={styles.rowActionBtn}
+                                                            title="Edit this entry"
+                                                        >
+                                                            <i
+                                                                className="ti ti-pencil"
+                                                                style={{ fontSize: fontSize.sm }}
+                                                            />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDeleteBatch(b)}
+                                                            disabled={deletingId === b.id}
+                                                            style={styles.rowActionBtnDanger}
+                                                            title="Delete this entry"
+                                                        >
+                                                            <i
+                                                                className="ti ti-trash"
+                                                                style={{ fontSize: fontSize.sm }}
+                                                            />
+                                                        </button>
+                                                    </span>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div style={styles.tableFooter}>
+                                    <span style={styles.tableFooterText}>
+                                        <i
+                                            className="ti ti-info-circle"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        {filteredBatches.length === 0
+                                            ? "No entries found"
+                                            : `Showing ${(page - 1) * PAGE_SIZE + 1} to ${Math.min(
+                                                  page * PAGE_SIZE,
+                                                  filteredBatches.length
+                                              )} of ${filteredBatches.length} entries`}
+                                    </span>
+
+                                    <div style={styles.pagination}>
+                                        <button
+                                            style={styles.pageBtn}
+                                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                            disabled={page <= 1}
+                                        >
+                                            <i
+                                                className="ti ti-chevron-left"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                        </button>
+                                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                            .slice(0, 4)
+                                            .map((n) => (
+                                                <button
+                                                    key={n}
+                                                    style={{
+                                                        ...styles.pageBtn,
+                                                        ...(n === page ? styles.pageBtnActive : {}),
+                                                    }}
+                                                    onClick={() => setPage(n)}
+                                                >
+                                                    {n}
+                                                </button>
+                                            ))}
+                                        <button
+                                            style={styles.pageBtn}
+                                            onClick={() =>
+                                                setPage((p) => Math.min(totalPages, p + 1))
+                                            }
+                                            disabled={page >= totalPages}
+                                        >
+                                            <i
+                                                className="ti ti-chevron-right"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    {!isMobile && (
-                        <div style={styles.breadcrumb}>
-                            <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
-                            <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbItem}>Dashboard</span>
-                            <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbActive}>Daily Work</span>
+                    {showBulkModal && (
+                        // NOTE: overlay intentionally has no onClick-to-close — an
+                        // accidental click on the backdrop while filling this out
+                        // shouldn't discard the file/results. Only the ✕ button
+                        // (closeBulkModal) closes it, per the same rule applied to
+                        // every other add/edit/delete popup in the app.
+                        <div style={styles.overlay}>
+                            <div style={styles.bulkModal}>
+                                <div style={styles.bulkModalHeader}>
+                                    <h3 style={styles.bulkModalTitle}>Bulk Add Daily Work</h3>
+                                    <p style={styles.bulkModalSubtitle}>
+                                        Upload an Excel file to log quantities for many services at
+                                        once, for {formatDisplayDate(workDate)}
+                                    </p>
+                                    <button
+                                        style={styles.closeBtn}
+                                        onClick={closeBulkModal}
+                                        type="button"
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <div style={styles.bulkInfoBox}>
+                                    <span style={styles.bulkInfoLabel}>Required columns</span>
+                                    <p style={styles.bulkInfoText}>
+                                        Service Name, Quantity. Each Service Name must match a
+                                        service that's already listed — anything that doesn't match
+                                        comes back as "not listed" instead of being created.
+                                    </p>
+                                </div>
+
+                                <div style={styles.bulkUploadRow}>
+                                    <label style={styles.fileInputWrapper}>
+                                        <input
+                                            type="file"
+                                            accept=".xlsx,.xls"
+                                            onChange={(e) =>
+                                                setBulkFile(e.target.files?.[0] || null)
+                                            }
+                                            style={styles.fileInputHidden}
+                                        />
+                                        <span style={styles.fileInputButton}>Choose File</span>
+                                        <span style={styles.fileInputName}>
+                                            {bulkFile ? bulkFile.name : "No file chosen"}
+                                        </span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={handleBulkUpload}
+                                        disabled={bulkSubmitting}
+                                        style={{
+                                            ...styles.bulkUploadBtn,
+                                            opacity: bulkSubmitting ? 0.7 : 1,
+                                            cursor: bulkSubmitting ? "not-allowed" : "pointer",
+                                        }}
+                                    >
+                                        {bulkSubmitting ? "Uploading…" : "Upload & Log Quantities"}
+                                    </button>
+                                </div>
+
+                                {bulkError && <p style={styles.formError}>{bulkError}</p>}
+
+                                {bulkResult && (
+                                    <div style={styles.resultsSection}>
+                                        <div style={styles.resultsSummary}>
+                                            <span style={styles.resultsSummaryText}>
+                                                <strong>{bulkResult.totalRows}</strong> total rows
+                                                {" · "}
+                                                <strong style={{ color: "#16a34a" }}>
+                                                    {bulkResult.createdCount}
+                                                </strong>{" "}
+                                                created
+                                                {bulkResult.failedCount > 0 && (
+                                                    <>
+                                                        {" · "}
+                                                        <strong style={{ color: "#dc2626" }}>
+                                                            {bulkResult.failedCount}
+                                                        </strong>{" "}
+                                                        failed
+                                                    </>
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div style={styles.resultsList}>
+                                            {bulkResult.results.map((r, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    style={{
+                                                        fontSize: fontSize.sm,
+                                                        color: r.success ? "#16a34a" : "#dc2626",
+                                                        padding: "4px 0",
+                                                    }}
+                                                >
+                                                    {r.identifier}:{" "}
+                                                    {r.success ? "Created" : r.message}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {editingBatch && (
+                        // Same rule as the bulk modal above — overlay has no
+                        // onClick-to-close, only the ✕ / Cancel button does.
+                        <div style={styles.overlay}>
+                            <div style={styles.editModal}>
+                                <div style={styles.bulkModalHeader}>
+                                    <h3 style={styles.bulkModalTitle}>Edit Daily Work Entry</h3>
+                                    <p style={styles.bulkModalSubtitle}>
+                                        {editingBatch.productName || "This service"} —{" "}
+                                        {formatDisplayDate(editingBatch.workDate)}
+                                    </p>
+                                    <button
+                                        style={styles.closeBtn}
+                                        onClick={closeEditModal}
+                                        type="button"
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <form onSubmit={handleUpdateBatch} style={styles.form}>
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i
+                                                className="ti ti-calendar"
+                                                style={styles.labelIcon}
+                                            />
+                                            Date
+                                        </span>
+                                        <input
+                                            type="date"
+                                            value={editWorkDate}
+                                            onChange={(e) => setEditWorkDate(e.target.value)}
+                                            style={styles.input}
+                                            required
+                                        />
+                                    </label>
+
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i className="ti ti-package" style={styles.labelIcon} />
+                                            Service
+                                        </span>
+                                        <select
+                                            value={editProductId}
+                                            onChange={(e) => setEditProductId(e.target.value)}
+                                            style={styles.input}
+                                            required
+                                        >
+                                            {products.map((p) => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.product_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+
+                                    <label style={styles.label}>
+                                        <span style={styles.labelText}>
+                                            <i className="ti ti-hash" style={styles.labelIcon} />
+                                            Total Quantity
+                                        </span>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            value={editTotalQty}
+                                            onChange={(e) => setEditTotalQty(e.target.value)}
+                                            style={styles.input}
+                                            required
+                                        />
+                                        {editingBatch.allocatedQty > 0 && (
+                                            <span
+                                                style={{ fontSize: fontSize.xs, color: "#94a3b8" }}
+                                            >
+                                                {editingBatch.allocatedQty} already allocated —
+                                                quantity can't go below that.
+                                            </span>
+                                        )}
+                                    </label>
+
+                                    {editError && (
+                                        <div style={styles.formError}>
+                                            <i
+                                                className="ti ti-alert-triangle"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            {editError}
+                                        </div>
+                                    )}
+
+                                    <div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
+                                        <button
+                                            type="button"
+                                            onClick={closeEditModal}
+                                            style={styles.editCancelBtn}
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            style={{ ...styles.submitBtn, flex: 1, marginTop: 0 }}
+                                            disabled={editSubmitting}
+                                        >
+                                            <i
+                                                className="ti ti-device-floppy"
+                                                style={{ fontSize: fontSize.lg }}
+                                            />
+                                            {editSubmitting ? "Saving..." : "Save Changes"}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
                         </div>
                     )}
                 </div>
-
-                {/* KPI cards */}
-                <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
-                    <KpiCard
-                        icon="ti ti-package"
-                        iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
-                        label="Services"
-                        value={products.length}
-                        footer="Total Services"
-                        dotColor="var(--brand-blue)"
-                    />
-                    <KpiCard
-                        icon="ti ti-users"
-                        iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
-                        label="Allocated"
-                        value={totalAllocated}
-                        footer="Total Allocated"
-                        dotColor="var(--brand-light-blue)"
-                    />
-                    <KpiCard
-                        icon="ti ti-check"
-                        iconBg="linear-gradient(135deg, #34d399, #059669)"
-                        label="Pending"
-                        value={totalPending}
-                        footer="Total Pending"
-                        dotColor="#059669"
-                    />
-                    <KpiCard
-                        icon="ti ti-users-group"
-                        iconBg="linear-gradient(135deg, #c084fc, #9333ea)"
-                        label="Employees"
-                        value={employeeCount ?? "-"}
-                        footer="Total Employees"
-                        dotColor="#9333ea"
-                    />
-                </div>
-
-                <div style={isMobile ? styles.contentRowMobile : styles.contentRow}>
-                    {/* Form panel */}
-                    <div style={styles.formPanel}>
-                        <div style={styles.formPanelHeader}>
-                            <i className="ti ti-edit" style={{ fontSize: fontSize.xl }} />
-                            <span style={{ flex: 1 }}>Log Production</span>
-                            {/* Bulk upload: log many services' quantity for the same
-                                date in one Excel file instead of one dropdown submit
-                                per service — useful once there are 50-100+ services. */}
-                            <button
-                                type="button"
-                                onClick={downloadBulkTemplate}
-                                style={styles.headerGhostBtn}
-                                title="Sample sheet for bulk upload (.xlsx)"
-                            >
-                                <i
-                                    className="ti ti-file-spreadsheet"
-                                    style={{ fontSize: fontSize.base }}
-                                />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setShowBulkModal(true)}
-                                style={styles.headerGhostBtn}
-                                title="Bulk upload quantities from Excel"
-                            >
-                                <i className="ti ti-upload" style={{ fontSize: fontSize.base }} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleSubmit} style={styles.form}>
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-calendar" style={styles.labelIcon} />
-                                    Date
-                                </span>
-                                <input
-                                    type="date"
-                                    value={workDate}
-                                    onChange={(e) => setWorkDate(e.target.value)}
-                                    style={styles.input}
-                                    required
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-package" style={styles.labelIcon} />
-                                    Service
-                                </span>
-                                <select
-                                    value={productId}
-                                    onChange={(e) => setProductId(e.target.value)}
-                                    style={styles.input}
-                                    required
-                                    disabled={productsLoading}
-                                >
-                                    <option value="">
-                                        {productsLoading
-                                            ? "Loading services..."
-                                            : "Select a service"}
-                                    </option>
-                                    {products.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.product_name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-hash" style={styles.labelIcon} />
-                                    Total Quantity
-                                </span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={totalQty}
-                                    onChange={(e) => setTotalQty(e.target.value)}
-                                    style={styles.input}
-                                    placeholder="e.g. 500"
-                                    required
-                                />
-                            </label>
-
-                            {formError && (
-                                <div style={styles.formError}>
-                                    <i
-                                        className="ti ti-alert-triangle"
-                                        style={{ fontSize: fontSize.md }}
-                                    />
-                                    {formError}
-                                </div>
-                            )}
-                            {formSuccess && (
-                                <div style={styles.formSuccess}>
-                                    <i
-                                        className="ti ti-circle-check"
-                                        style={{ fontSize: fontSize.md }}
-                                    />
-                                    {formSuccess}
-                                </div>
-                            )}
-
-                            <button type="submit" style={styles.submitBtn} disabled={submitting}>
-                                <i
-                                    className="ti ti-device-floppy"
-                                    style={{ fontSize: fontSize.lg }}
-                                />
-                                {submitting ? "Saving..." : "Save Daily Work"}
-                            </button>
-                        </form>
-                    </div>
-
-                    {/* Table panel */}
-                    <div style={styles.listPanel}>
-                        <div style={styles.listPanelHeader}>
-                            <div style={styles.listPanelTitle}>
-                                <i className="ti ti-chart-bar" style={{ fontSize: fontSize.xl }} />
-                                <span>Today's Production</span>
-                            </div>
-                            <div style={styles.listPanelHeaderRight}>
-                                <div style={styles.searchBox}>
-                                    <i
-                                        className="ti ti-search"
-                                        style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
-                                    />
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search service, date, qty..."
-                                        style={styles.searchInput}
-                                    />
-                                </div>
-                                <div style={styles.dateBadge}>
-                                    <i
-                                        className="ti ti-calendar"
-                                        style={{ fontSize: fontSize.sm }}
-                                    />
-                                    {formatDisplayDate(todayStr())}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={styles.tableScroll}>
-                            <div style={styles.tableHead}>
-                                <span style={{ ...styles.tableHeadLabel, flex: 1.1 }}>Date</span>
-                                <span style={{ ...styles.tableHeadLabel, flex: 1.6 }}>Service</span>
-                                <span style={styles.tableHeadLabel}>Total</span>
-                                <span style={styles.tableHeadLabel}>Allocated</span>
-                                <span style={styles.tableHeadLabel}>Pending</span>
-                                <span
-                                    style={{
-                                        ...styles.tableHeadLabel,
-                                        flex: 0.8,
-                                        textAlign: "right",
-                                    }}
-                                >
-                                    Actions
-                                </span>
-                            </div>
-
-                            <div style={styles.tableBody}>
-                                {batchesLoading ? (
-                                    <div style={styles.emptyState}>Loading daily work...</div>
-                                ) : batchesError ? (
-                                    <div style={styles.emptyState}>{batchesError}</div>
-                                ) : pagedBatches.length === 0 ? (
-                                    <div style={styles.emptyState}>
-                                        {searchQuery
-                                            ? "No matching records found."
-                                            : "No daily work logged yet."}
-                                    </div>
-                                ) : (
-                                    pagedBatches.map((b, idx) => (
-                                        <div
-                                            key={b.id}
-                                            style={{
-                                                ...styles.tableRow,
-                                                background: idx % 2 === 0 ? "#fff" : "#fafaff",
-                                            }}
-                                        >
-                                            <span style={{ flex: 1.1 }}>
-                                                {formatDisplayDate(b.workDate)}
-                                            </span>
-                                            <span
-                                                style={{
-                                                    flex: 1.6,
-                                                    fontWeight: fontWeight.medium,
-                                                    color: "#312e81",
-                                                }}
-                                            >
-                                                {b.productName || "-"}
-                                            </span>
-                                            <span style={{ flex: 1 }}>
-                                                <Pill value={b.totalQty} tone="blue" />
-                                            </span>
-                                            <span style={{ flex: 1 }}>
-                                                <Pill value={b.allocatedQty} tone="green" />
-                                            </span>
-                                            <span style={{ flex: 1 }}>
-                                                <Pill
-                                                    value={b.pendingQty}
-                                                    tone={b.pendingQty > 0 ? "amber" : "teal"}
-                                                />
-                                            </span>
-                                            <span
-                                                style={{
-                                                    flex: 0.8,
-                                                    display: "flex",
-                                                    justifyContent: "flex-end",
-                                                    gap: "6px",
-                                                }}
-                                            >
-                                                <button
-                                                    type="button"
-                                                    onClick={() => openEditModal(b)}
-                                                    style={styles.rowActionBtn}
-                                                    title="Edit this entry"
-                                                >
-                                                    <i
-                                                        className="ti ti-pencil"
-                                                        style={{ fontSize: fontSize.sm }}
-                                                    />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDeleteBatch(b)}
-                                                    disabled={deletingId === b.id}
-                                                    style={styles.rowActionBtnDanger}
-                                                    title="Delete this entry"
-                                                >
-                                                    <i
-                                                        className="ti ti-trash"
-                                                        style={{ fontSize: fontSize.sm }}
-                                                    />
-                                                </button>
-                                            </span>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-
-                        <div style={styles.tableFooter}>
-                            <span style={styles.tableFooterText}>
-                                <i
-                                    className="ti ti-info-circle"
-                                    style={{ fontSize: fontSize.base }}
-                                />
-                                {filteredBatches.length === 0
-                                    ? "No entries found"
-                                    : `Showing ${(page - 1) * PAGE_SIZE + 1} to ${Math.min(
-                                          page * PAGE_SIZE,
-                                          filteredBatches.length
-                                      )} of ${filteredBatches.length} entries`}
-                            </span>
-
-                            <div style={styles.pagination}>
-                                <button
-                                    style={styles.pageBtn}
-                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                    disabled={page <= 1}
-                                >
-                                    <i
-                                        className="ti ti-chevron-left"
-                                        style={{ fontSize: fontSize.md }}
-                                    />
-                                </button>
-                                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                                    .slice(0, 4)
-                                    .map((n) => (
-                                        <button
-                                            key={n}
-                                            style={{
-                                                ...styles.pageBtn,
-                                                ...(n === page ? styles.pageBtnActive : {}),
-                                            }}
-                                            onClick={() => setPage(n)}
-                                        >
-                                            {n}
-                                        </button>
-                                    ))}
-                                <button
-                                    style={styles.pageBtn}
-                                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                                    disabled={page >= totalPages}
-                                >
-                                    <i
-                                        className="ti ti-chevron-right"
-                                        style={{ fontSize: fontSize.md }}
-                                    />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {showBulkModal && (
-                // NOTE: overlay intentionally has no onClick-to-close — an
-                // accidental click on the backdrop while filling this out
-                // shouldn't discard the file/results. Only the ✕ button
-                // (closeBulkModal) closes it, per the same rule applied to
-                // every other add/edit/delete popup in the app.
-                <div style={styles.overlay}>
-                    <div style={styles.bulkModal}>
-                        <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Bulk Add Daily Work</h3>
-                            <p style={styles.bulkModalSubtitle}>
-                                Upload an Excel file to log quantities for many services at once,
-                                for {formatDisplayDate(workDate)}
-                            </p>
-                            <button
-                                style={styles.closeBtn}
-                                onClick={closeBulkModal}
-                                type="button"
-                                aria-label="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div style={styles.bulkInfoBox}>
-                            <span style={styles.bulkInfoLabel}>Required columns</span>
-                            <p style={styles.bulkInfoText}>
-                                Service Name, Quantity. Each Service Name must match a service
-                                that's already listed — anything that doesn't match comes back as
-                                "not listed" instead of being created.
-                            </p>
-                        </div>
-
-                        <div style={styles.bulkUploadRow}>
-                            <label style={styles.fileInputWrapper}>
-                                <input
-                                    type="file"
-                                    accept=".xlsx,.xls"
-                                    onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-                                    style={styles.fileInputHidden}
-                                />
-                                <span style={styles.fileInputButton}>Choose File</span>
-                                <span style={styles.fileInputName}>
-                                    {bulkFile ? bulkFile.name : "No file chosen"}
-                                </span>
-                            </label>
-                            <button
-                                type="button"
-                                onClick={handleBulkUpload}
-                                disabled={bulkSubmitting}
-                                style={{
-                                    ...styles.bulkUploadBtn,
-                                    opacity: bulkSubmitting ? 0.7 : 1,
-                                    cursor: bulkSubmitting ? "not-allowed" : "pointer",
-                                }}
-                            >
-                                {bulkSubmitting ? "Uploading…" : "Upload & Log Quantities"}
-                            </button>
-                        </div>
-
-                        {bulkError && <p style={styles.formError}>{bulkError}</p>}
-
-                        {bulkResult && (
-                            <div style={styles.resultsSection}>
-                                <div style={styles.resultsSummary}>
-                                    <span style={styles.resultsSummaryText}>
-                                        <strong>{bulkResult.totalRows}</strong> total rows
-                                        {" · "}
-                                        <strong style={{ color: "#16a34a" }}>
-                                            {bulkResult.createdCount}
-                                        </strong>{" "}
-                                        created
-                                        {bulkResult.failedCount > 0 && (
-                                            <>
-                                                {" · "}
-                                                <strong style={{ color: "#dc2626" }}>
-                                                    {bulkResult.failedCount}
-                                                </strong>{" "}
-                                                failed
-                                            </>
-                                        )}
-                                    </span>
-                                </div>
-                                <div style={styles.resultsList}>
-                                    {bulkResult.results.map((r, idx) => (
-                                        <div
-                                            key={idx}
-                                            style={{
-                                                fontSize: fontSize.sm,
-                                                color: r.success ? "#16a34a" : "#dc2626",
-                                                padding: "4px 0",
-                                            }}
-                                        >
-                                            {r.identifier}: {r.success ? "Created" : r.message}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
             )}
-
-            {editingBatch && (
-                // Same rule as the bulk modal above — overlay has no
-                // onClick-to-close, only the ✕ / Cancel button does.
-                <div style={styles.overlay}>
-                    <div style={styles.editModal}>
-                        <div style={styles.bulkModalHeader}>
-                            <h3 style={styles.bulkModalTitle}>Edit Daily Work Entry</h3>
-                            <p style={styles.bulkModalSubtitle}>
-                                {editingBatch.productName || "This service"} —{" "}
-                                {formatDisplayDate(editingBatch.workDate)}
-                            </p>
-                            <button
-                                style={styles.closeBtn}
-                                onClick={closeEditModal}
-                                type="button"
-                                aria-label="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleUpdateBatch} style={styles.form}>
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-calendar" style={styles.labelIcon} />
-                                    Date
-                                </span>
-                                <input
-                                    type="date"
-                                    value={editWorkDate}
-                                    onChange={(e) => setEditWorkDate(e.target.value)}
-                                    style={styles.input}
-                                    required
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-package" style={styles.labelIcon} />
-                                    Service
-                                </span>
-                                <select
-                                    value={editProductId}
-                                    onChange={(e) => setEditProductId(e.target.value)}
-                                    style={styles.input}
-                                    required
-                                >
-                                    {products.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.product_name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-
-                            <label style={styles.label}>
-                                <span style={styles.labelText}>
-                                    <i className="ti ti-hash" style={styles.labelIcon} />
-                                    Total Quantity
-                                </span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={editTotalQty}
-                                    onChange={(e) => setEditTotalQty(e.target.value)}
-                                    style={styles.input}
-                                    required
-                                />
-                                {editingBatch.allocatedQty > 0 && (
-                                    <span style={{ fontSize: fontSize.xs, color: "#94a3b8" }}>
-                                        {editingBatch.allocatedQty} already allocated — quantity
-                                        can't go below that.
-                                    </span>
-                                )}
-                            </label>
-
-                            {editError && (
-                                <div style={styles.formError}>
-                                    <i
-                                        className="ti ti-alert-triangle"
-                                        style={{ fontSize: fontSize.md }}
-                                    />
-                                    {editError}
-                                </div>
-                            )}
-
-                            <div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
-                                <button
-                                    type="button"
-                                    onClick={closeEditModal}
-                                    style={styles.editCancelBtn}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    style={{ ...styles.submitBtn, flex: 1, marginTop: 0 }}
-                                    disabled={editSubmitting}
-                                >
-                                    <i
-                                        className="ti ti-device-floppy"
-                                        style={{ fontSize: fontSize.lg }}
-                                    />
-                                    {editSubmitting ? "Saving..." : "Save Changes"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-        </div>
+        </>
     );
 }
 
@@ -1030,6 +1114,31 @@ function Pill({ value, tone }: { value: number; tone: keyof typeof PILL_TONES })
 }
 
 const styles: Record<string, CSSProperties> = {
+    // NEW: page-level tab bar (Daily Work / Case Register).
+    mainTabBar: {
+        display: "flex",
+        gap: 8,
+        padding: "14px 28px 0",
+        background: "#f4f5fb",
+    },
+    mainTabBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "9px 18px",
+        borderRadius: `${radius.md} ${radius.md} 0 0`,
+        border: "none",
+        background: "transparent",
+        color: "#767F92",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    mainTabBtnActive: {
+        background: "#fff",
+        color: "#204297",
+        boxShadow: "0 -2px 10px rgba(0,0,0,.04)",
+    },
     root: {
         width: "100%",
         minHeight: "100%",
@@ -1056,12 +1165,23 @@ const styles: Record<string, CSSProperties> = {
 
     headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
     headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
+    headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
+    headerIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: radius.md,
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
-        flexShrink: 0,
         textAlign: "left",
     },
     headerSubtext: {
