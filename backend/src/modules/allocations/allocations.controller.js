@@ -5,106 +5,14 @@
 // Formula (per spec): base_qty = floor(total / present)
 //                      pending  = total - (base_qty * present_count)
 //
-// Every query is scoped to req.user.organizationId — this is the
-// actual multi-tenant enforcement point. daily_work rows, employees,
-// and attendance are all checked against the caller's own org before
-// anything is read or written, so one company can never allocate
-// against (or see) another company's daily_work batch.
+// Req/res handling, permission checks, and the allocation math live
+// here. All raw Supabase/DB access lives in allocations.service.js.
+// Every operation is still scoped to req.user.organizationId — this is
+// the actual multi-tenant enforcement point, enforced inside the
+// service's queries.
 
-const supabase = require("../../config/supabaseClient");
-
-// ------------------------------------------------------------
-// Shared helper: load a daily_work row, but ONLY if it belongs to the
-// caller's organization. Returns null if missing OR cross-tenant.
-// ------------------------------------------------------------
-async function getOwnedDailyWork(dailyWorkId, organizationId) {
-  const { data, error } = await supabase
-    .from("daily_work")
-    .select("*")
-    .eq("id", dailyWorkId)
-    .eq("organization_id", organizationId)
-    .single();
-
-  if (error || !data) return null;
-  return data;
-}
-
-// ------------------------------------------------------------
-// Given a list of daily_work IDs, fetch their work_date/product_id/
-// total_qty in ONE extra query, plus product names in another —
-// same manual-join pattern used in dailywork.controller.js (no FK
-// embedding, since PostgREST needs an actual DB constraint for that).
-// ------------------------------------------------------------
-async function getDailyWorkMap(dailyWorkIds) {
-  const uniqueIds = [...new Set(dailyWorkIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from("daily_work")
-    .select("id, work_date, product_id, total_qty")
-    .in("id", uniqueIds);
-  if (error) {
-    console.error("Failed to fetch daily_work for allocations:", error);
-    return {};
-  }
-
-  const productIds = [
-    ...new Set(data.map((d) => d.product_id).filter(Boolean)),
-  ];
-  let productNames = {};
-  if (productIds.length > 0) {
-    const { data: products } = await supabase
-      .from("service_master")
-      .select("id, product_name")
-      .in("id", productIds);
-    productNames = (products || []).reduce((acc, p) => {
-      acc[p.id] = p.product_name;
-      return acc;
-    }, {});
-  }
-
-  return data.reduce((acc, d) => {
-    acc[d.id] = {
-      workDate: d.work_date,
-      productId: d.product_id,
-      productName: productNames[d.product_id] || null,
-      totalQty: d.total_qty,
-    };
-    return acc;
-  }, {});
-}
-
-// ------------------------------------------------------------
-// Given a list of user_master IDs (employee_id and/or created_by from
-// allocations rows), fetch each one's team ("Worked In Teams") and
-// display name in ONE query — used to fill in the Profile page's
-// "Team" and "Allocated By" columns, which the allocations table
-// itself doesn't store (same manual-join pattern as getDailyWorkMap,
-// since there's no DB-level FK for PostgREST to embed through).
-// ------------------------------------------------------------
-async function getUserInfoMap(userIds) {
-  const uniqueIds = [...new Set(userIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from("user_master")
-    .select('"Auth User Id", "First Name", "Last Name", "Worked In Teams"')
-    .in("Auth User Id", uniqueIds);
-  if (error) {
-    console.error("Failed to fetch user_master for allocations:", error);
-    return {};
-  }
-
-  return data.reduce((acc, u) => {
-    const firstName = u["First Name"] ?? "";
-    const lastName = u["Last Name"] ?? "";
-    acc[u["Auth User Id"]] = {
-      name: `${firstName} ${lastName}`.trim() || null,
-      team: u["Worked In Teams"] ?? null,
-    };
-    return acc;
-  }, {});
-}
+const { hasPermission } = require("../../config/permissions");
+const allocationsService = require("./allocations.service");
 
 // ------------------------------------------------------------
 // GET /api/allocations/history
@@ -114,7 +22,7 @@ async function getUserInfoMap(userIds) {
 // allocation (employee-wise, service-wise, client-wise, subclient-
 // wise, date-wise, completed/pending). Manager/admin-only (same
 // permission as the Reports "team" endpoint), unlike listAllocations
-// above which any employee can call for their own rows.
+// below which any employee can call for their own rows.
 //
 // Client/subclient are NOT columns on daily_work or allocations —
 // a service (service_master row) is linked to clients/subclients via
@@ -139,35 +47,25 @@ async function getAllocationHistory(req, res) {
     } = req.query;
 
     // ---- daily_work rows in range (date + service filters apply here) ----
-    let dwQuery = supabase
-      .from("daily_work")
-      .select("id, work_date, product_id")
-      .eq("organization_id", orgId);
-    if (dateFrom) dwQuery = dwQuery.gte("work_date", dateFrom);
-    if (dateTo) dwQuery = dwQuery.lte("work_date", dateTo);
-    if (productId) dwQuery = dwQuery.eq("product_id", productId);
+    const dwRows = await allocationsService.fetchDailyWorkInRange(orgId, {
+      dateFrom,
+      dateTo,
+      productId,
+    });
 
-    const { data: dwRows, error: dwError } = await dwQuery;
-    if (dwError) throw dwError;
-
-    const dailyWorkIds = (dwRows || []).map((d) => d.id);
+    const dailyWorkIds = dwRows.map((d) => d.id);
     if (dailyWorkIds.length === 0) {
       return res.json({ success: true, data: [], meta: { truncated: false } });
     }
 
     // ---- allocations for those batches (employee filter applies here) ----
-    let allocQuery = supabase
-      .from("allocations")
-      .select("*")
-      .eq("organization_id", orgId)
-      .in("daily_work_id", dailyWorkIds)
-      .order("created_at", { ascending: false });
-    if (employeeId) allocQuery = allocQuery.eq("employee_id", employeeId);
+    const allocations = await allocationsService.fetchAllocationsForBatches(
+      orgId,
+      dailyWorkIds,
+      employeeId,
+    );
 
-    const { data: allocations, error: allocError } = await allocQuery;
-    if (allocError) throw allocError;
-
-    let rows = allocations || [];
+    let rows = allocations;
     if (status === "completed") {
       rows = rows.filter(
         (a) => a.submitted_qty !== null && a.submitted_qty !== undefined,
@@ -189,46 +87,22 @@ async function getAllocationHistory(req, res) {
     rows = rows.slice(0, HISTORY_ROW_CAP);
 
     // ---- enrichment: product/date, employee/team, allocated-by ----
-    const dailyWorkMap = await getDailyWorkMap(
+    const dailyWorkMap = await allocationsService.getDailyWorkMap(
       rows.map((a) => a.daily_work_id),
     );
-    const userInfoMap = await getUserInfoMap(
+    const userInfoMap = await allocationsService.getUserInfoMap(
       rows.flatMap((a) => [a.employee_id, a.created_by]),
     );
 
-    // ---- client/subclient linkage per service (manual join — same
-    // pattern as getDailyWorkMap/getUserInfoMap above, avoids relying
-    // on an untested PostgREST embedded-select relationship name). ----
-    const [
-      { data: clientLinks },
-      { data: clientRows },
-      { data: subclientLinks },
-      { data: subclientRows },
-    ] = await Promise.all([
-      supabase
-        .from("client_products")
-        .select("product_id, client_id")
-        .eq("organization_id", orgId),
-      supabase.from("clients").select("id, name").eq("organization_id", orgId),
-      supabase
-        .from("subclient_products")
-        .select("product_id, subclient_id")
-        .eq("organization_id", orgId),
-      supabase
-        .from("subclients")
-        .select("id, name")
-        .eq("organization_id", orgId),
-    ]);
+    // ---- client/subclient linkage per service ----
+    const { clientLinks, clientRows, subclientLinks, subclientRows } =
+      await allocationsService.fetchClientSubclientLinkage(orgId);
 
-    const clientNameById = new Map(
-      (clientRows || []).map((c) => [c.id, c.name]),
-    );
-    const subclientNameById = new Map(
-      (subclientRows || []).map((s) => [s.id, s.name]),
-    );
+    const clientNameById = new Map(clientRows.map((c) => [c.id, c.name]));
+    const subclientNameById = new Map(subclientRows.map((s) => [s.id, s.name]));
 
     const clientsByProduct = new Map();
-    (clientLinks || []).forEach((l) => {
+    clientLinks.forEach((l) => {
       const name = clientNameById.get(l.client_id);
       if (!name) return;
       const list = clientsByProduct.get(l.product_id) || [];
@@ -237,7 +111,7 @@ async function getAllocationHistory(req, res) {
     });
 
     const subclientsByProduct = new Map();
-    (subclientLinks || []).forEach((l) => {
+    subclientLinks.forEach((l) => {
       const name = subclientNameById.get(l.subclient_id);
       if (!name) return;
       const list = subclientsByProduct.get(l.product_id) || [];
@@ -303,7 +177,6 @@ async function listAllocations(req, res) {
     const { dailyWorkId, employeeId } = req.query;
 
     if (employeeId && employeeId !== req.user.userId) {
-      const { hasPermission } = require("../../config/permissions");
       const canViewOthers =
         hasPermission(req.user.role, "tasks.allocate.team") ||
         hasPermission(req.user.role, "tasks.allocate.org");
@@ -314,28 +187,21 @@ async function listAllocations(req, res) {
       }
     }
 
-    let query = supabase
-      .from("allocations")
-      .select("*")
-      .eq("organization_id", req.user.organizationId)
-      .order("created_at", { ascending: false });
+    const data = await allocationsService.fetchAllocations(
+      req.user.organizationId,
+      { dailyWorkId, employeeId },
+    );
 
-    if (dailyWorkId) query = query.eq("daily_work_id", dailyWorkId);
-    if (employeeId) query = query.eq("employee_id", employeeId);
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const dailyWorkMap = await getDailyWorkMap(
-      (data || []).map((a) => a.daily_work_id),
+    const dailyWorkMap = await allocationsService.getDailyWorkMap(
+      data.map((a) => a.daily_work_id),
     );
     // Team comes from the allocated employee's own profile; "Allocated
     // By" comes from whoever's user_master row matches created_by —
     // both looked up together in one batched query.
-    const userInfoMap = await getUserInfoMap(
-      (data || []).flatMap((a) => [a.employee_id, a.created_by]),
+    const userInfoMap = await allocationsService.getUserInfoMap(
+      data.flatMap((a) => [a.employee_id, a.created_by]),
     );
-    const enriched = (data || []).map((a) => ({
+    const enriched = data.map((a) => ({
       ...a,
       workDate: dailyWorkMap[a.daily_work_id]?.workDate || null,
       productName: dailyWorkMap[a.daily_work_id]?.productName || null,
@@ -373,7 +239,7 @@ async function autoAllocate(req, res) {
         .json({ success: false, message: "dailyWorkId is required" });
     }
 
-    const dailyWork = await getOwnedDailyWork(
+    const dailyWork = await allocationsService.getOwnedDailyWork(
       dailyWorkId,
       req.user.organizationId,
     );
@@ -387,13 +253,9 @@ async function autoAllocate(req, res) {
     // been allocated (auto or manual) — would silently double-allocate
     // the same total_qty. Caller should clear first if they really
     // want to redo it.
-    const { data: existing, error: existingError } = await supabase
-      .from("allocations")
-      .select("id")
-      .eq("daily_work_id", dailyWorkId)
-      .limit(1);
-    if (existingError) throw existingError;
-    if (existing && existing.length > 0) {
+    const alreadyHasAllocations =
+      await allocationsService.hasAnyAllocations(dailyWorkId);
+    if (alreadyHasAllocations) {
       return res.status(409).json({
         success: false,
         message:
@@ -401,19 +263,12 @@ async function autoAllocate(req, res) {
       });
     }
 
-    // Deterministic order (employee #1, #2, #3...) — by employee_id so
-    // re-running against the same attendance list always gives the
-    // same people the +1, rather than depending on DB row order.
-    const { data: presentRows, error: attendanceError } = await supabase
-      .from("attendance")
-      .select("employee_id")
-      .eq("organization_id", req.user.organizationId)
-      .eq("attendance_date", dailyWork.work_date)
-      .eq("status", "PRESENT")
-      .order("employee_id", { ascending: true });
-    if (attendanceError) throw attendanceError;
+    const presentRows = await allocationsService.fetchPresentEmployees(
+      req.user.organizationId,
+      dailyWork.work_date,
+    );
 
-    const presentCount = presentRows?.length || 0;
+    const presentCount = presentRows.length;
     if (presentCount === 0) {
       return res.status(400).json({
         success: false,
@@ -440,25 +295,20 @@ async function autoAllocate(req, res) {
     const carriedAllocationIds = [];
 
     if (dailyWork.product_id) {
-      const { data: pastBatches, error: pastBatchError } = await supabase
-        .from("daily_work")
-        .select("id")
-        .eq("organization_id", req.user.organizationId)
-        .eq("product_id", dailyWork.product_id)
-        .lt("work_date", dailyWork.work_date);
-      if (pastBatchError) throw pastBatchError;
+      const pastBatchIds = await allocationsService.fetchPastBatchIds(
+        req.user.organizationId,
+        dailyWork.product_id,
+        dailyWork.work_date,
+      );
 
-      const pastBatchIds = (pastBatches || []).map((b) => b.id);
       if (pastBatchIds.length > 0) {
-        const { data: pastAllocations, error: pastAllocError } = await supabase
-          .from("allocations")
-          .select("id, employee_id, allocated_qty, submitted_qty")
-          .in("daily_work_id", pastBatchIds)
-          .in("employee_id", presentIds)
-          .eq("carried_forward", false);
-        if (pastAllocError) throw pastAllocError;
+        const pastAllocations =
+          await allocationsService.fetchCarryForwardAllocations(
+            pastBatchIds,
+            presentIds,
+          );
 
-        for (const row of pastAllocations || []) {
+        for (const row of pastAllocations) {
           const shortfall = row.allocated_qty - (row.submitted_qty ?? 0);
           if (shortfall > 0) {
             backlogByEmployee[row.employee_id] =
@@ -485,22 +335,14 @@ async function autoAllocate(req, res) {
       };
     });
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("allocations")
-      .insert(rows)
-      .select();
-    if (insertError) throw insertError;
+    const inserted = await allocationsService.insertAllocations(rows);
 
     // Now that the backlog has a new home, mark the old rows so a
     // later batch of this product doesn't carry the same shortfall
     // forward again.
-    if (carriedAllocationIds.length > 0) {
-      const { error: carryUpdateError } = await supabase
-        .from("allocations")
-        .update({ carried_forward: true })
-        .in("id", carriedAllocationIds);
-      if (carryUpdateError) throw carryUpdateError;
-    }
+    await allocationsService.markAllocationsCarriedForward(
+      carriedAllocationIds,
+    );
 
     const totalCarriedIn = Object.values(backlogByEmployee).reduce(
       (s, v) => s + v,
@@ -552,7 +394,7 @@ async function manualAllocate(req, res) {
       });
     }
 
-    const dailyWork = await getOwnedDailyWork(
+    const dailyWork = await allocationsService.getOwnedDailyWork(
       dailyWorkId,
       req.user.organizationId,
     );
@@ -572,16 +414,8 @@ async function manualAllocate(req, res) {
       }
     }
 
-    const { data: existingRows, error: existingError } = await supabase
-      .from("allocations")
-      .select("allocated_qty")
-      .eq("daily_work_id", dailyWorkId);
-    if (existingError) throw existingError;
-
-    const alreadyAllocated = (existingRows || []).reduce(
-      (sum, r) => sum + r.allocated_qty,
-      0,
-    );
+    const alreadyAllocated =
+      await allocationsService.fetchAllocatedSumForBatch(dailyWorkId);
     const newTotal = allocations.reduce((sum, a) => sum + a.qty, 0);
 
     if (alreadyAllocated + newTotal > dailyWork.total_qty) {
@@ -601,11 +435,7 @@ async function manualAllocate(req, res) {
       created_by: req.user.userId,
     }));
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("allocations")
-      .insert(rows)
-      .select();
-    if (insertError) throw insertError;
+    const inserted = await allocationsService.insertAllocations(rows);
 
     const pendingQty = dailyWork.total_qty - (alreadyAllocated + newTotal);
 
@@ -641,19 +471,16 @@ async function updateAllocationStatus(req, res) {
       });
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from("allocations")
-      .select("employee_id")
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .single();
-    if (fetchError || !existing) {
+    const existing = await allocationsService.fetchAllocationOwner(
+      id,
+      req.user.organizationId,
+    );
+    if (!existing) {
       return res
         .status(404)
         .json({ success: false, message: "Allocation not found" });
     }
 
-    const { hasPermission } = require("../../config/permissions");
     const isOwner = existing.employee_id === req.user.userId;
     const canManageOthers =
       hasPermission(req.user.role, "tasks.allocate.team") ||
@@ -663,13 +490,11 @@ async function updateAllocationStatus(req, res) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const { data, error } = await supabase
-      .from("allocations")
-      .update({ status })
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId) // tenant check on the WRITE too
-      .select();
-    if (error) throw error;
+    const data = await allocationsService.updateAllocationStatusRow(
+      id,
+      req.user.organizationId,
+      status,
+    );
 
     res.json({ success: true, data: data[0] });
   } catch (err) {
@@ -685,12 +510,10 @@ async function updateAllocationStatus(req, res) {
 async function clearAllocationsForBatch(req, res) {
   try {
     const { dailyWorkId } = req.params;
-    const { error } = await supabase
-      .from("allocations")
-      .delete()
-      .eq("daily_work_id", dailyWorkId)
-      .eq("organization_id", req.user.organizationId);
-    if (error) throw error;
+    await allocationsService.deleteAllocationsForBatch(
+      dailyWorkId,
+      req.user.organizationId,
+    );
 
     res.json({ success: true, message: "Allocations cleared for this batch" });
   } catch (err) {
@@ -731,15 +554,13 @@ async function transferAllocation(req, res) {
       });
     }
 
-    const { data: rows, error: fetchError } = await supabase
-      .from("allocations")
-      .select("*")
-      .in("id", [fromAllocationId, toAllocationId])
-      .eq("organization_id", req.user.organizationId);
-    if (fetchError) throw fetchError;
+    const rows = await allocationsService.fetchAllocationsByIds(
+      [fromAllocationId, toAllocationId],
+      req.user.organizationId,
+    );
 
-    const from = rows?.find((r) => r.id === fromAllocationId);
-    const to = rows?.find((r) => r.id === toAllocationId);
+    const from = rows.find((r) => r.id === fromAllocationId);
+    const to = rows.find((r) => r.id === toAllocationId);
 
     if (!from || !to) {
       return res
@@ -759,19 +580,16 @@ async function transferAllocation(req, res) {
       });
     }
 
-    const { error: decError } = await supabase
-      .from("allocations")
-      .update({ allocated_qty: from.allocated_qty - qty })
-      .eq("id", fromAllocationId)
-      .eq("organization_id", req.user.organizationId);
-    if (decError) throw decError;
-
-    const { error: incError } = await supabase
-      .from("allocations")
-      .update({ allocated_qty: to.allocated_qty + qty })
-      .eq("id", toAllocationId)
-      .eq("organization_id", req.user.organizationId);
-    if (incError) throw incError;
+    await allocationsService.updateAllocatedQty(
+      fromAllocationId,
+      req.user.organizationId,
+      from.allocated_qty - qty,
+    );
+    await allocationsService.updateAllocatedQty(
+      toAllocationId,
+      req.user.organizationId,
+      to.allocated_qty + qty,
+    );
 
     res.json({
       success: true,
@@ -829,7 +647,7 @@ async function bulkUpsertAllocations(req, res) {
       }
     }
 
-    const dailyWork = await getOwnedDailyWork(
+    const dailyWork = await allocationsService.getOwnedDailyWork(
       dailyWorkId,
       req.user.organizationId,
     );
@@ -849,12 +667,10 @@ async function bulkUpsertAllocations(req, res) {
 
     // Replace-all: clear whatever was saved for this batch before, then
     // insert the current table state fresh.
-    const { error: deleteError } = await supabase
-      .from("allocations")
-      .delete()
-      .eq("daily_work_id", dailyWorkId)
-      .eq("organization_id", req.user.organizationId);
-    if (deleteError) throw deleteError;
+    await allocationsService.deleteAllocationsForBatch(
+      dailyWorkId,
+      req.user.organizationId,
+    );
 
     const insertRows = rows.map((r) => ({
       organization_id: req.user.organizationId,
@@ -872,11 +688,7 @@ async function bulkUpsertAllocations(req, res) {
       created_by: req.user.userId,
     }));
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("allocations")
-      .insert(insertRows)
-      .select();
-    if (insertError) throw insertError;
+    const inserted = await allocationsService.insertAllocations(insertRows);
 
     res.status(201).json({
       success: true,
@@ -916,19 +728,16 @@ async function submitAllocationWork(req, res) {
       });
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from("allocations")
-      .select("employee_id, allocated_qty")
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .single();
-    if (fetchError || !existing) {
+    const existing = await allocationsService.fetchAllocationForSubmit(
+      id,
+      req.user.organizationId,
+    );
+    if (!existing) {
       return res
         .status(404)
         .json({ success: false, message: "Allocation not found" });
     }
 
-    const { hasPermission } = require("../../config/permissions");
     const isOwner = existing.employee_id === req.user.userId;
     const canManageOthers =
       hasPermission(req.user.role, "tasks.allocate.team") ||
@@ -948,18 +757,16 @@ async function submitAllocationWork(req, res) {
       });
     }
 
-    const { data, error } = await supabase
-      .from("allocations")
-      .update({
+    const data = await allocationsService.updateAllocationSubmission(
+      id,
+      req.user.organizationId,
+      {
         submitted_qty: submittedQty,
         submission_reason: differs ? reason.trim() : null,
         submitted_at: new Date().toISOString(),
         status: "COMPLETED",
-      })
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .select();
-    if (error) throw error;
+      },
+    );
 
     res.json({ success: true, data: data[0] });
   } catch (err) {
@@ -999,16 +806,13 @@ async function bulkSubmitAllocationWork(req, res) {
     }
 
     const ids = items.map((it) => it.id).filter(Boolean);
-    const { data: existingRows, error: fetchError } = await supabase
-      .from("allocations")
-      .select("id, employee_id, allocated_qty")
-      .in("id", ids)
-      .eq("organization_id", req.user.organizationId);
-    if (fetchError) throw fetchError;
+    const existingRows = await allocationsService.fetchAllocationsByIds(
+      ids,
+      req.user.organizationId,
+    );
 
-    const existingById = new Map((existingRows || []).map((r) => [r.id, r]));
+    const existingById = new Map(existingRows.map((r) => [r.id, r]));
 
-    const { hasPermission } = require("../../config/permissions");
     const canManageOthers =
       hasPermission(req.user.role, "tasks.allocate.team") ||
       hasPermission(req.user.role, "tasks.allocate.org");
@@ -1055,25 +859,24 @@ async function bulkSubmitAllocationWork(req, res) {
         continue;
       }
 
-      const { error: updateError } = await supabase
-        .from("allocations")
-        .update({
-          submitted_qty: submittedQty,
-          submission_reason: differs ? itemReason : null,
-          submitted_at: new Date().toISOString(),
-          status: "COMPLETED",
-        })
-        .eq("id", item.id)
-        .eq("organization_id", req.user.organizationId);
-
-      if (updateError) {
+      try {
+        await allocationsService.updateAllocationSubmission(
+          item.id,
+          req.user.organizationId,
+          {
+            submitted_qty: submittedQty,
+            submission_reason: differs ? itemReason : null,
+            submitted_at: new Date().toISOString(),
+            status: "COMPLETED",
+          },
+        );
+        results.push({ id: item.id, success: true });
+      } catch (updateErr) {
         results.push({
           id: item.id,
           success: false,
-          message: updateError.message,
+          message: updateErr.message,
         });
-      } else {
-        results.push({ id: item.id, success: true });
       }
     }
 
@@ -1122,7 +925,7 @@ async function selfAllocate(req, res) {
       });
     }
 
-    const dailyWork = await getOwnedDailyWork(
+    const dailyWork = await allocationsService.getOwnedDailyWork(
       dailyWorkId,
       req.user.organizationId,
     );
@@ -1134,14 +937,12 @@ async function selfAllocate(req, res) {
 
     // Everything already allocated on this batch, by anyone — the same
     // pending formula used everywhere else (total_qty - allocated).
-    const { data: allocRows, error: allocError } = await supabase
-      .from("allocations")
-      .select("id, employee_id, allocated_qty")
-      .eq("daily_work_id", dailyWorkId)
-      .eq("organization_id", req.user.organizationId);
-    if (allocError) throw allocError;
+    const allocRows = await allocationsService.fetchAllocationsForBatch(
+      dailyWorkId,
+      req.user.organizationId,
+    );
 
-    const alreadyAllocated = (allocRows || []).reduce(
+    const alreadyAllocated = allocRows.reduce(
       (sum, r) => sum + r.allocated_qty,
       0,
     );
@@ -1164,44 +965,38 @@ async function selfAllocate(req, res) {
     // If this employee already has a row on this batch (e.g. they took
     // some earlier today), add to it instead of creating a second row
     // for the same employee+batch.
-    const existingOwn = (allocRows || []).find(
+    const existingOwn = allocRows.find(
       (r) => r.employee_id === req.user.userId,
     );
 
     let allocation;
     if (existingOwn) {
-      const { data, error } = await supabase
-        .from("allocations")
-        .update({ allocated_qty: existingOwn.allocated_qty + qty })
-        .eq("id", existingOwn.id)
-        .eq("organization_id", req.user.organizationId)
-        .select()
-        .single();
-      if (error) throw error;
-      allocation = data;
+      await allocationsService.updateAllocatedQty(
+        existingOwn.id,
+        req.user.organizationId,
+        existingOwn.allocated_qty + qty,
+      );
+      allocation = {
+        ...existingOwn,
+        allocated_qty: existingOwn.allocated_qty + qty,
+      };
     } else {
-      const { data, error } = await supabase
-        .from("allocations")
-        .insert({
-          organization_id: req.user.organizationId,
-          daily_work_id: dailyWorkId,
-          employee_id: req.user.userId,
-          allocated_qty: qty,
-          // Reuses the "MANUAL" allocation_type value (same as
-          // manualAllocate/bulkUpsertAllocations) rather than inventing a
-          // new one, since we don't have a guarantee the DB's CHECK
-          // constraint (if any) permits anything beyond AUTO/MANUAL.
-          // Self-allocated rows are still distinguishable from a
-          // manager's manual entries: employee_id === created_by here,
-          // which is never true when a manager allocates to someone else.
-          allocation_type: "MANUAL",
-          status: "ASSIGNED",
-          created_by: req.user.userId,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      allocation = data;
+      allocation = await allocationsService.insertSingleAllocation({
+        organization_id: req.user.organizationId,
+        daily_work_id: dailyWorkId,
+        employee_id: req.user.userId,
+        allocated_qty: qty,
+        // Reuses the "MANUAL" allocation_type value (same as
+        // manualAllocate/bulkUpsertAllocations) rather than inventing a
+        // new one, since we don't have a guarantee the DB's CHECK
+        // constraint (if any) permits anything beyond AUTO/MANUAL.
+        // Self-allocated rows are still distinguishable from a
+        // manager's manual entries: employee_id === created_by here,
+        // which is never true when a manager allocates to someone else.
+        allocation_type: "MANUAL",
+        status: "ASSIGNED",
+        created_by: req.user.userId,
+      });
     }
 
     res.status(201).json({

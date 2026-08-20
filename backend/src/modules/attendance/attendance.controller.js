@@ -6,28 +6,11 @@
 // before it can compute base_qty = floor(total_qty / present_count). Without
 // this module, auto-allocate always fails with "No employees marked PRESENT".
 //
-// Table (assumed, same one allocations.controller.js already reads):
-//   attendance(id, organization_id, employee_id, attendance_date, status,
-//              marked_by, created_at)
-// status is one of: PRESENT | ABSENT | LEAVE
-// Unique on (employee_id, attendance_date) so marking twice for the same
-// day updates the same row instead of creating duplicates.
-//
-// Every query scoped to req.user.organizationId — same tenant pattern as
-// every other module in this codebase.
+// Req/res handling only — all Supabase/DB access lives in
+// attendance.service.js. Every query is scoped to req.user.organizationId —
+// same tenant pattern as every other module in this codebase.
 
-const supabase = require("../../config/supabaseClient");
-
-function mapRow(row) {
-  return {
-    id: row.id,
-    employeeId: row.employee_id,
-    attendanceDate: row.attendance_date,
-    status: row.status,
-    markedBy: row.marked_by,
-    createdAt: row.created_at,
-  };
-}
+const attendanceService = require("./attendance.service");
 
 // ------------------------------------------------------------
 // GET /api/attendance?date=YYYY-MM-DD
@@ -41,15 +24,12 @@ async function listAttendance(req, res) {
         .json({ success: false, message: "date query param is required" });
     }
 
-    const { data, error } = await supabase
-      .from("attendance")
-      .select("*")
-      .eq("organization_id", req.user.organizationId)
-      .eq("attendance_date", date);
+    const data = await attendanceService.fetchAttendanceForDate(
+      req.user.organizationId,
+      date,
+    );
 
-    if (error) throw error;
-
-    res.json({ success: true, data: (data || []).map(mapRow) });
+    res.json({ success: true, data: data.map(attendanceService.mapRow) });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -92,14 +72,11 @@ async function bulkMarkAttendance(req, res) {
       marked_by: req.user.userId,
     }));
 
-    const { data, error } = await supabase
-      .from("attendance")
-      .upsert(rows, { onConflict: "employee_id,attendance_date" })
-      .select();
+    const data = await attendanceService.upsertAttendanceRows(rows);
 
-    if (error) throw error;
-
-    res.status(201).json({ success: true, data: (data || []).map(mapRow) });
+    res
+      .status(201)
+      .json({ success: true, data: data.map(attendanceService.mapRow) });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }

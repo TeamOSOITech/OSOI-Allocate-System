@@ -165,6 +165,7 @@ async function listServiceCases(req, res) {
       assignedEmployeeName: employeeMap[r.assigned_employee_id] || null,
       allocationStatus: r.allocation_status || "PENDING",
       allocatedAt: r.allocated_at || null,
+      profile: r.profile || "",
     }));
 
     res.json({
@@ -477,10 +478,147 @@ async function autoAllocateServiceCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// NEW: Profile — free-text value attached to a case, keyed by case
+// number (same way employee allocation works, just a plain text field
+// instead of a dropdown). Two ways to set it, both from the Case
+// Register page:
+//   1. Single — PATCH /:id/profile, one case at a time.
+//   2. Bulk upload — POST /bulk-profile, a CSV of (case number,
+//      profile) pairs parsed on the frontend and sent as JSON here,
+//      matched by case_number within the org and updated together.
+//
+// Requires a new column on service_cases (see migration note below):
+//   profile  text, nullable
+// ------------------------------------------------------------
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/profile
+// body: { profile: string }
+// ------------------------------------------------------------
+async function updateServiceCaseProfile(req, res) {
+  try {
+    const { id } = req.params;
+    const profile = (req.body.profile ?? "").toString().trim();
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({ profile })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} profile updated.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        profile: data.profile || "",
+      },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseProfile error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /api/service-cases/bulk-profile
+// body: { rows: [{ caseNumber, profile }, ...] }
+//
+// Bulk-upload counterpart of the above — matches each row to an
+// existing case by case_number (within this org) and sets its
+// profile value. Case numbers that don't match any row are reported
+// back as "notFound" rather than failing the whole request, so one
+// typo in a 200-row CSV doesn't block the other 199.
+// ------------------------------------------------------------
+async function bulkUpdateServiceCaseProfiles(req, res) {
+  try {
+    const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+    const cleaned = rows
+      .map((r) => ({
+        caseNumber: (r.caseNumber || "").toString().trim(),
+        profile: (r.profile ?? "").toString().trim(),
+      }))
+      .filter((r) => r.caseNumber);
+
+    if (cleaned.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid rows to upload — each row needs a case number.",
+      });
+    }
+    if (cleaned.length > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Bulk upload cannot exceed 5000 rows at a time.",
+      });
+    }
+
+    const caseNumbers = cleaned.map((r) => r.caseNumber);
+    const { data: existing, error: fetchError } = await supabase
+      .from("service_cases")
+      .select("id, case_number")
+      .eq("organization_id", req.user.organizationId)
+      .in("case_number", caseNumbers);
+    if (fetchError) throw fetchError;
+
+    const idByCaseNumber = (existing || []).reduce((acc, row) => {
+      acc[row.case_number] = row.id;
+      return acc;
+    }, {});
+
+    const notFound = [];
+    const toUpdate = [];
+    cleaned.forEach((r) => {
+      const id = idByCaseNumber[r.caseNumber];
+      if (!id) {
+        notFound.push(r.caseNumber);
+      } else {
+        toUpdate.push({ id, caseNumber: r.caseNumber, profile: r.profile });
+      }
+    });
+
+    await Promise.all(
+      toUpdate.map((u) =>
+        supabase
+          .from("service_cases")
+          .update({ profile: u.profile })
+          .eq("id", u.id)
+          .eq("organization_id", req.user.organizationId),
+      ),
+    );
+
+    res.json({
+      success: true,
+      message: `${toUpdate.length} case(s) updated.${
+        notFound.length ? ` ${notFound.length} case number(s) not found.` : ""
+      }`,
+      data: {
+        updatedCount: toUpdate.length,
+        notFound,
+      },
+    });
+  } catch (err) {
+    console.error("bulkUpdateServiceCaseProfiles error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  updateServiceCaseProfile,
+  bulkUpdateServiceCaseProfiles,
 };

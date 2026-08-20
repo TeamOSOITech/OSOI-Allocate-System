@@ -2,7 +2,10 @@
 const router = require("express").Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
-const { listAttendance, bulkMarkAttendance } = require("./attendance.controller");
+const {
+  listAttendance,
+  bulkMarkAttendance,
+} = require("./attendance.controller");
 
 router.use(authenticate);
 

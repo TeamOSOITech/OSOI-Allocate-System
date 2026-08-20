@@ -11,61 +11,11 @@
 //   - quality_score (a 0–100 numeric rating for the batch, independent
 //     of the raw counts — e.g. a supervisor's overall quality rating)
 //
-// Every query is scoped to req.user.organizationId, same multi-tenant
-// pattern as allocations.controller.js / dailywork.controller.js.
+// Req/res handling only — all Supabase/DB access lives in
+// qc.service.js. Every query is scoped to req.user.organizationId, same
+// multi-tenant pattern as allocations.controller.js / dailywork.controller.js.
 
-const supabase = require("../../config/supabaseClient");
-
-// ------------------------------------------------------------
-// Shared helper: given a list of employee/product ids, fetch their
-// display names in one query each — same manual-join pattern used
-// elsewhere (no FK embedding, since PostgREST needs an actual DB
-// constraint for that, and these tables don't have one defined).
-// ------------------------------------------------------------
-async function getEmployeeNameMap(employeeIds) {
-  const uniqueIds = [...new Set(employeeIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from("user_master")
-    .select('"Auth User Id", "First Name", "Last Name", "Employee ID"')
-    .in('"Auth User Id"', uniqueIds);
-  if (error) {
-    console.error("Failed to fetch employee names for QC:", error);
-    return {};
-  }
-
-  return (data || []).reduce((acc, row) => {
-    const name = [row["First Name"], row["Last Name"]]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-    acc[row["Auth User Id"]] = {
-      name: name || null,
-      employeeCode: row["Employee ID"] || null,
-    };
-    return acc;
-  }, {});
-}
-
-async function getProductNameMap(productIds) {
-  const uniqueIds = [...new Set(productIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return {};
-
-  const { data, error } = await supabase
-    .from("service_master")
-    .select("id, product_name")
-    .in("id", uniqueIds);
-  if (error) {
-    console.error("Failed to fetch product names for QC:", error);
-    return {};
-  }
-
-  return (data || []).reduce((acc, p) => {
-    acc[p.id] = p.product_name;
-    return acc;
-  }, {});
-}
+const qcService = require("./qc.service");
 
 // ------------------------------------------------------------
 // GET /api/qc — recent QC checks for the caller's organization, newest
@@ -75,27 +25,14 @@ async function getProductNameMap(productIds) {
 // ------------------------------------------------------------
 async function listQcChecks(req, res) {
   try {
-    let query = supabase
-      .from("qc_checks")
-      .select("*")
-      .eq("organization_id", req.user.organizationId)
-      .order("created_at", { ascending: false })
-      .limit(200);
+    const rows = await qcService.fetchQcChecks(req.user.organizationId, {
+      employeeId: req.query.employeeId,
+      productId: req.query.productId,
+    });
 
-    if (req.query.employeeId) {
-      query = query.eq("employee_id", req.query.employeeId);
-    }
-    if (req.query.productId) {
-      query = query.eq("product_id", req.query.productId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const rows = data || [];
     const [employeeMap, productMap] = await Promise.all([
-      getEmployeeNameMap(rows.map((r) => r.employee_id)),
-      getProductNameMap(rows.map((r) => r.product_id)),
+      qcService.getEmployeeNameMap(rows.map((r) => r.employee_id)),
+      qcService.getProductNameMap(rows.map((r) => r.product_id)),
     ]);
 
     const enriched = rows.map((r) => ({
@@ -164,21 +101,15 @@ async function createQcCheck(req, res) {
       });
     }
 
-    const { data, error } = await supabase
-      .from("qc_checks")
-      .insert({
-        organization_id: req.user.organizationId,
-        employee_id: employeeId,
-        product_id: productId,
-        pass_qty: passQty,
-        fail_qty: failQty,
-        quality_score: qualityScore,
-        created_by: req.user.userId,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+    const data = await qcService.insertQcCheck({
+      organization_id: req.user.organizationId,
+      employee_id: employeeId,
+      product_id: productId,
+      pass_qty: passQty,
+      fail_qty: failQty,
+      quality_score: qualityScore,
+      created_by: req.user.userId,
+    });
 
     res.status(201).json({
       success: true,
