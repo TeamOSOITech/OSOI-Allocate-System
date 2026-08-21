@@ -1608,10 +1608,10 @@ function getStyles(
         /* Stats */
         statsGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(3, 1fr)",
             gap: 16,
         },
-        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr", gap: 12 },
         statCard: {
             background: "#fff",
             borderRadius: radius.lg,

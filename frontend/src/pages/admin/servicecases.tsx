@@ -110,6 +110,14 @@ export default function ServiceCases() {
     const [totalCases, setTotalCases] = useState(0);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteError, setDeleteError] = useState("");
+    // NEW: multi-select bulk delete — same pattern as Employees/Clients.
+    // Selection is a Set<string> of case ids, scoped to whatever's on
+    // the current page (this list is paginated server-side).
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isSelectMode, setIsSelectMode] = useState(false);
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [bulkDeleteError, setBulkDeleteError] = useState("");
     // NEW: Case Register — inline Client edit. Tracks which row's
     // dropdown is mid-save so it can be disabled/greyed while saving.
     const [savingClientId, setSavingClientId] = useState<string | null>(null);
@@ -360,6 +368,104 @@ export default function ServiceCases() {
         }
     };
 
+    // ---- Multi-select delete handlers ----
+    // Reuses the exact same DELETE /api/service-cases/:id endpoint as
+    // the single-row delete above — no new backend route needed, just
+    // fired once per selected id.
+    const toggleSelected = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    // "Select all" toggles every row currently on this page.
+    const toggleSelectAllVisible = (visibleIds: string[]) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+            if (allSelected) {
+                const next = new Set(prev);
+                visibleIds.forEach((id) => next.delete(id));
+                return next;
+            }
+            return new Set([...prev, ...visibleIds]);
+        });
+    };
+
+    const clearSelection = () => setSelectedIds(new Set());
+
+    // Toggles select-mode on/off. Always clears any existing selection
+    // so turning it off (or back on) starts from a clean slate.
+    const toggleSelectMode = () => {
+        setIsSelectMode((prev) => !prev);
+        setSelectedIds(new Set());
+    };
+
+    const openBulkDeleteConfirm = () => {
+        setBulkDeleteError("");
+        setBulkDeleteOpen(true);
+    };
+
+    const closeBulkDeleteConfirm = () => {
+        if (bulkDeleting) return;
+        setBulkDeleteOpen(false);
+        setBulkDeleteError("");
+    };
+
+    const handleBulkDeleteConfirm = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        setBulkDeleteError("");
+
+        const ids = Array.from(selectedIds);
+        const failures: string[] = [];
+
+        // Sequential, not Promise.all — a burst of simultaneous deletes
+        // is more likely to trip rate limits/row-lock contention than a
+        // few hundred ms of extra time is worth here. Each failure is
+        // collected instead of aborting the whole batch, so one bad row
+        // doesn't block the rest from being deleted.
+        for (const id of ids) {
+            const c = cases.find((row) => row.id === id);
+            try {
+                const res = await authFetch(`${API_BASE}/api/service-cases/${id}`, {
+                    method: "DELETE",
+                });
+                const json = await res.json().catch(() => null);
+                if (!res.ok || !json?.success) {
+                    failures.push(`${c?.caseNumber || id}: ${json?.message || "Failed to delete"}`);
+                }
+            } catch (err: any) {
+                failures.push(`${c?.caseNumber || id}: ${err?.message || "Something went wrong"}`);
+            }
+        }
+
+        setSelectedIds(new Set());
+        setBulkDeleting(false);
+        setPage(1);
+        fetchCases();
+
+        if (failures.length > 0) {
+            setBulkDeleteError(
+                `${ids.length - failures.length} of ${ids.length} deleted. ` +
+                    `${failures.length} failed:\n${failures.join("\n")}`
+            );
+        } else {
+            setBulkDeleteOpen(false);
+            setIsSelectMode(false);
+        }
+    };
+
+    // Ids eligible for bulk selection — every row on the current page
+    // (this list is paginated server-side, so "select all" only ever
+    // means "all on this page", same as Employees/Clients scope
+    // selection to what's currently visible).
+    const selectableVisibleIds = cases.map((c) => c.id);
+    const allVisibleSelected =
+        selectableVisibleIds.length > 0 && selectableVisibleIds.every((id) => selectedIds.has(id));
+
     const styles = getStyles(isMobile);
 
     return (
@@ -369,12 +475,6 @@ export default function ServiceCases() {
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-list-numbers"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
                         <div>
                             <h1 style={styles.pageTitle}>Case Register</h1>
                             <p style={styles.headerSubtext}>
@@ -537,20 +637,100 @@ export default function ServiceCases() {
                                     <span style={styles.countBadge}>{totalCases}</span>
                                 )}
                             </p>
-                            <select
-                                style={styles.filterSelect}
-                                value={filterProductId}
-                                onChange={(e) => setFilterProductId(e.target.value)}
-                            >
-                                {products.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.product_name}
-                                    </option>
-                                ))}
-                            </select>
+                            {/* Filter + "Select" grouped together on the right, instead
+                                of being spread apart by space-between across 3 siblings. */}
+                            <div style={styles.toolbarRightGroup}>
+                                <select
+                                    style={styles.filterSelect}
+                                    value={filterProductId}
+                                    onChange={(e) => setFilterProductId(e.target.value)}
+                                >
+                                    {products.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.product_name}
+                                        </option>
+                                    ))}
+                                </select>
+                                {/* NEW: "Select" toggle — checkboxes for bulk delete only
+                                    show once this is switched on. Tapping it again exits
+                                    select mode and clears whatever was checked. */}
+                                {selectableVisibleIds.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={toggleSelectMode}
+                                        style={{
+                                            ...styles.selectModeBtn,
+                                            ...(isSelectMode ? styles.selectModeBtnActive : {}),
+                                        }}
+                                    >
+                                        <i
+                                            className={isSelectMode ? "ti ti-x" : "ti ti-checkbox"}
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                        {isSelectMode ? "Cancel" : "Select"}
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
+                        {/* NEW: bulk-select action bar — appears as soon as at
+                            least one row is checked. */}
+                        {!casesLoading && !casesError && isSelectMode && selectedIds.size > 0 && (
+                            <div style={styles.bulkBar}>
+                                <span style={styles.bulkBarText}>
+                                    {selectedIds.size} case{selectedIds.size > 1 ? "s" : ""}{" "}
+                                    selected
+                                </span>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {!allVisibleSelected && selectableVisibleIds.length > 1 && (
+                                        <button
+                                            type="button"
+                                            style={styles.bulkBarClearBtn}
+                                            onClick={() =>
+                                                toggleSelectAllVisible(selectableVisibleIds)
+                                            }
+                                        >
+                                            Select all {selectableVisibleIds.length}
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        style={styles.bulkBarClearBtn}
+                                        onClick={clearSelection}
+                                    >
+                                        Clear
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={styles.bulkBarDeleteBtn}
+                                        onClick={openBulkDeleteConfirm}
+                                    >
+                                        <i
+                                            className="ti ti-trash"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Delete Selected
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <div style={styles.tableHeadRow}>
+                            {isSelectMode && (
+                                <span style={styles.colCheckbox}>
+                                    {selectableVisibleIds.length > 0 && (
+                                        <input
+                                            type="checkbox"
+                                            style={styles.cardCheckboxInline}
+                                            checked={allVisibleSelected}
+                                            onChange={() =>
+                                                toggleSelectAllVisible(selectableVisibleIds)
+                                            }
+                                            aria-label="Select all cases on this page"
+                                        />
+                                    )}
+                                </span>
+                            )}
                             <span style={styles.colCaseNo}>Case No.</span>
                             <span style={styles.colClient}>Client</span>
                             <span style={styles.colService}>Service</span>
@@ -569,6 +749,17 @@ export default function ServiceCases() {
                         ) : (
                             cases.map((c) => (
                                 <div key={c.id} style={styles.tableRow}>
+                                    {isSelectMode && (
+                                        <span style={styles.colCheckbox}>
+                                            <input
+                                                type="checkbox"
+                                                style={styles.cardCheckboxInline}
+                                                checked={selectedIds.has(c.id)}
+                                                onChange={() => toggleSelected(c.id)}
+                                                aria-label={`Select ${c.caseNumber}`}
+                                            />
+                                        </span>
+                                    )}
                                     <span
                                         style={{
                                             ...styles.colCaseNo,
@@ -663,6 +854,67 @@ export default function ServiceCases() {
                     </div>
                 </div>
             </div>
+
+            {/* ---- bulk delete confirm modal ---- */}
+            {bulkDeleteOpen && (
+                <div style={styles.modalOverlay}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalIcon}>
+                            <i className="ti ti-trash" />
+                        </div>
+                        <h3
+                            style={{
+                                margin: "0 0 6px",
+                                fontSize: fontSize.xl,
+                                fontWeight: fontWeight.bold,
+                                color: "#16233a",
+                            }}
+                        >
+                            Delete {selectedIds.size} case{selectedIds.size > 1 ? "s" : ""}?
+                        </h3>
+                        <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
+                            Are you sure you want to remove {selectedIds.size} selected case
+                            {selectedIds.size > 1 ? "s" : ""}? Once deleted, they can't be
+                            recovered.
+                        </p>
+                        {bulkDeleteError && (
+                            <p
+                                style={{
+                                    margin: "10px 0 0",
+                                    fontSize: fontSize.sm,
+                                    color: "#b91c1c",
+                                    whiteSpace: "pre-line",
+                                    textAlign: "left",
+                                }}
+                            >
+                                {bulkDeleteError}
+                            </p>
+                        )}
+                        <div style={styles.modalButtons}>
+                            <button
+                                type="button"
+                                style={styles.cancelButton}
+                                onClick={closeBulkDeleteConfirm}
+                                disabled={bulkDeleting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.deleteButton,
+                                    opacity: bulkDeleting ? 0.7 : 1,
+                                    cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                }}
+                                onClick={handleBulkDeleteConfirm}
+                                disabled={bulkDeleting}
+                            >
+                                {bulkDeleting ? "Deleting..." : `Delete ${selectedIds.size}`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -846,7 +1098,92 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
             padding: "18px 20px 8px",
+        },
+        // NEW: groups the Service filter + "Select" button together on
+        // the right of the toolbar, right next to each other, instead of
+        // being spread apart by tableToolbar's space-between.
+        toolbarRightGroup: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+        },
+        // NEW: multi-select bulk-delete bar + checkbox.
+        bulkBar: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 8,
+            background: "#FEF2F2",
+            border: "1px solid #FECACA",
+            borderRadius: 10,
+            padding: "10px 16px",
+            margin: "10px 20px 0",
+        },
+        bulkBarText: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            color: "#991B1B",
+        },
+        bulkBarClearBtn: {
+            background: "#fff",
+            color: "#6b7280",
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: "7px 14px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            cursor: "pointer",
+        },
+        bulkBarDeleteBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "#DC2626",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "7px 16px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
+        // NEW: "Select" toggle button — switches bulk-select mode on/off
+        // so the per-row checkboxes aren't shown all the time by default.
+        selectModeBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "#fafbfc",
+            border: "1px solid #dbe6f0",
+            borderRadius: radius.md,
+            padding: "8px 14px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#3b4a63",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+        },
+        selectModeBtnActive: {
+            background: "#e7ecf8",
+            color: "var(--brand-blue)",
+            border: "1px solid var(--brand-blue)",
+        },
+        colCheckbox: {
+            width: 28,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+        },
+        cardCheckboxInline: {
+            width: 15,
+            height: 15,
+            cursor: "pointer",
         },
         countBadge: {
             fontSize: fontSize.xs,
@@ -969,6 +1306,59 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         pageIndicator: {
             fontSize: fontSize.sm,
             color: "#374151",
+            fontWeight: fontWeight.medium,
+        },
+        // NEW: bulk-delete confirm modal.
+        modalOverlay: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 5000,
+        },
+        modal: {
+            width: 380,
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 30,
+            textAlign: "center",
+            boxShadow: "0 20px 60px rgba(0,0,0,.2)",
+        },
+        modalIcon: {
+            width: 70,
+            height: 70,
+            margin: "0 auto 15px",
+            borderRadius: radius.circle,
+            background: "#FEE2E2",
+            color: "#DC2626",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            fontSize: fontSize["7xl"],
+        },
+        modalButtons: {
+            display: "flex",
+            justifyContent: "center",
+            gap: 12,
+            marginTop: 25,
+        },
+        cancelButton: {
+            padding: "10px 22px",
+            border: "none",
+            borderRadius: radius.sm,
+            cursor: "pointer",
+            background: "#E5E7EB",
+            fontWeight: fontWeight.medium,
+        },
+        deleteButton: {
+            padding: "10px 22px",
+            border: "none",
+            borderRadius: radius.sm,
+            cursor: "pointer",
+            background: "#DC2626",
+            color: "#fff",
             fontWeight: fontWeight.medium,
         },
     };
