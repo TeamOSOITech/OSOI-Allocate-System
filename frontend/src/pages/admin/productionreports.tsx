@@ -137,6 +137,18 @@ type DailyWorkBatch = {
     status: string;
 };
 
+// NEW: History (case-number) view — one row per individual case, from
+// the Case Register / service_cases table, instead of one row per
+// batch. Same shape the Case Register page already uses.
+type ServiceCaseRow = {
+    id: string;
+    caseNumber: string;
+    productName: string | null;
+    clientName: string | null;
+    workDate: string;
+    allocationStatus: string;
+};
+
 function todayStr() {
     const d = new Date();
     const y = d.getFullYear();
@@ -175,6 +187,21 @@ function toCsv(rows: DailyWorkBatch[]) {
     return [header.join(","), ...lines].join("\n");
 }
 
+// NEW: CSV export for the History (case-number) view.
+function toHistoryCsv(rows: ServiceCaseRow[]) {
+    const header = ["Case No.", "Client", "Service", "Date", "Status"];
+    const lines = rows.map((r) =>
+        [
+            r.caseNumber,
+            (r.clientName || "").replace(/,/g, " "),
+            (r.productName || "").replace(/,/g, " "),
+            r.workDate,
+            r.allocationStatus,
+        ].join(",")
+    );
+    return [header.join(","), ...lines].join("\n");
+}
+
 const DEFAULT_FROM = daysAgoStr(30);
 const DEFAULT_TO = todayStr();
 
@@ -197,6 +224,17 @@ export default function ProductionReports() {
     const [fromDate, setFromDate] = useState(DEFAULT_FROM);
     const [toDate, setToDate] = useState(DEFAULT_TO);
 
+    // NEW: Count (existing, unchanged) vs History (case-number) view.
+    const [reportMode, setReportMode] = useState<"count" | "history">("count");
+    const [caseNumberFilter, setCaseNumberFilter] = useState("");
+    const [historyRows, setHistoryRows] = useState<ServiceCaseRow[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
+    const [historyError, setHistoryError] = useState<string | null>(null);
+    const [historyPage, setHistoryPage] = useState(1);
+    const [historyTotalPages, setHistoryTotalPages] = useState(1);
+    const [historyTotal, setHistoryTotal] = useState(0);
+    const HISTORY_PAGE_SIZE = 20;
+
     useEffect(() => {
         (async () => {
             setLoading(true);
@@ -215,6 +253,43 @@ export default function ProductionReports() {
             }
         })();
     }, []);
+
+    // NEW: History view fetch — same date range as Count mode, plus the
+    // Case Number filter. Server-side paginated (service_cases can span
+    // thousands of rows for a busy org).
+    useEffect(() => {
+        if (reportMode !== "history") return;
+        (async () => {
+            setHistoryLoading(true);
+            setHistoryError(null);
+            try {
+                const params = new URLSearchParams();
+                params.set("page", String(historyPage));
+                params.set("pageSize", String(HISTORY_PAGE_SIZE));
+                if (fromDate) params.set("workDateFrom", fromDate);
+                if (toDate) params.set("workDateTo", toDate);
+                if (caseNumberFilter.trim()) params.set("caseNumber", caseNumberFilter.trim());
+
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json.message || "Failed to load case history");
+                setHistoryRows(json.data || []);
+                setHistoryTotalPages(json.pagination?.totalPages || 1);
+                setHistoryTotal(json.pagination?.total || 0);
+            } catch (err: any) {
+                setHistoryError(err.message || "Failed to load case history");
+            } finally {
+                setHistoryLoading(false);
+            }
+        })();
+    }, [reportMode, historyPage, fromDate, toDate, caseNumberFilter]);
+
+    // Changing any filter should jump History back to page 1 — same
+    // reasoning as the Case Register page's own filter-reset effect.
+    useEffect(() => {
+        setHistoryPage(1);
+    }, [fromDate, toDate, caseNumberFilter, reportMode]);
 
     const filtered = useMemo(() => {
         return batches
@@ -235,13 +310,28 @@ export default function ProductionReports() {
         [filtered]
     );
 
-    const filtersActive = fromDate !== DEFAULT_FROM || toDate !== DEFAULT_TO;
+    const filtersActive =
+        fromDate !== DEFAULT_FROM || toDate !== DEFAULT_TO || caseNumberFilter.trim() !== "";
     const handleClearFilters = () => {
         setFromDate(DEFAULT_FROM);
         setToDate(DEFAULT_TO);
+        setCaseNumberFilter("");
     };
 
     const handleExportCsv = () => {
+        if (reportMode === "history") {
+            const csv = toHistoryCsv(historyRows);
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `production-report-history_${fromDate}_to_${toDate}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            return;
+        }
         const csv = toCsv(filtered);
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
@@ -261,7 +351,9 @@ export default function ProductionReports() {
                     <div>
                         <h1 style={styles.title}>Production Reports</h1>
                         <p style={styles.subtitle}>
-                            Daily Work batches by date range, with CSV export.
+                            {reportMode === "count"
+                                ? "Daily Work batches by date range, with CSV export."
+                                : "Every logged case, by date range and case number, with CSV export."}
                         </p>
                     </div>
                     <div style={styles.headerActions}>
@@ -275,9 +367,17 @@ export default function ProductionReports() {
                             style={{
                                 ...styles.exportButton,
                                 background: GRADIENT,
-                                opacity: filtered.length === 0 ? 0.6 : 1,
+                                opacity:
+                                    (reportMode === "count"
+                                        ? filtered.length
+                                        : historyRows.length) === 0
+                                        ? 0.6
+                                        : 1,
                             }}
-                            disabled={filtered.length === 0}
+                            disabled={
+                                (reportMode === "count" ? filtered.length : historyRows.length) ===
+                                0
+                            }
                             onClick={handleExportCsv}
                         >
                             <Download size={14} />
@@ -286,34 +386,69 @@ export default function ProductionReports() {
                     </div>
                 </div>
 
-                {error && <div style={styles.errorBanner}>{error}</div>}
-
-                <div style={isMobile ? styles.summaryRowMobile : styles.summaryRow}>
-                    <SummaryStat
-                        icon={Layers}
-                        label="Batches"
-                        value={filtered.length}
-                        color={BRAND.lightBlue}
-                    />
-                    <SummaryStat
-                        icon={Box}
-                        label="Total Qty"
-                        value={totals.total}
-                        color={BRAND.lightBlue}
-                    />
-                    <SummaryStat
-                        icon={CheckCircle}
-                        label="Allocated"
-                        value={totals.allocated}
-                        color={BRAND.green}
-                    />
-                    <SummaryStat
-                        icon={Clock}
-                        label="Pending"
-                        value={totals.pending}
-                        color={BRAND.amber}
-                    />
+                {/* NEW: Count (existing, unchanged) vs History (case-number)
+                    view toggle — same pill-button pattern used on the Case
+                    Register page's Auto-generate/Upload toggle. */}
+                <div style={styles.modeToggleRow}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.modeToggleBtn,
+                            ...(reportMode === "count"
+                                ? { ...styles.modeToggleBtnActive, background: GRADIENT }
+                                : {}),
+                        }}
+                        onClick={() => setReportMode("count")}
+                    >
+                        Count
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.modeToggleBtn,
+                            ...(reportMode === "history"
+                                ? { ...styles.modeToggleBtnActive, background: GRADIENT }
+                                : {}),
+                        }}
+                        onClick={() => setReportMode("history")}
+                    >
+                        History
+                    </button>
                 </div>
+
+                {error && <div style={styles.errorBanner}>{error}</div>}
+                {reportMode === "history" && historyError && (
+                    <div style={styles.errorBanner}>{historyError}</div>
+                )}
+
+                {reportMode === "count" && (
+                    <div style={isMobile ? styles.summaryRowMobile : styles.summaryRow}>
+                        <SummaryStat
+                            icon={Layers}
+                            label="Batches"
+                            value={filtered.length}
+                            color={BRAND.lightBlue}
+                        />
+                        <SummaryStat
+                            icon={Box}
+                            label="Total Qty"
+                            value={totals.total}
+                            color={BRAND.lightBlue}
+                        />
+                        <SummaryStat
+                            icon={CheckCircle}
+                            label="Allocated"
+                            value={totals.allocated}
+                            color={BRAND.green}
+                        />
+                        <SummaryStat
+                            icon={Clock}
+                            label="Pending"
+                            value={totals.pending}
+                            color={BRAND.amber}
+                        />
+                    </div>
+                )}
 
                 <div style={styles.filterBar}>
                     <div>
@@ -343,6 +478,23 @@ export default function ProductionReports() {
                             />
                         </div>
                     </div>
+                    {/* NEW: History-only filter — everything else in this
+                        bar (From, To, Clear Filters) stays exactly as it
+                        was, shared by both views. */}
+                    {reportMode === "history" && (
+                        <div>
+                            <label style={styles.label}>Case Number</label>
+                            <div style={styles.dateInputWrap}>
+                                <input
+                                    style={styles.dateInput}
+                                    type="text"
+                                    placeholder="e.g. CASEB011"
+                                    value={caseNumberFilter}
+                                    onChange={(e) => setCaseNumberFilter(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    )}
                     <button
                         style={{
                             ...styles.clearButton,
@@ -360,80 +512,207 @@ export default function ProductionReports() {
                 </div>
 
                 <div style={styles.tableCard}>
-                    <div style={{ ...styles.tableHeadRow, background: GRADIENT }}>
-                        <span>Date</span>
-                        <span>Product</span>
-                        <span style={{ textAlign: "right" }}>Total</span>
-                        <span style={{ textAlign: "right" }}>Allocated</span>
-                        <span style={{ textAlign: "right" }}>Pending</span>
-                        <span style={{ textAlign: "right" }}>Status</span>
-                    </div>
-                    {loading ? (
-                        <div style={styles.emptyState}>
-                            <div style={styles.emptyText}>Loading...</div>
-                        </div>
-                    ) : filtered.length === 0 ? (
-                        <div style={styles.emptyState}>
-                            <div style={styles.emptyIconWrap}>
-                                <FileChart size={36} color={BRAND.lightBlue} />
+                    {reportMode === "count" ? (
+                        <>
+                            <div style={{ ...styles.tableHeadRow, background: GRADIENT }}>
+                                <span>Date</span>
+                                <span>Product</span>
+                                <span style={{ textAlign: "right" }}>Total</span>
+                                <span style={{ textAlign: "right" }}>Allocated</span>
+                                <span style={{ textAlign: "right" }}>Pending</span>
+                                <span style={{ textAlign: "right" }}>Status</span>
                             </div>
-                            <div style={styles.emptyText}>No batches found in this date range.</div>
-                        </div>
+                            {loading ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyText}>Loading...</div>
+                                </div>
+                            ) : filtered.length === 0 ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyIconWrap}>
+                                        <FileChart size={36} color={BRAND.lightBlue} />
+                                    </div>
+                                    <div style={styles.emptyText}>
+                                        No batches found in this date range.
+                                    </div>
+                                </div>
+                            ) : (
+                                filtered.map((b) => (
+                                    <div key={b.id} style={styles.tableRow}>
+                                        <span style={{ fontSize: fontSize.base }}>
+                                            {formatDisplayDate(b.workDate)}
+                                        </span>
+                                        <span
+                                            style={{
+                                                fontSize: fontSize.base,
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            {b.productName || "-"}
+                                        </span>
+                                        <span
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: fontSize.base,
+                                            }}
+                                        >
+                                            {b.totalQty}
+                                        </span>
+                                        <span
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: fontSize.base,
+                                                color: BRAND.green,
+                                                fontWeight: fontWeight.medium,
+                                            }}
+                                        >
+                                            {b.allocatedQty}
+                                        </span>
+                                        <span
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: fontSize.base,
+                                                color: BRAND.amber,
+                                                fontWeight: fontWeight.medium,
+                                            }}
+                                        >
+                                            {b.pendingQty}
+                                        </span>
+                                        <span
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: fontSize.sm,
+                                                color: "#6b7280",
+                                            }}
+                                        >
+                                            {b.status}
+                                        </span>
+                                    </div>
+                                ))
+                            )}
+                        </>
                     ) : (
-                        filtered.map((b) => (
-                            <div key={b.id} style={styles.tableRow}>
-                                <span style={{ fontSize: fontSize.base }}>
-                                    {formatDisplayDate(b.workDate)}
-                                </span>
-                                <span
-                                    style={{
-                                        fontSize: fontSize.base,
-                                        overflow: "hidden",
-                                        textOverflow: "ellipsis",
-                                        whiteSpace: "nowrap",
-                                    }}
-                                >
-                                    {b.productName || "-"}
-                                </span>
-                                <span
-                                    style={{
-                                        textAlign: "right",
-                                        fontSize: fontSize.base,
-                                    }}
-                                >
-                                    {b.totalQty}
-                                </span>
-                                <span
-                                    style={{
-                                        textAlign: "right",
-                                        fontSize: fontSize.base,
-                                        color: BRAND.green,
-                                        fontWeight: fontWeight.medium,
-                                    }}
-                                >
-                                    {b.allocatedQty}
-                                </span>
-                                <span
-                                    style={{
-                                        textAlign: "right",
-                                        fontSize: fontSize.base,
-                                        color: BRAND.amber,
-                                        fontWeight: fontWeight.medium,
-                                    }}
-                                >
-                                    {b.pendingQty}
-                                </span>
-                                <span
-                                    style={{
-                                        textAlign: "right",
-                                        fontSize: fontSize.sm,
-                                        color: "#6b7280",
-                                    }}
-                                >
-                                    {b.status}
-                                </span>
+                        <>
+                            <div style={{ ...styles.historyTableHeadRow, background: GRADIENT }}>
+                                <span>Case No.</span>
+                                <span>Client</span>
+                                <span>Service</span>
+                                <span>Date</span>
+                                <span style={{ textAlign: "right" }}>Status</span>
                             </div>
-                        ))
+                            {historyLoading ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyText}>Loading...</div>
+                                </div>
+                            ) : historyRows.length === 0 ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyIconWrap}>
+                                        <FileChart size={36} color={BRAND.lightBlue} />
+                                    </div>
+                                    <div style={styles.emptyText}>
+                                        No cases found for this filter.
+                                    </div>
+                                </div>
+                            ) : (
+                                historyRows.map((c) => (
+                                    <div key={c.id} style={styles.historyTableRow}>
+                                        <span
+                                            style={{
+                                                fontSize: fontSize.base,
+                                                fontWeight: fontWeight.medium,
+                                            }}
+                                        >
+                                            {c.caseNumber}
+                                        </span>
+                                        <span
+                                            style={{
+                                                fontSize: fontSize.base,
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            {c.clientName || "-"}
+                                        </span>
+                                        <span
+                                            style={{
+                                                fontSize: fontSize.base,
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            {c.productName || "-"}
+                                        </span>
+                                        <span style={{ fontSize: fontSize.base }}>
+                                            {formatDisplayDate(c.workDate)}
+                                        </span>
+                                        <span
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: fontSize.sm,
+                                                color:
+                                                    c.allocationStatus === "ALLOCATED"
+                                                        ? BRAND.green
+                                                        : BRAND.amber,
+                                                fontWeight: fontWeight.medium,
+                                            }}
+                                        >
+                                            {c.allocationStatus === "ALLOCATED"
+                                                ? "Allocated"
+                                                : "Pending"}
+                                        </span>
+                                    </div>
+                                ))
+                            )}
+                            {!historyLoading && historyRows.length > 0 && (
+                                <div style={styles.historyPaginationRow}>
+                                    <span style={styles.tableFooterText}>
+                                        {historyTotal} case(s) total
+                                    </span>
+                                    <div style={styles.pagination}>
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.pageBtn,
+                                                opacity: historyPage <= 1 ? 0.5 : 1,
+                                                cursor:
+                                                    historyPage <= 1 ? "not-allowed" : "pointer",
+                                            }}
+                                            disabled={historyPage <= 1}
+                                            onClick={() =>
+                                                setHistoryPage((p) => Math.max(1, p - 1))
+                                            }
+                                        >
+                                            <i className="ti ti-chevron-left" />
+                                        </button>
+                                        <span style={styles.pageIndicator}>
+                                            Page {historyPage} of {historyTotalPages}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.pageBtn,
+                                                opacity: historyPage >= historyTotalPages ? 0.5 : 1,
+                                                cursor:
+                                                    historyPage >= historyTotalPages
+                                                        ? "not-allowed"
+                                                        : "pointer",
+                                            }}
+                                            disabled={historyPage >= historyTotalPages}
+                                            onClick={() =>
+                                                setHistoryPage((p) =>
+                                                    Math.min(historyTotalPages, p + 1)
+                                                )
+                                            }
+                                        >
+                                            <i className="ti ti-chevron-right" />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             </div>
@@ -441,7 +720,7 @@ export default function ProductionReports() {
             {/* Decorative footer wave — visible only when there's no data
                 to show; hidden as soon as the table has rows, same rule
                 as Services/Clients/Employees. */}
-            {!loading && filtered.length === 0 && (
+            {!loading && reportMode === "count" && filtered.length === 0 && (
                 <svg
                     style={styles.wave}
                     viewBox="0 0 1440 160"
@@ -680,6 +959,76 @@ const styles: Record<string, CSSProperties> = {
         padding: "12px 20px",
         borderTop: "1px solid #f1f1f1",
         alignItems: "center",
+    },
+    // NEW: History (case-number) view — separate 5-column grid, same
+    // header/row visual language as the Count table above.
+    historyTableHeadRow: {
+        display: "grid",
+        gridTemplateColumns: "120px 160px minmax(140px, 1.4fr) 100px 100px",
+        columnGap: 12,
+        padding: "12px 20px",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#eaf2ff",
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+    },
+    historyTableRow: {
+        display: "grid",
+        gridTemplateColumns: "120px 160px minmax(140px, 1.4fr) 100px 100px",
+        columnGap: 12,
+        padding: "12px 20px",
+        borderTop: "1px solid #f1f1f1",
+        alignItems: "center",
+    },
+    historyPaginationRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "12px 20px",
+        borderTop: "1px solid #f1f1f1",
+        flexWrap: "wrap",
+        gap: 10,
+    },
+    tableFooterText: { fontSize: fontSize.xs, color: "#94a3b8" },
+    pagination: { display: "flex", gap: 6, alignItems: "center" },
+    pageBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 32,
+        height: 32,
+        borderRadius: radius.sm,
+        border: "1px solid #ececf5",
+        background: "#fff",
+        color: "#374151",
+    },
+    pageIndicator: { fontSize: fontSize.sm, color: "#374151", fontWeight: fontWeight.medium },
+    // NEW: Count / History mode toggle — same pill-button pattern as the
+    // Case Register page's Auto-generate/Upload toggle.
+    modeToggleRow: {
+        display: "flex",
+        gap: 8,
+        marginBottom: 4,
+        flexWrap: "wrap",
+    },
+    modeToggleBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#fff",
+        color: "#3b4a63",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "9px 18px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    modeToggleBtnActive: {
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(0,0,0,0.15)",
     },
     emptyState: {
         display: "flex",

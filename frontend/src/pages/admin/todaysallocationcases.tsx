@@ -38,6 +38,7 @@ type ServiceCase = {
     caseNumber: string;
     productId: string;
     productName: string | null;
+    clientName: string | null;
     workDate: string;
     assignedEmployeeId: string | null;
     assignedEmployeeName: string | null;
@@ -288,14 +289,22 @@ export default function TodaysAllocationCases({
             <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div style={styles.headerRow}>
-                    <div>
-                        <h1 style={styles.pageTitle}>Cases</h1>
-                        <p style={styles.headerSubtext}>
-                            Every logged case for the selected service/date — allocate each one
-                            manually below, or run Smart Allocation to split all pending cases
-                            equally across every employee (except anyone marked Absent or Leave on
-                            the Employees tab).
-                        </p>
+                    <div style={styles.headerLeft}>
+                        <div style={styles.headerIcon}>
+                            <i
+                                className="ti ti-list-numbers"
+                                style={{ fontSize: fontSize["4xl"] }}
+                            />
+                        </div>
+                        <div>
+                            <h1 style={styles.pageTitle}>Cases</h1>
+                            <p style={styles.headerSubtext}>
+                                Every logged case for the selected service/date — allocate each one
+                                manually below, or run Smart Allocation to split all pending cases
+                                equally across every employee (except anyone marked Absent or Leave
+                                on the Employees tab).
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -369,6 +378,7 @@ export default function TodaysAllocationCases({
                 <div style={styles.tableCard}>
                     <div style={styles.tableHeadRow}>
                         <span style={styles.colCase}>Case #</span>
+                        <span style={styles.colClient}>Client</span>
                         <span style={styles.colService}>Service</span>
                         <span style={styles.colDate}>Date</span>
                         <span style={styles.colStatus}>Status</span>
@@ -382,6 +392,7 @@ export default function TodaysAllocationCases({
                         cases.map((c) => (
                             <div key={c.id} style={styles.tableRow}>
                                 <span style={styles.colCase}>{c.caseNumber}</span>
+                                <span style={styles.colClient}>{c.clientName || "—"}</span>
                                 <span style={styles.colService}>{c.productName || "—"}</span>
                                 <span style={styles.colDate}>{c.workDate}</span>
                                 <span style={styles.colStatus}>
@@ -483,27 +494,26 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
     },
     contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
-    headerRow: {
+    headerRow: { display: "flex", alignItems: "center" },
+    headerLeft: { display: "flex", alignItems: "center", gap: 14 },
+    headerIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: radius.md,
+        background: "rgba(var(--brand-blue-rgb),0.08)",
+        color: BRAND.blue,
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: 16,
-        flexWrap: "wrap",
+        justifyContent: "center",
+        flexShrink: 0,
     },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["4xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
-        textAlign: "left",
     },
-    headerSubtext: {
-        margin: "4px 0 0",
-        fontSize: fontSize.base,
-        color: "#767F92",
-        maxWidth: 640,
-        textAlign: "left",
-    },
+    headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92", maxWidth: 640 },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
     label: {
         display: "block",
@@ -573,6 +583,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
     },
     colCase: { width: 120, flexShrink: 0, fontWeight: fontWeight.medium },
+    colClient: { width: 160, flexShrink: 0, paddingRight: 12 },
     colService: { flex: 1, minWidth: 0 },
     colDate: { width: 100, flexShrink: 0 },
     colStatus: { width: 110, flexShrink: 0 },

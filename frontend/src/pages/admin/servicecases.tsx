@@ -53,11 +53,14 @@ function formatDisplayDate(iso: string) {
 }
 
 type Product = { id: string; product_name: string };
+type Client = { id: string; name: string };
 type ServiceCase = {
     id: string;
     caseNumber: string;
     productId: string;
     productName: string | null;
+    clientId: string | null;
+    clientName: string | null;
     workDate: string;
     sequenceNumber: number;
     createdAt: string;
@@ -67,10 +70,16 @@ export default function ServiceCases() {
     const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
+    // NEW: Case Register — Client column. Fetched once, same list the
+    // Clients page uses, just for the inline dropdown here.
+    const [clients, setClients] = useState<Client[]>([]);
 
     // ---- left side: same shape as Daily Work's form (service + qty) ----
     const [workDate, setWorkDate] = useState(todayStr());
     const [productId, setProductId] = useState("");
+    // NEW: pick the Client at creation time too — still editable later
+    // from the table, this just saves that extra edit for the common case.
+    const [formClientId, setFormClientId] = useState("");
     const [quantity, setQuantity] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [formError, setFormError] = useState("");
@@ -101,6 +110,10 @@ export default function ServiceCases() {
     const [totalCases, setTotalCases] = useState(0);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteError, setDeleteError] = useState("");
+    // NEW: Case Register — inline Client edit. Tracks which row's
+    // dropdown is mid-save so it can be disabled/greyed while saving.
+    const [savingClientId, setSavingClientId] = useState<string | null>(null);
+    const [clientEditError, setClientEditError] = useState("");
 
     const fetchProducts = useCallback(async () => {
         setProductsLoading(true);
@@ -113,6 +126,21 @@ export default function ServiceCases() {
             console.error("Failed to fetch products:", err);
         } finally {
             setProductsLoading(false);
+        }
+    }, []);
+
+    // NEW: Case Register — Client column dropdown options.
+    const fetchClients = useCallback(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/clients`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            // NOTE: /api/clients returns a raw array (no {success, data}
+            // envelope), same as clients.tsx already assumes.
+            const json = await res.json();
+            const list = Array.isArray(json) ? json : json?.data || [];
+            setClients(list.map((c: any) => ({ id: c.id, name: c.name })));
+        } catch (err) {
+            console.error("Failed to fetch clients:", err);
         }
     }, []);
 
@@ -141,7 +169,8 @@ export default function ServiceCases() {
 
     useEffect(() => {
         fetchProducts();
-    }, [fetchProducts]);
+        fetchClients();
+    }, [fetchProducts, fetchClients]);
 
     // FIX: previously defaulted to "All services", which mixed every
     // service's cases together in one list (Billings and TC rows
@@ -186,7 +215,12 @@ export default function ServiceCases() {
             const res = await authFetch(`${API_BASE}/api/service-cases`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId, quantity: qty, workDate }),
+                body: JSON.stringify({
+                    productId,
+                    quantity: qty,
+                    workDate,
+                    clientId: formClientId || null,
+                }),
             });
             const json = await res.json();
             if (!res.ok || !json.success)
@@ -227,6 +261,7 @@ export default function ServiceCases() {
             formData.append("file", uploadFile);
             formData.append("productId", productId);
             formData.append("workDate", workDate);
+            if (formClientId) formData.append("clientId", formClientId);
 
             const res = await authFetch(`${API_BASE}/api/service-cases/upload`, {
                 method: "POST",
@@ -285,6 +320,46 @@ export default function ServiceCases() {
         }
     };
 
+    // NEW: Case Register — inline Client edit. Only this column is
+    // editable in the table; case number/service/date stay read-only.
+    const handleClientChange = async (c: ServiceCase, newClientId: string) => {
+        setClientEditError("");
+        setSavingClientId(c.id);
+        // Optimistic update so the dropdown reflects the choice immediately.
+        const prevClientId = c.clientId;
+        const prevClientName = c.clientName;
+        const newClientName = clients.find((cl) => cl.id === newClientId)?.name || null;
+        setCases((prev) =>
+            prev.map((row) =>
+                row.id === c.id
+                    ? { ...row, clientId: newClientId || null, clientName: newClientName }
+                    : row
+            )
+        );
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/client`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientId: newClientId || null }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Failed to update client");
+        } catch (err: any) {
+            // Roll back on failure.
+            setCases((prev) =>
+                prev.map((row) =>
+                    row.id === c.id
+                        ? { ...row, clientId: prevClientId, clientName: prevClientName }
+                        : row
+                )
+            );
+            setClientEditError(err?.message || "Failed to update client");
+        } finally {
+            setSavingClientId(null);
+        }
+    };
+
     const styles = getStyles(isMobile);
 
     return (
@@ -293,12 +368,20 @@ export default function ServiceCases() {
             <div style={styles.contentBody}>
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
-                    <div>
-                        <h1 style={styles.pageTitle}>Case Register</h1>
-                        <p style={styles.headerSubtext}>
-                            Log a service and quantity — one case number is generated per unit,
-                            continuing the running count for that service.
-                        </p>
+                    <div style={styles.headerLeft}>
+                        <div style={styles.headerIcon}>
+                            <i
+                                className="ti ti-list-numbers"
+                                style={{ fontSize: fontSize["4xl"] }}
+                            />
+                        </div>
+                        <div>
+                            <h1 style={styles.pageTitle}>Case Register</h1>
+                            <p style={styles.headerSubtext}>
+                                Log a service and quantity — one case number is generated per unit,
+                                continuing the running count for that service.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -368,6 +451,23 @@ export default function ServiceCases() {
                                 </option>
                             ))}
                         </select>
+
+                        <label style={styles.label}>Client</label>
+                        <select
+                            style={styles.input}
+                            value={formClientId}
+                            onChange={(e) => setFormClientId(e.target.value)}
+                        >
+                            <option value="">-- Select client --</option>
+                            {clients.map((cl) => (
+                                <option key={cl.id} value={cl.id}>
+                                    {cl.name}
+                                </option>
+                            ))}
+                        </select>
+                        <p style={styles.helperNote}>
+                            Optional — can be set or changed later from the table too.
+                        </p>
 
                         {formMode === "auto" ? (
                             <>
@@ -452,6 +552,7 @@ export default function ServiceCases() {
 
                         <div style={styles.tableHeadRow}>
                             <span style={styles.colCaseNo}>Case No.</span>
+                            <span style={styles.colClient}>Client</span>
                             <span style={styles.colService}>Service</span>
                             <span style={styles.colDate}>Date</span>
                             <span style={styles.colAction}></span>
@@ -475,6 +576,26 @@ export default function ServiceCases() {
                                         }}
                                     >
                                         {c.caseNumber}
+                                    </span>
+                                    {/* Only editable cell in the table — case number,
+                                        service, and date all stay read-only. */}
+                                    <span style={styles.colClient}>
+                                        <select
+                                            style={{
+                                                ...styles.clientSelect,
+                                                opacity: savingClientId === c.id ? 0.6 : 1,
+                                            }}
+                                            value={c.clientId || ""}
+                                            disabled={savingClientId === c.id}
+                                            onChange={(e) => handleClientChange(c, e.target.value)}
+                                        >
+                                            <option value="">-- Select client --</option>
+                                            {clients.map((cl) => (
+                                                <option key={cl.id} value={cl.id}>
+                                                    {cl.name}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </span>
                                     <span style={styles.colService}>{c.productName || "-"}</span>
                                     <span style={{ ...styles.colDate, color: "#767F92" }}>
@@ -504,6 +625,7 @@ export default function ServiceCases() {
                             ))
                         )}
 
+                        {clientEditError && <p style={styles.deleteErrorText}>{clientEditError}</p>}
                         {deleteError && <p style={styles.deleteErrorText}>{deleteError}</p>}
 
                         {/* ---- pagination ---- */}
@@ -576,9 +698,22 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         headerRow: {
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: 16,
-            flexWrap: "wrap",
+        },
+        headerLeft: {
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+        },
+        headerIcon: {
+            width: 48,
+            height: 48,
+            borderRadius: radius.md,
+            background: withBrandAlpha("blue", 0.08),
+            color: BRAND.blue,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
         },
         pageTitle: {
             margin: 0,
@@ -592,7 +727,6 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             fontSize: fontSize.base,
             color: "#767F92",
             maxWidth: 560,
-            textAlign: "left",
         },
         layout: {
             display: "grid",
@@ -756,6 +890,24 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         colCaseNo: {
             width: 140,
             flexShrink: 0,
+        },
+        // NEW: Client column — sits right after Case No. so the two stay
+        // visually aligned, per the requested layout.
+        colClient: {
+            width: 190,
+            flexShrink: 0,
+            paddingRight: 12,
+            boxSizing: "border-box",
+        },
+        clientSelect: {
+            width: "100%",
+            padding: "6px 8px",
+            borderRadius: radius.sm,
+            border: "1px solid #ececf5",
+            fontSize: fontSize.sm,
+            background: "#fafafa",
+            boxSizing: "border-box",
+            color: "#17181C",
         },
         colService: {
             flex: 1,
