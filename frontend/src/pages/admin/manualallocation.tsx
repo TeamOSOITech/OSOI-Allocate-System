@@ -459,6 +459,41 @@ export default function ManualAllocation() {
     const [caseProductId, setCaseProductId] = useState("");
     const [caseWorkDate, setCaseWorkDate] = useState(todayStr());
 
+    // BUGFIX: the Allocate tab used to never look at the `attendance`
+    // table at all — it had its own local Present/Half/Leave toggle that
+    // always defaulted everyone to Present, completely disconnected from
+    // whatever was marked on the Employees tab. So marking someone Leave
+    // there had zero effect here, and Smart Allocation / manual save would
+    // still hand them qty. Fetching attendance for the selected `date` and
+    // treating ABSENT/LEAVE as unavailable (same as the Cases tab already
+    // does for its own Smart Allocation) closes that gap.
+    const [attendanceByEmployee, setAttendanceByEmployee] = useState<
+        Record<string, "PRESENT" | "ABSENT" | "LEAVE">
+    >({});
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/attendance?date=${date}`);
+                const json = await res.json();
+                if (!res.ok || !json.success) {
+                    setAttendanceByEmployee({});
+                    return;
+                }
+                const next: Record<string, "PRESENT" | "ABSENT" | "LEAVE"> = {};
+                (json.data || []).forEach((a: any) => {
+                    if (a.status === "ABSENT" || a.status === "LEAVE") {
+                        next[a.employeeId] = a.status;
+                    }
+                });
+                setAttendanceByEmployee(next);
+            } catch {
+                // Attendance failing to load shouldn't block the page —
+                // just fall back to the old "everyone present" behavior.
+                setAttendanceByEmployee({});
+            }
+        })();
+    }, [date]);
+
     const showToast = (msg: string) => {
         setToast(msg);
         setTimeout(() => setToast(""), 3000);
@@ -598,7 +633,17 @@ export default function ManualAllocation() {
 
             const next: Record<string, RowState> = {};
             filteredEmployees.forEach((emp) => {
-                next[emp.id] = previous[emp.id] || draft?.[emp.id] || { status: "PRESENT", qty: 0 };
+                const attStatus = attendanceByEmployee[emp.id];
+                if (attStatus === "ABSENT" || attStatus === "LEAVE") {
+                    // Attendance (marked on the Employees tab) always wins —
+                    // someone marked Absent/Leave for the day should never
+                    // load in here as allocatable, regardless of any old
+                    // saved row or draft that predates the leave.
+                    next[emp.id] = { status: "LEAVE", qty: 0 };
+                } else {
+                    next[emp.id] = previous[emp.id] ||
+                        draft?.[emp.id] || { status: "PRESENT", qty: 0 };
+                }
             });
             setRows(next);
             // Baseline = exactly what the server has right now (empty if
@@ -610,6 +655,30 @@ export default function ManualAllocation() {
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedBatch?.id]);
+
+    // Keep `rows` in sync if attendance changes (or finishes loading)
+    // AFTER the batch's rows were already seeded above — e.g. the
+    // attendance fetch above resolves late, or the manager marks someone
+    // Leave on the Employees tab and flips back to this tab without
+    // reselecting the service. Attendance always overrides to Leave/qty 0
+    // here too, so a stale "Present" row can't linger.
+    useEffect(() => {
+        setRows((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            Object.entries(attendanceByEmployee).forEach(([empId, status]) => {
+                if (
+                    (status === "ABSENT" || status === "LEAVE") &&
+                    next[empId] &&
+                    (next[empId].status !== "LEAVE" || next[empId].qty !== 0)
+                ) {
+                    next[empId] = { status: "LEAVE", qty: 0 };
+                    changed = true;
+                }
+            });
+            return changed ? next : prev;
+        });
+    }, [attendanceByEmployee]);
 
     // Persist the draft on every change (Smart Allocation, manual qty
     // edits, status clicks) so it survives navigating away and back.
@@ -672,7 +741,11 @@ export default function ManualAllocation() {
             // Present) — not just whoever already had one in `prev` —
             // so someone nobody has touched yet still gets their share.
             filteredEmployees.forEach((emp) => {
-                const status = next[emp.id]?.status || "PRESENT";
+                const attStatus = attendanceByEmployee[emp.id];
+                const status =
+                    attStatus === "ABSENT" || attStatus === "LEAVE"
+                        ? "LEAVE"
+                        : next[emp.id]?.status || "PRESENT";
                 const qty =
                     status === "PRESENT"
                         ? baseQty

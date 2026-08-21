@@ -281,6 +281,37 @@ export default function TodaysAllocationCases({
         }
     };
 
+    // NEW: "Clear" button — un-allocates every case for the selected
+    // service/date in one shot (same idea as the Allocate tab's own
+    // Clear), so a bad Smart Allocation run or a batch of manual picks
+    // can be wiped and redone instead of un-assigning rows one at a time.
+    const [clearing, setClearing] = useState(false);
+    const handleClearAllocations = async () => {
+        if (!productId) {
+            showToast("Select a service first.");
+            return;
+        }
+        setClearing(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/clear-allocations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productId, workDate }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to clear");
+            showToast(json.message || "Cleared.");
+            setAutoResult(null);
+            setPendingSelection({});
+            setPage(1);
+            fetchCases();
+        } catch (err: any) {
+            showToast(err?.message || "Failed to clear allocations.");
+        } finally {
+            setClearing(false);
+        }
+    };
+
     const pendingCount = cases.filter((c) => c.allocationStatus === "PENDING").length;
 
     return (
@@ -359,6 +390,19 @@ export default function TodaysAllocationCases({
                     >
                         <i className="ti ti-bolt" />
                         {autoRunning ? "Allocating…" : "Smart Allocation"}
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.clearBtn,
+                            opacity: clearing || !productId ? 0.6 : 1,
+                        }}
+                        disabled={clearing || !productId}
+                        onClick={handleClearAllocations}
+                        title="Un-allocate every case for this service/date"
+                    >
+                        <i className="ti ti-eraser" />
+                        {clearing ? "Clearing…" : "Clear"}
                     </button>
                 </div>
 
@@ -540,6 +584,19 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
+    },
+    clearBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 18px",
+        borderRadius: radius.md,
+        border: `1px solid ${BRAND.red}`,
+        background: "#fff",
+        color: BRAND.red,
+        fontWeight: fontWeight.semibold,
+        fontSize: fontSize.base,
+        cursor: "pointer",
     },
     autoSummary: {
         padding: "10px 16px",
