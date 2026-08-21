@@ -996,6 +996,58 @@ async function bulkSubmitServiceCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/service-cases/clear-allocations
+// body: { productId, workDate }
+//
+// "Clear" button on the Cases tab — un-allocates every case for the
+// given service+date in one shot (assigned_employee_id -> null,
+// allocation_status -> PENDING, allocated_at -> null), same as
+// Daily Work's own "Clear" for the Allocate tab. Lets a manager wipe a
+// bad Smart Allocation run (or a batch of manual picks) and start over,
+// instead of un-assigning cases one at a time from the per-row dropdown.
+// Only touches ALLOCATED rows — already-PENDING cases are a no-op.
+// ------------------------------------------------------------
+async function clearServiceCaseAllocations(req, res) {
+  try {
+    const { productId, workDate } = req.body;
+    if (!productId || !workDate) {
+      return res.status(400).json({
+        success: false,
+        message: "productId and workDate are required",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        assigned_employee_id: null,
+        allocation_status: "PENDING",
+        allocated_at: null,
+      })
+      .eq("organization_id", req.user.organizationId)
+      .eq("product_id", productId)
+      .eq("work_date", workDate)
+      .eq("allocation_status", "ALLOCATED")
+      .select("id");
+    if (error) throw error;
+
+    const clearedCount = (data || []).length;
+
+    res.json({
+      success: true,
+      message:
+        clearedCount > 0
+          ? `${clearedCount} case(s) cleared — back to Pending.`
+          : "Nothing to clear — no allocated cases for this service/date.",
+      data: { clearedCount },
+    });
+  } catch (err) {
+    console.error("clearServiceCaseAllocations error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
@@ -1003,6 +1055,7 @@ module.exports = {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  clearServiceCaseAllocations,
   updateServiceCaseProfile,
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
