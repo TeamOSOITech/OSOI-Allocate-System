@@ -372,6 +372,22 @@ const deleteProduct = async (req, res) => {
 
     return res.status(200).json({ success: true, data: product });
   } catch (error) {
+    // FIX: deleting a service that already has Daily Work batches
+    // logged against it violates the daily_work.product_id foreign
+    // key — Postgres was returning that raw constraint error straight
+    // to the user ('update or delete on table "service_master"
+    // violates foreign key constraint "daily_work_product_id_fkey" on
+    // table "daily_work"'). Same pattern as the duplicate-name check
+    // in clients.controller.js: catch the FK violation (code 23503)
+    // and turn it into a message someone without DB knowledge can
+    // actually act on.
+    if (error.code === "23503") {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This service can't be deleted because it already has Daily Work logged against it. Delete or reassign those entries first.",
+      });
+    }
     return res.status(500).json({ success: false, message: error.message });
   }
 };

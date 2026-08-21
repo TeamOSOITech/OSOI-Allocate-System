@@ -15,6 +15,10 @@ const {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  updateServiceCaseProfile,
+  bulkUpdateServiceCaseProfiles,
+  submitServiceCase,
+  bulkSubmitServiceCases,
 } = require("./servicecases.controller");
 
 router.use(authenticate);
@@ -32,6 +36,25 @@ router.post(
   "/auto-allocate",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   autoAllocateServiceCases,
+);
+// NEW: Profile — Case Register page. Literal path "/bulk-profile"
+// registered before "/:id/profile" so it can never be shadowed.
+router.post(
+  "/bulk-profile",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  bulkUpdateServiceCaseProfiles,
+);
+// NEW: employee self-submit on the Profile page — no special
+// permission beyond being logged in, same as /api/allocations/self;
+// the controller itself only ever touches cases assigned to the
+// caller. Literal path "/bulk-submit" registered before "/:id/submit"
+// so it can never be shadowed.
+router.post("/bulk-submit", bulkSubmitServiceCases);
+router.patch("/:id/submit", submitServiceCase);
+router.patch(
+  "/:id/profile",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  updateServiceCaseProfile,
 );
 router.patch(
   "/:id/allocate",

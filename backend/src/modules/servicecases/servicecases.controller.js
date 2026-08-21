@@ -105,9 +105,14 @@ async function getEmployeeNameMap(employeeIds, organizationId) {
 async function listServiceCases(req, res) {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    // "mine=true" (the employee's own allocation page) loads everything
+    // assigned to them in one go rather than paginating — that page
+    // does its own today/past split and filtering client-side, same as
+    // it already did for the old allocations-based table.
+    const maxPageSize = req.query.mine === "true" ? 2000 : 100;
     const pageSize = Math.min(
       Math.max(parseInt(req.query.pageSize, 10) || 20, 1),
-      100,
+      maxPageSize,
     );
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -139,6 +144,16 @@ async function listServiceCases(req, res) {
     if (req.query.allocationStatus) {
       query = query.eq("allocation_status", req.query.allocationStatus);
     }
+    // NEW: "mine=true" — the employee's own Today's/Past Allocation
+    // table on the Profile page. Scoped server-side to whoever is
+    // authenticated (never trusts a client-supplied employee id), same
+    // pattern as /api/allocations/self.
+    if (req.query.mine === "true") {
+      query = query.eq("assigned_employee_id", req.user.userId);
+    }
+    if (req.query.submissionStatus) {
+      query = query.eq("submission_status", req.query.submissionStatus);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;
@@ -166,6 +181,13 @@ async function listServiceCases(req, res) {
       allocationStatus: r.allocation_status || "PENDING",
       allocatedAt: r.allocated_at || null,
       profile: r.profile || "",
+      // NEW: employee's own submission of their work on this case —
+      // separate from allocation_status (which just means "assigned to
+      // someone"). 'SUBMITTED' once the assigned employee marks it done.
+      submissionStatus: r.submission_status || "PENDING",
+      submissionType: r.submission_type || null,
+      queryText: r.query_text || "",
+      submittedAt: r.submitted_at || null,
     }));
 
     res.json({
@@ -613,6 +635,168 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// NEW: Employee self-submit — the "Today's Allocation"/"Past
+// Allocation" table on the Profile page now lists individual cases
+// (case-number wise, like the admin Cases tab) instead of quantity
+// batches. Since a case is one atomic unit of work, submitting it is
+// a single click — no partial quantity or mismatch-reason step like
+// the old daily_work batch flow needed.
+//
+// Requires four columns on service_cases (see migration note):
+//   submission_status  text, default 'PENDING' ('PENDING' | 'SUBMITTED')
+//   submission_type    text ('COMPLETED' | 'DONE_BY_TEAM' | 'QUERY')
+//   query_text         text, nullable
+//   submitted_at       timestamptz, nullable
+// ------------------------------------------------------------
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/submit
+// body: { submissionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'QUERY', queryText?: string }
+//
+// Every submission records an outcome, not just "submitted":
+//   'COMPLETED'    — completed (by the employee themself).
+//   'DONE_BY_TEAM' — completed, but by the team rather than the
+//                    employee directly. Kept separate from 'COMPLETED'.
+//   'QUERY'        — couldn't be completed as-is; queryText carries
+//                    what the query actually is (required in this case).
+// ------------------------------------------------------------
+async function submitServiceCase(req, res) {
+  try {
+    const { id } = req.params;
+    const submissionType = (req.body.submissionType || "").toString().trim();
+    const queryText = (req.body.queryText || "").toString().trim();
+
+    if (!["COMPLETED", "DONE_BY_TEAM", "QUERY"].includes(submissionType)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "submissionType must be 'COMPLETED', 'DONE_BY_TEAM' or 'QUERY'.",
+      });
+    }
+    if (submissionType === "QUERY" && !queryText) {
+      return res.status(400).json({
+        success: false,
+        message: "queryText is required when submissionType is 'QUERY'.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        submission_status: "SUBMITTED",
+        submission_type: submissionType,
+        query_text: submissionType === "QUERY" ? queryText : null,
+        submitted_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      // Self-service — can only ever submit a case assigned to you,
+      // regardless of what id is in the URL.
+      .eq("assigned_employee_id", req.user.userId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "Case not found or not assigned to you.",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} submitted.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        submissionStatus: data.submission_status,
+        submissionType: data.submission_type,
+        queryText: data.query_text,
+        submittedAt: data.submitted_at,
+      },
+    });
+  } catch (err) {
+    console.error("submitServiceCase error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /api/service-cases/bulk-submit
+// body: { items: [{ id, submissionType, queryText }, ...] }
+// Same as above but for many cases at once — the "Bulk Submit" button
+// on the Profile page. Each case picks its own outcome (every row in
+// the modal has its own dropdown), so this takes an items array rather
+// than a flat list of ids.
+// ------------------------------------------------------------
+async function bulkSubmitServiceCases(req, res) {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const cleaned = items
+      .map((it) => ({
+        id: (it.id || "").toString(),
+        submissionType: (it.submissionType || "").toString().trim(),
+        queryText: (it.queryText || "").toString().trim(),
+      }))
+      .filter((it) => it.id);
+
+    if (cleaned.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No cases provided." });
+    }
+    for (const it of cleaned) {
+      if (!["COMPLETED", "DONE_BY_TEAM", "QUERY"].includes(it.submissionType)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Every case needs a status of 'Completed', 'Done by Team' or 'Query'.",
+        });
+      }
+      if (it.submissionType === "QUERY" && !it.queryText) {
+        return res.status(400).json({
+          success: false,
+          message: "Every case marked 'Query' needs its query text filled in.",
+        });
+      }
+    }
+
+    const now = new Date().toISOString();
+    let submittedCount = 0;
+    // One update per case since each can have a different outcome —
+    // still all scoped to (org, caller) so this can only ever touch
+    // the caller's own cases, same guarantee as the single-submit path.
+    await Promise.all(
+      cleaned.map(async (it) => {
+        const { data, error } = await supabase
+          .from("service_cases")
+          .update({
+            submission_status: "SUBMITTED",
+            submission_type: it.submissionType,
+            query_text: it.submissionType === "QUERY" ? it.queryText : null,
+            submitted_at: now,
+          })
+          .eq("id", it.id)
+          .eq("organization_id", req.user.organizationId)
+          .eq("assigned_employee_id", req.user.userId)
+          .select("id");
+        if (error) throw error;
+        if (data && data.length > 0) submittedCount++;
+      }),
+    );
+
+    res.json({
+      success: true,
+      message: `${submittedCount} case(s) submitted.`,
+      data: { submittedCount },
+    });
+  } catch (err) {
+    console.error("bulkSubmitServiceCases error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
@@ -621,4 +805,6 @@ module.exports = {
   autoAllocateServiceCases,
   updateServiceCaseProfile,
   bulkUpdateServiceCaseProfiles,
+  submitServiceCase,
+  bulkSubmitServiceCases,
 };

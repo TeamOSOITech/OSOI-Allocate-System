@@ -17,17 +17,20 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
   );
 }
 
-// IMPORTANT: this client is a shared singleton used both for admin-level
-// table queries (as service_role) AND for per-request token verification
-// in auth.js (supabase.auth.getUser(token)). Without disabling session
-// persistence/auto-refresh, calling auth.getUser(token) with a given
-// user's JWT can mutate this client's internal GoTrue session state —
-// under concurrent requests, that leaks a caller's "authenticated" role
-// session into OTHER in-flight service-role queries on the same client,
-// silently downgrading them from service_role (which bypasses RLS) to
-// authenticated (which is subject to RLS) and causing intermittent,
-// hard-to-reproduce "new row violates row-level security policy" errors
-// under real traffic — even though the service_role key itself is correct.
+// This client uses the service_role key and is meant ONLY for
+// server-side table queries (it bypasses Row Level Security).
+//
+// FIX (RLS bug): this used to ALSO be reused for auth.getUser(token) /
+// signInWithPassword() / refreshSession() in auth.js and auth.service.js.
+// Those calls mutate a client's internal GoTrue session state — doing
+// that on this same shared instance let a caller's "authenticated"
+// session leak into OTHER in-flight service-role queries on this client,
+// silently downgrading them from service_role to authenticated and
+// causing intermittent, hard-to-reproduce "new row violates row-level
+// security policy" errors under real traffic — even though the service
+// role key itself was correct. All auth/session calls now run on a
+// separate, isolated client instead — see supabaseAuthClient.js. This
+// client should only ever be used for .from(...) table queries.
 const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
   auth: {
     persistSession: false,
