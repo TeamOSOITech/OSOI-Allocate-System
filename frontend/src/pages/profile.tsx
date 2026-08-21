@@ -43,15 +43,6 @@ function getHoverCss(BRAND: { blue: string }) {
 `;
 }
 
-const REASON_OPTIONS = [
-    "Completed as planned",
-    "Pending from previous day",
-    "Extra work assigned",
-    "Technical issue",
-    "Resource / data unavailable",
-    "Other",
-];
-
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
         typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
@@ -126,40 +117,22 @@ type EmployeeData = {
     bio?: string | null;
 };
 
-type Allocation = {
+type CaseRow = {
     id: string;
-    daily_work_id: string;
-    employee_id: string;
-    allocated_qty: number;
-    status: string;
-    submitted_qty: number | null;
-    submission_reason: string | null;
-    submitted_at: string | null;
-    workDate: string | null;
+    caseNumber: string;
+    productId: string;
     productName: string | null;
-    description?: string | null;
-    team?: string | null;
-    allocatedByName?: string | null;
-    created_at: string;
-    carried_in_qty?: number | null;
+    workDate: string;
+    profile: string;
+    allocationStatus: string;
+    submissionStatus: "PENDING" | "SUBMITTED";
+    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "QUERY" | null;
+    queryText: string;
+    submittedAt: string | null;
 };
 
-// A task counts as "Submitted"/done only once the full allocated
-// quantity has come in. Anything submitted for less than the
-// allocated_qty (a partial submission) is still "Pending" so the
-// employee can come back and submit the remaining qty.
-function isFullyDone(a: Allocation) {
-    return (
-        a.submitted_qty !== null &&
-        a.submitted_qty !== undefined &&
-        a.submitted_qty >= a.allocated_qty
-    );
-}
-
-// How much is still owed on this task right now.
-function pendingQty(a: Allocation) {
-    const already = a.submitted_qty ?? 0;
-    return Math.max(a.allocated_qty - already, 0);
+function isSubmitted(c: CaseRow) {
+    return c.submissionStatus === "SUBMITTED";
 }
 
 interface ProfileProps {
@@ -288,7 +261,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [employee, setEmployee] = useState<EmployeeData | null>(null);
-    const [allocations, setAllocations] = useState<Allocation[]>([]);
+    const [cases, setCases] = useState<CaseRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -305,20 +278,28 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [activeTab, setActiveTab] = useState<"today" | "past">("today");
     const [dateFilter, setDateFilter] = useState("");
     const [productFilter, setProductFilter] = useState("all");
-    const [teamFilter, setTeamFilter] = useState("all");
+    const [statusFilter, setStatusFilter] = useState<"all" | "PENDING" | "SUBMITTED">("all");
     const [search, setSearch] = useState("");
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [submitQty, setSubmitQty] = useState("");
-    const [submitReason, setSubmitReason] = useState("");
+    // What the employee is reporting for the selected case — mandatory
+    // before "Submit Work" is enabled. "QUERY" additionally requires
+    // submitQueryText to be filled in.
+    const [submitType, setSubmitType] = useState<"" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">("");
+    const [submitQueryText, setSubmitQueryText] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const panelRef = useRef<HTMLDivElement>(null);
 
-    // ---- Bulk Submit (all pending tasks at once, each with its own reason) ----
+    // ---- Bulk Submit (every pending case for today, in one click) ----
     const [showBulkModal, setShowBulkModal] = useState(false);
-    const [bulkQtyById, setBulkQtyById] = useState<Record<string, string>>({});
-    const [bulkReasonById, setBulkReasonById] = useState<Record<string, string>>({});
+    // Per-row outcome + query text for the bulk modal — both mandatory
+    // (a row with "Query" selected also needs its text filled) before
+    // "Submit All" is enabled.
+    const [bulkTypeById, setBulkTypeById] = useState<
+        Record<string, "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">
+    >({});
+    const [bulkQueryById, setBulkQueryById] = useState<Record<string, string>>({});
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState<string | null>(null);
 
@@ -335,12 +316,20 @@ export default function Profile({ onLogout }: ProfileProps) {
         setLoading(true);
         setError(null);
         try {
-            const [profileRes, employeeRes, allocRes] = await Promise.all([
+            // NOTE: the cases fetch does NOT depend on myId. GET
+            // /api/service-cases?mine=true already resolves "who is
+            // asking" server-side from the auth token (req.user.userId)
+            // — it never needed a client-supplied id. Gating it on myId
+            // (read from localStorage) was a bug: right after a fresh
+            // login/logout, that localStorage value can momentarily be
+            // stale or missing, which silently skipped this request
+            // entirely and left the table empty — looking exactly like
+            // "my cases disappeared", even though nothing was ever
+            // deleted server-side.
+            const [profileRes, employeeRes, casesRes] = await Promise.all([
                 authFetch(`${API_BASE}/api/profile`),
                 myId ? authFetch(`${API_BASE}/api/employees/${myId}`) : Promise.resolve(null),
-                myId
-                    ? authFetch(`${API_BASE}/api/allocations?employeeId=${myId}`)
-                    : Promise.resolve(null),
+                authFetch(`${API_BASE}/api/service-cases?mine=true&pageSize=2000`),
             ]);
 
             if (profileRes) {
@@ -351,9 +340,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                 const emp = await safeJson(employeeRes);
                 if (employeeRes.ok) setEmployee(emp);
             }
-            if (allocRes) {
-                const json = await safeJson(allocRes);
-                if (allocRes.ok && json.success) setAllocations(json.data || []);
+            const casesJson = await safeJson(casesRes);
+            if (casesRes.ok && casesJson.success) {
+                setCases(casesJson.data || []);
+            } else {
+                console.error("Failed to load my cases:", casesJson?.message);
             }
         } catch (err: any) {
             setError(err?.message || "Could not load your profile");
@@ -401,105 +392,90 @@ export default function Profile({ onLogout }: ProfileProps) {
         .map((w: string) => w[0]?.toUpperCase())
         .join("");
 
-    const { todaysAllocations, pastAllocations } = useMemo(() => {
+    const { todaysCases, pastCases } = useMemo(() => {
         const today = todayStr();
-        const sorted = [...allocations].sort((a, b) =>
-            (b.workDate || "").localeCompare(a.workDate || "")
+        const sorted = [...cases].sort(
+            (a, b) =>
+                (b.workDate || "").localeCompare(a.workDate || "") ||
+                (b.caseNumber || "").localeCompare(a.caseNumber || "")
         );
         return {
-            todaysAllocations: sorted.filter((a) => a.workDate === today),
-            pastAllocations: sorted.filter((a) => a.workDate !== today),
+            todaysCases: sorted.filter((c) => c.workDate === today),
+            pastCases: sorted.filter((c) => c.workDate !== today),
         };
-    }, [allocations]);
+    }, [cases]);
 
     const products = useMemo(
-        () =>
-            Array.from(new Set(allocations.map((a) => a.productName).filter(Boolean))) as string[],
-        [allocations]
-    );
-    const teams = useMemo(
-        () => Array.from(new Set(allocations.map((a) => a.team).filter(Boolean))) as string[],
-        [allocations]
+        () => Array.from(new Set(cases.map((c) => c.productName).filter(Boolean))) as string[],
+        [cases]
     );
 
-    const baseRows = activeTab === "today" ? todaysAllocations : pastAllocations;
+    const baseRows = activeTab === "today" ? todaysCases : pastCases;
 
     const filteredRows = useMemo(() => {
-        return baseRows.filter((a) => {
-            if (dateFilter && a.workDate !== dateFilter) return false;
-            if (productFilter !== "all" && a.productName !== productFilter) return false;
-            if (teamFilter !== "all" && a.team !== teamFilter) return false;
+        return baseRows.filter((c) => {
+            if (dateFilter && c.workDate !== dateFilter) return false;
+            if (productFilter !== "all" && c.productName !== productFilter) return false;
+            if (statusFilter !== "all" && c.submissionStatus !== statusFilter) return false;
             if (search.trim()) {
                 const q = search.trim().toLowerCase();
                 const hay =
-                    `${a.productName || ""} ${a.team || ""} ${a.status || ""} ${a.allocatedByName || ""}`.toLowerCase();
+                    `${c.caseNumber || ""} ${c.productName || ""} ${c.profile || ""}`.toLowerCase();
                 if (!hay.includes(q)) return false;
             }
             return true;
         });
-    }, [baseRows, dateFilter, productFilter, teamFilter, search]);
+    }, [baseRows, dateFilter, productFilter, statusFilter, search]);
 
     const stats = useMemo(() => {
-        const totalAllocated = todaysAllocations.reduce((s, a) => s + (a.allocated_qty || 0), 0);
-        const submittedQty = todaysAllocations.reduce((s, a) => s + (a.submitted_qty ?? 0), 0);
-        const pendingCount = todaysAllocations.filter((a) => !isFullyDone(a)).length;
-        const remaining = Math.max(totalAllocated - submittedQty, 0);
-        return { totalAllocated, submittedQty, pendingCount, remaining };
-    }, [todaysAllocations]);
+        const total = todaysCases.length;
+        const submittedCount = todaysCases.filter(isSubmitted).length;
+        const pendingCount = total - submittedCount;
+        return { total, submittedCount, pendingCount };
+    }, [todaysCases]);
 
-    const selected = allocations.find((a) => a.id === selectedId) || null;
-    // submitQty now means "how much are you submitting right now" — it
-    // gets added on top of whatever was already submitted before.
-    const alreadySubmitted = selected?.submitted_qty ?? 0;
-    const submitCumulative = alreadySubmitted + Number(submitQty || 0);
-    const submitDifference = selected ? submitCumulative - selected.allocated_qty : 0;
+    const selected = cases.find((c) => c.id === selectedId) || null;
 
     useEffect(() => {
         if (selected) {
-            setSubmitQty(String(pendingQty(selected)));
-            setSubmitReason("");
+            setSubmitType("");
+            setSubmitQueryText("");
             setSubmitError(null);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedId]);
 
-    const handlePickForSubmit = (a: Allocation) => {
-        setSelectedId(a.id);
+    const handlePickForSubmit = (c: CaseRow) => {
+        setSelectedId(c.id);
         setTimeout(
             () => panelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
             50
         );
     };
 
+    // "Submit Work" only lights up once a status is picked, and — if
+    // that status is "Query" — the query text is filled in too.
+    const canSubmitSingle =
+        !!selected && !!submitType && (submitType !== "QUERY" || submitQueryText.trim() !== "");
+
     const handleSubmitWork = async () => {
-        if (!selected) return;
-        const qtyNow = Number(submitQty);
+        if (!selected || !canSubmitSingle) return;
         setSubmitError(null);
-
-        if (Number.isNaN(qtyNow) || qtyNow < 0) {
-            setSubmitError("Enter a valid quantity.");
-            return;
-        }
-        const cumulative = (selected.submitted_qty ?? 0) + qtyNow;
-        const differs = cumulative !== selected.allocated_qty;
-        if (differs && !submitReason.trim()) {
-            setSubmitError("Please select a reason for the difference.");
-            return;
-        }
-
         setSubmitting(true);
         try {
-            const res = await authFetch(`${API_BASE}/api/allocations/${selected.id}/submit`, {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${selected.id}/submit`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    submittedQty: cumulative,
-                    reason: differs ? submitReason.trim() : undefined,
+                    submissionType: submitType,
+                    queryText: submitType === "QUERY" ? submitQueryText.trim() : undefined,
                 }),
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json.message || "Failed to submit work");
             setSelectedId(null);
+            setSubmitType("");
+            setSubmitQueryText("");
             await loadAll();
         } catch (err: any) {
             setSubmitError(err?.message || "Failed to submit work");
@@ -508,109 +484,94 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
-    // ---- Bulk Submit: every still-pending allocation for TODAY (the
-    // KPI cards above and this button both scope to "today" — pending
-    // work from past dates is handled per-row on the Past Allocation
-    // tab, same as before). ----
-    const pendingTodayAllocations = useMemo(
-        () => todaysAllocations.filter((a) => !isFullyDone(a)),
-        [todaysAllocations]
+    // ---- Bulk Submit: every still-pending case for TODAY (the KPI
+    // cards above and this button both scope to "today" — pending work
+    // from past dates is handled per-row on the Past Allocation tab). ----
+    const pendingTodayCases = useMemo(
+        () => todaysCases.filter((c) => !isSubmitted(c)),
+        [todaysCases]
     );
 
     const openBulkModal = () => {
-        const initialQty: Record<string, string> = {};
-        const initialReason: Record<string, string> = {};
-        pendingTodayAllocations.forEach((a) => {
-            initialQty[a.id] = String(pendingQty(a));
-            initialReason[a.id] = "";
+        const initialType: Record<string, "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY"> = {};
+        const initialQuery: Record<string, string> = {};
+        pendingTodayCases.forEach((c) => {
+            initialType[c.id] = "";
+            initialQuery[c.id] = "";
         });
-        setBulkQtyById(initialQty);
-        setBulkReasonById(initialReason);
+        setBulkTypeById(initialType);
+        setBulkQueryById(initialQuery);
         setBulkError(null);
         setShowBulkModal(true);
     };
 
     const closeBulkModal = () => {
         setShowBulkModal(false);
-        setBulkQtyById({});
-        setBulkReasonById({});
+        setBulkTypeById({});
+        setBulkQueryById({});
         setBulkError(null);
     };
 
-    const setBulkQty = (id: string, value: string) => {
-        setBulkQtyById((prev) => ({ ...prev, [id]: value }));
+    const setBulkType = (id: string, value: "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY") => {
+        setBulkTypeById((prev) => ({ ...prev, [id]: value }));
+        // Switching away from "Query" clears any half-typed text so it
+        // doesn't get silently sent for a row that's no longer a query.
+        if (value !== "QUERY") {
+            setBulkQueryById((prev) => ({ ...prev, [id]: "" }));
+        }
     };
 
-    const setBulkReason = (id: string, value: string) => {
-        setBulkReasonById((prev) => ({ ...prev, [id]: value }));
+    const setBulkQuery = (id: string, value: string) => {
+        setBulkQueryById((prev) => ({ ...prev, [id]: value }));
     };
 
-    // Each field in the modal is "how much are you submitting right
-    // now" — it stacks on top of whatever was already submitted
-    // earlier (same as the single-item panel). A row is "ready" once
-    // it has a valid quantity, and — only when the resulting running
-    // total differs from what was allocated — its own reason. The
-    // submit button below stays disabled until every pending row is
-    // ready, i.e. nothing is left pending/incomplete.
-    const bulkRowState = (a: Allocation) => {
-        const qtyRaw = bulkQtyById[a.id] ?? "";
-        const qtyNum = Number(qtyRaw);
-        const qtyValid = qtyRaw.trim() !== "" && !Number.isNaN(qtyNum) && qtyNum >= 0;
-        const cumulative = (a.submitted_qty ?? 0) + qtyNum;
-        const differs = qtyValid && cumulative !== a.allocated_qty;
-        const reasonValid = !differs || !!(bulkReasonById[a.id] || "").trim();
-        return { qtyValid, differs, reasonValid, cumulative, ready: qtyValid && reasonValid };
-    };
-
+    // Every pending row needs a status, and every "Query" row needs its
+    // text filled in, before Submit All unlocks.
     const bulkAllReady = useMemo(
         () =>
-            pendingTodayAllocations.length > 0 &&
-            pendingTodayAllocations.every((a) => bulkRowState(a).ready),
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [pendingTodayAllocations, bulkQtyById, bulkReasonById]
+            pendingTodayCases.length > 0 &&
+            pendingTodayCases.every((c) => {
+                const type = bulkTypeById[c.id];
+                if (!type) return false;
+                if (type === "QUERY" && !(bulkQueryById[c.id] || "").trim()) return false;
+                return true;
+            }),
+        [pendingTodayCases, bulkTypeById, bulkQueryById]
     );
 
     const handleBulkSubmit = async () => {
         setBulkError(null);
+        if (pendingTodayCases.length === 0) return;
 
-        for (const a of pendingTodayAllocations) {
-            const { qtyValid, differs, reasonValid } = bulkRowState(a);
-            if (!qtyValid) {
-                setBulkError("Enter a valid quantity for every task before submitting.");
+        for (const c of pendingTodayCases) {
+            const type = bulkTypeById[c.id];
+            if (!type) {
+                setBulkError(`Pick a status for ${c.caseNumber} before submitting.`);
                 return;
             }
-            if (differs && !reasonValid) {
-                setBulkError(
-                    `"${a.productName || "A task"}" has a quantity that differs from what was allocated — add a reason for it.`
-                );
+            if (type === "QUERY" && !(bulkQueryById[c.id] || "").trim()) {
+                setBulkError(`Enter the query text for ${c.caseNumber} before submitting.`);
                 return;
             }
         }
 
-        const items = pendingTodayAllocations.map((a) => ({
-            id: a.id,
-            submittedQty: bulkRowState(a).cumulative,
-            reason: (bulkReasonById[a.id] || "").trim() || undefined,
+        const items = pendingTodayCases.map((c) => ({
+            id: c.id,
+            submissionType: bulkTypeById[c.id],
+            queryText:
+                bulkTypeById[c.id] === "QUERY" ? (bulkQueryById[c.id] || "").trim() : undefined,
         }));
 
         setBulkSubmitting(true);
         try {
-            const res = await authFetch(`${API_BASE}/api/allocations/bulk-submit`, {
-                method: "PATCH",
+            const res = await authFetch(`${API_BASE}/api/service-cases/bulk-submit`, {
+                method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ items }),
             });
             const json = await safeJson(res);
             if (!res.ok || !json.success) {
                 throw new Error(json.message || "Bulk submit failed");
-            }
-            const failed = (json.data?.results || []).filter((r: any) => !r.success);
-            if (failed.length > 0) {
-                setBulkError(
-                    `${failed.length} of ${items.length} task(s) could not be submitted — ${failed[0].message}`
-                );
-                await loadAll();
-                return;
             }
             closeBulkModal();
             await loadAll();
@@ -690,14 +651,14 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const exportCsv = () => {
-        const header = ["#", "Product", "Team", "Allocated By", "Allocated Qty", "Status"];
-        const rows = filteredRows.map((a, i) => [
+        const header = ["#", "Case No.", "Service", "Date", "Profile", "Status"];
+        const rows = filteredRows.map((c, i) => [
             i + 1,
-            a.productName || "-",
-            a.team || "-",
-            a.allocatedByName || "-",
-            a.allocated_qty,
-            a.submitted_qty != null ? "Submitted" : "Pending",
+            c.caseNumber,
+            c.productName || "-",
+            c.workDate,
+            c.profile || "-",
+            isSubmitted(c) ? "Submitted" : "Pending",
         ]);
         const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
         const blob = new Blob([csv], { type: "text/csv" });
@@ -867,33 +828,25 @@ export default function Profile({ onLogout }: ProfileProps) {
                 <StatCard
                     icon={<BoxIcon />}
                     tint={BRAND.blue}
-                    value={stats.totalAllocated}
-                    label="Total Allocation"
-                    sub="Total tasks allocated today"
+                    value={stats.total}
+                    label="Total Cases"
+                    sub="Cases allocated today"
                     styles={styles}
                 />
                 <StatCard
                     icon={<CheckIcon />}
                     tint={BRAND.green}
-                    value={stats.submittedQty}
+                    value={stats.submittedCount}
                     label="Submitted"
                     sub="Completed & submitted"
                     styles={styles}
                 />
                 <StatCard
                     icon={<ClockIcon />}
-                    tint={BRAND.lightBlue}
+                    tint={BRAND.amber}
                     value={stats.pendingCount}
                     label="Pending"
                     sub="Awaiting submission"
-                    styles={styles}
-                />
-                <StatCard
-                    icon={<AlertIcon />}
-                    tint={BRAND.amber}
-                    value={stats.remaining}
-                    label="Remaining"
-                    sub="Yet to submit"
                     styles={styles}
                 />
             </div>
@@ -972,18 +925,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </select>
                 </div>
                 <div style={styles.filterField}>
-                    <label style={styles.smallLabel}>Team</label>
+                    <label style={styles.smallLabel}>Status</label>
                     <select
                         style={styles.textInput}
-                        value={teamFilter}
-                        onChange={(e) => setTeamFilter(e.target.value)}
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as any)}
                     >
-                        <option value="all">All Teams</option>
-                        {teams.map((t) => (
-                            <option key={t} value={t}>
-                                {t}
-                            </option>
-                        ))}
+                        <option value="all">All</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="SUBMITTED">Submitted</option>
                     </select>
                 </div>
                 <div style={{ ...styles.filterField, flex: 1 }}>
@@ -992,7 +942,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         style={styles.textInput}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search by service, team or status…"
+                        placeholder="Search by case number, service or profile…"
                     />
                 </div>
             </div>
@@ -1012,12 +962,12 @@ export default function Profile({ onLogout }: ProfileProps) {
                     />
                 ) : isMobile ? (
                     <div style={styles.allocList}>
-                        {filteredRows.map((a, i) => (
+                        {filteredRows.map((c, i) => (
                             <MobileRow
-                                key={a.id}
+                                key={c.id}
                                 index={i + 1}
-                                a={a}
-                                onSubmit={() => handlePickForSubmit(a)}
+                                c={c}
+                                onSubmit={() => handlePickForSubmit(c)}
                                 styles={styles}
                             />
                         ))}
@@ -1026,62 +976,37 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <table style={styles.table}>
                         <colgroup>
                             <col style={{ width: "4%" }} />
-                            <col style={{ width: "22%" }} />
                             <col style={{ width: "14%" }} />
-                            <col style={{ width: "16%" }} />
+                            <col style={{ width: "20%" }} />
                             <col style={{ width: "12%" }} />
+                            <col style={{ width: "24%" }} />
                             <col style={{ width: "12%" }} />
-                            <col style={{ width: "10%" }} />
-                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "14%" }} />
                         </colgroup>
                         <thead>
                             <tr>
                                 <th style={styles.th}>#</th>
-                                <th style={styles.th}>Task / Service</th>
-                                <th style={styles.th}>Team</th>
-                                <th style={styles.th}>Allocated By</th>
-                                <th style={styles.th}>Allocated Qty</th>
-                                <th style={styles.th}>Pending</th>
+                                <th style={styles.th}>Case No.</th>
+                                <th style={styles.th}>Service</th>
+                                <th style={styles.th}>Date</th>
+                                <th style={styles.th}>Profile</th>
                                 <th style={styles.th}>Status</th>
                                 <th style={styles.th}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredRows.map((a, i) => {
-                                const submitted = isFullyDone(a);
-                                const hasPartial =
-                                    !submitted &&
-                                    a.submitted_qty !== null &&
-                                    a.submitted_qty !== undefined;
+                            {filteredRows.map((c, i) => {
+                                const submitted = isSubmitted(c);
                                 return (
-                                    <tr key={a.id} className="pf-row" style={styles.tr}>
+                                    <tr key={c.id} className="pf-row" style={styles.tr}>
                                         <td style={styles.td}>{i + 1}</td>
                                         <td style={{ ...styles.td, fontWeight: fontWeight.bold }}>
-                                            {a.productName || "-"}
+                                            {c.caseNumber}
                                         </td>
-                                        <td style={styles.td}>{a.team || "-"}</td>
-                                        <td style={styles.td}>{a.allocatedByName || "-"}</td>
+                                        <td style={styles.td}>{c.productName || "-"}</td>
+                                        <td style={styles.td}>{formatDisplayDate(c.workDate)}</td>
                                         <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                            {a.allocated_qty}
-                                            {!!a.carried_in_qty && (
-                                                <div style={styles.smallMuted}>
-                                                    incl. {a.carried_in_qty} carried
-                                                </div>
-                                            )}
-                                        </td>
-                                        <td style={styles.td}>
-                                            {submitted ? (
-                                                <span style={styles.smallMuted}>—</span>
-                                            ) : (
-                                                <span
-                                                    style={{
-                                                        fontWeight: fontWeight.semibold,
-                                                        color: BRAND.amber,
-                                                    }}
-                                                >
-                                                    {pendingQty(a)}
-                                                </span>
-                                            )}
+                                            {c.profile || <span style={styles.smallMuted}>—</span>}
                                         </td>
                                         <td style={styles.td}>
                                             <span
@@ -1091,27 +1016,25 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         : styles.statusPending
                                                 }
                                             >
-                                                {submitted
-                                                    ? "Submitted"
-                                                    : hasPartial
-                                                      ? "Partially Submitted"
-                                                      : "Pending"}
+                                                {submitted ? "Submitted" : "Pending"}
                                             </span>
                                         </td>
                                         <td style={styles.td}>
                                             {submitted ? (
                                                 <span style={styles.smallMuted}>
-                                                    {a.submitted_qty} submitted
+                                                    {formatDisplayDate(
+                                                        c.submittedAt
+                                                            ? c.submittedAt.slice(0, 10)
+                                                            : null
+                                                    )}
                                                 </span>
                                             ) : (
                                                 <button
                                                     type="button"
                                                     style={styles.rowSubmitBtn}
-                                                    onClick={() => handlePickForSubmit(a)}
+                                                    onClick={() => handlePickForSubmit(c)}
                                                 >
-                                                    {hasPartial
-                                                        ? `Submit Pending (${pendingQty(a)})`
-                                                        : "Submit"}
+                                                    Submit
                                                 </button>
                                             )}
                                         </td>
@@ -1128,64 +1051,55 @@ export default function Profile({ onLogout }: ProfileProps) {
                 <div style={styles.submitPanelTitle}>Submit Your Work</div>
                 <div style={styles.submitPanelSub}>
                     {selected
-                        ? `Submit your progress for "${selected.productName || "this task"}"`
-                        : "Select a task from the table above to submit your work."}
+                        ? `Confirm submission for case "${selected.caseNumber}"`
+                        : "Select a case from the table above to submit your work."}
                 </div>
 
                 {selected && (
                     <div style={isMobile ? styles.submitGridMobile : styles.submitGrid}>
                         <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Total Allocated Qty</label>
+                            <label style={styles.smallLabel}>Case No.</label>
                             <input
                                 style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                value={selected.allocated_qty}
+                                value={selected.caseNumber}
                                 disabled
                             />
                         </div>
                         <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Already Submitted</label>
+                            <label style={styles.smallLabel}>Service</label>
                             <input
                                 style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                value={alreadySubmitted}
+                                value={selected.productName || "-"}
                                 disabled
                             />
                         </div>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Pending Qty *</label>
-                            <input
-                                type="number"
-                                min={0}
+                        <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
+                            <label style={styles.smallLabel}>Status *</label>
+                            <select
                                 style={styles.textInput}
-                                value={submitQty}
-                                onChange={(e) => setSubmitQty(e.target.value)}
-                                placeholder="Qty you're submitting now"
-                            />
+                                value={submitType}
+                                onChange={(e) => {
+                                    const v = e.target.value as
+                                        "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY";
+                                    setSubmitType(v);
+                                    if (v !== "QUERY") setSubmitQueryText("");
+                                }}
+                            >
+                                <option value="">Select status</option>
+                                <option value="COMPLETED">Completed</option>
+                                <option value="DONE_BY_TEAM">Done by Team</option>
+                                <option value="QUERY">Query</option>
+                            </select>
                         </div>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Difference</label>
-                            <input
-                                style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                value={
-                                    submitDifference > 0 ? `+${submitDifference}` : submitDifference
-                                }
-                                disabled
-                            />
-                        </div>
-                        {submitDifference !== 0 && (
-                            <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
-                                <label style={styles.smallLabel}>Reason *</label>
-                                <select
+                        {submitType === "QUERY" && (
+                            <div style={{ ...styles.filterField, flex: 1, minWidth: 220 }}>
+                                <label style={styles.smallLabel}>Query *</label>
+                                <input
                                     style={styles.textInput}
-                                    value={submitReason}
-                                    onChange={(e) => setSubmitReason(e.target.value)}
-                                >
-                                    <option value="">Select reason</option>
-                                    {REASON_OPTIONS.map((r) => (
-                                        <option key={r} value={r}>
-                                            {r}
-                                        </option>
-                                    ))}
-                                </select>
+                                    value={submitQueryText}
+                                    onChange={(e) => setSubmitQueryText(e.target.value)}
+                                    placeholder="Describe the query…"
+                                />
                             </div>
                         )}
                     </div>
@@ -1200,9 +1114,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <div>
                         <strong>How it works?</strong>
                         <p style={{ margin: "4px 0 0" }}>
-                            "Pending Qty" is pre-filled with what's still owed on this task. Enter
-                            how much you're submitting right now — if the running total ends up less
-                            or more than the allocated quantity, please select a reason.
+                            Pick a case from the table above, choose whether it's completed or has a
+                            query, and submit. "Query" needs a short note on what the query is. Use
+                            "Bulk Submit" up top to submit every pending case for today in one
+                            click.
                         </p>
                     </div>
                 </div>
@@ -1212,10 +1127,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                     className="pf-btn pf-btn-solid"
                     style={{
                         ...styles.submitBtn,
-                        opacity: !selected || submitting ? 0.6 : 1,
-                        cursor: !selected || submitting ? "not-allowed" : "pointer",
+                        opacity: !canSubmitSingle || submitting ? 0.6 : 1,
+                        cursor: !canSubmitSingle || submitting ? "not-allowed" : "pointer",
                     }}
-                    disabled={!selected || submitting}
+                    disabled={!canSubmitSingle || submitting}
                     onClick={handleSubmitWork}
                 >
                     {submitting ? "Submitting…" : "Submit Work"}
@@ -1229,13 +1144,12 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <div style={styles.bulkModalHeader}>
                             <div>
                                 <h3 style={styles.bulkModalTitle}>
-                                    Bulk Submit — Today's Pending Tasks
+                                    Bulk Submit — Today's Pending Cases
                                 </h3>
                                 <p style={styles.bulkModalSubtitle}>
-                                    Each field is pre-filled with what's still pending. Enter how
-                                    much you're submitting now — if the running total ends up
-                                    different from what was allocated, give that task its own
-                                    reason.
+                                    Every case below is still pending. Pick a status for each — a
+                                    "Query" row also needs its text — then confirm to submit all of
+                                    them at once.
                                 </p>
                             </div>
                             <button
@@ -1251,83 +1165,82 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <div style={styles.bulkTableWrap}>
                             <table style={styles.bulkTable}>
                                 <colgroup>
+                                    <col style={{ width: "16%" }} />
+                                    <col style={{ width: "24%" }} />
                                     <col style={{ width: "26%" }} />
-                                    <col style={{ width: "14%" }} />
-                                    <col style={{ width: "18%" }} />
-                                    <col style={{ width: "42%" }} />
+                                    <col style={{ width: "34%" }} />
                                 </colgroup>
                                 <thead>
                                     <tr>
-                                        <th style={styles.th}>Task / Service</th>
-                                        <th style={styles.th}>Pending</th>
-                                        <th style={styles.th}>Submit Now</th>
-                                        <th style={styles.th}>Reason</th>
+                                        <th style={styles.th}>Case No.</th>
+                                        <th style={styles.th}>Service</th>
+                                        <th style={styles.th}>Status *</th>
+                                        <th style={styles.th}>Query</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pendingTodayAllocations.map((a) => {
-                                        const { differs, reasonValid } = bulkRowState(a);
+                                    {pendingTodayCases.map((c) => {
+                                        const type = bulkTypeById[c.id] ?? "";
+                                        const queryMissing =
+                                            type === "QUERY" && !(bulkQueryById[c.id] || "").trim();
                                         return (
-                                            <tr key={a.id} style={styles.tr}>
+                                            <tr key={c.id} style={styles.tr}>
                                                 <td
                                                     style={{
                                                         ...styles.td,
                                                         fontWeight: fontWeight.bold,
-                                                        whiteSpace: "normal",
                                                     }}
                                                 >
-                                                    {a.productName || "-"}
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <span
-                                                        style={{
-                                                            fontWeight: fontWeight.semibold,
-                                                            color: BRAND.amber,
-                                                        }}
-                                                    >
-                                                        {pendingQty(a)}
-                                                    </span>
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                        }}
-                                                        value={bulkQtyById[a.id] ?? ""}
-                                                        onChange={(e) =>
-                                                            setBulkQty(a.id, e.target.value)
-                                                        }
-                                                    />
+                                                    {c.caseNumber}
                                                 </td>
                                                 <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    {c.productName || "-"}
+                                                </td>
+                                                <td style={styles.td}>
                                                     <select
                                                         style={{
                                                             ...styles.textInput,
                                                             width: "100%",
-                                                            border:
-                                                                differs && !reasonValid
-                                                                    ? `1px solid ${BRAND.red || "#e04b4b"}`
-                                                                    : styles.textInput.border,
                                                         }}
-                                                        value={bulkReasonById[a.id] ?? ""}
+                                                        value={type}
                                                         onChange={(e) =>
-                                                            setBulkReason(a.id, e.target.value)
+                                                            setBulkType(
+                                                                c.id,
+                                                                e.target.value as
+                                                                    | ""
+                                                                    | "COMPLETED"
+                                                                    | "DONE_BY_TEAM"
+                                                                    | "QUERY"
+                                                            )
                                                         }
                                                     >
-                                                        <option value="">
-                                                            {differs
-                                                                ? "Select reason *"
-                                                                : "Select reason (optional)"}
+                                                        <option value="">Select status</option>
+                                                        <option value="COMPLETED">Completed</option>
+                                                        <option value="DONE_BY_TEAM">
+                                                            Done by Team
                                                         </option>
-                                                        {REASON_OPTIONS.map((r) => (
-                                                            <option key={r} value={r}>
-                                                                {r}
-                                                            </option>
-                                                        ))}
+                                                        <option value="QUERY">Query</option>
                                                     </select>
+                                                </td>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    {type === "QUERY" ? (
+                                                        <input
+                                                            style={{
+                                                                ...styles.textInput,
+                                                                width: "100%",
+                                                                border: queryMissing
+                                                                    ? `1px solid ${BRAND.red || "#e04b4b"}`
+                                                                    : styles.textInput.border,
+                                                            }}
+                                                            value={bulkQueryById[c.id] ?? ""}
+                                                            onChange={(e) =>
+                                                                setBulkQuery(c.id, e.target.value)
+                                                            }
+                                                            placeholder="Describe the query…"
+                                                        />
+                                                    ) : (
+                                                        <span style={styles.smallMuted}>—</span>
+                                                    )}
                                                 </td>
                                             </tr>
                                         );
@@ -1363,13 +1276,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 disabled={bulkSubmitting || !bulkAllReady}
                                 title={
                                     !bulkAllReady
-                                        ? "Enter a quantity (and a reason for any that differ) for every task first"
+                                        ? "Pick a status (and query text where needed) for every case first"
                                         : undefined
                                 }
                             >
                                 {bulkSubmitting
                                     ? "Submitting…"
-                                    : `Submit All (${pendingTodayAllocations.length})`}
+                                    : `Submit All (${pendingTodayCases.length})`}
                             </button>
                         </div>
                     </div>
@@ -1442,37 +1355,35 @@ function EmptyState({ text, styles }: { text: string; styles: Record<string, CSS
 
 function MobileRow({
     index,
-    a,
+    c,
     onSubmit,
     styles,
 }: {
     index: number;
-    a: Allocation;
+    c: CaseRow;
     onSubmit: () => void;
     styles: Record<string, CSSProperties>;
 }) {
-    const submitted = isFullyDone(a);
-    const hasPartial = !submitted && a.submitted_qty !== null && a.submitted_qty !== undefined;
+    const submitted = isSubmitted(c);
     return (
         <div style={styles.mobileCard}>
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
-                <span style={styles.mobileProduct}>{a.productName || "-"}</span>
+                <span style={styles.mobileProduct}>{c.caseNumber}</span>
                 <span style={submitted ? styles.statusDone : styles.statusPending}>
-                    {submitted ? "Submitted" : hasPartial ? "Partially Submitted" : "Pending"}
+                    {submitted ? "Submitted" : "Pending"}
                 </span>
             </div>
             <div style={styles.mobileMetaRow}>
-                <span>{formatDisplayDate(a.workDate)}</span>
-                <span>{a.team || "-"}</span>
-                <span>Qty: {a.allocated_qty}</span>
-                {!submitted && <span>Pending: {pendingQty(a)}</span>}
+                <span>{c.productName || "-"}</span>
+                <span>{formatDisplayDate(c.workDate)}</span>
+                {c.profile && <span>Profile: {c.profile}</span>}
             </div>
             {submitted ? (
-                <div style={styles.smallMuted}>{a.submitted_qty} submitted</div>
+                <div style={styles.smallMuted}>Submitted</div>
             ) : (
                 <button type="button" style={styles.rowSubmitBtn} onClick={onSubmit}>
-                    {hasPartial ? `Submit Pending (${pendingQty(a)})` : "Submit"}
+                    Submit
                 </button>
             )}
         </div>
