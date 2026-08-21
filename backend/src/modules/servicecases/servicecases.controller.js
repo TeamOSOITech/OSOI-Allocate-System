@@ -18,6 +18,7 @@
 // untouched by any of this.
 
 const supabase = require("../../config/supabaseClient");
+const XLSX = require("xlsx");
 
 function firstLetterOf(name) {
   const trimmed = (name || "").toString().trim();
@@ -295,6 +296,205 @@ async function createServiceCases(req, res) {
 }
 
 // ------------------------------------------------------------
+// POST /api/service-cases/upload
+// multipart/form-data: file (.xlsx/.xls/.csv), productId, workDate
+//
+// Alternative to createServiceCases above for orgs that already have
+// their own case numbering (e.g. a client-provided case ID) — instead
+// of auto-generating CASEB001, CASEB002, ..., this reads a "Case
+// Number" column from the uploaded sheet and creates one row per
+// value, verbatim, all under the one Service + Date picked in the
+// form (same as the quantity-based form — those two still come from
+// the dropdown/date picker, not from the sheet).
+//
+// Case numbers are unique per organization (case_number is used as a
+// lookup key elsewhere, e.g. bulkUpdateServiceCaseProfiles), so any
+// value that already exists anywhere in this org, or repeats within
+// the sheet itself, is skipped and reported back rather than failing
+// the whole upload — same "row-by-row results" shape as the other
+// bulk endpoints in this codebase (see subclients.controller.js).
+// sequence_number still needs a value (NOT NULL, used for ordering),
+// so it just continues this service's running counter same as the
+// auto-generate flow — it's an internal ordinal only, it doesn't need
+// to match anything in the case number text itself.
+// ------------------------------------------------------------
+async function uploadCustomServiceCases(req, res) {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const { productId } = req.body;
+    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+
+    if (!productId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "productId is required" });
+    }
+
+    const product = await getProduct(productId, req.user.organizationId);
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Service not found" });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      defval: "",
+    });
+
+    if (!sheetRows.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Uploaded file has no data rows" });
+    }
+
+    const norm = (v) => (v || "").toString().trim();
+
+    // Column is case-insensitive/whitespace-tolerant: accepts "Case
+    // Number", "case number", "CaseNumber", etc. Falls back to the
+    // first column in the sheet if nothing matches that header, so a
+    // simple single-column sheet with any header still works.
+    const firstRowKeys = Object.keys(sheetRows[0] || {});
+    const caseNumberKey =
+      firstRowKeys.find(
+        (k) => k.replace(/\s+/g, "").toLowerCase() === "casenumber",
+      ) || firstRowKeys[0];
+
+    const results = [];
+    let createdCount = 0;
+    let skippedCount = 0;
+
+    if (sheetRows.length > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Upload cannot exceed 5000 rows at a time.",
+      });
+    }
+
+    // Dedupe within the sheet itself first, keeping the first
+    // occurrence's row number for reporting.
+    const seenInFile = new Set();
+    const candidates = [];
+    sheetRows.forEach((row, i) => {
+      const rowNum = i + 2;
+      const caseNumber = norm(row[caseNumberKey]);
+      if (!caseNumber) {
+        skippedCount++;
+        results.push({
+          row: rowNum,
+          caseNumber: "",
+          status: "skipped",
+          message: "Empty case number",
+        });
+        return;
+      }
+      if (seenInFile.has(caseNumber)) {
+        skippedCount++;
+        results.push({
+          row: rowNum,
+          caseNumber,
+          status: "skipped",
+          message: "Duplicate within uploaded file",
+        });
+        return;
+      }
+      seenInFile.add(caseNumber);
+      candidates.push({ row: rowNum, caseNumber });
+    });
+
+    // Check which of the surviving candidates already exist anywhere
+    // in this org (case_number is org-unique, not just per-service).
+    let existingSet = new Set();
+    if (candidates.length > 0) {
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("service_cases")
+        .select("case_number")
+        .eq("organization_id", req.user.organizationId)
+        .in(
+          "case_number",
+          candidates.map((c) => c.caseNumber),
+        );
+      if (existingErr) throw existingErr;
+      existingSet = new Set((existingRows || []).map((r) => r.case_number));
+    }
+
+    const toInsert = [];
+    candidates.forEach((c) => {
+      if (existingSet.has(c.caseNumber)) {
+        skippedCount++;
+        results.push({
+          row: c.row,
+          caseNumber: c.caseNumber,
+          status: "skipped",
+          message: "Case number already exists",
+        });
+      } else {
+        toInsert.push(c);
+      }
+    });
+
+    if (toInsert.length > 0) {
+      const { data: maxRow, error: maxError } = await supabase
+        .from("service_cases")
+        .select("sequence_number")
+        .eq("organization_id", req.user.organizationId)
+        .eq("product_id", productId)
+        .order("sequence_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (maxError) throw maxError;
+
+      const startSeq = (maxRow?.sequence_number || 0) + 1;
+
+      const rowsToInsert = toInsert.map((c, i) => ({
+        organization_id: req.user.organizationId,
+        product_id: productId,
+        work_date: workDate,
+        sequence_number: startSeq + i,
+        case_number: c.caseNumber,
+        created_by: req.user.userId,
+      }));
+
+      const { error: insertError } = await supabase
+        .from("service_cases")
+        .insert(rowsToInsert);
+      if (insertError) throw insertError;
+
+      createdCount = toInsert.length;
+      toInsert.forEach((c) => {
+        results.push({
+          row: c.row,
+          caseNumber: c.caseNumber,
+          status: "created",
+        });
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `${createdCount} case(s) created.${
+        skippedCount ? ` ${skippedCount} row(s) skipped.` : ""
+      }`,
+      data: {
+        totalRows: sheetRows.length,
+        createdCount,
+        skippedCount,
+        results,
+      },
+    });
+  } catch (err) {
+    console.error("uploadCustomServiceCases error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
 // DELETE /api/service-cases/:id
 // Removes a single case row. Deliberately does NOT touch or renumber
 // any other case for that service — sequence numbers are a running,
@@ -425,8 +625,7 @@ async function autoAllocateServiceCases(req, res) {
     if (employeeIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "No employees selected — mark at least one employee Present on the Employees tab first.",
+        message: "No employees found to allocate to.",
       });
     }
 
@@ -800,6 +999,7 @@ async function bulkSubmitServiceCases(req, res) {
 module.exports = {
   listServiceCases,
   createServiceCases,
+  uploadCustomServiceCases,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,

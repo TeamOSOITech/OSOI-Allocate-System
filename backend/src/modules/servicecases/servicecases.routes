@@ -7,11 +7,13 @@
 
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
 const {
   listServiceCases,
   createServiceCases,
+  uploadCustomServiceCases,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
@@ -21,6 +23,20 @@ const {
   bulkSubmitServiceCases,
 } = require("./servicecases.controller");
 
+// Same memory-storage + extension-filter pattern as clients/subclients
+// bulk upload — file never touches disk, only .xlsx/.xls/.csv accepted.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowed = [".xlsx", ".xls", ".csv"];
+    const ext = file.originalname
+      .slice(file.originalname.lastIndexOf("."))
+      .toLowerCase();
+    if (allowed.includes(ext)) return cb(null, true);
+    cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+  },
+});
+
 router.use(authenticate);
 
 router.get("/", listServiceCases);
@@ -28,6 +44,16 @@ router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   createServiceCases,
+);
+// NEW: custom case-number upload — same Service + Date as the regular
+// form, but case numbers come from an uploaded sheet instead of being
+// auto-generated. Literal path registered before "/:id/*" routes so it
+// can never be shadowed.
+router.post(
+  "/upload",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  upload.single("file"),
+  uploadCustomServiceCases,
 );
 // NEW: Today's Allocation — Cases tab (manual, one case) + Employees tab
 // flow (smart/auto, many cases at once). Literal path "/auto-allocate"
