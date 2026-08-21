@@ -30,6 +30,23 @@ function formatCaseNumber(letter, sequenceNumber) {
   return `CASE${letter}${String(sequenceNumber).padStart(3, "0")}`;
 }
 
+// NEW: Case Register — Client column. Same shape as getProductNameMap
+// above, just pointed at the clients table instead of service_master.
+async function getClientNameMap(clientIds, organizationId) {
+  const uniqueIds = [...new Set(clientIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("clients")
+    .select("id, name")
+    .eq("organization_id", organizationId)
+    .in("id", uniqueIds);
+  if (error) throw error;
+  return (data || []).reduce((acc, c) => {
+    acc[c.id] = c.name;
+    return acc;
+  }, {});
+}
+
 async function getProduct(productId, organizationId) {
   const { data, error } = await supabase
     .from("service_master")
@@ -142,6 +159,24 @@ async function listServiceCases(req, res) {
     if (req.query.workDate) {
       query = query.eq("work_date", req.query.workDate);
     }
+    // NEW: Production Reports — History (case-number) view filters.
+    // Date-RANGE variant of the exact-match workDate above, so a report
+    // page can pull "everything between two dates" instead of one day
+    // at a time. Independent of workDate — pass whichever fits.
+    if (req.query.workDateFrom) {
+      query = query.gte("work_date", req.query.workDateFrom);
+    }
+    if (req.query.workDateTo) {
+      query = query.lte("work_date", req.query.workDateTo);
+    }
+    // NEW: case-number search for the same History view — partial,
+    // case-insensitive match so "b011" finds "CASEB011".
+    if (req.query.caseNumber) {
+      query = query.ilike("case_number", `%${req.query.caseNumber}%`);
+    }
+    if (req.query.clientId) {
+      query = query.eq("client_id", req.query.clientId);
+    }
     if (req.query.allocationStatus) {
       query = query.eq("allocation_status", req.query.allocationStatus);
     }
@@ -168,12 +203,20 @@ async function listServiceCases(req, res) {
       rows.map((r) => r.assigned_employee_id),
       req.user.organizationId,
     );
+    // NEW: Client column — resolves client_id on each case to its name,
+    // same pattern as productMap/employeeMap above.
+    const clientMap = await getClientNameMap(
+      rows.map((r) => r.client_id),
+      req.user.organizationId,
+    );
 
     const enriched = rows.map((r) => ({
       id: r.id,
       caseNumber: r.case_number,
       productId: r.product_id,
       productName: productMap[r.product_id] || null,
+      clientId: r.client_id || null,
+      clientName: clientMap[r.client_id] || null,
       workDate: r.work_date,
       sequenceNumber: r.sequence_number,
       createdAt: r.created_at,
@@ -219,6 +262,9 @@ async function createServiceCases(req, res) {
     const { productId } = req.body;
     const quantity = Number(req.body.quantity);
     const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    // NEW: Client can now be picked at creation time too (still editable
+    // later from the table). Optional — null is fine, same as before.
+    const clientId = req.body.clientId || null;
 
     if (!productId) {
       return res
@@ -247,6 +293,20 @@ async function createServiceCases(req, res) {
         .status(404)
         .json({ success: false, message: "Service not found" });
     }
+    if (clientId) {
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", clientId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Client not found" });
+      }
+    }
     const letter = firstLetterOf(product.product_name);
 
     // Running counter: highest sequence_number ever used for this
@@ -269,6 +329,7 @@ async function createServiceCases(req, res) {
       return {
         organization_id: req.user.organizationId,
         product_id: productId,
+        client_id: clientId,
         work_date: workDate,
         sequence_number: seq,
         case_number: formatCaseNumber(letter, seq),
@@ -328,6 +389,9 @@ async function uploadCustomServiceCases(req, res) {
 
     const { productId } = req.body;
     const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    // NEW: same optional Client as the auto-generate form — applies to
+    // every case row created from this upload.
+    const clientId = req.body.clientId || null;
 
     if (!productId) {
       return res
@@ -340,6 +404,20 @@ async function uploadCustomServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
+    }
+    if (clientId) {
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", clientId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Client not found" });
+      }
     }
 
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
@@ -455,6 +533,7 @@ async function uploadCustomServiceCases(req, res) {
       const rowsToInsert = toInsert.map((c, i) => ({
         organization_id: req.user.organizationId,
         product_id: productId,
+        client_id: clientId,
         work_date: workDate,
         sequence_number: startSeq + i,
         case_number: c.caseNumber,
@@ -752,6 +831,70 @@ async function updateServiceCaseProfile(req, res) {
 }
 
 // ------------------------------------------------------------
+// PATCH /api/service-cases/:id/client
+// body: { clientId }
+//
+// NEW: Case Register table's inline-editable Client column. Only the
+// client link is editable in place — case number, service, and date
+// stay read-only, set once at creation time. Passing clientId: null
+// (or "") clears the client on the case.
+// ------------------------------------------------------------
+async function updateServiceCaseClient(req, res) {
+  try {
+    const { id } = req.params;
+    const clientId = req.body.clientId || null;
+
+    if (clientId) {
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", clientId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Client not found" });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({ client_id: clientId })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    const clientMap = await getClientNameMap(
+      [data.client_id],
+      req.user.organizationId,
+    );
+
+    res.json({
+      success: true,
+      message: `${data.case_number} client updated.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        clientId: data.client_id || null,
+        clientName: clientMap[data.client_id] || null,
+      },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseClient error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
 // POST /api/service-cases/bulk-profile
 // body: { rows: [{ caseNumber, profile }, ...] }
 //
@@ -996,58 +1139,6 @@ async function bulkSubmitServiceCases(req, res) {
   }
 }
 
-// ------------------------------------------------------------
-// POST /api/service-cases/clear-allocations
-// body: { productId, workDate }
-//
-// "Clear" button on the Cases tab — un-allocates every case for the
-// given service+date in one shot (assigned_employee_id -> null,
-// allocation_status -> PENDING, allocated_at -> null), same as
-// Daily Work's own "Clear" for the Allocate tab. Lets a manager wipe a
-// bad Smart Allocation run (or a batch of manual picks) and start over,
-// instead of un-assigning cases one at a time from the per-row dropdown.
-// Only touches ALLOCATED rows — already-PENDING cases are a no-op.
-// ------------------------------------------------------------
-async function clearServiceCaseAllocations(req, res) {
-  try {
-    const { productId, workDate } = req.body;
-    if (!productId || !workDate) {
-      return res.status(400).json({
-        success: false,
-        message: "productId and workDate are required",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("service_cases")
-      .update({
-        assigned_employee_id: null,
-        allocation_status: "PENDING",
-        allocated_at: null,
-      })
-      .eq("organization_id", req.user.organizationId)
-      .eq("product_id", productId)
-      .eq("work_date", workDate)
-      .eq("allocation_status", "ALLOCATED")
-      .select("id");
-    if (error) throw error;
-
-    const clearedCount = (data || []).length;
-
-    res.json({
-      success: true,
-      message:
-        clearedCount > 0
-          ? `${clearedCount} case(s) cleared — back to Pending.`
-          : "Nothing to clear — no allocated cases for this service/date.",
-      data: { clearedCount },
-    });
-  } catch (err) {
-    console.error("clearServiceCaseAllocations error:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-}
-
 module.exports = {
   listServiceCases,
   createServiceCases,
@@ -1055,8 +1146,8 @@ module.exports = {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
-  clearServiceCaseAllocations,
   updateServiceCaseProfile,
+  updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,

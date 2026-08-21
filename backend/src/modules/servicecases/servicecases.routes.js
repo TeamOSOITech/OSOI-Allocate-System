@@ -17,8 +17,8 @@ const {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
-  clearServiceCaseAllocations,
   updateServiceCaseProfile,
+  updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
@@ -64,14 +64,6 @@ router.post(
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   autoAllocateServiceCases,
 );
-// NEW: "Clear" button on the Cases tab — un-allocates every case for a
-// service+date in one shot. Literal path registered before "/:id/allocate"
-// so it can never be shadowed.
-router.post(
-  "/clear-allocations",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  clearServiceCaseAllocations,
-);
 // NEW: Profile — Case Register page. Literal path "/bulk-profile"
 // registered before "/:id/profile" so it can never be shadowed.
 router.post(
@@ -90,6 +82,12 @@ router.patch(
   "/:id/profile",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   updateServiceCaseProfile,
+);
+// NEW: Case Register table's inline-editable Client column.
+router.patch(
+  "/:id/client",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  updateServiceCaseClient,
 );
 router.patch(
   "/:id/allocate",
