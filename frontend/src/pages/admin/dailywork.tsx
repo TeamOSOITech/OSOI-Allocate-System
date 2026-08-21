@@ -439,12 +439,6 @@ export default function DailyWork() {
                         {/* Header row: icon + title + breadcrumb */}
                         <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                             <div style={styles.headerLeft}>
-                                <div style={styles.headerIcon}>
-                                    <i
-                                        className="ti ti-clipboard-plus"
-                                        style={{ fontSize: fontSize["4xl"] }}
-                                    />
-                                </div>
                                 <div>
                                     <h1 style={styles.pageTitle}>Daily Work</h1>
                                     <p style={styles.headerSubtext}>
@@ -1183,17 +1177,6 @@ const styles: Record<string, CSSProperties> = {
     headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
     headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
     headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
-    headerIcon: {
-        width: 42,
-        height: 42,
-        borderRadius: radius.md,
-        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],

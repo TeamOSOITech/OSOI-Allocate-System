@@ -222,18 +222,13 @@ export default function TodaysAllocationEmployees({
             <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div style={styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i className="ti ti-users" style={{ fontSize: fontSize["4xl"] }} />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>Employees</h1>
-                            <p style={styles.headerSubtext}>
-                                Select a service, mark who's Present / Absent / Leave today, and
-                                save — Smart Allocation on the Cases tab splits pending cases
-                                equally across everyone marked Present here.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>Employees</h1>
+                        <p style={styles.headerSubtext}>
+                            Select a service, mark who's Present / Absent / Leave today, and save —
+                            Smart Allocation on the Cases tab splits pending cases equally across
+                            everyone marked Present here.
+                        </p>
                     </div>
                 </div>
 
@@ -372,26 +367,27 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
     },
     contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
-    headerRow: { display: "flex", alignItems: "center" },
-    headerLeft: { display: "flex", alignItems: "center", gap: 14 },
-    headerIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: radius.md,
-        background: "rgba(var(--brand-blue-rgb),0.08)",
-        color: BRAND.blue,
+    headerRow: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
     },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["4xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        textAlign: "left",
     },
-    headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92", maxWidth: 640 },
+    headerSubtext: {
+        margin: "4px 0 0",
+        fontSize: fontSize.base,
+        color: "#767F92",
+        maxWidth: 640,
+        textAlign: "left",
+    },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
     label: {
         display: "block",

@@ -281,37 +281,6 @@ export default function TodaysAllocationCases({
         }
     };
 
-    // NEW: "Clear" button — un-allocates every case for the selected
-    // service/date in one shot (same idea as the Allocate tab's own
-    // Clear), so a bad Smart Allocation run or a batch of manual picks
-    // can be wiped and redone instead of un-assigning rows one at a time.
-    const [clearing, setClearing] = useState(false);
-    const handleClearAllocations = async () => {
-        if (!productId) {
-            showToast("Select a service first.");
-            return;
-        }
-        setClearing(true);
-        try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/clear-allocations`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId, workDate }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to clear");
-            showToast(json.message || "Cleared.");
-            setAutoResult(null);
-            setPendingSelection({});
-            setPage(1);
-            fetchCases();
-        } catch (err: any) {
-            showToast(err?.message || "Failed to clear allocations.");
-        } finally {
-            setClearing(false);
-        }
-    };
-
     const pendingCount = cases.filter((c) => c.allocationStatus === "PENDING").length;
 
     return (
@@ -319,22 +288,14 @@ export default function TodaysAllocationCases({
             <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div style={styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-list-numbers"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>Cases</h1>
-                            <p style={styles.headerSubtext}>
-                                Every logged case for the selected service/date — allocate each one
-                                manually below, or run Smart Allocation to split all pending cases
-                                equally across every employee (except anyone marked Absent or Leave
-                                on the Employees tab).
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>Cases</h1>
+                        <p style={styles.headerSubtext}>
+                            Every logged case for the selected service/date — allocate each one
+                            manually below, or run Smart Allocation to split all pending cases
+                            equally across every employee (except anyone marked Absent or Leave on
+                            the Employees tab).
+                        </p>
                     </div>
                 </div>
 
@@ -390,19 +351,6 @@ export default function TodaysAllocationCases({
                     >
                         <i className="ti ti-bolt" />
                         {autoRunning ? "Allocating…" : "Smart Allocation"}
-                    </button>
-                    <button
-                        type="button"
-                        style={{
-                            ...styles.clearBtn,
-                            opacity: clearing || !productId ? 0.6 : 1,
-                        }}
-                        disabled={clearing || !productId}
-                        onClick={handleClearAllocations}
-                        title="Un-allocate every case for this service/date"
-                    >
-                        <i className="ti ti-eraser" />
-                        {clearing ? "Clearing…" : "Clear"}
                     </button>
                 </div>
 
@@ -535,26 +483,27 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
     },
     contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
-    headerRow: { display: "flex", alignItems: "center" },
-    headerLeft: { display: "flex", alignItems: "center", gap: 14 },
-    headerIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: radius.md,
-        background: "rgba(var(--brand-blue-rgb),0.08)",
-        color: BRAND.blue,
+    headerRow: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
     },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["4xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        textAlign: "left",
     },
-    headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92", maxWidth: 640 },
+    headerSubtext: {
+        margin: "4px 0 0",
+        fontSize: fontSize.base,
+        color: "#767F92",
+        maxWidth: 640,
+        textAlign: "left",
+    },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
     label: {
         display: "block",
@@ -584,19 +533,6 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
-    },
-    clearBtn: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 18px",
-        borderRadius: radius.md,
-        border: `1px solid ${BRAND.red}`,
-        background: "#fff",
-        color: BRAND.red,
-        fontWeight: fontWeight.semibold,
-        fontSize: fontSize.base,
-        cursor: "pointer",
     },
     autoSummary: {
         padding: "10px 16px",

@@ -293,20 +293,12 @@ export default function ServiceCases() {
             <div style={styles.contentBody}>
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
-                    <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-list-numbers"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
-                        <div>
-                            <h1 style={styles.pageTitle}>Case Register</h1>
-                            <p style={styles.headerSubtext}>
-                                Log a service and quantity — one case number is generated per unit,
-                                continuing the running count for that service.
-                            </p>
-                        </div>
+                    <div>
+                        <h1 style={styles.pageTitle}>Case Register</h1>
+                        <p style={styles.headerSubtext}>
+                            Log a service and quantity — one case number is generated per unit,
+                            continuing the running count for that service.
+                        </p>
                     </div>
                 </div>
 
@@ -584,22 +576,9 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         headerRow: {
             display: "flex",
             alignItems: "center",
-        },
-        headerLeft: {
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-        },
-        headerIcon: {
-            width: 48,
-            height: 48,
-            borderRadius: radius.md,
-            background: withBrandAlpha("blue", 0.08),
-            color: BRAND.blue,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
         },
         pageTitle: {
             margin: 0,
@@ -613,6 +592,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             fontSize: fontSize.base,
             color: "#767F92",
             maxWidth: 560,
+            textAlign: "left",
         },
         layout: {
             display: "grid",

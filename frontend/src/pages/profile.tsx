@@ -651,12 +651,13 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const exportCsv = () => {
-        const header = ["#", "Case No.", "Service", "Date", "Status"];
+        const header = ["#", "Case No.", "Service", "Date", "Profile", "Status"];
         const rows = filteredRows.map((c, i) => [
             i + 1,
             c.caseNumber,
             c.productName || "-",
             c.workDate,
+            c.profile || "-",
             isSubmitted(c) ? "Submitted" : "Pending",
         ]);
         const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
@@ -975,11 +976,12 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <table style={styles.table}>
                         <colgroup>
                             <col style={{ width: "4%" }} />
-                            <col style={{ width: "16%" }} />
-                            <col style={{ width: "26%" }} />
-                            <col style={{ width: "16%" }} />
-                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "14%" }} />
                             <col style={{ width: "20%" }} />
+                            <col style={{ width: "12%" }} />
+                            <col style={{ width: "24%" }} />
+                            <col style={{ width: "12%" }} />
+                            <col style={{ width: "14%" }} />
                         </colgroup>
                         <thead>
                             <tr>
@@ -987,6 +989,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <th style={styles.th}>Case No.</th>
                                 <th style={styles.th}>Service</th>
                                 <th style={styles.th}>Date</th>
+                                <th style={styles.th}>Profile</th>
                                 <th style={styles.th}>Status</th>
                                 <th style={styles.th}>Action</th>
                             </tr>
@@ -1002,6 +1005,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         </td>
                                         <td style={styles.td}>{c.productName || "-"}</td>
                                         <td style={styles.td}>{formatDisplayDate(c.workDate)}</td>
+                                        <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                            {c.profile || <span style={styles.smallMuted}>—</span>}
+                                        </td>
                                         <td style={styles.td}>
                                             <span
                                                 style={
@@ -1371,6 +1377,7 @@ function MobileRow({
             <div style={styles.mobileMetaRow}>
                 <span>{c.productName || "-"}</span>
                 <span>{formatDisplayDate(c.workDate)}</span>
+                {c.profile && <span>Profile: {c.profile}</span>}
             </div>
             {submitted ? (
                 <div style={styles.smallMuted}>Submitted</div>
