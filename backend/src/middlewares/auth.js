@@ -1,4 +1,9 @@
 const supabase = require("../config/supabaseClient");
+// getUser() mutates the calling client's internal session state, so it
+// must run on the isolated auth client, never on the shared service-role
+// `supabase` client used for .from(...) queries elsewhere — see the
+// comment in supabaseAuthClient.js.
+const supabaseAuthClient = require("../config/supabaseAuthClient");
 
 const authenticate = async (req, res, next) => {
   // COOKIE-AUTH: authFetch.ts no longer sends an Authorization header at
@@ -25,7 +30,7 @@ const authenticate = async (req, res, next) => {
   }
 
   try {
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await supabaseAuthClient.auth.getUser(token);
 
     if (error || !data?.user) {
       console.error("AUTH: token verification failed:", error?.message);

@@ -1,4 +1,11 @@
 const supabase = require("../../config/supabaseClient");
+// signInWithPassword() and refreshSession() both mutate the calling
+// client's internal session state, so they must run on the isolated auth
+// client, never on the shared service-role `supabase` client used for
+// .from(...) queries elsewhere — see the comment in
+// supabaseAuthClient.js. Using the shared client here was the actual
+// cause of the intermittent "row-level security policy" errors on writes.
+const supabaseAuthClient = require("../../config/supabaseAuthClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 
 const login = async (email, password) => {
@@ -20,7 +27,7 @@ const login = async (email, password) => {
   for (const candidate of candidates) {
     const loginEmail = candidate["Login Email"];
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
       email: loginEmail,
       password,
     });
@@ -174,7 +181,7 @@ const refreshSession = async (refreshToken) => {
     throw new Error("No refresh token provided.");
   }
 
-  const { data, error } = await supabase.auth.refreshSession({
+  const { data, error } = await supabaseAuthClient.auth.refreshSession({
     refresh_token: refreshToken,
   });
 

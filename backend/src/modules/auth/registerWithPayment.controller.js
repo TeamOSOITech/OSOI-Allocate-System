@@ -23,6 +23,12 @@
 //      and every other page already expect.
 
 const supabase = require("../../config/supabaseClient");
+// signInWithPassword() mutates the calling client's internal session
+// state, so it must run on the isolated auth client, never on the
+// shared service-role `supabase` client used for .from(...)/admin.*
+// calls elsewhere in this file — see the comment in
+// supabaseAuthClient.js.
+const supabaseAuthClient = require("../../config/supabaseAuthClient");
 const { setAuthCookies } = require("../../config/authCookies");
 
 // POST /api/auth/register-with-payment
@@ -165,7 +171,7 @@ const registerWithPaymentHandler = async (req, res) => {
 
     // 8. Sign in immediately, same shape as normal /api/auth/login
     const { data: sessionData, error: sessionError } =
-      await supabase.auth.signInWithPassword({
+      await supabaseAuthClient.auth.signInWithPassword({
         email: signup.email,
         password,
       });
