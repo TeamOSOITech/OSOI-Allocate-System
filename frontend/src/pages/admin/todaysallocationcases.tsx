@@ -237,19 +237,24 @@ export default function TodaysAllocationCases({
         setAutoRunning(true);
         setAutoResult(null);
         try {
-            // Whoever is marked Present today on the Employees tab.
+            // Present is the default for everyone — only skip an employee
+            // if attendance for this date explicitly marks them ABSENT or
+            // LEAVE. Nobody needs to be actively marked Present on the
+            // Employees tab first; Smart Allocation just needs to know
+            // who's NOT available.
             const attRes = await authFetch(`${API_BASE}/api/attendance?date=${workDate}`);
             const attJson = await attRes.json();
             if (!attRes.ok || !attJson.success)
                 throw new Error(attJson?.message || "Failed to load attendance");
-            const presentIds = (attJson.data || [])
-                .filter((a: any) => a.status === "PRESENT")
-                .map((a: any) => a.employeeId);
+            const unavailableIds = new Set(
+                (attJson.data || [])
+                    .filter((a: any) => a.status === "ABSENT" || a.status === "LEAVE")
+                    .map((a: any) => a.employeeId)
+            );
+            const presentIds = employees.filter((e) => !unavailableIds.has(e.id)).map((e) => e.id);
 
             if (presentIds.length === 0) {
-                showToast(
-                    "No one is marked Present for this date yet — go to the Employees tab first."
-                );
+                showToast("No employees available to allocate to.");
                 return;
             }
 
@@ -295,7 +300,8 @@ export default function TodaysAllocationCases({
                             <p style={styles.headerSubtext}>
                                 Every logged case for the selected service/date — allocate each one
                                 manually below, or run Smart Allocation to split all pending cases
-                                equally across today's Present employees.
+                                equally across every employee (except anyone marked Absent or Leave
+                                on the Employees tab).
                             </p>
                         </div>
                     </div>

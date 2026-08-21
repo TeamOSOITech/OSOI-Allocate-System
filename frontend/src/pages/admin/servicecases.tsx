@@ -76,6 +76,21 @@ export default function ServiceCases() {
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
 
+    // ---- NEW: "Auto-generate" (original quantity-based flow, untouched
+    // above) vs "Upload" — for orgs that already have their own case
+    // numbering (e.g. a client-provided case ID) and want to bring in
+    // custom/random case numbers via an Excel sheet instead of the
+    // auto-generated CASEB001-style numbers. Service + Date still come
+    // from the same dropdown/date picker either way — only the case
+    // numbers themselves come from the sheet in Upload mode.
+    const [formMode, setFormMode] = useState<"auto" | "upload">("auto");
+    const [uploadFile, setUploadFile] = useState<File | null>(null);
+    const [uploadResult, setUploadResult] = useState<{
+        createdCount: number;
+        skippedCount: number;
+        totalRows: number;
+    } | null>(null);
+
     // ---- right side: individual case rows, filterable + paginated ----
     const [cases, setCases] = useState<ServiceCase[]>([]);
     const [casesLoading, setCasesLoading] = useState(true);
@@ -191,6 +206,61 @@ export default function ServiceCases() {
         }
     };
 
+    const handleUploadSubmit = async (e: FormEvent) => {
+        e.preventDefault();
+        setFormError("");
+        setFormSuccess("");
+        setUploadResult(null);
+
+        if (!productId) {
+            setFormError("Select a service.");
+            return;
+        }
+        if (!uploadFile) {
+            setFormError("Choose a file to upload.");
+            return;
+        }
+
+        setSubmitting(true);
+        try {
+            const formData = new FormData();
+            formData.append("file", uploadFile);
+            formData.append("productId", productId);
+            formData.append("workDate", workDate);
+
+            const res = await authFetch(`${API_BASE}/api/service-cases/upload`, {
+                method: "POST",
+                body: formData,
+            });
+            // The server can 404/500 with an HTML error page instead of
+            // JSON (e.g. if this endpoint isn't deployed on the backend
+            // yet) — res.json() would throw a confusing raw parse error
+            // in that case, so check the content-type first and surface
+            // a clear message instead.
+            const contentType = res.headers.get("content-type") || "";
+            if (!contentType.includes("application/json")) {
+                throw new Error(
+                    res.status === 404
+                        ? "Upload endpoint not found (HTTP 404) — the backend may not have this feature deployed yet."
+                        : `Server returned an unexpected response (HTTP ${res.status}).`
+                );
+            }
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Failed to upload cases");
+            setFormSuccess(json.message || "Cases uploaded.");
+            setUploadResult(json.data || null);
+            setUploadFile(null);
+            setFilterProductId(productId);
+            setPage(1);
+            fetchCases();
+        } catch (err: any) {
+            setFormError(err?.message || "Something went wrong.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const handleDelete = async (c: ServiceCase) => {
         if (!window.confirm(`Delete ${c.caseNumber}? This can't be undone.`)) return;
         setDeleteError("");
@@ -242,8 +312,47 @@ export default function ServiceCases() {
 
                 <div style={styles.layout}>
                     {/* ---- LEFT: add form (same shape as Daily Work) ---- */}
-                    <form style={styles.formCard} onSubmit={handleSubmit}>
+                    <form
+                        style={styles.formCard}
+                        onSubmit={formMode === "auto" ? handleSubmit : handleUploadSubmit}
+                    >
                         <p style={styles.cardHeading}>Log Cases</p>
+
+                        {/* Mode toggle — Auto-generate (original quantity-based
+                            flow, unchanged) vs Upload (custom case numbers from
+                            an Excel/CSV sheet, for orgs with their own numbering). */}
+                        <div style={styles.modeToggleRow}>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.modeToggleBtn,
+                                    ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
+                                }}
+                                onClick={() => {
+                                    setFormMode("auto");
+                                    setFormError("");
+                                    setFormSuccess("");
+                                    setUploadResult(null);
+                                }}
+                            >
+                                Auto-generate
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.modeToggleBtn,
+                                    ...(formMode === "upload" ? styles.modeToggleBtnActive : {}),
+                                }}
+                                onClick={() => {
+                                    setFormMode("upload");
+                                    setFormError("");
+                                    setFormSuccess("");
+                                    setUploadResult(null);
+                                }}
+                            >
+                                Upload Case Numbers
+                            </button>
+                        </div>
 
                         <label style={styles.label}>Date</label>
                         <input
@@ -268,22 +377,48 @@ export default function ServiceCases() {
                             ))}
                         </select>
 
-                        <label style={styles.label}>Quantity</label>
-                        <input
-                            type="number"
-                            min={1}
-                            style={styles.input}
-                            value={quantity}
-                            onChange={(e) => setQuantity(e.target.value)}
-                            placeholder="e.g. 10"
-                        />
-                        <p style={styles.helperNote}>
-                            One case number is created per unit — entering 10 here creates 10
-                            individual case rows.
-                        </p>
+                        {formMode === "auto" ? (
+                            <>
+                                <label style={styles.label}>Quantity</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    style={styles.input}
+                                    value={quantity}
+                                    onChange={(e) => setQuantity(e.target.value)}
+                                    placeholder="e.g. 10"
+                                />
+                                <p style={styles.helperNote}>
+                                    One case number is created per unit — entering 10 here creates
+                                    10 individual case rows.
+                                </p>
+                            </>
+                        ) : (
+                            <>
+                                <label style={styles.label}>Case Numbers File</label>
+                                <input
+                                    type="file"
+                                    accept=".xlsx,.xls,.csv"
+                                    style={styles.input}
+                                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                                />
+                                <p style={styles.helperNote}>
+                                    Upload a .xlsx/.xls/.csv file with a "Case Number" column — any
+                                    values, in any order. One case row is created per value, under
+                                    the Service and Date picked above. Case numbers that already
+                                    exist, or repeat in the file, are skipped and reported below.
+                                </p>
+                            </>
+                        )}
 
                         {formError && <p style={styles.errorText}>{formError}</p>}
                         {formSuccess && <p style={styles.successText}>{formSuccess}</p>}
+                        {uploadResult && uploadResult.skippedCount > 0 && (
+                            <p style={styles.helperNote}>
+                                {uploadResult.createdCount} created, {uploadResult.skippedCount}{" "}
+                                skipped out of {uploadResult.totalRows} row(s).
+                            </p>
+                        )}
 
                         <button
                             type="submit"
@@ -291,7 +426,13 @@ export default function ServiceCases() {
                             disabled={submitting}
                         >
                             <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
-                            {submitting ? "Creating..." : "Create Cases"}
+                            {submitting
+                                ? formMode === "auto"
+                                    ? "Creating..."
+                                    : "Uploading..."
+                                : formMode === "auto"
+                                  ? "Create Cases"
+                                  : "Upload Cases"}
                         </button>
                     </form>
 
@@ -498,6 +639,37 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             display: "flex",
             alignItems: "center",
             gap: 8,
+        },
+        // Auto-generate / Upload Case Numbers mode toggle — same pill-button
+        // look as the other tab bars in this app (border + hover + gradient
+        // when active).
+        modeToggleRow: {
+            display: "flex",
+            gap: 8,
+            margin: "0 0 12px",
+            flexWrap: "wrap",
+        },
+        modeToggleBtn: {
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#fff",
+            color: "#3b4a63",
+            border: "1px solid #e4e9f2",
+            borderRadius: radius.md,
+            padding: "9px 12px",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            transition: "border-color .15s ease, color .15s ease",
+            whiteSpace: "nowrap",
+        },
+        modeToggleBtnActive: {
+            background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+            color: "#fff",
+            border: "1px solid transparent",
+            boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
         },
         label: {
             fontSize: fontSize.sm,

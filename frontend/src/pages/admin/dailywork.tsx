@@ -25,6 +25,12 @@ function useIsMobile() {
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
+// Hover state for the page-level tab bar (Daily Work / Case Register)
+// — same treatment as the Client/Subclient tab buttons on clients.tsx.
+const MAIN_TAB_CSS = `
+.dw-tab-btn:hover { border-color: #cfe0f5; color: var(--brand-blue); }
+`;
+
 type Product = {
     id: string;
     product_name: string;
@@ -389,12 +395,16 @@ export default function DailyWork() {
 
     return (
         <>
-            {/* NEW: tab bar — Tab 1 is the exact original Daily Work page
+            <style>{MAIN_TAB_CSS}</style>
+            {/* Tab bar — Tab 1 is the exact original Daily Work page
                 (nothing inside it was changed), Tab 2 is the new Case
-                Register. */}
+                Register. Styled as real pill buttons (border + hover +
+                gradient when active), same as the Client/Subclient tabs
+                on the Clients page, so they're unmistakably clickable. */}
             <div style={styles.mainTabBar}>
                 <button
                     type="button"
+                    className="dw-tab-btn"
                     style={{
                         ...styles.mainTabBtn,
                         ...(mainTab === "daily" ? styles.mainTabBtnActive : {}),
@@ -406,6 +416,7 @@ export default function DailyWork() {
                 </button>
                 <button
                     type="button"
+                    className="dw-tab-btn"
                     style={{
                         ...styles.mainTabBtn,
                         ...(mainTab === "cases" ? styles.mainTabBtnActive : {}),
@@ -1114,30 +1125,36 @@ function Pill({ value, tone }: { value: number; tone: keyof typeof PILL_TONES })
 }
 
 const styles: Record<string, CSSProperties> = {
-    // NEW: page-level tab bar (Daily Work / Case Register).
+    // Page-level tab bar (Daily Work / Case Register) — same pill-button
+    // look as the Client/Subclient tabs on clients.tsx: a real bordered
+    // button with a hover state and a gradient + shadow when active,
+    // instead of a flat underline tab. Easier to see and to hit.
     mainTabBar: {
         display: "flex",
         gap: 8,
-        padding: "14px 28px 0",
+        padding: "14px 28px",
         background: "#f4f5fb",
+        flexWrap: "wrap",
     },
     mainTabBtn: {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: "9px 18px",
-        borderRadius: `${radius.md} ${radius.md} 0 0`,
-        border: "none",
-        background: "transparent",
-        color: "#767F92",
+        background: "#fff",
+        color: "#3b4a63",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "10px 18px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
+        transition: "border-color .15s ease, color .15s ease",
     },
     mainTabBtnActive: {
-        background: "#fff",
-        color: "#204297",
-        boxShadow: "0 -2px 10px rgba(0,0,0,.04)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
     },
     root: {
         width: "100%",

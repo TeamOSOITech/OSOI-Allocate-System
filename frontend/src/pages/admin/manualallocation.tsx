@@ -305,6 +305,12 @@ type RowState = { status: RowStatus; qty: number };
 // every change and restored on return, per daily-work batch (never mixed
 // across different services/dates). It's cleared once the allocation is
 // actually saved (no longer "unsaved"), or when the person hits Clear.
+// Hover state for the page-level tab bar (Allocate / Cases / Employees)
+// — same treatment as the Client/Subclient tab buttons on clients.tsx.
+const MAIN_TAB_CSS = `
+.ma-tab-btn:hover { border-color: #cfe0f5; color: var(--brand-blue); }
+`;
+
 const DRAFT_PREFIX = "manualalloc_draft_";
 
 function draftKey(batchId: string) {
@@ -629,13 +635,22 @@ export default function ManualAllocation() {
     const remainingQty = totalQty - allocatedQty;
 
     // ---- status counts (for the smart allocation formula) ----
+    // Present is the default: an employee counts as Present unless they've
+    // been explicitly marked Half or Leave. This is computed off
+    // filteredEmployees (not just Object.values(rows)) so nobody needs to
+    // be actively "marked" Present for Smart Allocation to see them —
+    // only Half/Leave need explicit marking.
     const presentCount = useMemo(
-        () => Object.values(rows).filter((r) => r.status === "PRESENT").length,
-        [rows]
+        () =>
+            filteredEmployees.filter((e) => {
+                const s = rows[e.id]?.status;
+                return s !== "HALF" && s !== "LEAVE";
+            }).length,
+        [filteredEmployees, rows]
     );
     const halfCount = useMemo(
-        () => Object.values(rows).filter((r) => r.status === "HALF").length,
-        [rows]
+        () => filteredEmployees.filter((e) => rows[e.id]?.status === "HALF").length,
+        [filteredEmployees, rows]
     );
 
     // ---- SMART ALLOCATION LOGIC ----
@@ -653,15 +668,18 @@ export default function ManualAllocation() {
 
         setRows((prev) => {
             const next = { ...prev };
-            Object.keys(next).forEach((employeeId) => {
-                const status = next[employeeId].status;
+            // Every visible employee gets a row here (defaulting to
+            // Present) — not just whoever already had one in `prev` —
+            // so someone nobody has touched yet still gets their share.
+            filteredEmployees.forEach((emp) => {
+                const status = next[emp.id]?.status || "PRESENT";
                 const qty =
                     status === "PRESENT"
                         ? baseQty
                         : status === "HALF"
                           ? Math.round(baseQty / 2)
                           : 0;
-                next[employeeId] = { status, qty };
+                next[emp.id] = { status, qty };
             });
             return next;
         });
@@ -818,13 +836,18 @@ export default function ManualAllocation() {
 
     return (
         <>
-            {/* NEW: tab bar — Tab 1 is the exact original quantity-based
+            <style>{MAIN_TAB_CSS}</style>
+            {/* Tab bar — Tab 1 is the exact original quantity-based
                 Allocate page (nothing inside it was changed), Tab 2 is
                 the new case-level Cases view, Tab 3 is the new Employees
-                (attendance) view that feeds Tab 2's Smart Allocation. */}
+                (attendance) view that feeds Tab 2's Smart Allocation.
+                Styled as real pill buttons (border + hover + gradient
+                when active), same as the Client/Subclient tabs on the
+                Clients page, so they're unmistakably clickable. */}
             <div style={styles.mainTabBar}>
                 <button
                     type="button"
+                    className="ma-tab-btn"
                     style={{
                         ...styles.mainTabBtn,
                         ...(mainTab === "allocate" ? styles.mainTabBtnActive : {}),
@@ -836,6 +859,7 @@ export default function ManualAllocation() {
                 </button>
                 <button
                     type="button"
+                    className="ma-tab-btn"
                     style={{
                         ...styles.mainTabBtn,
                         ...(mainTab === "cases" ? styles.mainTabBtnActive : {}),
@@ -847,6 +871,7 @@ export default function ManualAllocation() {
                 </button>
                 <button
                     type="button"
+                    className="ma-tab-btn"
                     style={{
                         ...styles.mainTabBtn,
                         ...(mainTab === "employees" ? styles.mainTabBtnActive : {}),
@@ -1257,9 +1282,41 @@ export default function ManualAllocation() {
                                                                         flexWrap: "wrap",
                                                                     }}
                                                                 >
+                                                                    {r.status === "PRESENT" && (
+                                                                        <span
+                                                                            style={{
+                                                                                ...styles.statusBtn,
+                                                                                background:
+                                                                                    withAlpha(
+                                                                                        STATUS_META
+                                                                                            .PRESENT
+                                                                                            .color,
+                                                                                        0.06
+                                                                                    ),
+                                                                                color: STATUS_META
+                                                                                    .PRESENT.color,
+                                                                                border: `1px solid ${withAlpha(
+                                                                                    STATUS_META
+                                                                                        .PRESENT
+                                                                                        .color,
+                                                                                    0.35
+                                                                                )}`,
+                                                                                cursor: "default",
+                                                                            }}
+                                                                        >
+                                                                            <CheckCircle2
+                                                                                size={12}
+                                                                                color={
+                                                                                    STATUS_META
+                                                                                        .PRESENT
+                                                                                        .color
+                                                                                }
+                                                                            />
+                                                                            Present
+                                                                        </span>
+                                                                    )}
                                                                     {(
                                                                         [
-                                                                            "PRESENT",
                                                                             "HALF",
                                                                             "LEAVE",
                                                                         ] as RowStatus[]
@@ -1275,7 +1332,9 @@ export default function ManualAllocation() {
                                                                                 onClick={() =>
                                                                                     setStatus(
                                                                                         emp.id,
-                                                                                        s
+                                                                                        active
+                                                                                            ? "PRESENT"
+                                                                                            : s
                                                                                     )
                                                                                 }
                                                                                 style={{
@@ -1514,31 +1573,37 @@ function KpiCard({
 }
 
 const styles: Record<string, CSSProperties> = {
-    // NEW: page-level tab bar (Allocate / Cases / Employees) — same
-    // pattern/styling as dailywork.tsx's own mainTabBar.
+    // Page-level tab bar (Allocate / Cases / Employees) — same
+    // pill-button look as the Client/Subclient tabs on clients.tsx:
+    // a real bordered button with a hover state and a gradient +
+    // shadow when active, instead of a flat underline tab. Easier to
+    // see and to hit, which is what was making clicks feel unreliable.
     mainTabBar: {
         display: "flex",
         gap: 8,
-        padding: "14px 28px 0",
+        padding: "14px 28px",
         background: "#f4f5fb",
+        flexWrap: "wrap",
     },
     mainTabBtn: {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: "9px 18px",
-        borderRadius: `${radius.md} ${radius.md} 0 0`,
-        border: "none",
-        background: "transparent",
-        color: "#767F92",
+        background: "#fff",
+        color: "#3b4a63",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "10px 18px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
+        transition: "border-color .15s ease, color .15s ease",
     },
     mainTabBtnActive: {
-        background: "#fff",
-        color: "#204297",
-        boxShadow: "0 -2px 10px rgba(0,0,0,.04)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
     },
     root: {
         width: "100%",
