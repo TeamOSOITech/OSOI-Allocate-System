@@ -14,6 +14,7 @@ const {
   listServiceCases,
   createServiceCases,
   uploadCustomServiceCases,
+  downloadUploadTemplate,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
@@ -41,6 +42,9 @@ const upload = multer({
 router.use(authenticate);
 
 router.get("/", listServiceCases);
+// NEW: sample .xlsx for Upload mode — literal path registered before
+// "/:id/*" routes so it can never be shadowed.
+router.get("/upload/template", downloadUploadTemplate);
 router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),

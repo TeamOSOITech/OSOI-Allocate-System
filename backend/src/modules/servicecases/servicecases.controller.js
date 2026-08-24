@@ -19,6 +19,30 @@
 
 const supabase = require("../../config/supabaseClient");
 const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
+
+// ---------- brand theme (same palette as clients.controller.js) ----------
+const BRAND = {
+  blue: "FF204297",
+  lightBlue: "FF08A1CE",
+  white: "FFFFFFFF",
+};
+
+function styleHeaderCell(cell) {
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: BRAND.blue },
+  };
+  cell.font = { bold: true, color: { argb: BRAND.white }, size: 11 };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  cell.border = {
+    top: { style: "thin", color: { argb: BRAND.white } },
+    left: { style: "thin", color: { argb: BRAND.white } },
+    bottom: { style: "thin", color: { argb: BRAND.white } },
+    right: { style: "thin", color: { argb: BRAND.white } },
+  };
+}
 
 function firstLetterOf(name) {
   const trimmed = (name || "").toString().trim();
@@ -45,6 +69,44 @@ async function getClientNameMap(clientIds, organizationId) {
     acc[c.id] = c.name;
     return acc;
   }, {});
+}
+
+// NEW: same idea as getClientNameMap, for the Subclient column.
+async function getSubclientNameMap(subclientIds, organizationId) {
+  const uniqueIds = [...new Set(subclientIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("subclients")
+    .select("id, name")
+    .eq("organization_id", organizationId)
+    .in("id", uniqueIds);
+  if (error) throw error;
+  return (data || []).reduce((acc, s) => {
+    acc[s.id] = s.name;
+    return acc;
+  }, {});
+}
+
+// NEW: validates a subclient exists, belongs to this org, and (if
+// clientId is given) belongs to that specific client — used by both
+// the client/subclient edit endpoint and the create endpoints so a
+// case can never end up with a subclient that doesn't match its client.
+async function validateSubclient(subclientId, organizationId, clientId) {
+  const { data: subclient, error } = await supabase
+    .from("subclients")
+    .select("id, client_id")
+    .eq("id", subclientId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!subclient) return { ok: false, message: "Subclient not found" };
+  if (clientId && String(subclient.client_id) !== String(clientId)) {
+    return {
+      ok: false,
+      message: "Subclient does not belong to the selected client",
+    };
+  }
+  return { ok: true };
 }
 
 async function getProduct(productId, organizationId) {
@@ -177,6 +239,10 @@ async function listServiceCases(req, res) {
     if (req.query.clientId) {
       query = query.eq("client_id", req.query.clientId);
     }
+    // NEW: Subclient filter — same idea as clientId above.
+    if (req.query.subclientId) {
+      query = query.eq("subclient_id", req.query.subclientId);
+    }
     if (req.query.allocationStatus) {
       query = query.eq("allocation_status", req.query.allocationStatus);
     }
@@ -209,6 +275,11 @@ async function listServiceCases(req, res) {
       rows.map((r) => r.client_id),
       req.user.organizationId,
     );
+    // NEW: Subclient column.
+    const subclientMap = await getSubclientNameMap(
+      rows.map((r) => r.subclient_id),
+      req.user.organizationId,
+    );
 
     const enriched = rows.map((r) => ({
       id: r.id,
@@ -217,6 +288,8 @@ async function listServiceCases(req, res) {
       productName: productMap[r.product_id] || null,
       clientId: r.client_id || null,
       clientName: clientMap[r.client_id] || null,
+      subclientId: r.subclient_id || null,
+      subclientName: subclientMap[r.subclient_id] || null,
       workDate: r.work_date,
       sequenceNumber: r.sequence_number,
       createdAt: r.created_at,
@@ -265,6 +338,9 @@ async function createServiceCases(req, res) {
     // NEW: Client can now be picked at creation time too (still editable
     // later from the table). Optional — null is fine, same as before.
     const clientId = req.body.clientId || null;
+    // NEW: Subclient — only meaningful alongside a client, validated
+    // below to actually belong to it.
+    const subclientId = req.body.subclientId || null;
 
     if (!productId) {
       return res
@@ -307,6 +383,18 @@ async function createServiceCases(req, res) {
           .json({ success: false, message: "Client not found" });
       }
     }
+    if (subclientId) {
+      const subclientCheck = await validateSubclient(
+        subclientId,
+        req.user.organizationId,
+        clientId,
+      );
+      if (!subclientCheck.ok) {
+        return res
+          .status(404)
+          .json({ success: false, message: subclientCheck.message });
+      }
+    }
     const letter = firstLetterOf(product.product_name);
 
     // Running counter: highest sequence_number ever used for this
@@ -330,6 +418,7 @@ async function createServiceCases(req, res) {
         organization_id: req.user.organizationId,
         product_id: productId,
         client_id: clientId,
+        subclient_id: subclientId,
         work_date: workDate,
         sequence_number: seq,
         case_number: formatCaseNumber(letter, seq),
@@ -379,6 +468,59 @@ async function createServiceCases(req, res) {
 // auto-generate flow — it's an internal ordinal only, it doesn't need
 // to match anything in the case number text itself.
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// GET /api/service-cases/upload/template
+//
+// NEW: sample .xlsx for Upload mode — "Case Number" column (required)
+// plus the "Client Name" / "Subclient Name" columns uploadCustomServiceCases
+// below reads. Client/Subclient are optional in the actual upload; the
+// sample just shows the expected header names and one example row.
+// ------------------------------------------------------------
+async function downloadUploadTemplate(req, res) {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Cases");
+
+    sheet.columns = [
+      { header: "Case Number", key: "caseNumber", width: 22 },
+      { header: "Client Name", key: "clientName", width: 26 },
+      { header: "Subclient Name", key: "subclientName", width: 26 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 26;
+    [1, 2, 3].forEach((col) => styleHeaderCell(headerRow.getCell(col)));
+
+    sheet.addRows([
+      {
+        caseNumber: "CASEB011",
+        clientName: "Acme Corp",
+        subclientName: "Acme West",
+      },
+      { caseNumber: "CASEB012", clientName: "", subclientName: "" },
+    ]);
+
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=case_register_upload_template.xlsx",
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("downloadUploadTemplate error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to generate template" });
+  }
+}
+
 async function uploadCustomServiceCases(req, res) {
   try {
     if (!req.file) {
@@ -389,9 +531,6 @@ async function uploadCustomServiceCases(req, res) {
 
     const { productId } = req.body;
     const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
-    // NEW: same optional Client as the auto-generate form — applies to
-    // every case row created from this upload.
-    const clientId = req.body.clientId || null;
 
     if (!productId) {
       return res
@@ -404,20 +543,6 @@ async function uploadCustomServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
-    }
-    if (clientId) {
-      const { data: client, error: clientError } = await supabase
-        .from("clients")
-        .select("id")
-        .eq("id", clientId)
-        .eq("organization_id", req.user.organizationId)
-        .maybeSingle();
-      if (clientError) throw clientError;
-      if (!client) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Client not found" });
-      }
     }
 
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
@@ -443,6 +568,19 @@ async function uploadCustomServiceCases(req, res) {
       firstRowKeys.find(
         (k) => k.replace(/\s+/g, "").toLowerCase() === "casenumber",
       ) || firstRowKeys[0];
+    // NEW: optional "Client Name" / "Subclient Name" columns — bulk
+    // upload now resolves Client + Subclient per row from the sheet
+    // instead of one value picked for the whole batch. Both columns
+    // are optional; a row with neither still creates fine, same as
+    // before.
+    const clientNameKey = firstRowKeys.find((k) =>
+      ["clientname", "client"].includes(k.replace(/\s+/g, "").toLowerCase()),
+    );
+    const subclientNameKey = firstRowKeys.find((k) =>
+      ["subclientname", "subclient"].includes(
+        k.replace(/\s+/g, "").toLowerCase(),
+      ),
+    );
 
     const results = [];
     let createdCount = 0;
@@ -483,7 +621,12 @@ async function uploadCustomServiceCases(req, res) {
         return;
       }
       seenInFile.add(caseNumber);
-      candidates.push({ row: rowNum, caseNumber });
+      candidates.push({
+        row: rowNum,
+        caseNumber,
+        clientName: clientNameKey ? norm(row[clientNameKey]) : "",
+        subclientName: subclientNameKey ? norm(row[subclientNameKey]) : "",
+      });
     });
 
     // Check which of the surviving candidates already exist anywhere
@@ -517,7 +660,70 @@ async function uploadCustomServiceCases(req, res) {
       }
     });
 
-    if (toInsert.length > 0) {
+    // NEW: resolve each row's Client Name / Subclient Name against the
+    // org's actual clients/subclients — loaded once here rather than
+    // per-row, since a sheet can be thousands of rows. A row whose
+    // Client Name doesn't match anything is skipped outright (rather
+    // than silently created client-less) so a typo'd name gets caught
+    // instead of quietly losing its client link. A Subclient Name that
+    // doesn't resolve is more forgiving — the case still gets created,
+    // just without that subclient.
+    let clientNameToId = new Map();
+    let subclientKeyToId = new Map();
+    const needsClientLookup = toInsert.some((c) => c.clientName);
+    const needsSubclientLookup = toInsert.some((c) => c.subclientName);
+    if (needsClientLookup || needsSubclientLookup) {
+      const { data: orgClients, error: clientsErr } = await supabase
+        .from("clients")
+        .select("id, name")
+        .eq("organization_id", req.user.organizationId);
+      if (clientsErr) throw clientsErr;
+      (orgClients || []).forEach((cl) => {
+        clientNameToId.set(cl.name.trim().toLowerCase(), cl.id);
+      });
+
+      if (needsSubclientLookup) {
+        const { data: orgSubclients, error: subErr } = await supabase
+          .from("subclients")
+          .select("id, name, client_id")
+          .eq("organization_id", req.user.organizationId);
+        if (subErr) throw subErr;
+        (orgSubclients || []).forEach((s) => {
+          subclientKeyToId.set(
+            `${s.client_id}::${s.name.trim().toLowerCase()}`,
+            s.id,
+          );
+        });
+      }
+    }
+
+    const resolved = [];
+    toInsert.forEach((c) => {
+      let clientId = null;
+      if (c.clientName) {
+        clientId = clientNameToId.get(c.clientName.toLowerCase()) || null;
+        if (!clientId) {
+          skippedCount++;
+          results.push({
+            row: c.row,
+            caseNumber: c.caseNumber,
+            status: "skipped",
+            message: `Client not found: "${c.clientName}"`,
+          });
+          return;
+        }
+      }
+      let subclientId = null;
+      if (c.subclientName && clientId) {
+        subclientId =
+          subclientKeyToId.get(
+            `${clientId}::${c.subclientName.toLowerCase()}`,
+          ) || null;
+      }
+      resolved.push({ ...c, clientId, subclientId });
+    });
+
+    if (resolved.length > 0) {
       const { data: maxRow, error: maxError } = await supabase
         .from("service_cases")
         .select("sequence_number")
@@ -530,10 +736,11 @@ async function uploadCustomServiceCases(req, res) {
 
       const startSeq = (maxRow?.sequence_number || 0) + 1;
 
-      const rowsToInsert = toInsert.map((c, i) => ({
+      const rowsToInsert = resolved.map((c, i) => ({
         organization_id: req.user.organizationId,
         product_id: productId,
-        client_id: clientId,
+        client_id: c.clientId,
+        subclient_id: c.subclientId,
         work_date: workDate,
         sequence_number: startSeq + i,
         case_number: c.caseNumber,
@@ -545,8 +752,8 @@ async function uploadCustomServiceCases(req, res) {
         .insert(rowsToInsert);
       if (insertError) throw insertError;
 
-      createdCount = toInsert.length;
-      toInsert.forEach((c) => {
+      createdCount = resolved.length;
+      resolved.forEach((c) => {
         results.push({
           row: c.row,
           caseNumber: c.caseNumber,
@@ -839,16 +1046,53 @@ async function updateServiceCaseProfile(req, res) {
 // stay read-only, set once at creation time. Passing clientId: null
 // (or "") clears the client on the case.
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/client
+// body: { clientId?, subclientId? }
+//
+// Case Register table's inline-editable Client + Subclient columns.
+// Only these two are editable in place — case number, service, and
+// date stay read-only, set once at creation time. Either field is
+// optional in the body; only the ones actually sent get changed.
+// Passing clientId: null (or "") clears the client (and, per the rule
+// below, the subclient along with it — a subclient can't outlive the
+// client it belongs to).
+// ------------------------------------------------------------
 async function updateServiceCaseClient(req, res) {
   try {
     const { id } = req.params;
-    const clientId = req.body.clientId || null;
 
-    if (clientId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("service_cases")
+      .select("id, case_number, client_id, subclient_id")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    const bodyHasClient = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "clientId",
+    );
+    const bodyHasSubclient = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "subclientId",
+    );
+
+    const nextClientId = bodyHasClient
+      ? req.body.clientId || null
+      : existing.client_id;
+
+    if (bodyHasClient && nextClientId) {
       const { data: client, error: clientError } = await supabase
         .from("clients")
         .select("id")
-        .eq("id", clientId)
+        .eq("id", nextClientId)
         .eq("organization_id", req.user.organizationId)
         .maybeSingle();
       if (clientError) throw clientError;
@@ -859,9 +1103,31 @@ async function updateServiceCaseClient(req, res) {
       }
     }
 
+    // NEW: Subclient — a client change with no explicit subclient in
+    // the same request clears the old subclient (it belonged to the
+    // previous client and can't be assumed valid under the new one).
+    let nextSubclientId = bodyHasSubclient
+      ? req.body.subclientId || null
+      : bodyHasClient && String(nextClientId) !== String(existing.client_id)
+        ? null
+        : existing.subclient_id;
+
+    if (nextSubclientId) {
+      const subclientCheck = await validateSubclient(
+        nextSubclientId,
+        req.user.organizationId,
+        nextClientId,
+      );
+      if (!subclientCheck.ok) {
+        return res
+          .status(404)
+          .json({ success: false, message: subclientCheck.message });
+      }
+    }
+
     const { data, error } = await supabase
       .from("service_cases")
-      .update({ client_id: clientId })
+      .update({ client_id: nextClientId, subclient_id: nextSubclientId })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
       .select()
@@ -877,15 +1143,21 @@ async function updateServiceCaseClient(req, res) {
       [data.client_id],
       req.user.organizationId,
     );
+    const subclientMap = await getSubclientNameMap(
+      [data.subclient_id],
+      req.user.organizationId,
+    );
 
     res.json({
       success: true,
-      message: `${data.case_number} client updated.`,
+      message: `${data.case_number} updated.`,
       data: {
         id: data.id,
         caseNumber: data.case_number,
         clientId: data.client_id || null,
         clientName: clientMap[data.client_id] || null,
+        subclientId: data.subclient_id || null,
+        subclientName: subclientMap[data.subclient_id] || null,
       },
     });
   } catch (err) {
@@ -1143,6 +1415,7 @@ module.exports = {
   listServiceCases,
   createServiceCases,
   uploadCustomServiceCases,
+  downloadUploadTemplate,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,

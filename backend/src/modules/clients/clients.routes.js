@@ -41,6 +41,11 @@ router.use((req, res, next) => {
 // ---------- GET /api/clients ----------
 router.get("/", clientsController.listClients);
 
+// ---------- GET /api/clients/all/subclients ----------
+// NEW: flat org-wide subclient list for the Case Register page. Must be
+// declared above "/:id" so "all" doesn't get treated as a client id.
+router.get("/all/subclients", clientsController.listAllSubclients);
+
 // ---------- POST /api/clients ----------
 router.post(
   "/",

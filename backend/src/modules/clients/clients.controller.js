@@ -192,6 +192,29 @@ async function attachPendingClientApprovals(formattedClients, organizationId) {
   return [...placeholders, ...withBadges];
 }
 
+// ---------- GET /api/clients/all/subclients ----------
+// NEW: flat list of every subclient in the org (id, name, client_id) —
+// used by the Case Register page's Subclient dropdown, which needs to
+// filter options down to whichever client a row/form already has
+// selected. Declared in clients.routes.js above "/:id" so it isn't
+// shadowed by the param route.
+async function listAllSubclients(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const subclients = await clientsService.getAllSubclientsForOrg(orgId);
+    res.json(
+      (subclients || []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        clientId: s.client_id,
+      })),
+    );
+  } catch (err) {
+    console.error("listAllSubclients error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 // ---------- GET /api/clients ----------
 
 async function listClients(req, res) {
@@ -673,6 +696,7 @@ async function deleteClient(req, res) {
 
 module.exports = {
   listClients,
+  listAllSubclients,
   createClient,
   downloadTemplate,
   bulkUpload,
