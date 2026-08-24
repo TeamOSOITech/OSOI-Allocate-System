@@ -11,11 +11,22 @@
 //      the button shows a count/summary, and it closes when you click
 //      outside. Lists every case ALLOCATED to that employee, for that
 //      service, whose QC is still PENDING.
-//   4. Every selected case renders as its own card below: Client,
-//      Service, Date, Employee, and an editable "Marks" field.
-//   5. Each card has its own Pass / Fail buttons. Marking a case sends
-//      its marks + decision, then that card drops out of both the
-//      selection and the dropdown (list is refetched).
+//   4. Every selected case renders as its own compact card below —
+//      folder icon + case number/subtitle on top, a "QC Pending" pill,
+//      a row of icon-labelled fields (Client / Service / Date /
+//      Employee / Marks), and Fail / Pass buttons.
+//   5. Marking a case sends its marks + decision, then that card drops
+//      out of both the selection and the dropdown (list is refetched).
+//
+// REFRESH-RACE FIX (see fetchUncheckedCases below): every fetch now
+// carries its own id + AbortController. If the employee/service filter
+// changes again before an in-flight request finishes (or a slow/
+// cold-starting backend makes an old request resolve AFTER a newer
+// one), the stale response is now dropped instead of being applied —
+// previously the LAST response to land always won, even if it was for
+// an older filter, which made the case list appear to "refresh" back
+// to old data at random. Selections are also now preserved across a
+// refetch instead of being force-cleared every time.
 //
 // BACKEND ASSUMPTIONS (please confirm/adjust to match your actual API):
 //   - `service_cases` gets new columns:
@@ -157,6 +168,35 @@ function CaseMultiSelect({
     );
 }
 
+// ---------------------------------------------------------------------
+// One icon-labelled field inside a case card (Client / Service / Date /
+// Employee). Marks has its own inline markup below since it needs an
+// editable input instead of static text.
+// ---------------------------------------------------------------------
+function InfoItem({
+    icon,
+    color,
+    label,
+    value,
+}: {
+    icon: string;
+    color: string;
+    label: string;
+    value: string;
+}) {
+    return (
+        <div style={styles.infoItem}>
+            <div style={{ ...styles.infoIconCircle, background: `${color}1A`, color }}>
+                <i className={`ti ${icon}`} />
+            </div>
+            <div style={styles.infoText}>
+                <div style={styles.infoLabel}>{label}</div>
+                <div style={styles.infoValue}>{value}</div>
+            </div>
+        </div>
+    );
+}
+
 export default function QualityCheck() {
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -204,12 +244,30 @@ export default function QualityCheck() {
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
+    // Tags every fetch with an incrementing id so an older, slower
+    // request can never clobber a newer one that already landed — this
+    // is what was causing the list to appear to "refresh" back to
+    // stale data whenever the filters changed quickly or the backend
+    // was slow to respond (cold start, flaky network, etc).
+    const fetchIdRef = useRef(0);
+    const abortRef = useRef<AbortController | null>(null);
+
     const fetchUncheckedCases = useCallback(async () => {
+        // Cancel whatever request is still in flight for the previous
+        // filter — no point letting it keep running, and it guarantees
+        // it can't win a race against the request we're about to fire.
+        abortRef.current?.abort();
+
         if (!employeeId || !productId) {
             setUncheckedCases([]);
             setSelectedCaseIds([]);
             return;
         }
+
+        const myFetchId = ++fetchIdRef.current;
+        const controller = new AbortController();
+        abortRef.current = controller;
+
         setLoadingCases(true);
         setError("");
         try {
@@ -220,21 +278,35 @@ export default function QualityCheck() {
             params.set("qcStatus", "PENDING");
             params.set("pageSize", "500");
 
-            const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+            const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`, {
+                signal: controller.signal,
+            } as RequestInit);
             const json = await res.json();
+
+            // A newer fetch has already started (or finished) since this
+            // one began — throw this response away instead of applying it.
+            if (myFetchId !== fetchIdRef.current) return;
+
             if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
-            setUncheckedCases(json.data || []);
-            setSelectedCaseIds([]);
+            const rows: ServiceCase[] = json.data || [];
+            setUncheckedCases(rows);
+            // Keep any selection that's still valid for the new list
+            // instead of wiping it every time — this used to reset
+            // mid-review selections on every refetch.
+            setSelectedCaseIds((prev) => prev.filter((id) => rows.some((r) => r.id === id)));
         } catch (err: any) {
+            if (err?.name === "AbortError") return;
+            if (myFetchId !== fetchIdRef.current) return;
             setError(err?.message || "Failed to load unchecked cases.");
             setUncheckedCases([]);
         } finally {
-            setLoadingCases(false);
+            if (myFetchId === fetchIdRef.current) setLoadingCases(false);
         }
     }, [employeeId, productId]);
 
     useEffect(() => {
         fetchUncheckedCases();
+        return () => abortRef.current?.abort();
     }, [fetchUncheckedCases]);
 
     const selectedCases = uncheckedCases.filter((c) => selectedCaseIds.includes(c.id));
@@ -382,43 +454,83 @@ export default function QualityCheck() {
                 {selectedCases.map((c) => {
                     const deciding = decidingCaseId === c.id;
                     return (
-                        <div key={c.id} style={styles.detailCard}>
-                            <div style={styles.detailHeader}>
-                                <div>
-                                    <div style={styles.detailCaseNum}>{c.caseNumber}</div>
-                                    <div style={styles.detailSub}>
-                                        {c.productName || "—"} · {c.clientName || "No client"}
+                        <div key={c.id} style={styles.caseCard}>
+                            <div style={styles.cardHeader}>
+                                <div style={styles.cardHeaderLeft}>
+                                    <div style={styles.folderIcon}>
+                                        <i className="ti ti-folder" />
+                                    </div>
+                                    <div>
+                                        <div style={styles.cardCaseNum}>{c.caseNumber}</div>
+                                        <div style={styles.cardSub}>
+                                            {c.productName || "—"} · {c.clientName || "No client"}
+                                        </div>
                                     </div>
                                 </div>
-                                <span style={styles.qcPendingPill}>QC Pending</span>
+                                <span style={styles.qcPendingPill}>
+                                    <i className="ti ti-hourglass" />
+                                    QC Pending
+                                </span>
                             </div>
 
-                            <div style={styles.detailGrid}>
-                                <DetailField label="Client" value={c.clientName || "—"} />
-                                <DetailField label="Service" value={c.productName || "—"} />
-                                <DetailField label="Date" value={c.workDate} />
-                                <DetailField
-                                    label="Employee"
+                            <div style={styles.cardDivider} />
+
+                            <div style={styles.infoRow}>
+                                <InfoItem
+                                    icon="ti-users"
+                                    color="#3B82F6"
+                                    label="CLIENT"
+                                    value={c.clientName || "—"}
+                                />
+                                <InfoItem
+                                    icon="ti-cube"
+                                    color="#14B8A6"
+                                    label="SERVICE"
+                                    value={c.productName || "—"}
+                                />
+                                <InfoItem
+                                    icon="ti-calendar"
+                                    color="#8B5CF6"
+                                    label="DATE"
+                                    value={c.workDate}
+                                />
+                                <InfoItem
+                                    icon="ti-user"
+                                    color={BRAND.amber}
+                                    label="EMPLOYEE"
                                     value={c.assignedEmployeeName || "Unallocated"}
                                 />
-                                <div style={styles.detailField}>
-                                    <div style={styles.detailFieldLabel}>Marks</div>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        max={100}
-                                        placeholder="e.g. 92"
-                                        style={styles.marksInput}
-                                        value={marksByCaseId[c.id] ?? ""}
-                                        onChange={(e) =>
-                                            setMarksByCaseId((prev) => ({
-                                                ...prev,
-                                                [c.id]: e.target.value,
-                                            }))
-                                        }
-                                    />
+                                <div style={styles.infoItem}>
+                                    <div
+                                        style={{
+                                            ...styles.infoIconCircle,
+                                            background: "#EC489918",
+                                            color: "#EC4899",
+                                        }}
+                                    >
+                                        <i className="ti ti-star" />
+                                    </div>
+                                    <div style={styles.infoText}>
+                                        <div style={styles.infoLabel}>MARKS</div>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={100}
+                                            placeholder="e.g. 92"
+                                            style={styles.marksInput}
+                                            value={marksByCaseId[c.id] ?? ""}
+                                            onChange={(e) =>
+                                                setMarksByCaseId((prev) => ({
+                                                    ...prev,
+                                                    [c.id]: e.target.value,
+                                                }))
+                                            }
+                                        />
+                                    </div>
                                 </div>
                             </div>
+
+                            <div style={styles.cardDivider} />
 
                             <div style={styles.decisionRow}>
                                 <button
@@ -453,6 +565,16 @@ export default function QualityCheck() {
                         </div>
                     );
                 })}
+
+                {selectedCases.length > 0 && (
+                    <div style={styles.infoBanner}>
+                        <i className="ti ti-info-circle" style={{ flexShrink: 0, fontSize: 16 }} />
+                        <span>
+                            Please review all selected cases carefully before marking them as Passed
+                            or Failed.
+                        </span>
+                    </div>
+                )}
             </div>
 
             {toast && <div style={styles.toast}>{toast}</div>}
@@ -460,23 +582,21 @@ export default function QualityCheck() {
     );
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
-    return (
-        <div style={styles.detailField}>
-            <div style={styles.detailFieldLabel}>{label}</div>
-            <div style={styles.detailFieldValue}>{value}</div>
-        </div>
-    );
-}
-
 const styles: Record<string, CSSProperties> = {
-    root: { display: "flex", flexDirection: "column" },
+    root: { display: "flex", flexDirection: "column", width: "100%" },
     topBar: {
         height: 4,
         background: GRADIENT,
         borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
     },
-    contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
+    contentBody: {
+        padding: "20px 24px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        width: "100%",
+        boxSizing: "border-box",
+    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["4xl"],
@@ -569,59 +689,92 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
     },
     placeholderText: { margin: 0, fontSize: fontSize.base, color: "#9ca3af" },
-    detailCard: {
+
+    // ---- New compact case card (matches reference design) ----
+    caseCard: {
         background: "#fff",
         borderRadius: radius.lg,
+        borderLeft: `4px solid ${BRAND.blue}`,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: 24,
+        padding: "18px 22px",
         display: "flex",
         flexDirection: "column",
-        gap: 20,
+        gap: 14,
+        width: "100%",
+        boxSizing: "border-box",
     },
-    detailHeader: {
+    cardHeader: {
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "space-between",
         gap: 12,
         flexWrap: "wrap",
     },
-    detailCaseNum: { fontSize: fontSize["2xl"], fontWeight: fontWeight.bold, color: "#17181C" },
-    detailSub: { fontSize: fontSize.sm, color: "#767F92", marginTop: 4 },
+    cardHeaderLeft: { display: "flex", alignItems: "center", gap: 12 },
+    folderIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: radius.md,
+        background: GRADIENT,
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 18,
+        flexShrink: 0,
+    },
+    cardCaseNum: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },
+    cardSub: { fontSize: fontSize.sm, color: "#767F92", marginTop: 2 },
     qcPendingPill: {
         display: "inline-flex",
-        padding: "5px 14px",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 14px",
         borderRadius: radius.pill,
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
         background: "rgba(245,158,11,0.1)",
         color: BRAND.amber,
         height: "fit-content",
+        whiteSpace: "nowrap",
     },
-    detailGrid: {
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-        gap: 16,
-        padding: "16px 0",
-        borderTop: "1px solid #f1f1f1",
-        borderBottom: "1px solid #f1f1f1",
+    cardDivider: { height: 1, background: "#f1f1f1", width: "100%" },
+    infoRow: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 22,
+        flexWrap: "wrap",
+        width: "100%",
     },
-    detailField: { display: "flex", flexDirection: "column", gap: 4 },
-    detailFieldLabel: {
-        fontSize: fontSize.xs,
+    infoItem: { display: "flex", alignItems: "center", gap: 10, minWidth: 120 },
+    infoIconCircle: {
+        width: 34,
+        height: 34,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 15,
+        flexShrink: 0,
+    },
+    infoText: { display: "flex", flexDirection: "column", gap: 2 },
+    infoLabel: {
+        fontSize: fontSize.xxs,
         fontWeight: fontWeight.semibold,
         color: "#9ca3af",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
     },
-    detailFieldValue: { fontSize: fontSize.base, fontWeight: fontWeight.medium, color: "#17181C" },
+    infoValue: { fontSize: fontSize.base, fontWeight: fontWeight.medium, color: "#17181C" },
     marksInput: {
-        padding: "6px 10px",
-        borderRadius: radius.sm,
+        padding: "5px 8px",
+        borderRadius: radius.xs,
         border: "1px solid #ececf5",
         fontSize: fontSize.base,
         fontWeight: fontWeight.medium,
         background: "#fafafa",
-        width: "100%",
+        width: 90,
         boxSizing: "border-box",
     },
     decisionRow: { display: "flex", justifyContent: "flex-end", gap: 12 },
@@ -629,12 +782,25 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        padding: "11px 26px",
+        padding: "9px 22px",
         borderRadius: radius.md,
         border: "none",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
+    },
+    infoBanner: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "12px 16px",
+        borderRadius: radius.md,
+        background: "rgba(59,130,246,0.08)",
+        color: BRAND.blue,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        width: "100%",
+        boxSizing: "border-box",
     },
     toast: {
         position: "fixed",
