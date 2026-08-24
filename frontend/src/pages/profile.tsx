@@ -135,6 +135,50 @@ function isSubmitted(c: CaseRow) {
     return c.submissionStatus === "SUBMITTED";
 }
 
+// Turns the stored submission_type into the label shown in the
+// Outcome column (and anywhere else an outcome needs to read nicely).
+function outcomeLabel(type: CaseRow["submissionType"]) {
+    if (type === "COMPLETED") return "Completed";
+    if (type === "DONE_BY_TEAM") return "Done by Team";
+    if (type === "QUERY") return "Query";
+    return "-";
+}
+
+// ---- "Normal" (quantity-based) allocation — the OLDER flow, from
+// Daily Work batches via /api/allocations. Case Register's per-case
+// flow (above) exists ALONGSIDE this, not instead of it — a task can
+// be handed out either way, so this page shows both kinds together.
+type BatchRow = {
+    id: string;
+    daily_work_id: string;
+    employee_id: string;
+    allocated_qty: number;
+    status: string;
+    submitted_qty: number | null;
+    submission_reason: string | null;
+    submitted_at: string | null;
+    workDate: string | null;
+    productName: string | null;
+    description?: string | null;
+    team?: string | null;
+    allocatedByName?: string | null;
+    created_at: string;
+    carried_in_qty?: number | null;
+};
+
+function isBatchDone(b: BatchRow) {
+    return (
+        b.submitted_qty !== null &&
+        b.submitted_qty !== undefined &&
+        b.submitted_qty >= b.allocated_qty
+    );
+}
+
+function batchPendingQty(b: BatchRow) {
+    const already = b.submitted_qty ?? 0;
+    return Math.max(b.allocated_qty - already, 0);
+}
+
 interface ProfileProps {
     onLogout: () => void;
 }
@@ -262,6 +306,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [employee, setEmployee] = useState<EmployeeData | null>(null);
     const [cases, setCases] = useState<CaseRow[]>([]);
+    // NEW: quantity-based batch allocations, shown alongside case
+    // allocations (see BatchRow above) — not a replacement for them.
+    const [batches, setBatches] = useState<BatchRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -293,15 +340,21 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     // ---- Bulk Submit (every pending case for today, in one click) ----
     const [showBulkModal, setShowBulkModal] = useState(false);
-    // Per-row outcome + query text for the bulk modal — both mandatory
-    // (a row with "Query" selected also needs its text filled) before
-    // "Submit All" is enabled.
+    // Per-row outcome + query text for the bulk modal. Rows default to
+    // "PENDING" (meaning "not touched, don't submit this one") — the
+    // employee only needs to change the rows they actually want to
+    // submit right now; anything left on "Pending" is simply skipped,
+    // not blocked on.
     const [bulkTypeById, setBulkTypeById] = useState<
-        Record<string, "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">
+        Record<string, "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">
     >({});
     const [bulkQueryById, setBulkQueryById] = useState<Record<string, string>>({});
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState<string | null>(null);
+    // Search within the bulk modal — needed once there are dozens/
+    // hundreds of pending cases and the employee wants to find a
+    // specific one instead of scrolling.
+    const [bulkSearch, setBulkSearch] = useState("");
 
     const cachedUser = (() => {
         try {
@@ -316,26 +369,35 @@ export default function Profile({ onLogout }: ProfileProps) {
         setLoading(true);
         setError(null);
         try {
-            // NOTE: the cases fetch does NOT depend on myId. GET
-            // /api/service-cases?mine=true already resolves "who is
-            // asking" server-side from the auth token (req.user.userId)
-            // — it never needed a client-supplied id. Gating it on myId
-            // (read from localStorage) was a bug: right after a fresh
-            // login/logout, that localStorage value can momentarily be
-            // stale or missing, which silently skipped this request
-            // entirely and left the table empty — looking exactly like
-            // "my cases disappeared", even though nothing was ever
-            // deleted server-side.
-            const [profileRes, employeeRes, casesRes] = await Promise.all([
-                authFetch(`${API_BASE}/api/profile`),
-                myId ? authFetch(`${API_BASE}/api/employees/${myId}`) : Promise.resolve(null),
+            // Fetch the profile FIRST and read the user id straight off
+            // its response (server-resolved from the auth token) rather
+            // than from localStorage — the earlier "cases disappear
+            // after login" bug was exactly this: a client-cached id that
+            // can be momentarily stale/missing right after a fresh
+            // login/logout. Cases don't need an id at all (mine=true
+            // resolves server-side), but /api/allocations DOES require
+            // an explicit employeeId to scope to just this person, so it
+            // needs a reliable id source too.
+            const profileRes = await authFetch(`${API_BASE}/api/profile`);
+            const profileJson = await safeJson(profileRes);
+            let selfId: string | null = myId;
+            if (profileRes.ok && profileJson.success) {
+                setProfile(profileJson.data);
+                selfId = profileJson.data?.user_id || selfId;
+            }
+
+            // NEW: cases and "normal" quantity-based batch allocations
+            // are fetched together — a task can be handed out either
+            // way, so both need to show up here side by side, not one
+            // replacing the other.
+            const [employeeRes, casesRes, batchesRes] = await Promise.all([
+                selfId ? authFetch(`${API_BASE}/api/employees/${selfId}`) : Promise.resolve(null),
                 authFetch(`${API_BASE}/api/service-cases?mine=true&pageSize=2000`),
+                selfId
+                    ? authFetch(`${API_BASE}/api/allocations?employeeId=${selfId}`)
+                    : Promise.resolve(null),
             ]);
 
-            if (profileRes) {
-                const json = await safeJson(profileRes);
-                if (profileRes.ok && json.success) setProfile(json.data);
-            }
             if (employeeRes) {
                 const emp = await safeJson(employeeRes);
                 if (employeeRes.ok) setEmployee(emp);
@@ -345,6 +407,14 @@ export default function Profile({ onLogout }: ProfileProps) {
                 setCases(casesJson.data || []);
             } else {
                 console.error("Failed to load my cases:", casesJson?.message);
+            }
+            if (batchesRes) {
+                const batchesJson = await safeJson(batchesRes);
+                if (batchesRes.ok && batchesJson.success) {
+                    setBatches(batchesJson.data || []);
+                } else {
+                    console.error("Failed to load my batch allocations:", batchesJson?.message);
+                }
             }
         } catch (err: any) {
             setError(err?.message || "Could not load your profile");
@@ -404,6 +474,26 @@ export default function Profile({ onLogout }: ProfileProps) {
             pastCases: sorted.filter((c) => c.workDate !== today),
         };
     }, [cases]);
+
+    // NEW: same today/past split for batch (quantity-based) allocations.
+    const { todaysBatches, pastBatches } = useMemo(() => {
+        const today = todayStr();
+        const sorted = [...batches].sort((a, b) =>
+            (b.workDate || "").localeCompare(a.workDate || "")
+        );
+        return {
+            todaysBatches: sorted.filter((b) => b.workDate === today),
+            pastBatches: sorted.filter((b) => b.workDate !== today),
+        };
+    }, [batches]);
+
+    const baseBatchRows = activeTab === "today" ? todaysBatches : pastBatches;
+    const batchStats = useMemo(() => {
+        const totalAllocated = todaysBatches.reduce((s, b) => s + (b.allocated_qty || 0), 0);
+        const submittedQty = todaysBatches.reduce((s, b) => s + (b.submitted_qty ?? 0), 0);
+        const pendingCount = todaysBatches.filter((b) => !isBatchDone(b)).length;
+        return { totalAllocated, submittedQty, pendingCount };
+    }, [todaysBatches]);
 
     const products = useMemo(
         () => Array.from(new Set(cases.map((c) => c.productName).filter(Boolean))) as string[],
@@ -492,15 +582,37 @@ export default function Profile({ onLogout }: ProfileProps) {
         [todaysCases]
     );
 
+    // Search within the modal — matches case number, service, or the
+    // status label/text the employee typed, so finding one case among
+    // many pending ones doesn't mean scrolling through all of them.
+    const bulkVisibleCases = useMemo(() => {
+        const q = bulkSearch.trim().toLowerCase();
+        if (!q) return pendingTodayCases;
+        const statusLabel = (id: string) => {
+            const t = bulkTypeById[id];
+            if (t === "COMPLETED") return "completed";
+            if (t === "DONE_BY_TEAM") return "done by team";
+            if (t === "QUERY") return "query";
+            return "pending";
+        };
+        return pendingTodayCases.filter((c) => {
+            const hay = `${c.caseNumber} ${c.productName || ""} ${statusLabel(c.id)}`.toLowerCase();
+            return hay.includes(q);
+        });
+    }, [pendingTodayCases, bulkSearch, bulkTypeById]);
+
     const openBulkModal = () => {
-        const initialType: Record<string, "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY"> = {};
+        // Default every row to "Pending" — the employee only changes
+        // the ones they're actually ready to submit right now.
+        const initialType: Record<string, "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY"> = {};
         const initialQuery: Record<string, string> = {};
         pendingTodayCases.forEach((c) => {
-            initialType[c.id] = "";
+            initialType[c.id] = "PENDING";
             initialQuery[c.id] = "";
         });
         setBulkTypeById(initialType);
         setBulkQueryById(initialQuery);
+        setBulkSearch("");
         setBulkError(null);
         setShowBulkModal(true);
     };
@@ -509,10 +621,11 @@ export default function Profile({ onLogout }: ProfileProps) {
         setShowBulkModal(false);
         setBulkTypeById({});
         setBulkQueryById({});
+        setBulkSearch("");
         setBulkError(null);
     };
 
-    const setBulkType = (id: string, value: "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY") => {
+    const setBulkType = (id: string, value: "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY") => {
         setBulkTypeById((prev) => ({ ...prev, [id]: value }));
         // Switching away from "Query" clears any half-typed text so it
         // doesn't get silently sent for a row that's no longer a query.
@@ -525,37 +638,42 @@ export default function Profile({ onLogout }: ProfileProps) {
         setBulkQueryById((prev) => ({ ...prev, [id]: value }));
     };
 
-    // Every pending row needs a status, and every "Query" row needs its
-    // text filled in, before Submit All unlocks.
-    const bulkAllReady = useMemo(
+    // Only rows the employee actually changed away from "Pending" get
+    // submitted — everything else is left pending for later, not
+    // blocked on. A "Query" row still needs its text filled in before
+    // it counts as ready.
+    const bulkRowsToSubmit = useMemo(
         () =>
-            pendingTodayCases.length > 0 &&
-            pendingTodayCases.every((c) => {
+            pendingTodayCases.filter((c) => {
                 const type = bulkTypeById[c.id];
-                if (!type) return false;
-                if (type === "QUERY" && !(bulkQueryById[c.id] || "").trim()) return false;
-                return true;
+                return type && type !== "PENDING";
             }),
-        [pendingTodayCases, bulkTypeById, bulkQueryById]
+        [pendingTodayCases, bulkTypeById]
     );
+
+    const bulkHasIncompleteQuery = useMemo(
+        () =>
+            bulkRowsToSubmit.some(
+                (c) => bulkTypeById[c.id] === "QUERY" && !(bulkQueryById[c.id] || "").trim()
+            ),
+        [bulkRowsToSubmit, bulkTypeById, bulkQueryById]
+    );
+
+    const bulkCanSubmit = bulkRowsToSubmit.length > 0 && !bulkHasIncompleteQuery;
 
     const handleBulkSubmit = async () => {
         setBulkError(null);
-        if (pendingTodayCases.length === 0) return;
+        if (bulkRowsToSubmit.length === 0) return;
 
-        for (const c of pendingTodayCases) {
+        for (const c of bulkRowsToSubmit) {
             const type = bulkTypeById[c.id];
-            if (!type) {
-                setBulkError(`Pick a status for ${c.caseNumber} before submitting.`);
-                return;
-            }
             if (type === "QUERY" && !(bulkQueryById[c.id] || "").trim()) {
                 setBulkError(`Enter the query text for ${c.caseNumber} before submitting.`);
                 return;
             }
         }
 
-        const items = pendingTodayCases.map((c) => ({
+        const items = bulkRowsToSubmit.map((c) => ({
             id: c.id,
             submissionType: bulkTypeById[c.id],
             queryText:
@@ -651,14 +769,14 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const exportCsv = () => {
-        const header = ["#", "Case No.", "Service", "Date", "Profile", "Status"];
+        const header = ["#", "Case No.", "Service", "Date", "Status", "Outcome"];
         const rows = filteredRows.map((c, i) => [
             i + 1,
             c.caseNumber,
             c.productName || "-",
             c.workDate,
-            c.profile || "-",
             isSubmitted(c) ? "Submitted" : "Pending",
+            isSubmitted(c) ? outcomeLabel(c.submissionType) : "-",
         ]);
         const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
         const blob = new Blob([csv], { type: "text/csv" });
@@ -975,13 +1093,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                 ) : (
                     <table style={styles.table}>
                         <colgroup>
-                            <col style={{ width: "4%" }} />
+                            <col style={{ width: "5%" }} />
+                            <col style={{ width: "15%" }} />
+                            <col style={{ width: "21%" }} />
+                            <col style={{ width: "13%" }} />
                             <col style={{ width: "14%" }} />
-                            <col style={{ width: "20%" }} />
-                            <col style={{ width: "12%" }} />
-                            <col style={{ width: "24%" }} />
-                            <col style={{ width: "12%" }} />
-                            <col style={{ width: "14%" }} />
+                            <col style={{ width: "16%" }} />
+                            <col style={{ width: "16%" }} />
                         </colgroup>
                         <thead>
                             <tr>
@@ -989,26 +1107,30 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <th style={styles.th}>Case No.</th>
                                 <th style={styles.th}>Service</th>
                                 <th style={styles.th}>Date</th>
-                                <th style={styles.th}>Profile</th>
-                                <th style={styles.th}>Status</th>
-                                <th style={styles.th}>Action</th>
+                                <th style={{ ...styles.th, textAlign: "center" }}>Status</th>
+                                <th style={{ ...styles.th, textAlign: "center" }}>Outcome</th>
+                                <th style={{ ...styles.th, textAlign: "center" }}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             {filteredRows.map((c, i) => {
                                 const submitted = isSubmitted(c);
                                 return (
-                                    <tr key={c.id} className="pf-row" style={styles.tr}>
+                                    <tr
+                                        key={c.id}
+                                        className="pf-row"
+                                        style={{
+                                            ...styles.tr,
+                                            background: i % 2 === 1 ? "#FAFBFF" : "#fff",
+                                        }}
+                                    >
                                         <td style={styles.td}>{i + 1}</td>
                                         <td style={{ ...styles.td, fontWeight: fontWeight.bold }}>
                                             {c.caseNumber}
                                         </td>
                                         <td style={styles.td}>{c.productName || "-"}</td>
                                         <td style={styles.td}>{formatDisplayDate(c.workDate)}</td>
-                                        <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                            {c.profile || <span style={styles.smallMuted}>—</span>}
-                                        </td>
-                                        <td style={styles.td}>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>
                                             <span
                                                 style={
                                                     submitted
@@ -1019,7 +1141,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 {submitted ? "Submitted" : "Pending"}
                                             </span>
                                         </td>
-                                        <td style={styles.td}>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>
+                                            {submitted ? (
+                                                <span style={{ fontWeight: fontWeight.medium }}>
+                                                    {outcomeLabel(c.submissionType)}
+                                                </span>
+                                            ) : (
+                                                <span style={styles.smallMuted}>—</span>
+                                            )}
+                                        </td>
+                                        <td style={{ ...styles.td, textAlign: "center" }}>
                                             {submitted ? (
                                                 <span style={styles.smallMuted}>
                                                     {formatDisplayDate(
@@ -1147,9 +1278,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     Bulk Submit — Today's Pending Cases
                                 </h3>
                                 <p style={styles.bulkModalSubtitle}>
-                                    Every case below is still pending. Pick a status for each — a
-                                    "Query" row also needs its text — then confirm to submit all of
-                                    them at once.
+                                    Every case below starts as "Pending" — only change the ones
+                                    you're ready to submit now; the rest stay pending for later. A
+                                    "Query" row also needs its text filled in.
                                 </p>
                             </div>
                             <button
@@ -1161,6 +1292,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 ✕
                             </button>
                         </div>
+
+                        {/* Search — matters once there are dozens of pending cases and
+                            only a few need to be found and submitted right now. */}
+                        <input
+                            style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
+                            value={bulkSearch}
+                            onChange={(e) => setBulkSearch(e.target.value)}
+                            placeholder="Search by case number, service or status…"
+                        />
 
                         <div style={styles.bulkTableWrap}>
                             <table style={styles.bulkTable}>
@@ -1174,13 +1314,25 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     <tr>
                                         <th style={styles.th}>Case No.</th>
                                         <th style={styles.th}>Service</th>
-                                        <th style={styles.th}>Status *</th>
+                                        <th style={styles.th}>Status</th>
                                         <th style={styles.th}>Query</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pendingTodayCases.map((c) => {
-                                        const type = bulkTypeById[c.id] ?? "";
+                                    {bulkVisibleCases.length === 0 && (
+                                        <tr>
+                                            <td
+                                                colSpan={4}
+                                                style={{ ...styles.td, textAlign: "center" }}
+                                            >
+                                                <span style={styles.smallMuted}>
+                                                    No cases match "{bulkSearch}".
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {bulkVisibleCases.map((c) => {
+                                        const type = bulkTypeById[c.id] ?? "PENDING";
                                         const queryMissing =
                                             type === "QUERY" && !(bulkQueryById[c.id] || "").trim();
                                         return (
@@ -1201,20 +1353,28 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         style={{
                                                             ...styles.textInput,
                                                             width: "100%",
+                                                            fontWeight:
+                                                                type !== "PENDING"
+                                                                    ? fontWeight.semibold
+                                                                    : "normal",
+                                                            color:
+                                                                type !== "PENDING"
+                                                                    ? BRAND.blue
+                                                                    : undefined,
                                                         }}
                                                         value={type}
                                                         onChange={(e) =>
                                                             setBulkType(
                                                                 c.id,
                                                                 e.target.value as
-                                                                    | ""
+                                                                    | "PENDING"
                                                                     | "COMPLETED"
                                                                     | "DONE_BY_TEAM"
                                                                     | "QUERY"
                                                             )
                                                         }
                                                     >
-                                                        <option value="">Select status</option>
+                                                        <option value="PENDING">Pending</option>
                                                         <option value="COMPLETED">Completed</option>
                                                         <option value="DONE_BY_TEAM">
                                                             Done by Team
@@ -1268,21 +1428,25 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     ...styles.submitBtn,
                                     width: "auto",
                                     flex: 1,
-                                    opacity: bulkSubmitting || !bulkAllReady ? 0.6 : 1,
+                                    opacity: bulkSubmitting || !bulkCanSubmit ? 0.6 : 1,
                                     cursor:
-                                        bulkSubmitting || !bulkAllReady ? "not-allowed" : "pointer",
+                                        bulkSubmitting || !bulkCanSubmit
+                                            ? "not-allowed"
+                                            : "pointer",
                                 }}
                                 onClick={handleBulkSubmit}
-                                disabled={bulkSubmitting || !bulkAllReady}
+                                disabled={bulkSubmitting || !bulkCanSubmit}
                                 title={
-                                    !bulkAllReady
-                                        ? "Pick a status (and query text where needed) for every case first"
+                                    !bulkCanSubmit
+                                        ? "Change at least one case's status away from Pending first"
                                         : undefined
                                 }
                             >
                                 {bulkSubmitting
                                     ? "Submitting…"
-                                    : `Submit All (${pendingTodayCases.length})`}
+                                    : bulkRowsToSubmit.length > 0
+                                      ? `Submit (${bulkRowsToSubmit.length})`
+                                      : "Submit"}
                             </button>
                         </div>
                     </div>
@@ -1377,7 +1541,7 @@ function MobileRow({
             <div style={styles.mobileMetaRow}>
                 <span>{c.productName || "-"}</span>
                 <span>{formatDisplayDate(c.workDate)}</span>
-                {c.profile && <span>Profile: {c.profile}</span>}
+                {submitted && <span>{outcomeLabel(c.submissionType)}</span>}
             </div>
             {submitted ? (
                 <div style={styles.smallMuted}>Submitted</div>
@@ -1737,24 +1901,27 @@ function getStyles(
             fontSize: fontSize.xs,
             color: "#9099AC",
             fontWeight: fontWeight.semibold,
-            padding: "12px 14px",
+            padding: "14px 16px",
             borderBottom: "1px solid #f1f1f1",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            textTransform: "uppercase",
+            letterSpacing: 0.4,
         },
         tr: {},
         td: {
             textAlign: "left",
             fontSize: fontSize.base,
             color: "#3D4459",
-            padding: "12px 14px",
+            padding: "14px 16px",
             borderBottom: "1px solid #f6f6f9",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
         },
         statusDone: {
+            display: "inline-block",
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             color: BRAND.green,
@@ -1763,6 +1930,7 @@ function getStyles(
             borderRadius: radius.pill,
         },
         statusPending: {
+            display: "inline-block",
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             color: BRAND.amber,
