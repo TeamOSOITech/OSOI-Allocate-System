@@ -256,6 +256,12 @@ async function listServiceCases(req, res) {
     if (req.query.submissionStatus) {
       query = query.eq("submission_status", req.query.submissionStatus);
     }
+    // NEW: Quality Check page — filter cases by qc_status (defaults to
+    // PENDING in the DB for cases never checked, so "qcStatus=PENDING"
+    // naturally includes every case that hasn't been QC'd yet).
+    if (req.query.qcStatus) {
+      query = query.eq("qc_status", req.query.qcStatus);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;
@@ -305,6 +311,9 @@ async function listServiceCases(req, res) {
       submissionType: r.submission_type || null,
       queryText: r.query_text || "",
       submittedAt: r.submitted_at || null,
+      // NEW: Quality Check page fields.
+      qcStatus: r.qc_status || "PENDING",
+      marks: r.marks === undefined ? null : r.marks,
     }));
 
     res.json({
@@ -1411,6 +1420,79 @@ async function bulkSubmitServiceCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/qc
+// body: { qcStatus: "PASSED" | "FAILED", marks?: number | null }
+//
+// Quality Check page — records the QC verdict + marks for one case.
+// Same permission gate as allocating/profiling a case
+// (tasks.allocate.team/org). Scoped to organization only (not to
+// assigned_employee_id) since QC is done by a reviewer, not the
+// employee who did the work.
+// ------------------------------------------------------------
+async function updateServiceCaseQc(req, res) {
+  try {
+    const { id } = req.params;
+    const qcStatus = (req.body.qcStatus || "").toString().trim().toUpperCase();
+
+    if (!["PASSED", "FAILED"].includes(qcStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "qcStatus must be 'PASSED' or 'FAILED'.",
+      });
+    }
+
+    let marks = null;
+    if (
+      req.body.marks !== undefined &&
+      req.body.marks !== null &&
+      req.body.marks !== ""
+    ) {
+      const parsed = Number(req.body.marks);
+      if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
+        return res.status(400).json({
+          success: false,
+          message: "marks must be a number between 0 and 100.",
+        });
+      }
+      marks = parsed;
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        qc_status: qcStatus,
+        marks,
+        qc_checked_at: new Date().toISOString(),
+        qc_checked_by: req.user.userId,
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} marked ${qcStatus === "PASSED" ? "Passed" : "Failed"}.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        qcStatus: data.qc_status,
+        marks: data.marks === undefined ? null : data.marks,
+      },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseQc error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
@@ -1424,4 +1506,5 @@ module.exports = {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  updateServiceCaseQc,
 };

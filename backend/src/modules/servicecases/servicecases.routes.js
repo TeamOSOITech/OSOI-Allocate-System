@@ -23,6 +23,7 @@ const {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  updateServiceCaseQc,
 } = require("./servicecases.controller");
 
 // Same memory-storage + extension-filter pattern as clients/subclients
@@ -97,6 +98,12 @@ router.patch(
   "/:id/allocate",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   allocateServiceCase,
+);
+// NEW: Quality Check page — Pass/Fail + marks for one case.
+router.patch(
+  "/:id/qc",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  updateServiceCaseQc,
 );
 router.delete(
   "/:id",
