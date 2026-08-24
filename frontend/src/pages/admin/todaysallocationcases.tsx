@@ -155,10 +155,9 @@ export default function TodaysAllocationCases({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
-    useEffect(() => {
-        if (!productId && products.length > 0) onChangeProductId(products[0].id);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [products]);
+    // NOTE: removed the auto-select-first-product effect that used to run
+    // here. Default is now "All Services" (productId === ""), so we no
+    // longer force-select products[0] once the product list loads.
 
     useEffect(() => {
         fetchCases();
@@ -310,6 +309,7 @@ export default function TodaysAllocationCases({
                             value={productId}
                             onChange={(e) => onChangeProductId(e.target.value)}
                         >
+                            <option value="">All Services</option>
                             {products.map((p) => (
                                 <option key={p.id} value={p.id}>
                                     {p.product_name}
@@ -376,7 +376,7 @@ export default function TodaysAllocationCases({
                         <span style={styles.colService}>Service</span>
                         <span style={styles.colDate}>Date</span>
                         <span style={styles.colStatus}>Status</span>
-                        <span style={styles.colAssign}>Allocate to</span>
+                        <span style={{ ...styles.colAssign, textAlign: "left" }}>Allocate to</span>
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading cases…</div>
@@ -408,7 +408,7 @@ export default function TodaysAllocationCases({
                                             : "Pending"}
                                     </span>
                                 </span>
-                                <span style={styles.colAssign}>
+                                <span style={{ ...styles.colAssign, textAlign: "left" }}>
                                     <select
                                         style={styles.assignSelect}
                                         value={
@@ -553,9 +553,16 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
     },
+    // Shared grid template across header + rows so columns always line up
+    // and spacing between them stays even, regardless of content length.
+    tableGridCols: {
+        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
+    },
     tableHeadRow: {
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
         alignItems: "center",
+        columnGap: 16,
         padding: "10px 20px",
         background: "#F4F8FD",
         fontSize: fontSize.xs,
@@ -565,19 +572,26 @@ const styles: Record<string, CSSProperties> = {
         letterSpacing: "0.03em",
     },
     tableRow: {
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
         alignItems: "center",
+        columnGap: 16,
         padding: "10px 20px",
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
     },
-    colCase: { width: 120, flexShrink: 0, fontWeight: fontWeight.medium },
-    colClient: { width: 160, flexShrink: 0, paddingRight: 12 },
-    colService: { flex: 1, minWidth: 0 },
-    colDate: { width: 100, flexShrink: 0 },
-    colStatus: { width: 110, flexShrink: 0 },
-    colAssign: { width: 220, flexShrink: 0, textAlign: "right" },
+    colCase: {
+        fontWeight: fontWeight.medium,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    colClient: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    colService: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    colDate: { whiteSpace: "nowrap" },
+    colStatus: {},
+    colAssign: { minWidth: 0 },
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",
