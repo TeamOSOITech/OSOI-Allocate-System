@@ -197,19 +197,63 @@ function InfoItem({
     );
 }
 
+// Selections/filters are kept in sessionStorage so switching to another
+// page and coming back to QC doesn't lose what you'd already picked —
+// React unmounts this component on route change, which was wiping all
+// of its local state (employee/service/case selection, entered marks).
+// sessionStorage survives that; it only clears when the tab is closed.
+const QC_STORAGE_KEY = "qc_page_state_v1";
+
+type PersistedQcState = {
+    employeeId: string;
+    productId: string;
+    selectedCaseIds: string[];
+    marksByCaseId: Record<string, string>;
+};
+
+function loadPersistedQcState(): PersistedQcState {
+    const fallback: PersistedQcState = {
+        employeeId: "",
+        productId: "",
+        selectedCaseIds: [],
+        marksByCaseId: {},
+    };
+    if (typeof window === "undefined") return fallback;
+    try {
+        const raw = sessionStorage.getItem(QC_STORAGE_KEY);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return {
+            employeeId: typeof parsed.employeeId === "string" ? parsed.employeeId : "",
+            productId: typeof parsed.productId === "string" ? parsed.productId : "",
+            selectedCaseIds: Array.isArray(parsed.selectedCaseIds) ? parsed.selectedCaseIds : [],
+            marksByCaseId:
+                parsed.marksByCaseId && typeof parsed.marksByCaseId === "object"
+                    ? parsed.marksByCaseId
+                    : {},
+        };
+    } catch {
+        return fallback;
+    }
+}
+
 export default function QualityCheck() {
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
 
-    const [employeeId, setEmployeeId] = useState("");
-    const [productId, setProductId] = useState("");
+    const persisted = useRef(loadPersistedQcState()).current;
+
+    const [employeeId, setEmployeeId] = useState(persisted.employeeId);
+    const [productId, setProductId] = useState(persisted.productId);
 
     const [uncheckedCases, setUncheckedCases] = useState<ServiceCase[]>([]);
     const [loadingCases, setLoadingCases] = useState(false);
     const [error, setError] = useState("");
 
-    const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
-    const [marksByCaseId, setMarksByCaseId] = useState<Record<string, string>>({});
+    const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>(persisted.selectedCaseIds);
+    const [marksByCaseId, setMarksByCaseId] = useState<Record<string, string>>(
+        persisted.marksByCaseId
+    );
     const [decidingCaseId, setDecidingCaseId] = useState<string | null>(null);
     const [toast, setToast] = useState("");
 
@@ -217,6 +261,20 @@ export default function QualityCheck() {
         setToast(msg);
         setTimeout(() => setToast(""), 3000);
     };
+
+    // Persist filters/selection/marks on every change so they survive
+    // navigating away to another page and back.
+    useEffect(() => {
+        try {
+            sessionStorage.setItem(
+                QC_STORAGE_KEY,
+                JSON.stringify({ employeeId, productId, selectedCaseIds, marksByCaseId })
+            );
+        } catch {
+            // sessionStorage can throw in private/incognito edge cases —
+            // non-fatal, selection just won't survive navigation this time.
+        }
+    }, [employeeId, productId, selectedCaseIds, marksByCaseId]);
 
     const fetchProducts = useCallback(async () => {
         try {
@@ -386,23 +444,38 @@ export default function QualityCheck() {
                             ))}
                         </select>
                     </div>
-                    <div style={{ minWidth: 240 }}>
-                        <label style={styles.label}>Case Number</label>
-                        <CaseMultiSelect
-                            options={uncheckedCases}
-                            selectedIds={selectedCaseIds}
-                            onChange={setSelectedCaseIds}
-                            disabled={!bothSelected || loadingCases || uncheckedCases.length === 0}
-                            placeholder={
-                                !bothSelected
-                                    ? "Select employee & service first"
-                                    : loadingCases
-                                      ? "Loading…"
-                                      : uncheckedCases.length === 0
-                                        ? "No unchecked cases"
-                                        : "Select case(s)…"
-                            }
-                        />
+                    <div style={{ minWidth: 240, display: "flex", alignItems: "flex-end", gap: 8 }}>
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                            <label style={styles.label}>Case Number</label>
+                            <CaseMultiSelect
+                                options={uncheckedCases}
+                                selectedIds={selectedCaseIds}
+                                onChange={setSelectedCaseIds}
+                                disabled={
+                                    !bothSelected || loadingCases || uncheckedCases.length === 0
+                                }
+                                placeholder={
+                                    !bothSelected
+                                        ? "Select employee & service first"
+                                        : loadingCases
+                                          ? "Loading…"
+                                          : uncheckedCases.length === 0
+                                            ? "No unchecked cases"
+                                            : "Select case(s)…"
+                                }
+                            />
+                        </div>
+                        {selectedCaseIds.length > 0 && (
+                            <button
+                                type="button"
+                                style={styles.clearAllBtn}
+                                onClick={() => setSelectedCaseIds([])}
+                                title="Clear all selected cases"
+                            >
+                                <i className="ti ti-x" />
+                                Clear all
+                            </button>
+                        )}
                     </div>
                     {bothSelected && (
                         <div style={styles.pendingBadge}>
@@ -670,6 +743,21 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         whiteSpace: "nowrap",
+    },
+    clearAllBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "9px 12px",
+        borderRadius: radius.sm,
+        border: "1px solid #ececf5",
+        background: "#fff",
+        color: "#767F92",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
     },
     errorText: {
         color: BRAND.red,
