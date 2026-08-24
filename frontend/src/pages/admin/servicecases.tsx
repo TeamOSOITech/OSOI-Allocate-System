@@ -95,7 +95,60 @@ type ServiceCase = {
     createdAt: string;
 };
 
-export default function ServiceCases() {
+// NEW: small presentational card for the KPI row — same look as the
+// KpiCard used on the Daily Work tab.
+function KpiCard({
+    icon,
+    iconBg,
+    label,
+    value,
+    footer,
+    dotColor,
+    styles,
+}: {
+    icon: string;
+    iconBg: string;
+    label: string;
+    value: number | string;
+    footer: string;
+    dotColor: string;
+    styles: Record<string, CSSProperties>;
+}) {
+    return (
+        <div style={styles.kpiCard}>
+            <div style={styles.kpiTop}>
+                <div style={{ ...styles.kpiIcon, background: iconBg }}>
+                    <i className={icon} style={{ fontSize: fontSize["3xl"], color: "#fff" }} />
+                </div>
+                <div>
+                    <div style={styles.kpiLabel}>{label}</div>
+                    <div style={styles.kpiValue}>{value}</div>
+                </div>
+            </div>
+            <div style={styles.kpiFooter}>
+                <span>{footer}</span>
+                <span style={{ ...styles.kpiDot, background: dotColor }}>
+                    <i
+                        className="ti ti-arrow-right"
+                        style={{ fontSize: fontSize.xxs, color: "#fff" }}
+                    />
+                </span>
+            </div>
+        </div>
+    );
+}
+
+// NEW: KPI figures passed down from the parent (Daily Work) page — this
+// tab shows the same org-wide Services/Allocated/Pending/Employees
+// numbers, not separate Case-Register-only figures.
+type ServiceCasesKpi = {
+    services: number;
+    allocated: number;
+    pending: number;
+    employees: number | null;
+};
+
+export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
@@ -152,6 +205,14 @@ export default function ServiceCases() {
     // can be edited independently of the Client dropdown.
     const [savingSubclientId, setSavingSubclientId] = useState<string | null>(null);
     const [clientEditError, setClientEditError] = useState("");
+    // NEW: Client/Subclient cells now render as plain text by default —
+    // clicking the pencil icon on a row switches just that row's
+    // Client/Subclient cells into editable dropdowns.
+    const [editingRowId, setEditingRowId] = useState<string | null>(null);
+    // NEW: multi-select for bulk delete — a "Select all" checkbox in the
+    // header plus a per-row checkbox on the left of every row.
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [bulkDeleting, setBulkDeleting] = useState(false);
 
     const fetchProducts = useCallback(async () => {
         setProductsLoading(true);
@@ -258,21 +319,40 @@ export default function ServiceCases() {
         setFormSubclientId("");
     }, [formClientId]);
 
-    // FIX: previously defaulted to "All services", which mixed every
-    // service's cases together in one list (Billings and TC rows
-    // interleaved on the same page). Services must stay fully separate,
-    // so as soon as the product list loads, auto-select the first
-    // service — the filter dropdown below no longer offers an "All
-    // services" option at all.
-    useEffect(() => {
-        if (!filterProductId && products.length > 0) {
-            setFilterProductId(products[0].id);
-        }
-    }, [products, filterProductId]);
-
+    // Filter dropdown defaults to "All" — every service's cases show
+    // together until the user picks a specific one.
     useEffect(() => {
         fetchCases();
     }, [fetchCases]);
+
+    // NEW: whenever the page's row list changes (new page, filter change,
+    // refetch after a delete), drop any selections that no longer exist
+    // on screen — keeps "Select all" and the bulk-delete count honest.
+    useEffect(() => {
+        setSelectedIds((prev) => {
+            const visibleIds = new Set(cases.map((c) => c.id));
+            const next = new Set<string>();
+            prev.forEach((id) => {
+                if (visibleIds.has(id)) next.add(id);
+            });
+            return next.size === prev.size ? prev : next;
+        });
+    }, [cases]);
+
+    const toggleSelectAll = () => {
+        setSelectedIds((prev) =>
+            prev.size === cases.length ? new Set() : new Set(cases.map((c) => c.id))
+        );
+    };
+
+    const toggleSelectOne = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     // Filter change should always jump back to page 1 — staying on page 4
     // of an unfiltered list while filtering down to a service with only 1
@@ -430,6 +510,50 @@ export default function ServiceCases() {
         }
     };
 
+    // NEW: bulk delete — reuses the same single-case DELETE endpoint for
+    // every selected id (no dedicated bulk endpoint on the backend), run
+    // in parallel and reported together.
+    const handleBulkDelete = async () => {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) return;
+        if (
+            !window.confirm(
+                `Delete ${ids.length} selected case${ids.length > 1 ? "s" : ""}? This can't be undone.`
+            )
+        )
+            return;
+        setDeleteError("");
+        setBulkDeleting(true);
+        try {
+            const results = await Promise.allSettled(
+                ids.map((id) =>
+                    authFetch(`${API_BASE}/api/service-cases/${id}`, { method: "DELETE" }).then(
+                        async (res) => {
+                            const json = await res.json();
+                            if (!res.ok || !json.success)
+                                throw new Error(json?.message || "Failed to delete");
+                        }
+                    )
+                )
+            );
+            const failedCount = results.filter((r) => r.status === "rejected").length;
+            if (failedCount > 0) {
+                setDeleteError(
+                    `${failedCount} of ${ids.length} case${ids.length > 1 ? "s" : ""} couldn't be deleted.`
+                );
+            }
+            setSelectedIds(new Set());
+            // Same "don't land on an empty page" guard as the single delete.
+            if (ids.length >= cases.length && page > 1) {
+                setPage((p) => p - 1);
+            } else {
+                fetchCases();
+            }
+        } finally {
+            setBulkDeleting(false);
+        }
+    };
+
     // NEW: Case Register — inline Client edit. Changing Client also
     // clears Subclient (old subclient belonged to the previous client
     // and can't be assumed valid under the new one) — same rule the
@@ -552,6 +676,50 @@ export default function ServiceCases() {
                         </div>
                     </div>
                 </div>
+
+                {/* NEW: same KPI row as the Daily Work tab — Services /
+                    Allocated / Pending / Employees, using the figures
+                    passed down from the parent page. */}
+                {kpi && (
+                    <div style={styles.kpiRow}>
+                        <KpiCard
+                            styles={styles}
+                            icon="ti ti-package"
+                            iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
+                            label="Services"
+                            value={kpi.services}
+                            footer="Total Services"
+                            dotColor="var(--brand-blue)"
+                        />
+                        <KpiCard
+                            styles={styles}
+                            icon="ti ti-users"
+                            iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
+                            label="Allocated"
+                            value={kpi.allocated}
+                            footer="Total Allocated"
+                            dotColor="var(--brand-light-blue)"
+                        />
+                        <KpiCard
+                            styles={styles}
+                            icon="ti ti-check"
+                            iconBg="linear-gradient(135deg, #34d399, #059669)"
+                            label="Pending"
+                            value={kpi.pending}
+                            footer="Total Pending"
+                            dotColor="#059669"
+                        />
+                        <KpiCard
+                            styles={styles}
+                            icon="ti ti-users-group"
+                            iconBg="linear-gradient(135deg, #c084fc, #9333ea)"
+                            label="Employees"
+                            value={kpi.employees ?? "-"}
+                            footer="Total Employees"
+                            dotColor="#9333ea"
+                        />
+                    </div>
+                )}
 
                 <div style={styles.layout}>
                     {/* ---- LEFT: add form (same shape as Daily Work) ---- */}
@@ -745,20 +913,62 @@ export default function ServiceCases() {
                                     <span style={styles.countBadge}>{totalCases}</span>
                                 )}
                             </p>
-                            <select
-                                style={styles.filterSelect}
-                                value={filterProductId}
-                                onChange={(e) => setFilterProductId(e.target.value)}
-                            >
-                                {products.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.product_name}
-                                    </option>
-                                ))}
-                            </select>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                {/* NEW: appears only once at least one row is
+                                    checked — bulk-deletes every selected case. */}
+                                {selectedIds.size > 0 && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.bulkDeleteBtn,
+                                            opacity: bulkDeleting ? 0.6 : 1,
+                                            cursor: bulkDeleting ? "not-allowed" : "pointer",
+                                        }}
+                                        disabled={bulkDeleting}
+                                        onClick={handleBulkDelete}
+                                    >
+                                        <i
+                                            className="ti ti-trash"
+                                            style={{ fontSize: fontSize.sm }}
+                                        />
+                                        {bulkDeleting
+                                            ? "Deleting…"
+                                            : `Delete Selected (${selectedIds.size})`}
+                                    </button>
+                                )}
+                                <select
+                                    style={styles.filterSelect}
+                                    value={filterProductId}
+                                    onChange={(e) => setFilterProductId(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {products.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.product_name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
 
                         <div style={styles.tableHeadRow}>
+                            <span style={styles.colCheckbox}>
+                                <input
+                                    type="checkbox"
+                                    style={styles.checkbox}
+                                    checked={cases.length > 0 && selectedIds.size === cases.length}
+                                    ref={(el) => {
+                                        if (el) {
+                                            el.indeterminate =
+                                                selectedIds.size > 0 &&
+                                                selectedIds.size < cases.length;
+                                        }
+                                    }}
+                                    onChange={toggleSelectAll}
+                                    aria-label="Select all cases on this page"
+                                    disabled={cases.length === 0}
+                                />
+                            </span>
                             <span style={styles.colCaseNo}>Case No.</span>
                             <span style={styles.colClient}>Client</span>
                             <span style={styles.colClient}>Subclient</span>
@@ -766,6 +976,9 @@ export default function ServiceCases() {
                             <span style={styles.colDate}>Date</span>
                             <span style={styles.colAction}></span>
                         </div>
+                        {/* Client/Subclient cells show as plain text until the
+                            row's pencil icon is clicked, then switch to the
+                            editable dropdowns below. */}
 
                         {casesLoading ? (
                             <div style={styles.emptyNote}>Loading…</div>
@@ -776,89 +989,158 @@ export default function ServiceCases() {
                         ) : cases.length === 0 ? (
                             <div style={styles.emptyNote}>No cases logged yet.</div>
                         ) : (
-                            cases.map((c) => (
-                                <div key={c.id} style={styles.tableRow}>
-                                    <span
+                            cases.map((c) => {
+                                const isEditingRow = editingRowId === c.id;
+                                const isSelected = selectedIds.has(c.id);
+                                return (
+                                    <div
+                                        key={c.id}
                                         style={{
-                                            ...styles.colCaseNo,
-                                            fontWeight: fontWeight.semibold,
+                                            ...styles.tableRow,
+                                            ...(isSelected ? styles.tableRowSelected : null),
                                         }}
                                     >
-                                        {c.caseNumber}
-                                    </span>
-                                    {/* Only these two cells are editable in the
-                                        table — case number, service, and date all
-                                        stay read-only. */}
-                                    <span style={styles.colClient}>
-                                        <select
-                                            style={{
-                                                ...styles.clientSelect,
-                                                opacity: savingClientId === c.id ? 0.6 : 1,
-                                            }}
-                                            value={c.clientId || ""}
-                                            disabled={savingClientId === c.id}
-                                            onChange={(e) => handleClientChange(c, e.target.value)}
-                                        >
-                                            <option value="">-- Select client --</option>
-                                            {clients.map((cl) => (
-                                                <option key={cl.id} value={cl.id}>
-                                                    {cl.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </span>
-                                    <span style={styles.colClient}>
-                                        <select
-                                            style={{
-                                                ...styles.clientSelect,
-                                                opacity: savingSubclientId === c.id ? 0.6 : 1,
-                                            }}
-                                            value={c.subclientId || ""}
-                                            disabled={savingSubclientId === c.id || !c.clientId}
-                                            onChange={(e) =>
-                                                handleSubclientChange(c, e.target.value)
-                                            }
-                                        >
-                                            <option value="">
-                                                {c.clientId
-                                                    ? "-- Select subclient --"
-                                                    : "-- No client --"}
-                                            </option>
-                                            {subclients
-                                                .filter((s) => s.clientId === c.clientId)
-                                                .map((s) => (
-                                                    <option key={s.id} value={s.id}>
-                                                        {s.name}
-                                                    </option>
-                                                ))}
-                                        </select>
-                                    </span>
-                                    <span style={styles.colService}>{c.productName || "-"}</span>
-                                    <span style={{ ...styles.colDate, color: "#767F92" }}>
-                                        {formatDisplayDate(c.workDate)}
-                                    </span>
-                                    <span style={styles.colAction}>
-                                        <button
-                                            type="button"
-                                            style={{
-                                                ...styles.deleteBtn,
-                                                opacity: deletingId === c.id ? 0.5 : 1,
-                                                cursor:
-                                                    deletingId === c.id ? "not-allowed" : "pointer",
-                                            }}
-                                            disabled={deletingId === c.id}
-                                            onClick={() => handleDelete(c)}
-                                            aria-label={`Delete ${c.caseNumber}`}
-                                            title="Delete case"
-                                        >
-                                            <i
-                                                className="ti ti-trash"
-                                                style={{ fontSize: fontSize.md }}
+                                        <span style={styles.colCheckbox}>
+                                            <input
+                                                type="checkbox"
+                                                style={styles.checkbox}
+                                                checked={isSelected}
+                                                onChange={() => toggleSelectOne(c.id)}
+                                                aria-label={`Select ${c.caseNumber}`}
                                             />
-                                        </button>
-                                    </span>
-                                </div>
-                            ))
+                                        </span>
+                                        <span
+                                            style={{
+                                                ...styles.colCaseNo,
+                                                fontWeight: fontWeight.semibold,
+                                            }}
+                                        >
+                                            {c.caseNumber}
+                                        </span>
+                                        {/* Case number, service, and date stay
+                                            read-only. Client/Subclient toggle
+                                            between plain text and dropdown
+                                            based on the row's edit state. */}
+                                        <span style={styles.colClient}>
+                                            {isEditingRow ? (
+                                                <select
+                                                    style={{
+                                                        ...styles.clientSelect,
+                                                        opacity: savingClientId === c.id ? 0.6 : 1,
+                                                    }}
+                                                    value={c.clientId || ""}
+                                                    disabled={savingClientId === c.id}
+                                                    autoFocus
+                                                    onChange={(e) =>
+                                                        handleClientChange(c, e.target.value)
+                                                    }
+                                                >
+                                                    <option value="">-- Select client --</option>
+                                                    {clients.map((cl) => (
+                                                        <option key={cl.id} value={cl.id}>
+                                                            {cl.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <span style={styles.cellText}>
+                                                    {c.clientName || "-"}
+                                                </span>
+                                            )}
+                                        </span>
+                                        <span style={styles.colClient}>
+                                            {isEditingRow ? (
+                                                <select
+                                                    style={{
+                                                        ...styles.clientSelect,
+                                                        opacity:
+                                                            savingSubclientId === c.id ? 0.6 : 1,
+                                                    }}
+                                                    value={c.subclientId || ""}
+                                                    disabled={
+                                                        savingSubclientId === c.id || !c.clientId
+                                                    }
+                                                    onChange={(e) =>
+                                                        handleSubclientChange(c, e.target.value)
+                                                    }
+                                                >
+                                                    <option value="">
+                                                        {c.clientId
+                                                            ? "-- Select subclient --"
+                                                            : "-- No client --"}
+                                                    </option>
+                                                    {subclients
+                                                        .filter((s) => s.clientId === c.clientId)
+                                                        .map((s) => (
+                                                            <option key={s.id} value={s.id}>
+                                                                {s.name}
+                                                            </option>
+                                                        ))}
+                                                </select>
+                                            ) : (
+                                                <span style={styles.cellText}>
+                                                    {c.subclientName || "-"}
+                                                </span>
+                                            )}
+                                        </span>
+                                        <span style={styles.colService}>
+                                            {c.productName || "-"}
+                                        </span>
+                                        <span style={{ ...styles.colDate, color: "#767F92" }}>
+                                            {formatDisplayDate(c.workDate)}
+                                        </span>
+                                        <span style={styles.colAction}>
+                                            <button
+                                                type="button"
+                                                style={{
+                                                    ...styles.editBtn,
+                                                    ...(isEditingRow ? styles.editBtnActive : null),
+                                                }}
+                                                onClick={() =>
+                                                    setEditingRowId((prev) =>
+                                                        prev === c.id ? null : c.id
+                                                    )
+                                                }
+                                                aria-label={`Edit ${c.caseNumber}`}
+                                                title={
+                                                    isEditingRow
+                                                        ? "Done editing"
+                                                        : "Edit client / subclient"
+                                                }
+                                            >
+                                                <i
+                                                    className={
+                                                        isEditingRow
+                                                            ? "ti ti-check"
+                                                            : "ti ti-pencil"
+                                                    }
+                                                    style={{ fontSize: fontSize.md }}
+                                                />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                style={{
+                                                    ...styles.deleteBtn,
+                                                    opacity: deletingId === c.id ? 0.5 : 1,
+                                                    cursor:
+                                                        deletingId === c.id
+                                                            ? "not-allowed"
+                                                            : "pointer",
+                                                }}
+                                                disabled={deletingId === c.id}
+                                                onClick={() => handleDelete(c)}
+                                                aria-label={`Delete ${c.caseNumber}`}
+                                                title="Delete case"
+                                            >
+                                                <i
+                                                    className="ti ti-trash"
+                                                    style={{ fontSize: fontSize.md }}
+                                                />
+                                            </button>
+                                        </span>
+                                    </div>
+                                );
+                            })
                         )}
 
                         {clientEditError && <p style={styles.deleteErrorText}>{clientEditError}</p>}
@@ -999,6 +1281,57 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             flex: 1,
             minHeight: 0,
         },
+        // NEW: same KPI-card row shown at the top of the Daily Work tab,
+        // reused here on Case Register too (Services / Allocated /
+        // Pending / Employees) — driven by the same underlying figures,
+        // passed down from the parent page as props.
+        kpiRow: {
+            display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
+            gap: isMobile ? 10 : 14,
+        },
+        kpiCard: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 16,
+            boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+        },
+        kpiTop: { display: "flex", alignItems: "center", gap: 12 },
+        kpiIcon: {
+            width: 44,
+            height: 44,
+            borderRadius: radius.md,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+        },
+        kpiLabel: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            color: "var(--brand-blue)",
+        },
+        kpiValue: { fontSize: fontSize["4xl"], fontWeight: fontWeight.bold, color: "#1e1b4b" },
+        kpiFooter: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            fontSize: fontSize.xs,
+            color: "#94a3b8",
+            borderTop: "1px solid #f1f1f7",
+            paddingTop: 10,
+        },
+        kpiDot: {
+            width: 18,
+            height: 18,
+            borderRadius: radius.circle,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
         formCard: {
             background: "#fff",
             borderRadius: radius.lg,
@@ -1096,13 +1429,13 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             fontWeight: fontWeight.medium,
         },
         successText: {
-            margin: "10px 0 0",
+            margin: "8px 0 0",
             fontSize: fontSize.sm,
             color: BRAND.green,
             fontWeight: fontWeight.medium,
         },
         submitBtn: {
-            marginTop: 16,
+            marginTop: 6,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1148,9 +1481,17 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             background: "#fafafa",
             minWidth: 180,
         },
+        // Header and rows both use this exact grid template — a shared
+        // set of column tracks with one uniform `gap` between every one
+        // of them, so the space between Case No./Client/Subclient/
+        // Service/Date/Actions is always identical regardless of how
+        // long any cell's content is (a flex `1fr` column can't drift
+        // and swallow the gap the way flex:1 + variable text does).
         tableHeadRow: {
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "32px 100px 1fr 1fr 1fr 100px 76px",
             alignItems: "center",
+            columnGap: 20,
             padding: "10px 20px",
             background: "#F4F8FD",
             fontSize: fontSize.xs,
@@ -1160,28 +1501,53 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             letterSpacing: "0.03em",
         },
         tableRow: {
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "32px 100px 1fr 1fr 1fr 100px 76px",
             alignItems: "center",
+            columnGap: 20,
             padding: "12px 20px",
             borderTop: "1px solid #f1f1f1",
             fontSize: fontSize.base,
             color: "#17181C",
         },
-        // NEW: fixed pixel widths shared between header and rows —
-        // flex-ratio columns could drift out of alignment depending on
-        // content length; explicit widths guarantee the header label
-        // always sits directly above its column's data.
-        colCaseNo: {
-            width: 140,
-            flexShrink: 0,
+        // NEW: light highlight on a row while it's checked for bulk delete.
+        tableRowSelected: {
+            background: withBrandAlpha("blue", 0.05),
         },
-        // NEW: Client column — sits right after Case No. so the two stay
-        // visually aligned, per the requested layout.
+        // NEW: checkbox column — first cell in both the header (select
+        // all) and every row (select this case).
+        colCheckbox: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        checkbox: {
+            width: 16,
+            height: 16,
+            cursor: "pointer",
+            accentColor: BRAND.blue,
+        },
+        colCaseNo: {
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
         colClient: {
-            width: 190,
-            flexShrink: 0,
-            paddingRight: 12,
+            minWidth: 0,
+        },
+        // NEW: plain-text display for Client/Subclient cells when the
+        // row isn't in edit mode — same box as the select it replaces,
+        // so nothing shifts when toggling edit mode.
+        cellText: {
+            display: "block",
+            width: "100%",
+            padding: "6px 8px",
             boxSizing: "border-box",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            color: "#17181C",
         },
         clientSelect: {
             width: "100%",
@@ -1194,19 +1560,43 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             color: "#17181C",
         },
         colService: {
-            flex: 1,
             minWidth: 0,
-            paddingRight: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
         },
         colDate: {
-            width: 110,
-            flexShrink: 0,
+            minWidth: 0,
             textAlign: "right",
         },
+        // Fits both the edit and delete icon buttons side by side.
         colAction: {
-            width: 48,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 8,
+        },
+        // NEW: edit (pencil) icon button — sits immediately to the left
+        // of Delete in the actions column.
+        editBtn: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 30,
+            height: 30,
+            borderRadius: radius.sm,
+            border: "1px solid #dbe4f3",
+            background: "#f4f8fd",
+            color: BRAND.blue,
+            cursor: "pointer",
             flexShrink: 0,
-            textAlign: "right",
+        },
+        // NEW: highlighted state while a row's Client/Subclient cells
+        // are open for editing, so it's clear which row is active.
+        editBtnActive: {
+            border: `1px solid ${BRAND.green}`,
+            background: withBrandAlpha("green", 0.1),
+            color: BRAND.green,
         },
         deleteBtn: {
             display: "inline-flex",
@@ -1218,12 +1608,29 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             border: "1px solid #fecaca",
             background: "#fef2f2",
             color: BRAND.red,
+            cursor: "pointer",
+            flexShrink: 0,
         },
         deleteErrorText: {
             margin: "10px 20px",
             fontSize: fontSize.sm,
             color: BRAND.red,
             fontWeight: fontWeight.medium,
+        },
+        // NEW: "Delete Selected (n)" button — shown in the table toolbar
+        // once at least one row's checkbox is ticked.
+        bulkDeleteBtn: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 14px",
+            borderRadius: radius.sm,
+            border: "1px solid #fecaca",
+            background: "#fef2f2",
+            color: BRAND.red,
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            whiteSpace: "nowrap",
         },
         emptyNote: {
             padding: "28px 20px",

@@ -429,7 +429,14 @@ export default function DailyWork() {
             </div>
 
             {mainTab === "cases" ? (
-                <ServiceCases />
+                <ServiceCases
+                    kpi={{
+                        services: products.length,
+                        allocated: totalAllocated,
+                        pending: totalPending,
+                        employees: employeeCount,
+                    }}
+                />
             ) : (
                 <div style={isMobile ? styles.rootMobile : styles.root}>
                     {/* Top gradient accent bar */}
