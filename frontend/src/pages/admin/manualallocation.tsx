@@ -10,6 +10,7 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 // quantity-based Allocate tab's logic or JSX.
 import TodaysAllocationCases from "./todaysallocationcases";
 import TodaysAllocationEmployees from "./todaysallocationemployees";
+import TodaysAllocationHistory from "./todaysallocationhistory";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -455,7 +456,9 @@ export default function ManualAllocation() {
     // the Cases tab's Smart Allocation). Kept separate from the
     // quantity-based `date`/`productId` state above so neither tab's
     // filters interfere with the other's.
-    const [mainTab, setMainTab] = useState<"allocate" | "cases" | "employees">("allocate");
+    const [mainTab, setMainTab] = useState<"allocate" | "cases" | "employees" | "history">(
+        "allocate"
+    );
     const [caseProductId, setCaseProductId] = useState("");
     const [caseWorkDate, setCaseWorkDate] = useState(todayStr());
 
@@ -954,6 +957,18 @@ export default function ManualAllocation() {
                     <i className="ti ti-users" style={{ fontSize: fontSize.md }} />
                     Employees
                 </button>
+                <button
+                    type="button"
+                    className="ma-tab-btn"
+                    style={{
+                        ...styles.mainTabBtn,
+                        ...(mainTab === "history" ? styles.mainTabBtnActive : {}),
+                    }}
+                    onClick={() => setMainTab("history")}
+                >
+                    <i className="ti ti-history" style={{ fontSize: fontSize.md }} />
+                    History
+                </button>
             </div>
 
             {mainTab === "cases" ? (
@@ -969,6 +984,8 @@ export default function ManualAllocation() {
                     onChangeProductId={setCaseProductId}
                     workDate={caseWorkDate}
                 />
+            ) : mainTab === "history" ? (
+                <TodaysAllocationHistory />
             ) : (
                 <div style={isMobile ? styles.rootMobile : styles.root}>
                     <div style={styles.topBar} />

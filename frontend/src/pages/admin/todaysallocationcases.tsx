@@ -290,12 +290,6 @@ export default function TodaysAllocationCases({
             <div style={styles.contentBody}>
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-list-numbers"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
                         <div>
                             <h1 style={styles.pageTitle}>Cases</h1>
                             <p style={styles.headerSubtext}>
@@ -496,24 +490,20 @@ const styles: Record<string, CSSProperties> = {
     contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
     headerRow: { display: "flex", alignItems: "center" },
     headerLeft: { display: "flex", alignItems: "center", gap: 14 },
-    headerIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: radius.md,
-        background: "rgba(var(--brand-blue-rgb),0.08)",
-        color: BRAND.blue,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-    },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["4xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        textAlign: "left",
     },
-    headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92", maxWidth: 640 },
+    headerSubtext: {
+        margin: "4px 0 0",
+        fontSize: fontSize.base,
+        color: "#767F92",
+        maxWidth: 640,
+        textAlign: "left",
+    },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
     label: {
         display: "block",

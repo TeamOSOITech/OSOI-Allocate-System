@@ -212,6 +212,16 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // NEW: multi-select for bulk delete — a "Select all" checkbox in the
     // header plus a per-row checkbox on the left of every row.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    // NEW: bulk-select mode is off by default — checkboxes only appear
+    // once the "Select" button (next to the service filter) is clicked.
+    // Turning it off again also clears whatever was checked.
+    const [selectMode, setSelectMode] = useState(false);
+    const toggleSelectMode = () => {
+        setSelectMode((prev) => {
+            if (prev) setSelectedIds(new Set());
+            return !prev;
+        });
+    };
     const [bulkDeleting, setBulkDeleting] = useState(false);
 
     const fetchProducts = useCallback(async () => {
@@ -661,12 +671,6 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
-                        <div style={styles.headerIcon}>
-                            <i
-                                className="ti ti-list-numbers"
-                                style={{ fontSize: fontSize["4xl"] }}
-                            />
-                        </div>
                         <div>
                             <h1 style={styles.pageTitle}>Case Register</h1>
                             <p style={styles.headerSubtext}>
@@ -675,6 +679,16 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                             </p>
                         </div>
                     </div>
+
+                    {!isMobile && (
+                        <div style={styles.breadcrumb}>
+                            <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
+                            <span style={styles.breadcrumbSep}>/</span>
+                            <span style={styles.breadcrumbItem}>Dashboard</span>
+                            <span style={styles.breadcrumbSep}>/</span>
+                            <span style={styles.breadcrumbActive}>Case Register</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* NEW: same KPI row as the Daily Work tab — Services /
@@ -723,186 +737,192 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
 
                 <div style={styles.layout}>
                     {/* ---- LEFT: add form (same shape as Daily Work) ---- */}
-                    <form
-                        style={styles.formCard}
-                        onSubmit={formMode === "auto" ? handleSubmit : handleUploadSubmit}
-                    >
-                        <div style={styles.formHeadingRow}>
-                            <p style={styles.cardHeading}>Log Cases</p>
+                    <div style={styles.formPanel}>
+                        <div style={styles.formPanelHeader}>
+                            <i className="ti ti-list-numbers" style={{ fontSize: fontSize.xl }} />
+                            <span style={{ flex: 1 }}>Log Cases</span>
                             <button
                                 type="button"
-                                style={styles.sampleLink}
                                 onClick={handleDownloadTemplate}
+                                style={styles.headerGhostBtn}
+                                title="Sample sheet for case-number upload (.xlsx)"
                             >
                                 <i
                                     className="ti ti-file-spreadsheet"
                                     style={{ fontSize: fontSize.base }}
                                 />
-                                Sample Excel
                             </button>
                         </div>
 
-                        {/* Mode toggle — Auto-generate (original quantity-based
+                        <form
+                            style={styles.form}
+                            onSubmit={formMode === "auto" ? handleSubmit : handleUploadSubmit}
+                        >
+                            {/* Mode toggle — Auto-generate (original quantity-based
                             flow, unchanged) vs Upload (custom case numbers from
                             an Excel/CSV sheet, for orgs with their own numbering). */}
-                        <div style={styles.modeToggleRow}>
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.modeToggleBtn,
-                                    ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
-                                }}
-                                onClick={() => {
-                                    setFormMode("auto");
-                                    setFormError("");
-                                    setFormSuccess("");
-                                    setUploadResult(null);
-                                }}
-                            >
-                                Auto-generate
-                            </button>
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.modeToggleBtn,
-                                    ...(formMode === "upload" ? styles.modeToggleBtnActive : {}),
-                                }}
-                                onClick={() => {
-                                    setFormMode("upload");
-                                    setFormError("");
-                                    setFormSuccess("");
-                                    setUploadResult(null);
-                                }}
-                            >
-                                Upload Case Numbers
-                            </button>
-                        </div>
-
-                        <label style={styles.label}>Date</label>
-                        <input
-                            type="date"
-                            style={styles.input}
-                            value={workDate}
-                            onChange={(e) => setWorkDate(e.target.value)}
-                        />
-
-                        <label style={styles.label}>Service</label>
-                        <select
-                            style={styles.input}
-                            value={productId}
-                            onChange={(e) => setProductId(e.target.value)}
-                            disabled={productsLoading}
-                        >
-                            <option value="">-- Select service --</option>
-                            {products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                    {p.product_name}
-                                </option>
-                            ))}
-                        </select>
-
-                        {formMode === "auto" ? (
-                            <>
-                                <label style={styles.label}>Client</label>
-                                <select
-                                    style={styles.input}
-                                    value={formClientId}
-                                    onChange={(e) => setFormClientId(e.target.value)}
+                            <div style={styles.modeToggleRow}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.modeToggleBtn,
+                                        ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
+                                    }}
+                                    onClick={() => {
+                                        setFormMode("auto");
+                                        setFormError("");
+                                        setFormSuccess("");
+                                        setUploadResult(null);
+                                    }}
                                 >
-                                    <option value="">-- Select client --</option>
-                                    {clients.map((cl) => (
-                                        <option key={cl.id} value={cl.id}>
-                                            {cl.name}
-                                        </option>
-                                    ))}
-                                </select>
-
-                                <label style={styles.label}>Subclient</label>
-                                <select
-                                    style={styles.input}
-                                    value={formSubclientId}
-                                    onChange={(e) => setFormSubclientId(e.target.value)}
-                                    disabled={!formClientId}
+                                    Auto-generate
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.modeToggleBtn,
+                                        ...(formMode === "upload"
+                                            ? styles.modeToggleBtnActive
+                                            : {}),
+                                    }}
+                                    onClick={() => {
+                                        setFormMode("upload");
+                                        setFormError("");
+                                        setFormSuccess("");
+                                        setUploadResult(null);
+                                    }}
                                 >
-                                    <option value="">
-                                        {formClientId
-                                            ? "-- Select subclient --"
-                                            : "-- Select client first --"}
+                                    Upload Case Numbers
+                                </button>
+                            </div>
+
+                            <label style={styles.label}>Date</label>
+                            <input
+                                type="date"
+                                style={styles.input}
+                                value={workDate}
+                                onChange={(e) => setWorkDate(e.target.value)}
+                            />
+
+                            <label style={styles.label}>Service</label>
+                            <select
+                                style={styles.input}
+                                value={productId}
+                                onChange={(e) => setProductId(e.target.value)}
+                                disabled={productsLoading}
+                            >
+                                <option value="">-- Select service --</option>
+                                {products.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.product_name}
                                     </option>
-                                    {subclients
-                                        .filter((s) => s.clientId === formClientId)
-                                        .map((s) => (
-                                            <option key={s.id} value={s.id}>
-                                                {s.name}
+                                ))}
+                            </select>
+
+                            {formMode === "auto" ? (
+                                <>
+                                    <label style={styles.label}>Client</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formClientId}
+                                        onChange={(e) => setFormClientId(e.target.value)}
+                                    >
+                                        <option value="">-- Select client --</option>
+                                        {clients.map((cl) => (
+                                            <option key={cl.id} value={cl.id}>
+                                                {cl.name}
                                             </option>
                                         ))}
-                                </select>
-                                <p style={styles.helperNote}>
-                                    Optional — editable later from the table too.
-                                </p>
-                            </>
-                        ) : (
-                            <p style={styles.helperNote}>
-                                Client &amp; Subclient come from the file — see Sample Excel above.
-                            </p>
-                        )}
+                                    </select>
 
-                        {formMode === "auto" ? (
-                            <>
-                                <label style={styles.label}>Quantity</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    style={styles.input}
-                                    value={quantity}
-                                    onChange={(e) => setQuantity(e.target.value)}
-                                    placeholder="e.g. 10"
-                                />
+                                    <label style={styles.label}>Subclient</label>
+                                    <select
+                                        style={styles.input}
+                                        value={formSubclientId}
+                                        onChange={(e) => setFormSubclientId(e.target.value)}
+                                        disabled={!formClientId}
+                                    >
+                                        <option value="">
+                                            {formClientId
+                                                ? "-- Select subclient --"
+                                                : "-- Select client first --"}
+                                        </option>
+                                        {subclients
+                                            .filter((s) => s.clientId === formClientId)
+                                            .map((s) => (
+                                                <option key={s.id} value={s.id}>
+                                                    {s.name}
+                                                </option>
+                                            ))}
+                                    </select>
+                                    <p style={styles.helperNote}>
+                                        Optional — editable later from the table too.
+                                    </p>
+                                </>
+                            ) : (
                                 <p style={styles.helperNote}>
-                                    One case number is created per unit — entering 10 here creates
-                                    10 individual case rows.
+                                    Client &amp; Subclient come from the file — see Sample Excel
+                                    above.
                                 </p>
-                            </>
-                        ) : (
-                            <>
-                                <label style={styles.label}>Case Numbers File</label>
-                                <input
-                                    type="file"
-                                    accept=".xlsx,.xls,.csv"
-                                    style={styles.input}
-                                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                                />
+                            )}
+
+                            {formMode === "auto" ? (
+                                <>
+                                    <label style={styles.label}>Quantity</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        style={styles.input}
+                                        value={quantity}
+                                        onChange={(e) => setQuantity(e.target.value)}
+                                        placeholder="e.g. 10"
+                                    />
+                                    <p style={styles.helperNote}>
+                                        One case number is created per unit — entering 10 here
+                                        creates 10 individual case rows.
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <label style={styles.label}>Case Numbers File</label>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx,.xls,.csv"
+                                        style={styles.input}
+                                        onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                                    />
+                                    <p style={styles.helperNote}>
+                                        Duplicate or already-used case numbers are skipped and
+                                        reported below.
+                                    </p>
+                                </>
+                            )}
+
+                            {formError && <p style={styles.errorText}>{formError}</p>}
+                            {formSuccess && <p style={styles.successText}>{formSuccess}</p>}
+                            {uploadResult && uploadResult.skippedCount > 0 && (
                                 <p style={styles.helperNote}>
-                                    Duplicate or already-used case numbers are skipped and reported
-                                    below.
+                                    {uploadResult.createdCount} created, {uploadResult.skippedCount}{" "}
+                                    skipped out of {uploadResult.totalRows} row(s).
                                 </p>
-                            </>
-                        )}
+                            )}
 
-                        {formError && <p style={styles.errorText}>{formError}</p>}
-                        {formSuccess && <p style={styles.successText}>{formSuccess}</p>}
-                        {uploadResult && uploadResult.skippedCount > 0 && (
-                            <p style={styles.helperNote}>
-                                {uploadResult.createdCount} created, {uploadResult.skippedCount}{" "}
-                                skipped out of {uploadResult.totalRows} row(s).
-                            </p>
-                        )}
-
-                        <button
-                            type="submit"
-                            style={{ ...styles.submitBtn, opacity: submitting ? 0.6 : 1 }}
-                            disabled={submitting}
-                        >
-                            <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
-                            {submitting
-                                ? formMode === "auto"
-                                    ? "Creating..."
-                                    : "Uploading..."
-                                : formMode === "auto"
-                                  ? "Create Cases"
-                                  : "Upload Cases"}
-                        </button>
-                    </form>
+                            <button
+                                type="submit"
+                                style={{ ...styles.submitBtn, opacity: submitting ? 0.6 : 1 }}
+                                disabled={submitting}
+                            >
+                                <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
+                                {submitting
+                                    ? formMode === "auto"
+                                        ? "Creating..."
+                                        : "Uploading..."
+                                    : formMode === "auto"
+                                      ? "Create Cases"
+                                      : "Upload Cases"}
+                            </button>
+                        </form>
+                    </div>
 
                     {/* ---- RIGHT: case list — filter + pagination ---- */}
                     <div style={styles.tableCard}>
@@ -916,7 +936,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                 {/* NEW: appears only once at least one row is
                                     checked — bulk-deletes every selected case. */}
-                                {selectedIds.size > 0 && (
+                                {selectMode && selectedIds.size > 0 && (
                                     <button
                                         type="button"
                                         style={{
@@ -948,27 +968,55 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         </option>
                                     ))}
                                 </select>
+                                {/* NEW: checkboxes (select-all + per-row + bulk
+                                    delete) are hidden until this is clicked, so
+                                    the table doesn't show tick boxes all the time. */}
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.selectModeBtn,
+                                        ...(selectMode ? styles.selectModeBtnActive : {}),
+                                    }}
+                                    onClick={toggleSelectMode}
+                                >
+                                    <i
+                                        className="ti ti-square-check"
+                                        style={{ fontSize: fontSize.sm }}
+                                    />
+                                    {selectMode ? "Cancel" : "Select"}
+                                </button>
                             </div>
                         </div>
 
-                        <div style={styles.tableHeadRow}>
-                            <span style={styles.colCheckbox}>
-                                <input
-                                    type="checkbox"
-                                    style={styles.checkbox}
-                                    checked={cases.length > 0 && selectedIds.size === cases.length}
-                                    ref={(el) => {
-                                        if (el) {
-                                            el.indeterminate =
-                                                selectedIds.size > 0 &&
-                                                selectedIds.size < cases.length;
+                        <div
+                            style={{
+                                ...styles.tableHeadRow,
+                                gridTemplateColumns: selectMode
+                                    ? "32px 100px 1fr 1fr 1fr 100px 76px"
+                                    : "100px 1fr 1fr 1fr 100px 76px",
+                            }}
+                        >
+                            {selectMode && (
+                                <span style={styles.colCheckbox}>
+                                    <input
+                                        type="checkbox"
+                                        style={styles.checkbox}
+                                        checked={
+                                            cases.length > 0 && selectedIds.size === cases.length
                                         }
-                                    }}
-                                    onChange={toggleSelectAll}
-                                    aria-label="Select all cases on this page"
-                                    disabled={cases.length === 0}
-                                />
-                            </span>
+                                        ref={(el) => {
+                                            if (el) {
+                                                el.indeterminate =
+                                                    selectedIds.size > 0 &&
+                                                    selectedIds.size < cases.length;
+                                            }
+                                        }}
+                                        onChange={toggleSelectAll}
+                                        aria-label="Select all cases on this page"
+                                        disabled={cases.length === 0}
+                                    />
+                                </span>
+                            )}
                             <span style={styles.colCaseNo}>Case No.</span>
                             <span style={styles.colClient}>Client</span>
                             <span style={styles.colClient}>Subclient</span>
@@ -997,18 +1045,23 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         key={c.id}
                                         style={{
                                             ...styles.tableRow,
+                                            gridTemplateColumns: selectMode
+                                                ? "32px 100px 1fr 1fr 1fr 100px 76px"
+                                                : "100px 1fr 1fr 1fr 100px 76px",
                                             ...(isSelected ? styles.tableRowSelected : null),
                                         }}
                                     >
-                                        <span style={styles.colCheckbox}>
-                                            <input
-                                                type="checkbox"
-                                                style={styles.checkbox}
-                                                checked={isSelected}
-                                                onChange={() => toggleSelectOne(c.id)}
-                                                aria-label={`Select ${c.caseNumber}`}
-                                            />
-                                        </span>
+                                        {selectMode && (
+                                            <span style={styles.colCheckbox}>
+                                                <input
+                                                    type="checkbox"
+                                                    style={styles.checkbox}
+                                                    checked={isSelected}
+                                                    onChange={() => toggleSelectOne(c.id)}
+                                                    aria-label={`Select ${c.caseNumber}`}
+                                                />
+                                            </span>
+                                        )}
                                         <span
                                             style={{
                                                 ...styles.colCaseNo,
@@ -1242,24 +1295,27 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         },
         headerRow: {
             display: "flex",
-            alignItems: "center",
+            justifyContent: "space-between",
+            alignItems: isMobile ? undefined : "flex-start",
+            flexDirection: isMobile ? "column" : "row",
+            gap: isMobile ? 10 : undefined,
         },
         headerLeft: {
             display: "flex",
-            alignItems: "center",
             gap: 14,
+            alignItems: "flex-start",
         },
-        headerIcon: {
-            width: 48,
-            height: 48,
-            borderRadius: radius.md,
-            background: withBrandAlpha("blue", 0.08),
-            color: BRAND.blue,
+        breadcrumb: {
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
+            gap: 6,
+            fontSize: fontSize.sm,
+            color: "#64748b",
+            marginTop: 6,
         },
+        breadcrumbSep: { color: "#c7cbe0" },
+        breadcrumbItem: { color: "#64748b" },
+        breadcrumbActive: { color: BRAND.blue, fontWeight: fontWeight.semibold },
         pageTitle: {
             margin: 0,
             fontSize: fontSize["5xl"],
@@ -1275,7 +1331,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         },
         layout: {
             display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "340px 1fr",
+            gridTemplateColumns: isMobile ? "1fr" : "450px 1fr",
             gap: 20,
             alignItems: "start",
             flex: 1,
@@ -1332,14 +1388,43 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             alignItems: "center",
             justifyContent: "center",
         },
-        formCard: {
+        // Left panel now matches the Daily Work "Log Production" panel:
+        // white card + a blue gradient header bar (icon, title, ghost
+        // icon button for the sample sheet) instead of a plain heading row.
+        formPanel: {
             background: "#fff",
             borderRadius: radius.lg,
-            padding: 20,
-            boxShadow: "0 6px 20px rgba(0,0,0,.04)",
+            overflow: "hidden",
+            boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
+        },
+        formPanelHeader: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "14px 18px",
+            background: `linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))`,
+            color: "#fff",
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.semibold,
+        },
+        headerGhostBtn: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 30,
+            height: 30,
+            borderRadius: radius.sm,
+            border: "1px solid rgba(255,255,255,0.5)",
+            background: "rgba(255,255,255,0.12)",
+            color: "#fff",
+            cursor: "pointer",
+        },
+        form: {
             display: "flex",
             flexDirection: "column",
-            gap: 4,
+            gap: 8,
+            padding: "14px 16px",
+            textAlign: "left",
         },
         cardHeading: {
             margin: 0,
@@ -1350,34 +1435,13 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             alignItems: "center",
             gap: 8,
         },
-        // NEW: "Log Cases" heading + Sample Excel link, side by side.
-        formHeadingRow: {
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            marginBottom: 10,
-        },
-        sampleLink: {
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            background: "transparent",
-            border: "none",
-            color: BRAND.blue,
-            fontSize: fontSize.xs,
-            fontWeight: fontWeight.semibold,
-            cursor: "pointer",
-            padding: 0,
-            whiteSpace: "nowrap",
-        },
         // Auto-generate / Upload Case Numbers mode toggle — same pill-button
         // look as the other tab bars in this app (border + hover + gradient
         // when active).
         modeToggleRow: {
             display: "flex",
             gap: 8,
-            margin: "0 0 12px",
+            margin: "0 0 4px",
             flexWrap: "wrap",
         },
         modeToggleBtn: {
@@ -1406,21 +1470,24 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             fontSize: fontSize.sm,
             fontWeight: fontWeight.medium,
             color: "#374151",
-            margin: "6px 0 5px",
+            margin: "2px 0 3px",
+            textAlign: "left",
         },
         input: {
             width: "100%",
-            padding: "10px 12px",
+            padding: "8px 10px",
             borderRadius: radius.sm,
             border: "1px solid #ececf5",
             fontSize: fontSize.base,
             background: "#fafafa",
             boxSizing: "border-box",
+            textAlign: "left",
         },
         helperNote: {
-            margin: "6px 0 0",
+            margin: "2px 0 0",
             fontSize: fontSize.xs,
             color: "#9ca3af",
+            textAlign: "left",
         },
         errorText: {
             margin: "10px 0 0",
@@ -1480,6 +1547,27 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             fontSize: fontSize.sm,
             background: "#fafafa",
             minWidth: 180,
+        },
+        // NEW: toggles bulk-select mode (checkboxes) on/off. Sits next to
+        // the service filter dropdown so checkboxes aren't shown by default.
+        selectModeBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 14px",
+            borderRadius: radius.sm,
+            border: "1px solid #ececf5",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#3b4a63",
+            background: "#fff",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        selectModeBtnActive: {
+            background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+            color: "#fff",
+            border: "1px solid transparent",
         },
         // Header and rows both use this exact grid template — a shared
         // set of column tracks with one uniform `gap` between every one
