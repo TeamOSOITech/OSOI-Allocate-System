@@ -6,6 +6,9 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 10;
 const MOBILE_BREAKPOINT = 768;
+// Manual Entry mode: how many case numbers can be typed in and
+// submitted together in one go.
+const MAX_MANUAL_CASE_NUMBERS = 10;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -168,19 +171,20 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // NEW: Subclient picked alongside Client — cleared automatically
     // whenever the Client selection changes (see the effect below).
     const [formSubclientId, setFormSubclientId] = useState("");
-    const [quantity, setQuantity] = useState("");
+    // Manual entry: the person types the actual case number(s) instead
+    // of the system auto-generating them — one per line (or comma
+    // separated), up to MAX_MANUAL_CASE_NUMBERS at once.
+    const [caseNumbersText, setCaseNumbersText] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
 
-    // ---- NEW: "Auto-generate" (original quantity-based flow, untouched
-    // above) vs "Upload" — for orgs that already have their own case
-    // numbering (e.g. a client-provided case ID) and want to bring in
-    // custom/random case numbers via an Excel sheet instead of the
-    // auto-generated CASEB001-style numbers. Service + Date still come
-    // from the same dropdown/date picker either way — only the case
-    // numbers themselves come from the sheet in Upload mode.
-    const [formMode, setFormMode] = useState<"auto" | "upload">("auto");
+    // ---- "Manual Entry" (type the case number(s) yourself) vs "Upload"
+    // (bring in custom/random case numbers via an Excel sheet) — for
+    // orgs that already have their own case numbering (e.g. a
+    // client-provided case ID). Service + Date still come from the same
+    // dropdown/date picker either way.
+    const [formMode, setFormMode] = useState<"manual" | "upload">("manual");
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadResult, setUploadResult] = useState<{
         createdCount: number;
@@ -193,6 +197,11 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     const [casesLoading, setCasesLoading] = useState(true);
     const [casesError, setCasesError] = useState("");
     const [filterProductId, setFilterProductId] = useState("");
+    // NEW: Case Register search box — searches Case Number, Service,
+    // Client, and Subclient names (and the date column) via the
+    // backend's `search` param, so it works across every page of
+    // results, not just whatever 10 rows happen to be on screen.
+    const [searchQuery, setSearchQuery] = useState("");
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [totalCases, setTotalCases] = useState(0);
@@ -282,6 +291,23 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         }
     }, []);
 
+    // NEW: search box is debounced 350ms so it doesn't fire a request on
+    // every single keystroke — same idea as any typeahead search. The
+    // page reset to 1 happens in this SAME callback (not a separate
+    // effect) so React batches them into one render — otherwise the
+    // table briefly re-fetches with the OLD page number + NEW search
+    // term, which can ask the backend for a page that no longer exists
+    // once results are filtered down (a 416 "Requested range not
+    // satisfiable" error) before the corrected page-1 fetch lands.
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    useEffect(() => {
+        const t = setTimeout(() => {
+            setDebouncedSearch(searchQuery.trim());
+            setPage(1);
+        }, 350);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
+
     const fetchCases = useCallback(async () => {
         setCasesLoading(true);
         setCasesError("");
@@ -290,6 +316,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             params.set("page", String(page));
             params.set("pageSize", String(PAGE_SIZE));
             if (filterProductId) params.set("productId", filterProductId);
+            if (debouncedSearch) params.set("search", debouncedSearch);
 
             const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
             const json = await res.json();
@@ -308,13 +335,20 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             );
             setTotalPages(json.pagination?.totalPages || 1);
             setTotalCases(json.pagination?.total || 0);
+            // NEW: if the backend had to clamp an out-of-range page
+            // (e.g. a filter/search cut results down while we were on
+            // page 3), sync local state to match so the pager UI and
+            // any subsequent fetch use the corrected page too.
+            if (json.pagination?.page && json.pagination.page !== page) {
+                setPage(json.pagination.page);
+            }
         } catch (err: any) {
             console.error("Failed to fetch service cases:", err);
             setCasesError(err?.message || "Failed to load cases.");
         } finally {
             setCasesLoading(false);
         }
-    }, [page, filterProductId]);
+    }, [page, filterProductId, debouncedSearch]);
 
     useEffect(() => {
         fetchProducts();
@@ -364,12 +398,14 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         });
     };
 
-    // Filter change should always jump back to page 1 — staying on page 4
-    // of an unfiltered list while filtering down to a service with only 1
-    // page of results would just show an empty page.
-    useEffect(() => {
-        setPage(1);
-    }, [filterProductId]);
+    // Splits the textarea on newlines AND commas, trims each entry, and
+    // drops blanks — lets people paste either "one per line" or
+    // "comma, separated, values" and have it just work.
+    const parseCaseNumbers = (text: string) =>
+        text
+            .split(/[\n,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
@@ -380,20 +416,26 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             setFormError("Select a service.");
             return;
         }
-        const qty = parseInt(quantity, 10);
-        if (!Number.isFinite(qty) || qty <= 0) {
-            setFormError("Enter a quantity greater than 0.");
+        const caseNumbers = parseCaseNumbers(caseNumbersText);
+        if (caseNumbers.length === 0) {
+            setFormError("Type at least one case number.");
+            return;
+        }
+        if (caseNumbers.length > MAX_MANUAL_CASE_NUMBERS) {
+            setFormError(
+                `You can enter up to ${MAX_MANUAL_CASE_NUMBERS} case numbers at once — you typed ${caseNumbers.length}.`
+            );
             return;
         }
 
         setSubmitting(true);
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases`, {
+            const res = await authFetch(`${API_BASE}/api/service-cases/manual`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     productId,
-                    quantity: qty,
+                    caseNumbers,
                     workDate,
                     clientId: formClientId || null,
                     subclientId: formSubclientId || null,
@@ -403,7 +445,8 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             if (!res.ok || !json.success)
                 throw new Error(json?.message || "Failed to create cases");
             setFormSuccess(json.message || "Cases created.");
-            setQuantity("");
+            setUploadResult(json.data || null);
+            setCaseNumbersText("");
             // Switch the filter to the service just logged, so the newly
             // created cases are immediately visible (services are always
             // shown separately now, never mixed together).
@@ -674,8 +717,8 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                         <div>
                             <h1 style={styles.pageTitle}>Case Register</h1>
                             <p style={styles.headerSubtext}>
-                                Log a service and quantity — one case number is generated per unit,
-                                continuing the running count for that service.
+                                Log a service and type in the case number(s) yourself — up to{" "}
+                                {MAX_MANUAL_CASE_NUMBERS} at once.
                             </p>
                         </div>
                     </div>
@@ -756,26 +799,29 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
 
                         <form
                             style={styles.form}
-                            onSubmit={formMode === "auto" ? handleSubmit : handleUploadSubmit}
+                            onSubmit={formMode === "manual" ? handleSubmit : handleUploadSubmit}
                         >
-                            {/* Mode toggle — Auto-generate (original quantity-based
-                            flow, unchanged) vs Upload (custom case numbers from
-                            an Excel/CSV sheet, for orgs with their own numbering). */}
+                            {/* Mode toggle — Manual Entry (type the case number(s)
+                            yourself, up to MAX_MANUAL_CASE_NUMBERS at once) vs
+                            Upload (custom case numbers from an Excel/CSV sheet,
+                            for orgs with their own numbering). */}
                             <div style={styles.modeToggleRow}>
                                 <button
                                     type="button"
                                     style={{
                                         ...styles.modeToggleBtn,
-                                        ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
+                                        ...(formMode === "manual"
+                                            ? styles.modeToggleBtnActive
+                                            : {}),
                                     }}
                                     onClick={() => {
-                                        setFormMode("auto");
+                                        setFormMode("manual");
                                         setFormError("");
                                         setFormSuccess("");
                                         setUploadResult(null);
                                     }}
                                 >
-                                    Auto-generate
+                                    Manual Entry
                                 </button>
                                 <button
                                     type="button"
@@ -819,7 +865,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 ))}
                             </select>
 
-                            {formMode === "auto" ? (
+                            {formMode === "manual" ? (
                                 <>
                                     <label style={styles.label}>Client</label>
                                     <select
@@ -866,20 +912,20 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 </p>
                             )}
 
-                            {formMode === "auto" ? (
+                            {formMode === "manual" ? (
                                 <>
-                                    <label style={styles.label}>Quantity</label>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        style={styles.input}
-                                        value={quantity}
-                                        onChange={(e) => setQuantity(e.target.value)}
-                                        placeholder="e.g. 10"
+                                    <label style={styles.label}>Case Numbers</label>
+                                    <textarea
+                                        style={{ ...styles.input, ...styles.caseNumbersTextarea }}
+                                        value={caseNumbersText}
+                                        onChange={(e) => setCaseNumbersText(e.target.value)}
+                                        placeholder={`Type one case number per line\n(or comma-separated) — up to ${MAX_MANUAL_CASE_NUMBERS} at once`}
+                                        rows={5}
                                     />
                                     <p style={styles.helperNote}>
-                                        One case number is created per unit — entering 10 here
-                                        creates 10 individual case rows.
+                                        One row is created per case number typed — up to{" "}
+                                        {MAX_MANUAL_CASE_NUMBERS} at a time. One per line or
+                                        comma-separated both work.
                                     </p>
                                 </>
                             ) : (
@@ -914,10 +960,10 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                             >
                                 <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
                                 {submitting
-                                    ? formMode === "auto"
+                                    ? formMode === "manual"
                                         ? "Creating..."
                                         : "Uploading..."
-                                    : formMode === "auto"
+                                    : formMode === "manual"
                                       ? "Create Cases"
                                       : "Upload Cases"}
                             </button>
@@ -956,10 +1002,46 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                             : `Delete Selected (${selectedIds.size})`}
                                     </button>
                                 )}
+                                {/* NEW: searches Case Number, Service, Client, and
+                                    Subclient (and the date) across every page of
+                                    results — not just the 10 rows on screen. */}
+                                <div style={styles.searchBox}>
+                                    <i
+                                        className="ti ti-search"
+                                        style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
+                                    />
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search case no, client, service, date..."
+                                        style={styles.searchInput}
+                                    />
+                                    {searchQuery && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSearchQuery("")}
+                                            style={styles.searchClearBtn}
+                                            aria-label="Clear search"
+                                        >
+                                            <i
+                                                className="ti ti-x"
+                                                style={{ fontSize: fontSize.xs }}
+                                            />
+                                        </button>
+                                    )}
+                                </div>
                                 <select
                                     style={styles.filterSelect}
                                     value={filterProductId}
-                                    onChange={(e) => setFilterProductId(e.target.value)}
+                                    onChange={(e) => {
+                                        // Reset to page 1 in the SAME handler as the
+                                        // filter change (not a separate effect) — see
+                                        // the note above debouncedSearch for why that
+                                        // matters (avoids a stale-page 416 error).
+                                        setFilterProductId(e.target.value);
+                                        setPage(1);
+                                    }}
                                 >
                                     <option value="">All</option>
                                     {products.map((p) => (
@@ -1035,7 +1117,11 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 {casesError}
                             </div>
                         ) : cases.length === 0 ? (
-                            <div style={styles.emptyNote}>No cases logged yet.</div>
+                            <div style={styles.emptyNote}>
+                                {debouncedSearch || filterProductId
+                                    ? "No matching cases found."
+                                    : "No cases logged yet."}
+                            </div>
                         ) : (
                             cases.map((c) => {
                                 const isEditingRow = editingRowId === c.id;
@@ -1489,6 +1575,11 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             color: "#9ca3af",
             textAlign: "left",
         },
+        caseNumbersTextarea: {
+            fontFamily: "inherit",
+            resize: "vertical",
+            minHeight: 100,
+        },
         errorText: {
             margin: "10px 0 0",
             fontSize: fontSize.sm,
@@ -1539,6 +1630,40 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             background: withBrandAlpha("blue", 0.08),
             borderRadius: radius.xl,
             padding: "2px 9px",
+        },
+        // NEW: Case Register search box — same look as the search box
+        // on the Daily Work tab (searchBox/searchInput there).
+        searchBox: {
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            background: "#fafaff",
+            border: "1px solid #ececf5",
+            borderRadius: radius.pill,
+            padding: "6px 12px",
+            minWidth: 220,
+        },
+        searchInput: {
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: fontSize.sm,
+            color: "#1e1b4b",
+            width: "100%",
+            fontFamily: "inherit",
+        },
+        searchClearBtn: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 18,
+            height: 18,
+            borderRadius: radius.circle,
+            border: "none",
+            background: "#e5e7eb",
+            color: "#4b5563",
+            cursor: "pointer",
+            flexShrink: 0,
         },
         filterSelect: {
             padding: "8px 12px",

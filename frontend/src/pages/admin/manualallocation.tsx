@@ -273,7 +273,7 @@ function todayStr() {
 }
 
 // ---------------- types ----------------
-type Product = { id: string; product_name: string };
+type Product = { id: string; product_name: string; teams?: string[] };
 
 type DailyWorkBatch = {
     id: string;
@@ -567,14 +567,31 @@ export default function ManualAllocation() {
         loadBatches();
     }, [loadBatches]);
 
-    // ---- filtered employee list: Team dropdown narrows first, then the
-    // single search box matches name, department, team, product, or status ----
+    // ---- filtered employee list: the selected service's linked Teams
+    // (Products/Services -> Teams multi-select) narrows the list FIRST —
+    // only employees whose own Team is one of that service's teams show up
+    // at all. The Team dropdown then narrows further within that, and the
+    // single search box matches name, department, team, product, or status.
+    // Falls back to every employee ONLY when the service has no teams
+    // linked at all (nothing configured to filter by). If teams ARE
+    // linked but zero employees currently have a matching Team, the list
+    // is meant to come up empty — silently showing everyone in that case
+    // defeats the point of linking teams to begin with.
+    const serviceMatched = useMemo(() => {
+        const productTeams = products
+            .find((p) => String(p.id) === String(productId))
+            ?.teams?.filter(Boolean);
+        if (!productTeams || productTeams.length === 0) return employees;
+        const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
+        return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
+    }, [employees, products, productId]);
+
     const teams = useMemo(
-        () => Array.from(new Set(employees.map((e) => e.team).filter(Boolean))) as string[],
-        [employees]
+        () => Array.from(new Set(serviceMatched.map((e) => e.team).filter(Boolean))) as string[],
+        [serviceMatched]
     );
     const filteredEmployees = useMemo(() => {
-        let list = employees;
+        let list = serviceMatched;
         if (teamFilter) list = list.filter((e) => e.team === teamFilter);
 
         const q = searchText.trim().toLowerCase();
@@ -594,7 +611,7 @@ export default function ManualAllocation() {
                 .toLowerCase();
             return haystack.includes(q);
         });
-    }, [employees, teamFilter, searchText, rows, selectedBatch]);
+    }, [serviceMatched, teamFilter, searchText, rows, selectedBatch]);
 
     // ---- when the selected batch changes, prefill rows: restore a previous
     // save if one exists for this batch, otherwise default everyone to

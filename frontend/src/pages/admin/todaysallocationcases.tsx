@@ -13,7 +13,7 @@
 // in manualallocation.tsx — nothing here touches daily_work batches or
 // the existing `allocations` table.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
@@ -31,8 +31,13 @@ const BRAND = {
 };
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
-type Product = { id: string; product_name: string };
-type Employee = { id: string; name: string; employeeCode: string | null };
+type Product = { id: string; product_name: string; teams?: string[] };
+type Employee = {
+    id: string;
+    name: string;
+    employeeCode: string | null;
+    team: string | null;
+};
 type ServiceCase = {
     id: string;
     caseNumber: string;
@@ -88,6 +93,12 @@ export default function TodaysAllocationCases({
         perEmployee: { employeeId: string; employeeName: string | null; caseCount: number }[];
     } | null>(null);
     const [toast, setToast] = useState("");
+    // NEW: "Clear" button — unassigns every currently-ALLOCATED case for
+    // the selected service+date back to Pending, so a bad Smart
+    // Allocation run (e.g. wrong team, wrong day) can be undone right
+    // here instead of hunting it down on the History tab.
+    const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+    const [clearing, setClearing] = useState(false);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -155,13 +166,31 @@ export default function TodaysAllocationCases({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
-    // NOTE: removed the auto-select-first-product effect that used to run
-    // here. Default is now "All Services" (productId === ""), so we no
-    // longer force-select products[0] once the product list loads.
+    useEffect(() => {
+        if (!productId && products.length > 0) onChangeProductId(products[0].id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [products]);
 
     useEffect(() => {
         fetchCases();
     }, [fetchCases]);
+
+    // Only employees whose Team is linked to the selected service
+    // (Products/Services -> Teams multi-select) are eligible here — same
+    // narrowing as the Employees tab. Falls back to every employee ONLY
+    // when the service has no teams linked at all — if teams ARE linked
+    // but zero employees currently have a matching Team, this is meant to
+    // come up empty rather than silently allocating to everyone present.
+    const selectedProduct = useMemo(
+        () => products.find((p) => p.id === productId) || null,
+        [products, productId]
+    );
+    const eligibleEmployees = useMemo(() => {
+        const productTeams = (selectedProduct?.teams || []).filter(Boolean);
+        if (productTeams.length === 0) return employees;
+        const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
+        return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
+    }, [employees, selectedProduct]);
 
     useEffect(() => {
         setPage(1);
@@ -251,7 +280,9 @@ export default function TodaysAllocationCases({
                     .filter((a: any) => a.status === "ABSENT" || a.status === "LEAVE")
                     .map((a: any) => a.employeeId)
             );
-            const presentIds = employees.filter((e) => !unavailableIds.has(e.id)).map((e) => e.id);
+            const presentIds = eligibleEmployees
+                .filter((e) => !unavailableIds.has(e.id))
+                .map((e) => e.id);
 
             if (presentIds.length === 0) {
                 showToast("No employees available to allocate to.");
@@ -281,7 +312,78 @@ export default function TodaysAllocationCases({
         }
     };
 
+    // Fetches every ALLOCATED case for the current service+date (looping
+    // pages if there are more than fit in one, since the list endpoint
+    // caps pageSize at 100) and unassigns each one back to Pending.
+    const handleClearAllocations = async () => {
+        setClearConfirmOpen(false);
+        setClearing(true);
+        try {
+            const allocatedIds: string[] = [];
+            let fetchPage = 1;
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+                const params = new URLSearchParams();
+                params.set("page", String(fetchPage));
+                params.set("pageSize", "100");
+                if (productId) params.set("productId", productId);
+                if (workDate) params.set("workDate", workDate);
+                params.set("allocationStatus", "ALLOCATED");
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json?.message || "Failed to load allocated cases");
+                const rows: ServiceCase[] = json.data || [];
+                allocatedIds.push(...rows.map((c) => c.id));
+                const totalPages = Math.ceil((json.pagination?.total ?? rows.length) / 100);
+                if (fetchPage >= totalPages || rows.length === 0) break;
+                fetchPage += 1;
+            }
+
+            if (allocatedIds.length === 0) {
+                showToast("Nothing allocated for this service/date.");
+                return;
+            }
+
+            await Promise.all(
+                allocatedIds.map((id) =>
+                    authFetch(`${API_BASE}/api/service-cases/${id}/allocate`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ employeeId: null }),
+                    })
+                )
+            );
+
+            showToast(`Cleared ${allocatedIds.length} allocation(s) — back to Pending.`);
+            setAutoResult(null);
+            setPendingSelection({});
+            setPage(1);
+            fetchCases();
+        } catch (err: any) {
+            showToast(err?.message || "Failed to clear allocations.");
+        } finally {
+            setClearing(false);
+        }
+    };
+
+    const [refreshingLookups, setRefreshingLookups] = useState(false);
+    // Manual refresh — Products/Employees are only fetched once when this
+    // tab mounts, so editing a service's Teams (or an employee's Team) on
+    // another page/tab while this one is still open won't show up until
+    // this runs again. Lets that be a click instead of a full page reload.
+    const refreshLookups = async () => {
+        setRefreshingLookups(true);
+        try {
+            await Promise.all([fetchProducts(), fetchEmployees()]);
+            showToast("Services and employees refreshed.");
+        } finally {
+            setRefreshingLookups(false);
+        }
+    };
+
     const pendingCount = cases.filter((c) => c.allocationStatus === "PENDING").length;
+    const allocatedCount = cases.filter((c) => c.allocationStatus === "ALLOCATED").length;
 
     return (
         <div style={styles.root}>
@@ -309,7 +411,6 @@ export default function TodaysAllocationCases({
                             value={productId}
                             onChange={(e) => onChangeProductId(e.target.value)}
                         >
-                            <option value="">All Services</option>
                             {products.map((p) => (
                                 <option key={p.id} value={p.id}>
                                     {p.product_name}
@@ -355,7 +456,69 @@ export default function TodaysAllocationCases({
                         <i className="ti ti-bolt" />
                         {autoRunning ? "Allocating…" : "Smart Allocation"}
                     </button>
+                    {/* NEW: unassigns every ALLOCATED case for this
+                        service+date back to Pending — undo a bad Smart
+                        Allocation run without going to the History tab. */}
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.clearAllocBtn,
+                            opacity: clearing || allocatedCount === 0 ? 0.6 : 1,
+                            cursor: clearing || allocatedCount === 0 ? "not-allowed" : "pointer",
+                        }}
+                        disabled={clearing || allocatedCount === 0}
+                        onClick={() => setClearConfirmOpen(true)}
+                        title={
+                            allocatedCount === 0
+                                ? "Nothing allocated on this page"
+                                : "Unassign every allocated case for this service/date"
+                        }
+                    >
+                        <i className="ti ti-eraser" />
+                        {clearing ? "Clearing…" : "Clear"}
+                    </button>
                 </div>
+
+                {/* Eligibility hint — shows exactly who Smart Allocation
+                    (and the manual dropdown) will consider for the
+                    selected service, based on that service's linked
+                    Teams. If this list doesn't match expectations, the
+                    mismatch is in Team names on the Employees/Products
+                    pages, not in this page's filtering logic. */}
+                <p style={styles.eligibilityHint}>
+                    {selectedProduct && (selectedProduct.teams || []).filter(Boolean).length > 0 ? (
+                        <>
+                            Team-eligible for <strong>{selectedProduct.product_name}</strong> (
+                            {(selectedProduct.teams || []).filter(Boolean).join(", ")}):{" "}
+                            {eligibleEmployees.length === 0 ? (
+                                <span style={{ color: BRAND.red }}>
+                                    no employees have a matching Team — check the Team field on the
+                                    Employees page.
+                                </span>
+                            ) : (
+                                eligibleEmployees.map((e) => e.name).join(", ")
+                            )}
+                        </>
+                    ) : (
+                        <>No team linked to this service — every employee is eligible.</>
+                    )}{" "}
+                    <button
+                        type="button"
+                        onClick={refreshLookups}
+                        disabled={refreshingLookups}
+                        style={styles.refreshLink}
+                        title="Just changed a service's Teams or an employee's Team elsewhere? Refresh here instead of reloading the page."
+                    >
+                        <i
+                            className="ti ti-refresh"
+                            style={{
+                                fontSize: fontSize.xs,
+                                display: "inline-block",
+                            }}
+                        />
+                        {refreshingLookups ? "Refreshing…" : "Refresh"}
+                    </button>
+                </p>
 
                 {autoResult && (
                     <div style={styles.autoSummary}>
@@ -376,7 +539,7 @@ export default function TodaysAllocationCases({
                         <span style={styles.colService}>Service</span>
                         <span style={styles.colDate}>Date</span>
                         <span style={styles.colStatus}>Status</span>
-                        <span style={{ ...styles.colAssign, textAlign: "left" }}>Allocate to</span>
+                        <span style={styles.colAssign}>Allocate to</span>
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading cases…</div>
@@ -408,7 +571,7 @@ export default function TodaysAllocationCases({
                                             : "Pending"}
                                     </span>
                                 </span>
-                                <span style={{ ...styles.colAssign, textAlign: "left" }}>
+                                <span style={styles.colAssign}>
                                     <select
                                         style={styles.assignSelect}
                                         value={
@@ -423,7 +586,19 @@ export default function TodaysAllocationCases({
                                         }
                                     >
                                         <option value="">Unallocated</option>
-                                        {employees.map((emp) => (
+                                        {(eligibleEmployees.some(
+                                            (e) => e.id === c.assignedEmployeeId
+                                        )
+                                            ? eligibleEmployees
+                                            : [
+                                                  ...(c.assignedEmployeeId
+                                                      ? employees.filter(
+                                                            (e) => e.id === c.assignedEmployeeId
+                                                        )
+                                                      : []),
+                                                  ...eligibleEmployees,
+                                              ]
+                                        ).map((emp) => (
                                             <option key={emp.id} value={emp.id}>
                                                 {emp.name}
                                             </option>
@@ -474,6 +649,49 @@ export default function TodaysAllocationCases({
                     </div>
                 </div>
             </div>
+
+            {/* Confirmation popup for "Clear" — same overlay/modal pattern
+                as the History tab's delete confirmation. */}
+            {clearConfirmOpen && (
+                <div style={styles.overlay} onClick={() => setClearConfirmOpen(false)}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>Clear allocations?</h2>
+                            <button
+                                type="button"
+                                style={styles.modalCloseBtn}
+                                onClick={() => setClearConfirmOpen(false)}
+                                aria-label="Close"
+                            >
+                                <i className="ti ti-x" style={{ fontSize: fontSize.md }} />
+                            </button>
+                        </div>
+                        <div style={styles.modalDivider} />
+                        <p style={styles.modalBody}>
+                            This unassigns all <strong>{allocatedCount}</strong> allocated case(s)
+                            for <strong>{selectedProduct?.product_name || "this service"}</strong>{" "}
+                            on {workDate} back to Pending. You can reassign them manually or re-run
+                            Smart Allocation afterwards.
+                        </p>
+                        <div style={styles.modalActions}>
+                            <button
+                                type="button"
+                                style={styles.modalCancelBtn}
+                                onClick={() => setClearConfirmOpen(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                style={styles.modalClearBtn}
+                                onClick={handleClearAllocations}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {toast && <div style={styles.toast}>{toast}</div>}
         </div>
@@ -541,6 +759,119 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
         fontSize: fontSize.sm,
     },
+    clearAllocBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 16px",
+        borderRadius: radius.md,
+        border: `1px solid ${BRAND.red}`,
+        background: "#fff",
+        color: BRAND.red,
+        fontWeight: fontWeight.semibold,
+        fontSize: fontSize.base,
+    },
+    eligibilityHint: {
+        margin: 0,
+        fontSize: fontSize.xs,
+        color: "#767F92",
+        textAlign: "left",
+    },
+    refreshLink: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        border: "none",
+        background: "transparent",
+        color: BRAND.blue,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        padding: 0,
+    },
+    // Confirmation popup (Clear allocations)
+    overlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,17,25,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 16,
+    },
+    modal: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        width: "100%",
+        maxWidth: 440,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        overflow: "hidden",
+    },
+    modalHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "18px 20px 14px",
+    },
+    modalTitle: {
+        margin: 0,
+        fontSize: fontSize.xl,
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+        textAlign: "center",
+        flex: 1,
+    },
+    modalCloseBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 30,
+        height: 30,
+        borderRadius: radius.circle,
+        border: "none",
+        background: "#f1f2f6",
+        color: "#374151",
+        cursor: "pointer",
+        flexShrink: 0,
+    },
+    modalDivider: { height: 1, background: "#eef0f5" },
+    modalBody: {
+        margin: 0,
+        padding: "18px 22px",
+        fontSize: fontSize.base,
+        color: "#374151",
+        textAlign: "center",
+        lineHeight: 1.6,
+    },
+    modalActions: {
+        display: "flex",
+        gap: 12,
+        padding: "0 20px 20px",
+    },
+    modalCancelBtn: {
+        flex: 1,
+        padding: "12px 16px",
+        borderRadius: radius.md,
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: BRAND.blue,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    modalClearBtn: {
+        flex: 1,
+        padding: "12px 16px",
+        borderRadius: radius.md,
+        border: "none",
+        background: BRAND.red,
+        color: "#fff",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+    },
     errorText: {
         color: BRAND.red,
         fontSize: fontSize.sm,
@@ -553,16 +884,9 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
     },
-    // Shared grid template across header + rows so columns always line up
-    // and spacing between them stays even, regardless of content length.
-    tableGridCols: {
-        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
-    },
     tableHeadRow: {
-        display: "grid",
-        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
+        display: "flex",
         alignItems: "center",
-        columnGap: 16,
         padding: "10px 20px",
         background: "#F4F8FD",
         fontSize: fontSize.xs,
@@ -572,26 +896,19 @@ const styles: Record<string, CSSProperties> = {
         letterSpacing: "0.03em",
     },
     tableRow: {
-        display: "grid",
-        gridTemplateColumns: "110px 1fr 1fr 110px 110px 200px",
+        display: "flex",
         alignItems: "center",
-        columnGap: 16,
         padding: "10px 20px",
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
     },
-    colCase: {
-        fontWeight: fontWeight.medium,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-    },
-    colClient: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-    colService: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-    colDate: { whiteSpace: "nowrap" },
-    colStatus: {},
-    colAssign: { minWidth: 0 },
+    colCase: { width: 120, flexShrink: 0, fontWeight: fontWeight.medium },
+    colClient: { width: 160, flexShrink: 0, paddingRight: 12 },
+    colService: { flex: 1, minWidth: 0 },
+    colDate: { width: 100, flexShrink: 0 },
+    colStatus: { width: 110, flexShrink: 0 },
+    colAssign: { width: 220, flexShrink: 0, textAlign: "right" },
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",

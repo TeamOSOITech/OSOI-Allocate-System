@@ -112,6 +112,11 @@ function CaseMultiSelect({
         }
     };
 
+    const allSelected = options.length > 0 && options.every((o) => selectedIds.includes(o.id));
+    const toggleSelectAll = () => {
+        onChange(allSelected ? [] : options.map((o) => o.id));
+    };
+
     const summaryLabel =
         selectedIds.length === 0
             ? placeholder
@@ -148,19 +153,27 @@ function CaseMultiSelect({
                     {options.length === 0 ? (
                         <div style={styles.multiPanelEmpty}>No unchecked cases</div>
                     ) : (
-                        options.map((c) => (
-                            <label key={c.id} style={styles.multiOption}>
-                                <input
-                                    type="checkbox"
-                                    checked={selectedIds.includes(c.id)}
-                                    onChange={() => toggleId(c.id)}
-                                />
-                                <span style={styles.multiOptionText}>
-                                    {c.caseNumber}
-                                    {c.clientName ? ` — ${c.clientName}` : ""}
+                        <>
+                            <label style={styles.multiSelectAllOption} onClick={toggleSelectAll}>
+                                <input type="checkbox" checked={allSelected} readOnly />
+                                <span style={styles.multiSelectAllText}>
+                                    {allSelected ? "Deselect all" : "Select all"}
                                 </span>
                             </label>
-                        ))
+                            {options.map((c) => (
+                                <label key={c.id} style={styles.multiOption}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.includes(c.id)}
+                                        onChange={() => toggleId(c.id)}
+                                    />
+                                    <span style={styles.multiOptionText}>
+                                        {c.caseNumber}
+                                        {c.clientName ? ` — ${c.clientName}` : ""}
+                                    </span>
+                                </label>
+                            ))}
+                        </>
                     )}
                 </div>
             )}
@@ -732,6 +745,20 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
     },
     multiOptionText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    multiSelectAllOption: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        borderRadius: radius.sm,
+        cursor: "pointer",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        borderBottom: "1px solid #ececf5",
+        marginBottom: 4,
+    },
+    multiSelectAllText: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     pendingBadge: {
         display: "flex",
         alignItems: "center",

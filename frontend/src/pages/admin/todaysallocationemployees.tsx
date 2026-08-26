@@ -1,10 +1,9 @@
 // src/pages/admin/todaysallocationemployees.tsx
 //
 // "Employees" tab on the Today's Allocation page (see manualallocation.tsx).
-// Pick a service, narrow down to that service's employees (by Team, since
-// employees aren't directly linked to a service in the DB — same Team
-// field the original Allocate tab already filters by), then mark each one
-// Present / Absent / Leave for the day and save.
+// Pick a service, narrow down to only the employees whose Team is linked to
+// that service (Products/Services -> Teams multi-select), then mark each
+// one Present / Absent / Leave for the day and save.
 //
 // Saves straight into the existing `attendance` table via the existing
 // GET/POST /api/attendance endpoints (backend/src/modules/attendance) —
@@ -29,7 +28,7 @@ const BRAND = {
 };
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
-type Product = { id: string; product_name: string };
+type Product = { id: string; product_name: string; teams?: string[] };
 type Employee = {
     id: string;
     name: string;
@@ -138,14 +137,18 @@ export default function TodaysAllocationEmployees({
         [products, productId]
     );
 
-    // "Service-wise" narrowing: employees whose Team text matches the
-    // selected service's name — falls back to the full employee list if
-    // nothing matches (Team is free text, so there's no guaranteed link).
+    // "Service-wise" narrowing: only employees whose Team is one of the
+    // teams actually linked to the selected service (Products/Services ->
+    // Teams multi-select). Falls back to the full employee list ONLY when
+    // the service has no teams linked at all — if teams ARE linked but
+    // zero employees currently have a matching Team, the list is meant to
+    // come up empty rather than silently showing everyone.
     const serviceMatched = useMemo(() => {
         if (!selectedProduct) return employees;
-        const needle = selectedProduct.product_name.trim().toLowerCase();
-        const matched = employees.filter((e) => (e.team || "").toLowerCase().includes(needle));
-        return matched.length > 0 ? matched : employees;
+        const productTeams = (selectedProduct.teams || []).filter(Boolean);
+        if (productTeams.length === 0) return employees;
+        const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
+        return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
     }, [employees, selectedProduct]);
 
     const teams = useMemo(
