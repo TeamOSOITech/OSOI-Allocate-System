@@ -456,6 +456,14 @@ export default function ManualAllocation() {
     // the Cases tab's Smart Allocation). Kept separate from the
     // quantity-based `date`/`productId` state above so neither tab's
     // filters interfere with the other's.
+    // NOTE: "Allocate" tab now shows the old header/filters/KPI cards
+    // with the Case Register table embedded directly below them (see the
+    // `activeTab === "allocate"` block further down) instead of its own
+    // original quantity-based table, which is disabled via `{false && ()}`
+    // there — not deleted. The standalone "Cases" tab button is hidden
+    // (commented out below); "cases" is kept as a valid mainTab value
+    // (unreachable via the UI now) in case a separate Cases tab is
+    // wanted again later.
     const [mainTab, setMainTab] = useState<"allocate" | "cases" | "employees" | "history">(
         "allocate"
     );
@@ -950,6 +958,13 @@ export default function ManualAllocation() {
                     <i className="ti ti-hand-stop" style={{ fontSize: fontSize.md }} />
                     Allocate
                 </button>
+                {/* HIDDEN: standalone "Cases" tab button — its content
+                    (TodaysAllocationCases) is now embedded directly under
+                    the "Allocate" tab instead (see the `activeTab ===
+                    "allocate"` block: KPI cards stay, then the Cases table
+                    is rendered right below them using the same Date/
+                    Service filters). Kept here, commented, in case a
+                    separate Cases tab is wanted again later.
                 <button
                     type="button"
                     className="ma-tab-btn"
@@ -962,6 +977,7 @@ export default function ManualAllocation() {
                     <i className="ti ti-list-numbers" style={{ fontSize: fontSize.md }} />
                     Cases
                 </button>
+                */}
                 <button
                     type="button"
                     className="ma-tab-btn"
@@ -1146,465 +1162,566 @@ export default function ManualAllocation() {
                                     />
                                 </div>
 
-                                {/* ---- 2. ACTION BUTTONS ---- */}
-                                <div style={styles.actionBar}>
-                                    <div style={styles.actionBarLeft}>
-                                        <button
-                                            style={{
-                                                ...styles.smartBtn,
-                                                opacity: productSelected ? 1 : 0.5,
-                                                cursor: productSelected ? "pointer" : "not-allowed",
-                                            }}
-                                            disabled={!productSelected}
-                                            onClick={handleSmartAllocation}
-                                        >
-                                            <Zap size={14} />
-                                            Smart Allocation
-                                        </button>
-                                        <button
-                                            style={{
-                                                ...styles.manualBtn,
-                                                ...(manualEdit ? styles.manualBtnActive : {}),
-                                                opacity: productSelected ? 1 : 0.5,
-                                                cursor: productSelected ? "pointer" : "not-allowed",
-                                            }}
-                                            disabled={!productSelected}
-                                            onClick={() => setManualEdit((v) => !v)}
-                                        >
-                                            <Edit3 size={14} />
-                                            Manual Edit: {manualEdit ? "ON" : "OFF"}
-                                        </button>
-                                        {/* Clears every filled-in qty on screen (and the
+                                {/* Case Register table now embedded directly here,
+                            reusing the Date/Service filters above instead of
+                            its own filter row (Smart Allocation/Clear/Status
+                            hidden via hideHeader). The old quantity-based
+                            action-bar + table + save-button block that used
+                            to sit here is further below, disabled with
+                            `{false && (...)}` — not deleted — in case this
+                            needs to revert. */}
+                                <TodaysAllocationCases
+                                    productId={productId}
+                                    onChangeProductId={setProductId}
+                                    workDate={date}
+                                    onChangeWorkDate={setDate}
+                                    hideHeader
+                                />
+
+                                {false && (
+                                    <>
+                                        {/* ---- 2. ACTION BUTTONS ---- */}
+                                        <div style={styles.actionBar}>
+                                            <div style={styles.actionBarLeft}>
+                                                <button
+                                                    style={{
+                                                        ...styles.smartBtn,
+                                                        opacity: productSelected ? 1 : 0.5,
+                                                        cursor: productSelected
+                                                            ? "pointer"
+                                                            : "not-allowed",
+                                                    }}
+                                                    disabled={!productSelected}
+                                                    onClick={handleSmartAllocation}
+                                                >
+                                                    <Zap size={14} />
+                                                    Smart Allocation
+                                                </button>
+                                                <button
+                                                    style={{
+                                                        ...styles.manualBtn,
+                                                        ...(manualEdit
+                                                            ? styles.manualBtnActive
+                                                            : {}),
+                                                        opacity: productSelected ? 1 : 0.5,
+                                                        cursor: productSelected
+                                                            ? "pointer"
+                                                            : "not-allowed",
+                                                    }}
+                                                    disabled={!productSelected}
+                                                    onClick={() => setManualEdit((v) => !v)}
+                                                >
+                                                    <Edit3 size={14} />
+                                                    Manual Edit: {manualEdit ? "ON" : "OFF"}
+                                                </button>
+                                                {/* Clears every filled-in qty on screen (and the
                                     saved-locally draft) back to zero — for
                                     starting over, not for undoing an already-saved
                                     allocation. */}
-                                        <button
-                                            style={{
-                                                ...styles.clearBtn,
-                                                opacity: productSelected ? 1 : 0.5,
-                                                cursor: productSelected ? "pointer" : "not-allowed",
-                                            }}
-                                            disabled={!productSelected}
-                                            onClick={handleClearAllocation}
-                                            title="Clear all quantities on screen"
-                                        >
-                                            <i className="ti ti-eraser" style={{ fontSize: 14 }} />
-                                            Clear
-                                        </button>
-                                    </div>
-                                    {!isMobile && (
-                                        <div style={styles.actionBarRight}>
-                                            <button
-                                                style={styles.iconTextBtn}
-                                                onClick={handleExport}
-                                                disabled={!productSelected}
-                                                title="Export current table to CSV"
-                                            >
-                                                <Download size={14} />
-                                                Export
-                                            </button>
-                                            <button
-                                                style={styles.iconOnlyBtn}
-                                                onClick={() => setFiltersOpen((v) => !v)}
-                                                title={
-                                                    filtersOpen ? "Hide filters" : "Show filters"
-                                                }
-                                            >
-                                                <Filter size={15} />
-                                            </button>
+                                                <button
+                                                    style={{
+                                                        ...styles.clearBtn,
+                                                        opacity: productSelected ? 1 : 0.5,
+                                                        cursor: productSelected
+                                                            ? "pointer"
+                                                            : "not-allowed",
+                                                    }}
+                                                    disabled={!productSelected}
+                                                    onClick={handleClearAllocation}
+                                                    title="Clear all quantities on screen"
+                                                >
+                                                    <i
+                                                        className="ti ti-eraser"
+                                                        style={{ fontSize: 14 }}
+                                                    />
+                                                    Clear
+                                                </button>
+                                            </div>
+                                            {!isMobile && (
+                                                <div style={styles.actionBarRight}>
+                                                    <button
+                                                        style={styles.iconTextBtn}
+                                                        onClick={handleExport}
+                                                        disabled={!productSelected}
+                                                        title="Export current table to CSV"
+                                                    >
+                                                        <Download size={14} />
+                                                        Export
+                                                    </button>
+                                                    <button
+                                                        style={styles.iconOnlyBtn}
+                                                        onClick={() => setFiltersOpen((v) => !v)}
+                                                        title={
+                                                            filtersOpen
+                                                                ? "Hide filters"
+                                                                : "Show filters"
+                                                        }
+                                                    >
+                                                        <Filter size={15} />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
 
-                                {/* ---- 3. MAIN TABLE ----
+                                        {/* ---- 3. MAIN TABLE ----
                     A real <table> is used (not stacked CSS-grid divs) so the
                     header and every row are guaranteed to share the exact
                     same column widths — the browser's table layout engine
                     enforces this across <thead> and <tbody> automatically,
                     which independent grid containers per row cannot. */}
-                                <div style={styles.tableCard}>
-                                    <table style={styles.table}>
-                                        <colgroup>
-                                            <col style={{ width: isMobile ? 28 : 40 }} />
-                                            <col />
-                                            {!isMobile && <col style={{ width: "13%" }} />}
-                                            {!isMobile && <col style={{ width: "13%" }} />}
-                                            {!isMobile && <col style={{ width: "15%" }} />}
-                                            <col style={{ width: isMobile ? "34%" : "24%" }} />
-                                            <col style={{ width: isMobile ? 84 : 120 }} />
-                                            <col style={{ width: 28 }} />
-                                        </colgroup>
-                                        <thead>
-                                            <tr style={styles.theadRow}>
-                                                <th style={{ ...styles.th, paddingLeft: 18 }}>#</th>
-                                                <th style={styles.th}>Employee Name</th>
-                                                {!isMobile && <th style={styles.th}>Dept</th>}
-                                                {!isMobile && <th style={styles.th}>Team</th>}
-                                                {!isMobile && <th style={styles.th}>Service</th>}
-                                                <th style={styles.th}>Status</th>
-                                                <th style={{ ...styles.th, textAlign: "right" }}>
-                                                    Allocated Qty
-                                                </th>
-                                                <th style={{ ...styles.th, paddingRight: 18 }} />
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {loading ? (
-                                                <tr>
-                                                    <td
-                                                        style={styles.emptyNote}
-                                                        colSpan={isMobile ? 5 : 8}
-                                                    >
-                                                        Loading...
-                                                    </td>
-                                                </tr>
-                                            ) : !productSelected ? (
-                                                <tr>
-                                                    <td colSpan={isMobile ? 5 : 8}>
-                                                        <div style={styles.emptyState}>
-                                                            <EmptyStateIcon />
-                                                            <span style={styles.emptyStateText}>
-                                                                Select a service above to see the
-                                                                employee list.
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ) : filteredEmployees.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan={isMobile ? 5 : 8}>
-                                                        <div style={styles.emptyState}>
-                                                            <EmptyStateIcon />
-                                                            <span style={styles.emptyStateText}>
-                                                                No employees match your search.
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ) : (
-                                                filteredEmployees.map((emp, idx) => {
-                                                    const r = rows[emp.id] || {
-                                                        status: "PRESENT" as RowStatus,
-                                                        qty: 0,
-                                                    };
-                                                    const { bg, fg } = avatarColors(emp.name);
-                                                    const isLeave = r.status === "LEAVE";
-                                                    return (
-                                                        <tr
-                                                            key={emp.id}
+                                        <div style={styles.tableCard}>
+                                            <table style={styles.table}>
+                                                <colgroup>
+                                                    <col style={{ width: isMobile ? 28 : 40 }} />
+                                                    <col />
+                                                    {!isMobile && <col style={{ width: "13%" }} />}
+                                                    {!isMobile && <col style={{ width: "13%" }} />}
+                                                    {!isMobile && <col style={{ width: "15%" }} />}
+                                                    <col
+                                                        style={{ width: isMobile ? "34%" : "24%" }}
+                                                    />
+                                                    <col style={{ width: isMobile ? 84 : 120 }} />
+                                                    <col style={{ width: 28 }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr style={styles.theadRow}>
+                                                        <th
                                                             style={{
-                                                                background: isLeave
-                                                                    ? "#f3f4f6"
-                                                                    : idx % 2 === 0
-                                                                      ? "#fff"
-                                                                      : "#fafaff",
-                                                                opacity: isLeave ? 0.65 : 1,
+                                                                ...styles.th,
+                                                                paddingLeft: 18,
                                                             }}
                                                         >
+                                                            #
+                                                        </th>
+                                                        <th style={styles.th}>Employee Name</th>
+                                                        {!isMobile && (
+                                                            <th style={styles.th}>Dept</th>
+                                                        )}
+                                                        {!isMobile && (
+                                                            <th style={styles.th}>Team</th>
+                                                        )}
+                                                        {!isMobile && (
+                                                            <th style={styles.th}>Service</th>
+                                                        )}
+                                                        <th style={styles.th}>Status</th>
+                                                        <th
+                                                            style={{
+                                                                ...styles.th,
+                                                                textAlign: "right",
+                                                            }}
+                                                        >
+                                                            Allocated Qty
+                                                        </th>
+                                                        <th
+                                                            style={{
+                                                                ...styles.th,
+                                                                paddingRight: 18,
+                                                            }}
+                                                        />
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {loading ? (
+                                                        <tr>
                                                             <td
-                                                                style={{
-                                                                    ...styles.td,
-                                                                    paddingLeft: 18,
-                                                                    fontSize: fontSize.sm,
-                                                                    color: "#9ca3af",
-                                                                }}
+                                                                style={styles.emptyNote}
+                                                                colSpan={isMobile ? 5 : 8}
                                                             >
-                                                                {idx + 1}
+                                                                Loading...
                                                             </td>
-                                                            <td style={styles.td}>
-                                                                <div
+                                                        </tr>
+                                                    ) : !productSelected ? (
+                                                        <tr>
+                                                            <td colSpan={isMobile ? 5 : 8}>
+                                                                <div style={styles.emptyState}>
+                                                                    <EmptyStateIcon />
+                                                                    <span
+                                                                        style={
+                                                                            styles.emptyStateText
+                                                                        }
+                                                                    >
+                                                                        Select a service above to
+                                                                        see the employee list.
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ) : filteredEmployees.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan={isMobile ? 5 : 8}>
+                                                                <div style={styles.emptyState}>
+                                                                    <EmptyStateIcon />
+                                                                    <span
+                                                                        style={
+                                                                            styles.emptyStateText
+                                                                        }
+                                                                    >
+                                                                        No employees match your
+                                                                        search.
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        filteredEmployees.map((emp, idx) => {
+                                                            const r = rows[emp.id] || {
+                                                                status: "PRESENT" as RowStatus,
+                                                                qty: 0,
+                                                            };
+                                                            const { bg, fg } = avatarColors(
+                                                                emp.name
+                                                            );
+                                                            const isLeave = r.status === "LEAVE";
+                                                            return (
+                                                                <tr
+                                                                    key={emp.id}
                                                                     style={{
-                                                                        display: "flex",
-                                                                        alignItems: "center",
-                                                                        gap: 10,
-                                                                        minWidth: 0,
+                                                                        background: isLeave
+                                                                            ? "#f3f4f6"
+                                                                            : idx % 2 === 0
+                                                                              ? "#fff"
+                                                                              : "#fafaff",
+                                                                        opacity: isLeave ? 0.65 : 1,
                                                                     }}
                                                                 >
-                                                                    <div
+                                                                    <td
                                                                         style={{
-                                                                            ...styles.avatar,
-                                                                            background: bg,
-                                                                            color: fg,
+                                                                            ...styles.td,
+                                                                            paddingLeft: 18,
+                                                                            fontSize: fontSize.sm,
+                                                                            color: "#9ca3af",
                                                                         }}
                                                                     >
-                                                                        {initials(emp.name)}
-                                                                    </div>
-                                                                    <div style={{ minWidth: 0 }}>
-                                                                        <div style={styles.empName}>
-                                                                            {emp.name}
-                                                                        </div>
-                                                                        {emp.employeeCode && (
-                                                                            <div
-                                                                                style={
-                                                                                    styles.empCode
-                                                                                }
-                                                                            >
-                                                                                {emp.employeeCode}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                            </td>
-                                                            {!isMobile && (
-                                                                <td
-                                                                    style={{
-                                                                        ...styles.td,
-                                                                        fontSize: fontSize.base,
-                                                                        color: "#374151",
-                                                                    }}
-                                                                >
-                                                                    {emp.department || "-"}
-                                                                </td>
-                                                            )}
-                                                            {!isMobile && (
-                                                                <td
-                                                                    style={{
-                                                                        ...styles.td,
-                                                                        fontSize: fontSize.base,
-                                                                        color: "#374151",
-                                                                    }}
-                                                                >
-                                                                    {emp.team || "-"}
-                                                                </td>
-                                                            )}
-                                                            {!isMobile && (
-                                                                <td
-                                                                    style={{
-                                                                        ...styles.td,
-                                                                        fontSize: fontSize.base,
-                                                                        fontWeight:
-                                                                            fontWeight.medium,
-                                                                        color: BRAND.blue,
-                                                                    }}
-                                                                >
-                                                                    {selectedBatch?.productName ||
-                                                                        "-"}
-                                                                </td>
-                                                            )}
-                                                            <td style={styles.td}>
-                                                                <div
-                                                                    style={{
-                                                                        display: "flex",
-                                                                        gap: 6,
-                                                                        flexWrap: "wrap",
-                                                                    }}
-                                                                >
-                                                                    {r.status === "PRESENT" && (
-                                                                        <span
+                                                                        {idx + 1}
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        <div
                                                                             style={{
-                                                                                ...styles.statusBtn,
-                                                                                background:
-                                                                                    withAlpha(
-                                                                                        STATUS_META
-                                                                                            .PRESENT
-                                                                                            .color,
-                                                                                        0.06
-                                                                                    ),
-                                                                                color: STATUS_META
-                                                                                    .PRESENT.color,
-                                                                                border: `1px solid ${withAlpha(
-                                                                                    STATUS_META
-                                                                                        .PRESENT
-                                                                                        .color,
-                                                                                    0.35
-                                                                                )}`,
-                                                                                cursor: "default",
+                                                                                display: "flex",
+                                                                                alignItems:
+                                                                                    "center",
+                                                                                gap: 10,
+                                                                                minWidth: 0,
                                                                             }}
                                                                         >
-                                                                            <CheckCircle2
-                                                                                size={12}
-                                                                                color={
-                                                                                    STATUS_META
-                                                                                        .PRESENT
-                                                                                        .color
-                                                                                }
-                                                                            />
-                                                                            Present
-                                                                        </span>
-                                                                    )}
-                                                                    {(
-                                                                        [
-                                                                            "HALF",
-                                                                            "LEAVE",
-                                                                        ] as RowStatus[]
-                                                                    ).map((s) => {
-                                                                        const active =
-                                                                            r.status === s;
-                                                                        const meta = STATUS_META[s];
-                                                                        const StatusIcon =
-                                                                            meta.icon;
-                                                                        return (
-                                                                            <button
-                                                                                key={s}
-                                                                                onClick={() =>
-                                                                                    setStatus(
-                                                                                        emp.id,
-                                                                                        active
-                                                                                            ? "PRESENT"
-                                                                                            : s
-                                                                                    )
-                                                                                }
+                                                                            <div
                                                                                 style={{
-                                                                                    ...styles.statusBtn,
-                                                                                    background:
-                                                                                        active
-                                                                                            ? meta.color
-                                                                                            : withAlpha(
-                                                                                                  meta.color,
-                                                                                                  0.06
-                                                                                              ),
-                                                                                    color: active
-                                                                                        ? "#fff"
-                                                                                        : meta.color,
-                                                                                    border: `1px solid ${
-                                                                                        active
-                                                                                            ? meta.color
-                                                                                            : withAlpha(
-                                                                                                  meta.color,
-                                                                                                  0.35
-                                                                                              )
-                                                                                    }`,
+                                                                                    ...styles.avatar,
+                                                                                    background: bg,
+                                                                                    color: fg,
                                                                                 }}
                                                                             >
-                                                                                <StatusIcon
-                                                                                    size={12}
-                                                                                    color={
-                                                                                        active
-                                                                                            ? "#fff"
-                                                                                            : meta.color
+                                                                                {initials(emp.name)}
+                                                                            </div>
+                                                                            <div
+                                                                                style={{
+                                                                                    minWidth: 0,
+                                                                                }}
+                                                                            >
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.empName
                                                                                     }
-                                                                                />
-                                                                                {meta.label}
-                                                                            </button>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                <div
-                                                                    style={{
-                                                                        display: "flex",
-                                                                        justifyContent: "flex-end",
-                                                                    }}
-                                                                >
-                                                                    {manualEdit ? (
-                                                                        <input
-                                                                            type="number"
-                                                                            min={0}
-                                                                            value={r.qty}
-                                                                            disabled={isLeave}
-                                                                            onChange={(e) =>
-                                                                                setQty(
-                                                                                    emp.id,
-                                                                                    Number(
-                                                                                        e.target
-                                                                                            .value
-                                                                                    ) || 0
-                                                                                )
-                                                                            }
-                                                                            style={styles.qtyInput}
-                                                                        />
-                                                                    ) : (
-                                                                        <span
+                                                                                >
+                                                                                    {emp.name}
+                                                                                </div>
+                                                                                {emp.employeeCode && (
+                                                                                    <div
+                                                                                        style={
+                                                                                            styles.empCode
+                                                                                        }
+                                                                                    >
+                                                                                        {
+                                                                                            emp.employeeCode
+                                                                                        }
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    </td>
+                                                                    {!isMobile && (
+                                                                        <td
                                                                             style={{
-                                                                                ...styles.qtyPill,
-                                                                                background:
-                                                                                    withAlpha(
-                                                                                        BRAND.lightBlue,
-                                                                                        0.12
-                                                                                    ),
+                                                                                ...styles.td,
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                                color: "#374151",
+                                                                            }}
+                                                                        >
+                                                                            {emp.department || "-"}
+                                                                        </td>
+                                                                    )}
+                                                                    {!isMobile && (
+                                                                        <td
+                                                                            style={{
+                                                                                ...styles.td,
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                                color: "#374151",
+                                                                            }}
+                                                                        >
+                                                                            {emp.team || "-"}
+                                                                        </td>
+                                                                    )}
+                                                                    {!isMobile && (
+                                                                        <td
+                                                                            style={{
+                                                                                ...styles.td,
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                                fontWeight:
+                                                                                    fontWeight.medium,
                                                                                 color: BRAND.blue,
                                                                             }}
                                                                         >
-                                                                            {r.qty}
-                                                                        </span>
+                                                                            {selectedBatch?.productName ||
+                                                                                "-"}
+                                                                        </td>
                                                                     )}
-                                                                </div>
-                                                            </td>
-                                                            <td
-                                                                style={{
-                                                                    ...styles.td,
-                                                                    paddingRight: 18,
-                                                                    position: "relative",
-                                                                }}
-                                                            >
-                                                                <button
-                                                                    style={styles.dotsBtn}
-                                                                    onClick={() =>
-                                                                        setOpenMenuFor(
-                                                                            openMenuFor === emp.id
-                                                                                ? null
-                                                                                : emp.id
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <MoreVertical
-                                                                        size={15}
-                                                                        color="#9ca3af"
-                                                                    />
-                                                                </button>
-                                                                {openMenuFor === emp.id && (
-                                                                    <div
-                                                                        ref={menuRef}
-                                                                        style={styles.rowMenu}
+                                                                    <td style={styles.td}>
+                                                                        <div
+                                                                            style={{
+                                                                                display: "flex",
+                                                                                gap: 6,
+                                                                                flexWrap: "wrap",
+                                                                            }}
+                                                                        >
+                                                                            {r.status ===
+                                                                                "PRESENT" && (
+                                                                                <span
+                                                                                    style={{
+                                                                                        ...styles.statusBtn,
+                                                                                        background:
+                                                                                            withAlpha(
+                                                                                                STATUS_META
+                                                                                                    .PRESENT
+                                                                                                    .color,
+                                                                                                0.06
+                                                                                            ),
+                                                                                        color: STATUS_META
+                                                                                            .PRESENT
+                                                                                            .color,
+                                                                                        border: `1px solid ${withAlpha(
+                                                                                            STATUS_META
+                                                                                                .PRESENT
+                                                                                                .color,
+                                                                                            0.35
+                                                                                        )}`,
+                                                                                        cursor: "default",
+                                                                                    }}
+                                                                                >
+                                                                                    <CheckCircle2
+                                                                                        size={12}
+                                                                                        color={
+                                                                                            STATUS_META
+                                                                                                .PRESENT
+                                                                                                .color
+                                                                                        }
+                                                                                    />
+                                                                                    Present
+                                                                                </span>
+                                                                            )}
+                                                                            {(
+                                                                                [
+                                                                                    "HALF",
+                                                                                    "LEAVE",
+                                                                                ] as RowStatus[]
+                                                                            ).map((s) => {
+                                                                                const active =
+                                                                                    r.status === s;
+                                                                                const meta =
+                                                                                    STATUS_META[s];
+                                                                                const StatusIcon =
+                                                                                    meta.icon;
+                                                                                return (
+                                                                                    <button
+                                                                                        key={s}
+                                                                                        onClick={() =>
+                                                                                            setStatus(
+                                                                                                emp.id,
+                                                                                                active
+                                                                                                    ? "PRESENT"
+                                                                                                    : s
+                                                                                            )
+                                                                                        }
+                                                                                        style={{
+                                                                                            ...styles.statusBtn,
+                                                                                            background:
+                                                                                                active
+                                                                                                    ? meta.color
+                                                                                                    : withAlpha(
+                                                                                                          meta.color,
+                                                                                                          0.06
+                                                                                                      ),
+                                                                                            color: active
+                                                                                                ? "#fff"
+                                                                                                : meta.color,
+                                                                                            border: `1px solid ${
+                                                                                                active
+                                                                                                    ? meta.color
+                                                                                                    : withAlpha(
+                                                                                                          meta.color,
+                                                                                                          0.35
+                                                                                                      )
+                                                                                            }`,
+                                                                                        }}
+                                                                                    >
+                                                                                        <StatusIcon
+                                                                                            size={
+                                                                                                12
+                                                                                            }
+                                                                                            color={
+                                                                                                active
+                                                                                                    ? "#fff"
+                                                                                                    : meta.color
+                                                                                            }
+                                                                                        />
+                                                                                        {meta.label}
+                                                                                    </button>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        <div
+                                                                            style={{
+                                                                                display: "flex",
+                                                                                justifyContent:
+                                                                                    "flex-end",
+                                                                            }}
+                                                                        >
+                                                                            {manualEdit ? (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    min={0}
+                                                                                    value={r.qty}
+                                                                                    disabled={
+                                                                                        isLeave
+                                                                                    }
+                                                                                    onChange={(e) =>
+                                                                                        setQty(
+                                                                                            emp.id,
+                                                                                            Number(
+                                                                                                e
+                                                                                                    .target
+                                                                                                    .value
+                                                                                            ) || 0
+                                                                                        )
+                                                                                    }
+                                                                                    style={
+                                                                                        styles.qtyInput
+                                                                                    }
+                                                                                />
+                                                                            ) : (
+                                                                                <span
+                                                                                    style={{
+                                                                                        ...styles.qtyPill,
+                                                                                        background:
+                                                                                            withAlpha(
+                                                                                                BRAND.lightBlue,
+                                                                                                0.12
+                                                                                            ),
+                                                                                        color: BRAND.blue,
+                                                                                    }}
+                                                                                >
+                                                                                    {r.qty}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td
+                                                                        style={{
+                                                                            ...styles.td,
+                                                                            paddingRight: 18,
+                                                                            position: "relative",
+                                                                        }}
                                                                     >
                                                                         <button
-                                                                            style={
-                                                                                styles.rowMenuItem
-                                                                            }
+                                                                            style={styles.dotsBtn}
                                                                             onClick={() =>
-                                                                                markPresentRow(
-                                                                                    emp.id
+                                                                                setOpenMenuFor(
+                                                                                    openMenuFor ===
+                                                                                        emp.id
+                                                                                        ? null
+                                                                                        : emp.id
                                                                                 )
                                                                             }
                                                                         >
-                                                                            Mark Present
+                                                                            <MoreVertical
+                                                                                size={15}
+                                                                                color="#9ca3af"
+                                                                            />
                                                                         </button>
-                                                                        <button
-                                                                            style={
-                                                                                styles.rowMenuItem
-                                                                            }
-                                                                            onClick={() =>
-                                                                                resetRow(emp.id)
-                                                                            }
-                                                                        >
-                                                                            Reset to 0
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                                        {openMenuFor === emp.id && (
+                                                                            <div
+                                                                                ref={menuRef}
+                                                                                style={
+                                                                                    styles.rowMenu
+                                                                                }
+                                                                            >
+                                                                                <button
+                                                                                    style={
+                                                                                        styles.rowMenuItem
+                                                                                    }
+                                                                                    onClick={() =>
+                                                                                        markPresentRow(
+                                                                                            emp.id
+                                                                                        )
+                                                                                    }
+                                                                                >
+                                                                                    Mark Present
+                                                                                </button>
+                                                                                <button
+                                                                                    style={
+                                                                                        styles.rowMenuItem
+                                                                                    }
+                                                                                    onClick={() =>
+                                                                                        resetRow(
+                                                                                            emp.id
+                                                                                        )
+                                                                                    }
+                                                                                >
+                                                                                    Reset to 0
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
 
-                                {/* ---- 6. BOTTOM BUTTON ----
+                                        {/* ---- 6. BOTTOM BUTTON ----
                     Disabled once everything visible matches what's
                     already saved (isDirty === false) — re-enables the
                     instant any row's status/qty changes, even by 1. */}
-                                <button
-                                    style={{
-                                        ...styles.saveBtn,
-                                        opacity:
-                                            submitting || !productSelected || !isDirty ? 0.6 : 1,
-                                        cursor:
-                                            submitting || !productSelected || !isDirty
-                                                ? "not-allowed"
-                                                : "pointer",
-                                    }}
-                                    disabled={submitting || !productSelected || !isDirty}
-                                    onClick={handleSaveAllocations}
-                                >
-                                    <Save size={16} />
-                                    {submitting
-                                        ? "Saving..."
-                                        : !isDirty && productSelected
-                                          ? "Saved"
-                                          : "Allocate & Save"}
-                                </button>
+                                        <button
+                                            style={{
+                                                ...styles.saveBtn,
+                                                opacity:
+                                                    submitting || !productSelected || !isDirty
+                                                        ? 0.6
+                                                        : 1,
+                                                cursor:
+                                                    submitting || !productSelected || !isDirty
+                                                        ? "not-allowed"
+                                                        : "pointer",
+                                            }}
+                                            disabled={submitting || !productSelected || !isDirty}
+                                            onClick={handleSaveAllocations}
+                                        >
+                                            <Save size={16} />
+                                            {submitting
+                                                ? "Saving..."
+                                                : !isDirty && productSelected
+                                                  ? "Saved"
+                                                  : "Allocate & Save"}
+                                        </button>
+                                    </>
+                                )}
                             </>
                         )}
 

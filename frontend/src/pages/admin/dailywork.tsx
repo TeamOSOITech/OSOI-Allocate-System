@@ -70,7 +70,7 @@ export default function DailyWork() {
     // original behavior below) vs "cases" (new Case Register tab). Kept
     // as the very first piece of state so it's obvious at a glance that
     // nothing else on this page was touched to add it.
-    const [mainTab, setMainTab] = useState<"daily" | "cases">("daily");
+    const [mainTab, setMainTab] = useState<"daily" | "cases">("cases");
 
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
@@ -401,6 +401,11 @@ export default function DailyWork() {
                 Register. Styled as real pill buttons (border + hover +
                 gradient when active), same as the Client/Subclient tabs
                 on the Clients page, so they're unmistakably clickable. */}
+            {/* Tab bar hidden for now — Daily Work button removed from
+                sidebar, so this page always opens straight into Case
+                Register. Code kept as-is (not deleted) so the "Daily
+                Work" tab + form can be switched back on later; just
+                commented out below.
             <div style={styles.mainTabBar}>
                 <button
                     type="button"
@@ -427,6 +432,7 @@ export default function DailyWork() {
                     Case Register
                 </button>
             </div>
+            */}
 
             {mainTab === "cases" ? (
                 <ServiceCases
