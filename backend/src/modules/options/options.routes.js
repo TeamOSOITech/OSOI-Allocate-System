@@ -2,6 +2,15 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
+const { cached, delByPrefix } = require("../../utils/cache");
+
+// Dropdown options don't change often (someone hits "+" on Add User maybe
+// a few times a week), but GET / is called on every Add User / bulk-upload
+// page load and fires 5 Supabase queries. 60s TTL keeps the dropdown feeling
+// live (a newly-added option shows up for other users within a minute even
+// without the explicit invalidation below) while cutting steady-state DB load.
+const OPTIONS_CACHE_TTL_SECONDS = 60;
+const optionsCacheKey = (orgId) => `options:${orgId}`;
 
 // Every dropdown-option table this route serves. Adding a new addable
 // dropdown later (e.g. "Location") = add one line here + one table in the
@@ -81,70 +90,78 @@ router.get("/", async (req, res) => {
   try {
     const orgId = req.user.organizationId;
 
-    const [
-      { data: departments, error: deptErr },
-      { data: designations, error: desErr },
-      { data: teams, error: teamErr },
-      { data: reportingManagers, error: rmErr },
-      { data: userValues, error: userValuesErr },
-    ] = await Promise.all([
-      supabase
-        .from("departments")
-        .select("id,name")
-        .eq("organization_id", orgId)
-        .order("name", { ascending: true }),
-      supabase
-        .from("designations")
-        .select("id,name")
-        .eq("organization_id", orgId)
-        .order("name", { ascending: true }),
-      supabase
-        .from("teams")
-        .select("id,name")
-        .eq("organization_id", orgId)
-        .order("name", { ascending: true }),
-      supabase
-        .from("reporting_managers")
-        .select("id,name")
-        .eq("organization_id", orgId)
-        .order("name", { ascending: true }),
-      // Read-only, same org_id scope as everything else here — just used
-      // to backfill the dropdowns, never written to from this route.
-      supabase
-        .from("user_master")
-        .select('"Department","Designation","Worked In Teams"')
-        .eq("organization_id", orgId),
-    ]);
+    const payload = await cached(
+      optionsCacheKey(orgId),
+      OPTIONS_CACHE_TTL_SECONDS,
+      async () => {
+        const [
+          { data: departments, error: deptErr },
+          { data: designations, error: desErr },
+          { data: teams, error: teamErr },
+          { data: reportingManagers, error: rmErr },
+          { data: userValues, error: userValuesErr },
+        ] = await Promise.all([
+          supabase
+            .from("departments")
+            .select("id,name")
+            .eq("organization_id", orgId)
+            .order("name", { ascending: true }),
+          supabase
+            .from("designations")
+            .select("id,name")
+            .eq("organization_id", orgId)
+            .order("name", { ascending: true }),
+          supabase
+            .from("teams")
+            .select("id,name")
+            .eq("organization_id", orgId)
+            .order("name", { ascending: true }),
+          supabase
+            .from("reporting_managers")
+            .select("id,name")
+            .eq("organization_id", orgId)
+            .order("name", { ascending: true }),
+          // Read-only, same org_id scope as everything else here — just used
+          // to backfill the dropdowns, never written to from this route.
+          supabase
+            .from("user_master")
+            .select('"Department","Designation","Worked In Teams"')
+            .eq("organization_id", orgId),
+        ]);
 
-    if (deptErr) throw deptErr;
-    if (desErr) throw desErr;
-    if (teamErr) throw teamErr;
-    if (rmErr) throw rmErr;
-    if (userValuesErr) throw userValuesErr;
+        if (deptErr) throw deptErr;
+        if (desErr) throw desErr;
+        if (teamErr) throw teamErr;
+        if (rmErr) throw rmErr;
+        if (userValuesErr) throw userValuesErr;
 
-    const rows = userValues || [];
-    const usedDepartments = rows.map((r) => r["Department"]);
-    const usedDesignations = rows.map((r) => r["Designation"]);
-    const usedTeams = rows.map((r) => r["Worked In Teams"]);
+        const rows = userValues || [];
+        const usedDepartments = rows.map((r) => r["Department"]);
+        const usedDesignations = rows.map((r) => r["Designation"]);
+        const usedTeams = rows.map((r) => r["Worked In Teams"]);
 
-    res.json({
-      departments: mergeDistinct(
-        (departments || []).map((d) => d.name),
-        usedDepartments,
-      ),
-      designations: mergeDistinct(
-        (designations || []).map((d) => d.name),
-        usedDesignations,
-      ),
-      teams: mergeDistinct(
-        (teams || []).map((d) => d.name),
-        usedTeams,
-      ),
-      // Reporting manager is intentionally left as-is (curated list only) —
-      // it's tied to actual manager emails elsewhere in the app, so
-      // auto-merging free-text user values here isn't safe/meaningful.
-      reportingManagers: (reportingManagers || []).map((d) => d.name),
-    });
+        return {
+          departments: mergeDistinct(
+            (departments || []).map((d) => d.name),
+            usedDepartments,
+          ),
+          designations: mergeDistinct(
+            (designations || []).map((d) => d.name),
+            usedDesignations,
+          ),
+          teams: mergeDistinct(
+            (teams || []).map((d) => d.name),
+            usedTeams,
+          ),
+          // Reporting manager is intentionally left as-is (curated list only) —
+          // it's tied to actual manager emails elsewhere in the app, so
+          // auto-merging free-text user values here isn't safe/meaningful.
+          reportingManagers: (reportingManagers || []).map((d) => d.name),
+        };
+      },
+    );
+
+    res.json(payload);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch options" });
@@ -195,6 +212,11 @@ router.post("/", async (req, res) => {
       }
       throw error;
     }
+
+    // New option now exists in the DB — drop the cached GET / payload for
+    // this org so the next fetch picks it up immediately instead of
+    // waiting out the TTL.
+    await delByPrefix(optionsCacheKey(orgId));
 
     res.status(201).json({ id: data.id, name: data.name });
   } catch (err) {
