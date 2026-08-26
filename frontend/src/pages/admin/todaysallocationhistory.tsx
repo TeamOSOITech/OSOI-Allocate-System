@@ -3,21 +3,35 @@
 // "History" tab on the Today's Allocation page (see manualallocation.tsx).
 // The Allocate/Cases/Employees tabs only ever show ONE date at a time (the
 // date picked in the filter bar) — there was no single place to see every
-// PAST day's allocation at a glance. This tab lists every daily_work batch
-// (across all dates, newest first) except today's, with a per-row "Clear"
-// button that PERMANENTLY DELETES that batch — both its allocations and
-// the Daily Work entry itself. That's what actually unblocks deleting a
-// service from Products/Services (it's blocked while any Daily Work batch
-// still references it), not just resetting the allocated quantities.
+// day's allocation (including today) at a glance across dates. This tab
+// lists every service + date combination that has logged CASES
+// (service_cases rows), newest first, with Total/Allocated/Pending
+// counted by CASE NUMBER (rows in service_cases) instead of the old
+// daily_work batch's quantity fields — case creation doesn't touch
+// daily_work at all, so a batch-based list was both the wrong basis for
+// the numbers and could miss dates that only ever had cases logged (no
+// batch ever created for them).
+//
+// Styled to match the Cases tab (todaysallocationcases.tsx) — same
+// flex-based table row layout, column padding/gap, and font sizes —
+// instead of the CSS-grid layout this used before, so the two tabs look
+// like one consistent page.
+//
+// A per-row "Clear" button unassigns every ALLOCATED case in that
+// service+date group back to Pending (same as the Cases tab's own
+// "Clear" button, just scoped to a specific date picked from this list
+// instead of whatever date happens to be selected on the Cases tab) — it
+// does NOT delete the case rows themselves, only their allocation.
 //
 // Reuses existing endpoints only, no backend changes:
-//   GET    /api/daily-work                       (no ?date= -> every batch)
-//   DELETE /api/allocations/by-daily-work/:id     (clears allocations —
-//                                                   required first, since
-//                                                   the backend blocks
-//                                                   deleting a batch that
-//                                                   still has allocations)
-//   DELETE /api/daily-work/:id                    (deletes the batch row)
+//   GET   /api/service-cases?page=&pageSize=100   (looped across every
+//                                                   page to build the
+//                                                   full case list, then
+//                                                   grouped client-side
+//                                                   by productId+workDate)
+//   PATCH /api/service-cases/:id/allocate         (employeeId: null,
+//                                                   same as Cases tab's
+//                                                   Clear)
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
@@ -37,23 +51,24 @@ const BRAND = {
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
 type Product = { id: string; product_name: string };
-type Batch = {
+type CaseRow = {
     id: string;
+    productId: string;
+    productName: string | null;
+    workDate: string;
+    allocationStatus: "PENDING" | "ALLOCATED";
+};
+// One row here = every case for a given service+date, rolled up into
+// counts — replaces the old one-row-per-daily_work-batch shape.
+type HistoryGroup = {
+    key: string; // `${productId}__${workDate}`
     workDate: string;
     productId: string;
     productName: string | null;
-    totalQty: number;
-    allocatedQty: number;
-    pendingQty: number;
+    total: number;
+    allocated: number;
+    pending: number;
 };
-
-function todayStr() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-}
 
 function formatDisplayDate(iso: string) {
     const [y, m, d] = iso.split("-");
@@ -63,7 +78,7 @@ function formatDisplayDate(iso: string) {
 
 export default function TodaysAllocationHistory() {
     const [products, setProducts] = useState<Product[]>([]);
-    const [batches, setBatches] = useState<Batch[]>([]);
+    const [groups, setGroups] = useState<HistoryGroup[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [toast, setToast] = useState("");
@@ -71,10 +86,10 @@ export default function TodaysAllocationHistory() {
     const [productFilter, setProductFilter] = useState("");
     const [searchText, setSearchText] = useState("");
 
-    // Clicking "Clear" opens a confirmation popup instead of deleting
-    // right away — confirmTarget holds the batch waiting on that popup.
-    const [confirmTarget, setConfirmTarget] = useState<Batch | null>(null);
-    const [clearingId, setClearingId] = useState<string | null>(null);
+    // Clicking "Clear" opens a confirmation popup instead of unassigning
+    // right away — confirmTarget holds the group waiting on that popup.
+    const [confirmTarget, setConfirmTarget] = useState<HistoryGroup | null>(null);
+    const [clearingKey, setClearingKey] = useState<string | null>(null);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -91,19 +106,60 @@ export default function TodaysAllocationHistory() {
         }
     }, []);
 
-    const fetchBatches = useCallback(async () => {
+    // Loops every page of /api/service-cases (org-wide, no filters) and
+    // rolls the rows up into one HistoryGroup per productId+workDate —
+    // there's no backend aggregate endpoint for this, so the grouping
+    // happens client-side. Fine at typical case volumes; if this ever
+    // gets slow for an org with a very large case history, the right
+    // fix is a dedicated GROUP BY endpoint rather than more looping here.
+    const fetchCaseHistory = useCallback(async () => {
         setLoading(true);
         setError("");
         try {
-            // No ?date= — returns every batch, newest work_date first.
-            const res = await authFetch(`${API_BASE}/api/daily-work`);
-            const json = await res.json();
-            if (!res.ok || !json.success)
-                throw new Error(json.message || "Failed to load allocation history");
-            setBatches(json.data || []);
+            const pageSize = 100;
+            let page = 1;
+            let totalPages = 1;
+            const allRows: CaseRow[] = [];
+            do {
+                const params = new URLSearchParams();
+                params.set("page", String(page));
+                params.set("pageSize", String(pageSize));
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json.message || "Failed to load allocation history");
+                allRows.push(...(json.data || []));
+                totalPages = json.pagination?.totalPages || 1;
+                page += 1;
+            } while (page <= totalPages);
+
+            const byKey = new Map<string, HistoryGroup>();
+            allRows.forEach((c) => {
+                const key = `${c.productId}__${c.workDate}`;
+                const existing = byKey.get(key);
+                if (existing) {
+                    existing.total += 1;
+                    if (c.allocationStatus === "ALLOCATED") existing.allocated += 1;
+                } else {
+                    byKey.set(key, {
+                        key,
+                        workDate: c.workDate,
+                        productId: c.productId,
+                        productName: c.productName,
+                        total: 1,
+                        allocated: c.allocationStatus === "ALLOCATED" ? 1 : 0,
+                        pending: 0,
+                    });
+                }
+            });
+            byKey.forEach((g) => {
+                g.pending = g.total - g.allocated;
+            });
+
+            setGroups(Array.from(byKey.values()));
         } catch (err: any) {
             setError(err.message || "Failed to load allocation history");
-            setBatches([]);
+            setGroups([]);
         } finally {
             setLoading(false);
         }
@@ -111,53 +167,84 @@ export default function TodaysAllocationHistory() {
 
     useEffect(() => {
         fetchProducts();
-        fetchBatches();
-    }, [fetchProducts, fetchBatches]);
+        fetchCaseHistory();
+    }, [fetchProducts, fetchCaseHistory]);
 
-    const today = todayStr();
-    const pastBatches = useMemo(() => {
-        let list = batches.filter((b) => b.workDate !== today);
-        if (productFilter) list = list.filter((b) => b.productId === productFilter);
+    // Every service+date group with logged cases, newest date first —
+    // includes today (no longer excluded), since the whole point of this
+    // tab is now "every day's allocation in one list", not just past days.
+    const filteredGroups = useMemo(() => {
+        let list = groups;
+        if (productFilter) list = list.filter((g) => g.productId === productFilter);
         const q = searchText.trim().toLowerCase();
         if (q) {
-            list = list.filter((b) =>
-                [b.productName, b.workDate].filter(Boolean).join(" ").toLowerCase().includes(q)
+            list = list.filter((g) =>
+                [g.productName, g.workDate].filter(Boolean).join(" ").toLowerCase().includes(q)
             );
         }
-        return list;
-    }, [batches, productFilter, searchText, today]);
+        return list.sort((a, b) => {
+            if (a.workDate !== b.workDate) return b.workDate.localeCompare(a.workDate);
+            return (a.productName || "").localeCompare(b.productName || "");
+        });
+    }, [groups, productFilter, searchText]);
 
-    const handleClear = async (batch: Batch) => {
+    // Unassigns every currently-ALLOCATED case in this service+date group
+    // back to Pending — same pattern as the Cases tab's own "Clear"
+    // button (handleClearAllocations in todaysallocationcases.tsx), just
+    // scoped to a past date picked from this list instead of whatever
+    // date is selected there. Case rows themselves are never deleted.
+    const handleClear = async (group: HistoryGroup) => {
         setConfirmTarget(null);
-        setClearingId(batch.id);
+        setClearingKey(group.key);
         try {
-            // Step 1: clear allocations for this batch (daily-work delete
-            // below is blocked by the backend while allocations exist).
-            const clearRes = await authFetch(
-                `${API_BASE}/api/allocations/by-daily-work/${batch.id}`,
-                { method: "DELETE" }
+            const allocatedIds: string[] = [];
+            let fetchPage = 1;
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+                const params = new URLSearchParams();
+                params.set("page", String(fetchPage));
+                params.set("pageSize", "100");
+                params.set("productId", group.productId);
+                params.set("workDate", group.workDate);
+                params.set("allocationStatus", "ALLOCATED");
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json.message || "Failed to load allocated cases");
+                const rows: CaseRow[] = json.data || [];
+                allocatedIds.push(...rows.map((c) => c.id));
+                const totalPages = Math.ceil((json.pagination?.total ?? rows.length) / 100);
+                if (fetchPage >= totalPages || rows.length === 0) break;
+                fetchPage += 1;
+            }
+
+            if (allocatedIds.length === 0) {
+                showToast("Nothing allocated for this service/date.");
+                return;
+            }
+
+            await Promise.all(
+                allocatedIds.map((id) =>
+                    authFetch(`${API_BASE}/api/service-cases/${id}/allocate`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ employeeId: null }),
+                    })
+                )
             );
-            const clearJson = await clearRes.json();
-            if (!clearRes.ok || !clearJson.success)
-                throw new Error(clearJson.message || "Failed to clear allocations");
 
-            // Step 2: delete the Daily Work batch entry itself, so it no
-            // longer blocks deleting the service from Products/Services.
-            const delRes = await authFetch(`${API_BASE}/api/daily-work/${batch.id}`, {
-                method: "DELETE",
-            });
-            const delJson = await delRes.json();
-            if (!delRes.ok || !delJson.success)
-                throw new Error(delJson.message || "Failed to delete Daily Work batch");
-
-            setBatches((prev) => prev.filter((b) => b.id !== batch.id));
+            setGroups((prev) =>
+                prev.map((g) =>
+                    g.key === group.key ? { ...g, allocated: 0, pending: g.total } : g
+                )
+            );
             showToast(
-                `Deleted ${batch.productName || "service"} on ${formatDisplayDate(batch.workDate)} — allocations and the Daily Work entry are both gone.`
+                `Cleared ${allocatedIds.length} allocation(s) for ${group.productName || "this service"} on ${formatDisplayDate(group.workDate)} — back to Pending.`
             );
         } catch (err: any) {
-            showToast(err?.message || "Failed to clear this batch.");
+            showToast(err?.message || "Failed to clear this group.");
         } finally {
-            setClearingId(null);
+            setClearingKey(null);
         }
     };
 
@@ -169,9 +256,9 @@ export default function TodaysAllocationHistory() {
                     <div>
                         <h1 style={styles.pageTitle}>History</h1>
                         <p style={styles.headerSubtext}>
-                            Every past day's allocation, service by service — Clear here permanently
-                            deletes that batch (allocations + the Daily Work entry itself), e.g. so
-                            a service can be deleted from Products afterwards.
+                            Every day's allocation (including today), service by service — Total,
+                            Allocated and Pending are counted by case number. Clear here unassigns
+                            every allocated case for that service/date back to Pending.
                         </p>
                     </div>
                 </div>
@@ -216,20 +303,20 @@ export default function TodaysAllocationHistory() {
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading history…</div>
-                    ) : pastBatches.length === 0 ? (
+                    ) : filteredGroups.length === 0 ? (
                         <div style={styles.emptyNote}>
-                            No past allocations yet — today's entries will show up here once a new
-                            day starts.
+                            No allocations logged yet — entries show up here as soon as cases are
+                            logged for a service/date.
                         </div>
                     ) : (
-                        pastBatches.map((b) => {
-                            const isClearing = clearingId === b.id;
+                        filteredGroups.map((g) => {
+                            const isClearing = clearingKey === g.key;
                             return (
-                                <div key={b.id} style={styles.tableRow}>
+                                <div key={g.key} style={styles.tableRow}>
                                     <span style={styles.colDate}>
-                                        {formatDisplayDate(b.workDate)}
+                                        {formatDisplayDate(g.workDate)}
                                     </span>
-                                    <span style={styles.colService}>{b.productName || "—"}</span>
+                                    <span style={styles.colService}>{g.productName || "—"}</span>
                                     <span style={{ ...styles.colNum, ...styles.pillWrap }}>
                                         <span
                                             style={{
@@ -238,7 +325,7 @@ export default function TodaysAllocationHistory() {
                                                 color: BRAND.blue,
                                             }}
                                         >
-                                            {b.totalQty}
+                                            {g.total}
                                         </span>
                                     </span>
                                     <span style={{ ...styles.colNum, ...styles.pillWrap }}>
@@ -249,7 +336,7 @@ export default function TodaysAllocationHistory() {
                                                 color: "#1f7a34",
                                             }}
                                         >
-                                            {b.allocatedQty}
+                                            {g.allocated}
                                         </span>
                                     </span>
                                     <span style={{ ...styles.colNum, ...styles.pillWrap }}>
@@ -260,26 +347,33 @@ export default function TodaysAllocationHistory() {
                                                 color: "#b45309",
                                             }}
                                         >
-                                            {b.pendingQty}
+                                            {g.pending}
                                         </span>
                                     </span>
                                     <span style={styles.colAction}>
                                         <button
                                             type="button"
-                                            disabled={isClearing}
-                                            onClick={() => setConfirmTarget(b)}
+                                            disabled={isClearing || g.allocated === 0}
+                                            onClick={() => setConfirmTarget(g)}
                                             style={{
                                                 ...styles.clearBtn,
-                                                opacity: isClearing ? 0.5 : 1,
-                                                cursor: isClearing ? "not-allowed" : "pointer",
+                                                opacity: isClearing || g.allocated === 0 ? 0.5 : 1,
+                                                cursor:
+                                                    isClearing || g.allocated === 0
+                                                        ? "not-allowed"
+                                                        : "pointer",
                                             }}
-                                            title="Permanently delete this batch (allocations + Daily Work entry)"
+                                            title={
+                                                g.allocated === 0
+                                                    ? "Nothing allocated for this service/date"
+                                                    : "Unassign every allocated case for this service/date back to Pending"
+                                            }
                                         >
                                             <i
                                                 className="ti ti-trash"
                                                 style={{ fontSize: fontSize.sm }}
                                             />
-                                            {isClearing ? "Deleting…" : "Clear"}
+                                            {isClearing ? "Clearing…" : "Clear"}
                                         </button>
                                     </span>
                                 </div>
@@ -311,10 +405,12 @@ export default function TodaysAllocationHistory() {
                         </div>
                         <div style={styles.modalDivider} />
                         <p style={styles.modalBody}>
-                            Are you sure you want to clear{" "}
-                            <strong>{confirmTarget.productName || "this service"}</strong> for{" "}
-                            {formatDisplayDate(confirmTarget.workDate)}? This deletes its
-                            allocations and the Daily Work entry itself — it can't be recovered.
+                            This unassigns all <strong>{confirmTarget.allocated}</strong> allocated
+                            case(s) for{" "}
+                            <strong>{confirmTarget.productName || "this service"}</strong> on{" "}
+                            {formatDisplayDate(confirmTarget.workDate)} back to Pending. You can
+                            reassign them manually or re-run Smart Allocation on the Cases tab
+                            afterwards.
                         </p>
                         <div style={styles.modalActions}>
                             <button
@@ -358,7 +454,7 @@ const styles: Record<string, CSSProperties> = {
     },
     pageTitle: {
         margin: 0,
-        fontSize: fontSize["4xl"],
+        fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
         textAlign: "left",
@@ -385,6 +481,7 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.medium,
         color: "#374151",
         margin: "0 0 6px",
+        textAlign: "left",
     },
     select: {
         padding: "9px 12px",
@@ -395,6 +492,7 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 170,
         width: "100%",
         boxSizing: "border-box",
+        textAlign: "left",
     },
     tableCard: {
         background: "#fff",
@@ -402,12 +500,14 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
     },
+    // Matches the Cases tab's flex-based row layout (todaysallocationcases
+    // tsx's tableHeadRow/tableRow) instead of the CSS-grid layout this
+    // used before, so the two tabs read as one consistent table style.
     tableHeadRow: {
-        display: "grid",
-        gridTemplateColumns: "110px 1fr 90px 90px 90px 110px",
+        display: "flex",
         alignItems: "center",
-        columnGap: 12,
-        padding: "10px 20px",
+        gap: 28,
+        padding: "12px 20px",
         background: "#F4F8FD",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
@@ -416,19 +516,30 @@ const styles: Record<string, CSSProperties> = {
         letterSpacing: "0.03em",
     },
     tableRow: {
-        display: "grid",
-        gridTemplateColumns: "110px 1fr 90px 90px 90px 110px",
+        display: "flex",
         alignItems: "center",
-        columnGap: 12,
-        padding: "10px 20px",
+        gap: 28,
+        padding: "12px 20px",
+        minHeight: 56,
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
     },
-    colDate: { color: "#374151" },
-    colService: { fontWeight: fontWeight.medium, color: "#1a1a2e" },
-    colNum: {},
-    colAction: { display: "flex", justifyContent: "flex-end" },
+    colDate: { width: 100, flexShrink: 0, color: "#374151", textAlign: "left" },
+    colService: {
+        width: 200,
+        flexShrink: 0,
+        fontWeight: fontWeight.medium,
+        color: "#1a1a2e",
+        textAlign: "left",
+    },
+    colNum: { width: 90, flexShrink: 0, textAlign: "center" },
+    colAction: {
+        display: "flex",
+        justifyContent: "flex-end",
+        marginLeft: "auto",
+        textAlign: "left",
+    },
     pillWrap: { display: "flex" },
     pill: {
         display: "inline-flex",

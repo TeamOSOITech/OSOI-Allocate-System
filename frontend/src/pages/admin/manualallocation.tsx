@@ -731,6 +731,74 @@ export default function ManualAllocation() {
 
     const remainingQty = totalQty - allocatedQty;
 
+    // ---- NEW: case-number-based KPI counts ----
+    // The "Allocate" tab now shows the Case Register table (Cases tab
+    // content embedded above), so its Total/Allocated/Remaining KPI
+    // cards should count CASES (rows in service_cases for this
+    // service+date), not the Daily Work batch's quantity like totalQty/
+    // allocatedQty/remainingQty above still do. Two lightweight
+    // pageSize=1 list calls (one unfiltered, one allocationStatus=
+    // ALLOCATED) just read back `pagination.total` for an exact count
+    // without pulling every row. Re-fetches whenever the selected
+    // service or date changes; "All Services" (productId === "") omits
+    // productId from the query so the count spans every service for
+    // that date, same scope the old batchesForDate sum used.
+    const [caseTotalCount, setCaseTotalCount] = useState(0);
+    const [caseAllocatedCount, setCaseAllocatedCount] = useState(0);
+    // Bumped by TodaysAllocationCases (via onCasesChanged) after any
+    // allocate/auto-allocate/clear action, so these KPI counts refresh
+    // right away instead of waiting for the next productId/date change.
+    const [caseCountsRefreshKey, setCaseCountsRefreshKey] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+        const fetchCaseCounts = async () => {
+            try {
+                const baseParams = new URLSearchParams();
+                baseParams.set("page", "1");
+                baseParams.set("pageSize", "1");
+                if (productId) baseParams.set("productId", productId);
+                if (date) baseParams.set("workDate", date);
+
+                const allocatedParams = new URLSearchParams(baseParams);
+                allocatedParams.set("allocationStatus", "ALLOCATED");
+
+                const [totalRes, allocatedRes] = await Promise.all([
+                    authFetch(`${API_BASE}/api/service-cases?${baseParams.toString()}`),
+                    authFetch(`${API_BASE}/api/service-cases?${allocatedParams.toString()}`),
+                ]);
+                const [totalJson, allocatedJson] = await Promise.all([
+                    totalRes.json(),
+                    allocatedRes.json(),
+                ]);
+                if (cancelled) return;
+                setCaseTotalCount(
+                    totalRes.ok && totalJson.success ? (totalJson.pagination?.total ?? 0) : 0
+                );
+                setCaseAllocatedCount(
+                    allocatedRes.ok && allocatedJson.success
+                        ? (allocatedJson.pagination?.total ?? 0)
+                        : 0
+                );
+            } catch (err) {
+                if (!cancelled) {
+                    setCaseTotalCount(0);
+                    setCaseAllocatedCount(0);
+                }
+            }
+        };
+        fetchCaseCounts();
+        return () => {
+            cancelled = true;
+        };
+    }, [productId, date, caseCountsRefreshKey]);
+
+    const caseRemainingCount = caseTotalCount - caseAllocatedCount;
+
+    const fetchCaseCountsAgain = useCallback(() => {
+        setCaseCountsRefreshKey((k) => k + 1);
+    }, []);
+
     // ---- status counts (for the smart allocation formula) ----
     // Present is the default: an employee counts as Present unless they've
     // been explicitly marked Half or Leave. This is computed off
@@ -1134,9 +1202,9 @@ export default function ManualAllocation() {
                                 <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
                                     <KpiCard
                                         icon={Box}
-                                        label="Total Qty"
-                                        subLabel="Total quantity to allocate"
-                                        value={totalQty}
+                                        label="Total Cases"
+                                        subLabel="Total cases to allocate"
+                                        value={caseTotalCount}
                                         color={BRAND.blue}
                                     />
                                     <KpiCard
@@ -1150,15 +1218,15 @@ export default function ManualAllocation() {
                                         icon={CheckCircle2}
                                         label="Allocated"
                                         subLabel="Already allocated"
-                                        value={allocatedQty}
+                                        value={caseAllocatedCount}
                                         color={BRAND.lightBlue}
                                     />
                                     <KpiCard
                                         icon={AlertTriangle}
                                         label="Remaining"
                                         subLabel="Yet to allocate"
-                                        value={remainingQty}
-                                        color={remainingQty > 0 ? BRAND.amber : BRAND.green}
+                                        value={caseRemainingCount}
+                                        color={caseRemainingCount > 0 ? BRAND.amber : BRAND.green}
                                     />
                                 </div>
 
@@ -1176,6 +1244,7 @@ export default function ManualAllocation() {
                                     workDate={date}
                                     onChangeWorkDate={setDate}
                                     hideHeader
+                                    onCasesChanged={fetchCaseCountsAgain}
                                 />
 
                                 {false && (

@@ -379,7 +379,7 @@ const styles: Record<string, CSSProperties> = {
     },
     pageTitle: {
         margin: 0,
-        fontSize: fontSize["4xl"],
+        fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
         textAlign: "left",

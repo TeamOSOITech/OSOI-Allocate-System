@@ -70,6 +70,14 @@ type Props = {
     // tsx's merged "Allocate" tab) so there's only one filter bar on
     // screen. Defaults to false so nothing changes for any other caller.
     hideHeader?: boolean;
+    // NEW: fired after any action that changes a case's allocation
+    // status (manual allocate, bulk "Allocate" button, Smart
+    // Allocation, or Clear) — lets an embedding page (manualallocation
+    // tsx's KPI cards, which count cases separately from this
+    // component's own list) refetch its own counts instead of going
+    // stale until the next productId/date change. Optional so nothing
+    // breaks for any other caller.
+    onCasesChanged?: () => void;
 };
 
 export default function TodaysAllocationCases({
@@ -78,6 +86,7 @@ export default function TodaysAllocationCases({
     workDate,
     onChangeWorkDate,
     hideHeader = false,
+    onCasesChanged,
 }: Props) {
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -232,6 +241,7 @@ export default function TodaysAllocationCases({
                 ...prev,
                 [caseId]: json.data.assignedEmployeeId || "",
             }));
+            onCasesChanged?.();
             return true;
         } catch (err: any) {
             showToast(err?.message || `Failed to allocate ${caseId}.`);
@@ -314,6 +324,7 @@ export default function TodaysAllocationCases({
             // from the server on the next fetchCases().
             setPendingSelection({});
             fetchCases();
+            onCasesChanged?.();
         } catch (err: any) {
             showToast(err?.message || "Auto allocation failed.");
         } finally {
@@ -369,6 +380,7 @@ export default function TodaysAllocationCases({
             setPendingSelection({});
             setPage(1);
             fetchCases();
+            onCasesChanged?.();
         } catch (err: any) {
             showToast(err?.message || "Failed to clear allocations.");
         } finally {
@@ -785,7 +797,7 @@ const styles: Record<string, CSSProperties> = {
     headerLeft: { display: "flex", alignItems: "center", gap: 14 },
     pageTitle: {
         margin: 0,
-        fontSize: fontSize["4xl"],
+        fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
         textAlign: "left",
@@ -958,6 +970,11 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.lg,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
+        // Slightly wider than the filter/stat cards above — bleeds a
+        // touch past the content padding on both sides.
+        width: "calc(100% + 16px)",
+        marginLeft: -8,
+        marginRight: -8,
     },
     tableHeadRow: {
         display: "flex",
