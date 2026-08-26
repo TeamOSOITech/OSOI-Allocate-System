@@ -13,6 +13,7 @@ const { requireAnyPermission } = require("../../middlewares/rbac");
 const {
   listServiceCases,
   createServiceCases,
+  manualCreateServiceCases,
   uploadCustomServiceCases,
   downloadUploadTemplate,
   deleteServiceCase,
@@ -23,7 +24,6 @@ const {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
-  updateServiceCaseQc,
 } = require("./servicecases.controller");
 
 // Same memory-storage + extension-filter pattern as clients/subclients
@@ -50,6 +50,15 @@ router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   createServiceCases,
+);
+// NEW: manual case-number entry — person types the case numbers
+// themselves (up to 10+ at once) instead of the system auto-generating
+// them. Literal path registered before "/:id/*" routes so it can never
+// be shadowed.
+router.post(
+  "/manual",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  manualCreateServiceCases,
 );
 // NEW: custom case-number upload — same Service + Date as the regular
 // form, but case numbers come from an uploaded sheet instead of being
@@ -98,12 +107,6 @@ router.patch(
   "/:id/allocate",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   allocateServiceCase,
-);
-// NEW: Quality Check page — Pass/Fail + marks for one case.
-router.patch(
-  "/:id/qc",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  updateServiceCaseQc,
 );
 router.delete(
   "/:id",

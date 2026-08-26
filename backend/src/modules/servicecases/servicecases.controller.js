@@ -120,6 +120,33 @@ async function getProduct(productId, organizationId) {
   return data;
 }
 
+// NEW: resolves ids of every service_master/clients/subclients row in
+// this org whose name matches `term` (case-insensitive, partial) — used
+// by listServiceCases' generic search box below so typing a client or
+// service NAME (not just a case number) still finds matching cases.
+async function findMatchingIds(table, nameColumn, term, organizationId) {
+  const { data, error } = await supabase
+    .from(table)
+    .select("id")
+    .eq("organization_id", organizationId)
+    .ilike(nameColumn, `%${term}%`);
+  if (error) throw error;
+  return (data || []).map((r) => r.id);
+}
+
+// NEW: the Case Register search box accepts either the ISO date
+// (2026-08-26) or the display date (26-08-2026) the table itself
+// shows — this normalizes either into ISO so it can be matched
+// exactly against the work_date column. Returns null if `term`
+// doesn't look like a full date in either format.
+function tryParseSearchDate(term) {
+  const iso = term.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return term;
+  const display = term.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  return null;
+}
+
 async function getProductNameMap(productIds, organizationId) {
   const uniqueIds = [...new Set(productIds.filter(Boolean))];
   if (uniqueIds.length === 0) return {};
@@ -194,13 +221,134 @@ async function listServiceCases(req, res) {
       Math.max(parseInt(req.query.pageSize, 10) || 20, 1),
       maxPageSize,
     );
-    const from = (page - 1) * pageSize;
+
+    // NEW: Case Register search box resolves to a few extra OR
+    // conditions (matching service/client/subclient ids, matching
+    // date) — computed once up front so both the count query and the
+    // data query below can apply the exact same filters.
+    let searchOrParts = null;
+    if (req.query.search && req.query.search.trim()) {
+      const term = req.query.search.trim();
+      const [matchingProductIds, matchingClientIds, matchingSubclientIds] =
+        await Promise.all([
+          findMatchingIds(
+            "service_master",
+            "product_name",
+            term,
+            req.user.organizationId,
+          ),
+          findMatchingIds("clients", "name", term, req.user.organizationId),
+          findMatchingIds("subclients", "name", term, req.user.organizationId),
+        ]);
+      const matchedDate = tryParseSearchDate(term);
+
+      searchOrParts = [`case_number.ilike.%${term}%`];
+      if (matchingProductIds.length) {
+        searchOrParts.push(`product_id.in.(${matchingProductIds.join(",")})`);
+      }
+      if (matchingClientIds.length) {
+        searchOrParts.push(`client_id.in.(${matchingClientIds.join(",")})`);
+      }
+      if (matchingSubclientIds.length) {
+        searchOrParts.push(
+          `subclient_id.in.(${matchingSubclientIds.join(",")})`,
+        );
+      }
+      if (matchedDate) {
+        searchOrParts.push(`work_date.eq.${matchedDate}`);
+      }
+    }
+
+    // Applies every filter (productId, date range, client/subclient,
+    // the search box's OR clause, etc.) to a freshly-created query
+    // builder. Supabase-js query builders aren't cloneable, so this
+    // gets called twice below — once for a count-only query, once for
+    // the actual page of data — rather than trying to reuse one
+    // builder instance for both.
+    const applyFilters = (q) => {
+      let filtered = q.eq("organization_id", req.user.organizationId);
+      if (req.query.productId) {
+        filtered = filtered.eq("product_id", req.query.productId);
+      }
+      // NEW: Cases tab filters — same work_date the Employees tab marks
+      // attendance for, and allocation_status so "show only unallocated"
+      // works without pulling every case ever logged.
+      if (req.query.workDate) {
+        filtered = filtered.eq("work_date", req.query.workDate);
+      }
+      // NEW: Production Reports — History (case-number) view filters.
+      // Date-RANGE variant of the exact-match workDate above, so a
+      // report page can pull "everything between two dates" instead of
+      // one day at a time. Independent of workDate — pass whichever fits.
+      if (req.query.workDateFrom) {
+        filtered = filtered.gte("work_date", req.query.workDateFrom);
+      }
+      if (req.query.workDateTo) {
+        filtered = filtered.lte("work_date", req.query.workDateTo);
+      }
+      // NEW: case-number search for the same History view — partial,
+      // case-insensitive match so "b011" finds "CASEB011".
+      if (req.query.caseNumber) {
+        filtered = filtered.ilike("case_number", `%${req.query.caseNumber}%`);
+      }
+      if (req.query.clientId) {
+        filtered = filtered.eq("client_id", req.query.clientId);
+      }
+      // NEW: Subclient filter — same idea as clientId above.
+      if (req.query.subclientId) {
+        filtered = filtered.eq("subclient_id", req.query.subclientId);
+      }
+      if (req.query.allocationStatus) {
+        filtered = filtered.eq("allocation_status", req.query.allocationStatus);
+      }
+      // NEW: Case Register search box — one input that searches Case
+      // Number, Service, Client, and Subclient (and the work date, in
+      // either 2026-08-26 or 26-08-2026 form) all at once, across the
+      // FULL result set (not just whatever page happens to be on
+      // screen), same as the productId dropdown filter above. Runs as
+      // one .or() so it stays an AND with every other filter applied.
+      if (searchOrParts) {
+        filtered = filtered.or(searchOrParts.join(","));
+      }
+      // NEW: "mine=true" — the employee's own Today's/Past Allocation
+      // table on the Profile page. Scoped server-side to whoever is
+      // authenticated (never trusts a client-supplied employee id),
+      // same pattern as /api/allocations/self.
+      if (req.query.mine === "true") {
+        filtered = filtered.eq("assigned_employee_id", req.user.userId);
+      }
+      if (req.query.submissionStatus) {
+        filtered = filtered.eq("submission_status", req.query.submissionStatus);
+      }
+      return filtered;
+    };
+
+    // NEW: guards against a 416 "Requested range not satisfiable" from
+    // PostgREST — this can happen when a filter/search narrows the
+    // result set out from under a page number the client had picked
+    // for the previous (unfiltered/wider) view, e.g. a stale request
+    // that still asks for page 2 right as a filter change on the
+    // frontend cuts total results down to 4. Rather than surface that
+    // as an error, clamp the requested page down to the last valid one
+    // for this filtered set — the frontend's own page-reset logic
+    // handles the common case, this is just a server-side safety net
+    // for any request that still slips through with a stale page.
+    const { count: filteredCount, error: countError } = await applyFilters(
+      supabase
+        .from("service_cases")
+        .select("*", { count: "exact", head: true }),
+    );
+    if (countError) throw countError;
+
+    const totalCount = filteredCount || 0;
+    const lastValidPage = Math.max(Math.ceil(totalCount / pageSize), 1);
+    const effectivePage = Math.min(page, lastValidPage);
+    const from = (effectivePage - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    let query = supabase
-      .from("service_cases")
-      .select("*", { count: "exact" })
-      .eq("organization_id", req.user.organizationId)
+    const query = applyFilters(
+      supabase.from("service_cases").select("*", { count: "exact" }),
+    )
       // FIX: ordering by created_at alone left ties unresolved when a
       // whole batch (e.g. 10 cases) was inserted in the same instant —
       // Postgres/PostgREST doesn't guarantee any particular order among
@@ -211,57 +359,6 @@ async function listServiceCases(req, res) {
       .order("created_at", { ascending: false })
       .order("sequence_number", { ascending: false })
       .range(from, to);
-
-    if (req.query.productId) {
-      query = query.eq("product_id", req.query.productId);
-    }
-    // NEW: Cases tab filters — same work_date the Employees tab marks
-    // attendance for, and allocation_status so "show only unallocated"
-    // works without pulling every case ever logged.
-    if (req.query.workDate) {
-      query = query.eq("work_date", req.query.workDate);
-    }
-    // NEW: Production Reports — History (case-number) view filters.
-    // Date-RANGE variant of the exact-match workDate above, so a report
-    // page can pull "everything between two dates" instead of one day
-    // at a time. Independent of workDate — pass whichever fits.
-    if (req.query.workDateFrom) {
-      query = query.gte("work_date", req.query.workDateFrom);
-    }
-    if (req.query.workDateTo) {
-      query = query.lte("work_date", req.query.workDateTo);
-    }
-    // NEW: case-number search for the same History view — partial,
-    // case-insensitive match so "b011" finds "CASEB011".
-    if (req.query.caseNumber) {
-      query = query.ilike("case_number", `%${req.query.caseNumber}%`);
-    }
-    if (req.query.clientId) {
-      query = query.eq("client_id", req.query.clientId);
-    }
-    // NEW: Subclient filter — same idea as clientId above.
-    if (req.query.subclientId) {
-      query = query.eq("subclient_id", req.query.subclientId);
-    }
-    if (req.query.allocationStatus) {
-      query = query.eq("allocation_status", req.query.allocationStatus);
-    }
-    // NEW: "mine=true" — the employee's own Today's/Past Allocation
-    // table on the Profile page. Scoped server-side to whoever is
-    // authenticated (never trusts a client-supplied employee id), same
-    // pattern as /api/allocations/self.
-    if (req.query.mine === "true") {
-      query = query.eq("assigned_employee_id", req.user.userId);
-    }
-    if (req.query.submissionStatus) {
-      query = query.eq("submission_status", req.query.submissionStatus);
-    }
-    // NEW: Quality Check page — filter cases by qc_status (defaults to
-    // PENDING in the DB for cases never checked, so "qcStatus=PENDING"
-    // naturally includes every case that hasn't been QC'd yet).
-    if (req.query.qcStatus) {
-      query = query.eq("qc_status", req.query.qcStatus);
-    }
 
     const { data, error, count } = await query;
     if (error) throw error;
@@ -311,16 +408,13 @@ async function listServiceCases(req, res) {
       submissionType: r.submission_type || null,
       queryText: r.query_text || "",
       submittedAt: r.submitted_at || null,
-      // NEW: Quality Check page fields.
-      qcStatus: r.qc_status || "PENDING",
-      marks: r.marks === undefined ? null : r.marks,
     }));
 
     res.json({
       success: true,
       data: enriched,
       pagination: {
-        page,
+        page: effectivePage,
         pageSize,
         total: count || 0,
         totalPages: Math.max(Math.ceil((count || 0) / pageSize), 1),
@@ -785,6 +879,215 @@ async function uploadCustomServiceCases(req, res) {
     });
   } catch (err) {
     console.error("uploadCustomServiceCases error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /api/service-cases/manual
+// application/json: { productId, workDate, clientId, subclientId, caseNumbers: string[] }
+//
+// Replaces the old quantity-based "Auto-generate" flow (createServiceCases
+// above). Instead of the system inventing CASEB001, CASEB002, ... on its
+// own, the person types the actual case numbers themselves — one per
+// line/comma in the textarea on the frontend, sent here as an array.
+// Supports at least 10 case numbers typed in at once (the frontend caps
+// the textarea at 10 lines; this endpoint itself allows up to 500 so a
+// slightly larger paste still works).
+//
+// Same uniqueness rule as uploadCustomServiceCases: case_number is
+// unique per organization, so duplicates (within the request or already
+// in the DB) are skipped and reported back rather than failing the
+// whole submission.
+// ------------------------------------------------------------
+async function manualCreateServiceCases(req, res) {
+  try {
+    const { productId } = req.body;
+    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const clientId = req.body.clientId || null;
+    const subclientId = req.body.subclientId || null;
+    const rawCaseNumbers = Array.isArray(req.body.caseNumbers)
+      ? req.body.caseNumbers
+      : [];
+
+    if (!productId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "productId is required" });
+    }
+    if (!rawCaseNumbers.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Enter at least one case number" });
+    }
+    if (rawCaseNumbers.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot submit more than 500 case numbers at a time",
+      });
+    }
+
+    const product = await getProduct(productId, req.user.organizationId);
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Service not found" });
+    }
+    if (clientId) {
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", clientId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Client not found" });
+      }
+    }
+    if (subclientId) {
+      const subclientCheck = await validateSubclient(
+        subclientId,
+        req.user.organizationId,
+        clientId,
+      );
+      if (!subclientCheck.ok) {
+        return res
+          .status(404)
+          .json({ success: false, message: subclientCheck.message });
+      }
+    }
+
+    const norm = (v) => (v || "").toString().trim();
+
+    // Dedupe within the submitted list first, keeping the first
+    // occurrence — same pattern as the Upload flow.
+    const seen = new Set();
+    const results = [];
+    const candidates = [];
+    rawCaseNumbers.forEach((raw, i) => {
+      const caseNumber = norm(raw);
+      if (!caseNumber) return; // silently skip blank lines
+      if (seen.has(caseNumber)) {
+        results.push({
+          caseNumber,
+          status: "skipped",
+          message: "Duplicate in this submission",
+        });
+        return;
+      }
+      seen.add(caseNumber);
+      candidates.push({ row: i + 1, caseNumber });
+    });
+
+    if (!candidates.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Enter at least one case number" });
+    }
+
+    let existingSet = new Set();
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("service_cases")
+      .select("case_number")
+      .eq("organization_id", req.user.organizationId)
+      .in(
+        "case_number",
+        candidates.map((c) => c.caseNumber),
+      );
+    if (existingErr) throw existingErr;
+    existingSet = new Set((existingRows || []).map((r) => r.case_number));
+
+    const toInsert = [];
+    candidates.forEach((c) => {
+      if (existingSet.has(c.caseNumber)) {
+        results.push({
+          caseNumber: c.caseNumber,
+          status: "skipped",
+          message: "Case number already exists",
+        });
+      } else {
+        toInsert.push(c);
+      }
+    });
+
+    let createdCount = 0;
+    if (toInsert.length > 0) {
+      const { data: maxRow, error: maxError } = await supabase
+        .from("service_cases")
+        .select("sequence_number")
+        .eq("organization_id", req.user.organizationId)
+        .eq("product_id", productId)
+        .order("sequence_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (maxError) throw maxError;
+
+      const startSeq = (maxRow?.sequence_number || 0) + 1;
+
+      const rowsToInsert = toInsert.map((c, i) => ({
+        organization_id: req.user.organizationId,
+        product_id: productId,
+        client_id: clientId,
+        subclient_id: subclientId,
+        work_date: workDate,
+        sequence_number: startSeq + i,
+        case_number: c.caseNumber,
+        created_by: req.user.userId,
+      }));
+
+      const { error: insertError } = await supabase
+        .from("service_cases")
+        .insert(rowsToInsert);
+      if (insertError) throw insertError;
+
+      createdCount = toInsert.length;
+      toInsert.forEach((c) => {
+        results.push({ caseNumber: c.caseNumber, status: "created" });
+      });
+    }
+
+    const skippedCount = results.filter((r) => r.status === "skipped").length;
+    // NEW: spell out exactly WHY things were skipped instead of just a
+    // bare count — the already-exists case in particular is the one
+    // people keep re-typing by mistake, so it gets called out by
+    // case number rather than left as a generic "X skipped".
+    const alreadyExisting = results
+      .filter(
+        (r) =>
+          r.status === "skipped" && r.message === "Case number already exists",
+      )
+      .map((r) => r.caseNumber);
+    const duplicateInRequest = results
+      .filter(
+        (r) =>
+          r.status === "skipped" &&
+          r.message === "Duplicate in this submission",
+      )
+      .map((r) => r.caseNumber);
+
+    let message = `${createdCount} case(s) created.`;
+    if (alreadyExisting.length) {
+      message += ` This case number already exists: ${alreadyExisting.join(", ")}.`;
+    }
+    if (duplicateInRequest.length) {
+      message += ` Typed more than once: ${duplicateInRequest.join(", ")}.`;
+    }
+
+    res.status(201).json({
+      success: true,
+      message,
+      data: {
+        totalRows: rawCaseNumbers.length,
+        createdCount,
+        skippedCount,
+        results,
+      },
+    });
+  } catch (err) {
+    console.error("manualCreateServiceCases error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -1420,82 +1723,10 @@ async function bulkSubmitServiceCases(req, res) {
   }
 }
 
-// ------------------------------------------------------------
-// PATCH /api/service-cases/:id/qc
-// body: { qcStatus: "PASSED" | "FAILED", marks?: number | null }
-//
-// Quality Check page — records the QC verdict + marks for one case.
-// Same permission gate as allocating/profiling a case
-// (tasks.allocate.team/org). Scoped to organization only (not to
-// assigned_employee_id) since QC is done by a reviewer, not the
-// employee who did the work.
-// ------------------------------------------------------------
-async function updateServiceCaseQc(req, res) {
-  try {
-    const { id } = req.params;
-    const qcStatus = (req.body.qcStatus || "").toString().trim().toUpperCase();
-
-    if (!["PASSED", "FAILED"].includes(qcStatus)) {
-      return res.status(400).json({
-        success: false,
-        message: "qcStatus must be 'PASSED' or 'FAILED'.",
-      });
-    }
-
-    let marks = null;
-    if (
-      req.body.marks !== undefined &&
-      req.body.marks !== null &&
-      req.body.marks !== ""
-    ) {
-      const parsed = Number(req.body.marks);
-      if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
-        return res.status(400).json({
-          success: false,
-          message: "marks must be a number between 0 and 100.",
-        });
-      }
-      marks = parsed;
-    }
-
-    const { data, error } = await supabase
-      .from("service_cases")
-      .update({
-        qc_status: qcStatus,
-        marks,
-        qc_checked_at: new Date().toISOString(),
-        qc_checked_by: req.user.userId,
-      })
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .select()
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Case not found" });
-    }
-
-    res.json({
-      success: true,
-      message: `${data.case_number} marked ${qcStatus === "PASSED" ? "Passed" : "Failed"}.`,
-      data: {
-        id: data.id,
-        caseNumber: data.case_number,
-        qcStatus: data.qc_status,
-        marks: data.marks === undefined ? null : data.marks,
-      },
-    });
-  } catch (err) {
-    console.error("updateServiceCaseQc error:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-}
-
 module.exports = {
   listServiceCases,
   createServiceCases,
+  manualCreateServiceCases,
   uploadCustomServiceCases,
   downloadUploadTemplate,
   deleteServiceCase,
@@ -1506,5 +1737,4 @@ module.exports = {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
-  updateServiceCaseQc,
 };
