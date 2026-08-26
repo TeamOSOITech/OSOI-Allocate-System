@@ -166,10 +166,9 @@ export default function TodaysAllocationCases({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
-    useEffect(() => {
-        if (!productId && products.length > 0) onChangeProductId(products[0].id);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [products]);
+    // NOTE: no auto-select-first-service effect here — "All" (empty
+    // productId) is the intended default so the page opens showing every
+    // service's cases, not just one picked at random.
 
     useEffect(() => {
         fetchCases();
@@ -420,6 +419,7 @@ export default function TodaysAllocationCases({
                             value={productId}
                             onChange={(e) => onChangeProductId(e.target.value)}
                         >
+                            <option value="">All</option>
                             {products.map((p) => {
                                 const nameLower = p.product_name.trim().toLowerCase();
                                 const isDup =
@@ -503,7 +503,13 @@ export default function TodaysAllocationCases({
                     mismatch is in Team names on the Employees/Products
                     pages, not in this page's filtering logic. */}
                 <p style={styles.eligibilityHint}>
-                    {selectedProduct && (selectedProduct.teams || []).filter(Boolean).length > 0 ? (
+                    {!productId ? (
+                        <>
+                            Showing cases across every service — pick one to see its Team-eligible
+                            employees.
+                        </>
+                    ) : selectedProduct &&
+                      (selectedProduct.teams || []).filter(Boolean).length > 0 ? (
                         <>
                             Team-eligible for <strong>{selectedProduct.product_name}</strong> (
                             {(selectedProduct.teams || []).filter(Boolean).join(", ")}):{" "}

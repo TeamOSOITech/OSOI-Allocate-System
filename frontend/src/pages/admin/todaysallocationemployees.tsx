@@ -123,10 +123,9 @@ export default function TodaysAllocationEmployees({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
-    useEffect(() => {
-        if (!productId && products.length > 0) onChangeProductId(products[0].id);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [products]);
+    // NOTE: "All" (empty productId) is the intended default, shared with
+    // the Cases tab (same productId state in manualallocation.tsx) — no
+    // auto-select-first-service effect here either.
 
     useEffect(() => {
         fetchAttendance();
@@ -243,6 +242,7 @@ export default function TodaysAllocationEmployees({
                             value={productId}
                             onChange={(e) => onChangeProductId(e.target.value)}
                         >
+                            <option value="">All</option>
                             {products.map((p) => (
                                 <option key={p.id} value={p.id}>
                                     {p.product_name}

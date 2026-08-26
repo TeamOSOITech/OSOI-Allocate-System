@@ -426,83 +426,113 @@ export default function QualityCheck() {
                     </p>
                 </div>
 
-                <div style={styles.filterBar}>
-                    <div style={{ minWidth: 200 }}>
-                        <label style={styles.label}>Employee</label>
-                        <select
-                            style={styles.select}
-                            value={employeeId}
-                            onChange={(e) => setEmployeeId(e.target.value)}
-                        >
-                            <option value="">Select employee…</option>
-                            {employees.map((emp) => (
-                                <option key={emp.id} value={emp.id}>
-                                    {emp.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div style={{ minWidth: 200 }}>
-                        <label style={styles.label}>Service</label>
-                        <select
-                            style={styles.select}
-                            value={productId}
-                            onChange={(e) => setProductId(e.target.value)}
-                        >
-                            <option value="">Select a service…</option>
-                            {products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                    {p.product_name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div style={{ minWidth: 240, display: "flex", alignItems: "flex-end", gap: 8 }}>
-                        <div style={{ flex: 1, minWidth: 200 }}>
-                            <label style={styles.label}>Case Number</label>
-                            <CaseMultiSelect
-                                options={uncheckedCases}
-                                selectedIds={selectedCaseIds}
-                                onChange={setSelectedCaseIds}
-                                disabled={
-                                    !bothSelected || loadingCases || uncheckedCases.length === 0
-                                }
-                                placeholder={
-                                    !bothSelected
-                                        ? "Select employee & service first"
-                                        : loadingCases
-                                          ? "Loading…"
-                                          : uncheckedCases.length === 0
-                                            ? "No unchecked cases"
-                                            : "Select case(s)…"
-                                }
-                            />
-                        </div>
-                        {selectedCaseIds.length > 0 && (
-                            <button
-                                type="button"
-                                style={styles.clearAllBtn}
-                                onClick={() => setSelectedCaseIds([])}
-                                title="Clear all selected cases"
-                            >
-                                <i className="ti ti-x" />
-                                Clear all
-                            </button>
+                <div style={styles.filterCard}>
+                    <div style={styles.filterCardHeader}>
+                        <span style={styles.filterCardTitle}>
+                            <i className="ti ti-filter" style={{ color: BRAND.blue }} />
+                            Filters
+                        </span>
+                        {bothSelected && (
+                            <div style={styles.pendingBadge}>
+                                <i className="ti ti-clipboard-list" />
+                                {loadingCases ? "…" : uncheckedCases.length} pending QC
+                            </div>
                         )}
                     </div>
-                    {bothSelected && (
-                        <div style={styles.pendingBadge}>
-                            <i className="ti ti-clipboard-list" />
-                            {loadingCases ? "…" : uncheckedCases.length} pending QC
+
+                    <div style={styles.filterBar}>
+                        <div style={{ minWidth: 200, flex: 1 }}>
+                            <label style={styles.label}>
+                                <i className="ti ti-user" style={styles.labelIcon} /> Employee
+                            </label>
+                            <select
+                                style={styles.select}
+                                value={employeeId}
+                                onChange={(e) => setEmployeeId(e.target.value)}
+                            >
+                                <option value="">Select employee…</option>
+                                {employees.map((emp) => (
+                                    <option key={emp.id} value={emp.id}>
+                                        {emp.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
-                    )}
+                        <div style={{ minWidth: 200, flex: 1 }}>
+                            <label style={styles.label}>
+                                <i className="ti ti-cube" style={styles.labelIcon} /> Service
+                            </label>
+                            <select
+                                style={styles.select}
+                                value={productId}
+                                onChange={(e) => setProductId(e.target.value)}
+                            >
+                                <option value="">Select a service…</option>
+                                {products.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.product_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div
+                            style={{
+                                minWidth: 240,
+                                flex: 1.4,
+                                display: "flex",
+                                alignItems: "flex-end",
+                                gap: 8,
+                            }}
+                        >
+                            <div style={{ flex: 1, minWidth: 200 }}>
+                                <label style={styles.label}>
+                                    <i className="ti ti-hash" style={styles.labelIcon} /> Case
+                                    Number
+                                </label>
+                                <CaseMultiSelect
+                                    options={uncheckedCases}
+                                    selectedIds={selectedCaseIds}
+                                    onChange={setSelectedCaseIds}
+                                    disabled={
+                                        !bothSelected || loadingCases || uncheckedCases.length === 0
+                                    }
+                                    placeholder={
+                                        !bothSelected
+                                            ? "Select employee & service first"
+                                            : loadingCases
+                                              ? "Loading…"
+                                              : uncheckedCases.length === 0
+                                                ? "No unchecked cases"
+                                                : "Select case(s)…"
+                                    }
+                                />
+                            </div>
+                            {selectedCaseIds.length > 0 && (
+                                <button
+                                    type="button"
+                                    style={styles.clearAllBtn}
+                                    onClick={() => setSelectedCaseIds([])}
+                                    title="Clear all selected cases"
+                                >
+                                    <i className="ti ti-x" />
+                                    Clear all
+                                </button>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
                 {error && <p style={styles.errorText}>{error}</p>}
 
                 {!bothSelected && (
                     <div style={styles.placeholderCard}>
-                        <i className="ti ti-checkbox" style={{ fontSize: 28, color: BRAND.grey }} />
+                        <div style={styles.placeholderIconCircle}>
+                            <i
+                                className="ti ti-checkbox"
+                                style={{ fontSize: 26, color: BRAND.blue }}
+                            />
+                        </div>
+                        <p style={styles.placeholderTitle}>No employee/service selected yet</p>
                         <p style={styles.placeholderText}>
                             Pick an employee and a service above to load their unchecked cases.
                         </p>
@@ -514,10 +544,13 @@ export default function QualityCheck() {
                     !loadingCases &&
                     uncheckedCases.length > 0 && (
                         <div style={styles.placeholderCard}>
-                            <i
-                                className="ti ti-hand-click"
-                                style={{ fontSize: 28, color: BRAND.grey }}
-                            />
+                            <div style={styles.placeholderIconCircle}>
+                                <i
+                                    className="ti ti-hand-click"
+                                    style={{ fontSize: 26, color: BRAND.blue }}
+                                />
+                            </div>
+                            <p style={styles.placeholderTitle}>Ready when you are</p>
                             <p style={styles.placeholderText}>
                                 Select one or more case numbers above to review them.
                             </p>
@@ -526,10 +559,18 @@ export default function QualityCheck() {
 
                 {bothSelected && uncheckedCases.length === 0 && !loadingCases && (
                     <div style={styles.placeholderCard}>
-                        <i
-                            className="ti ti-circle-check"
-                            style={{ fontSize: 28, color: BRAND.green }}
-                        />
+                        <div
+                            style={{
+                                ...styles.placeholderIconCircle,
+                                background: "rgba(46,187,168,0.12)",
+                            }}
+                        >
+                            <i
+                                className="ti ti-circle-check"
+                                style={{ fontSize: 26, color: BRAND.green }}
+                            />
+                        </div>
+                        <p style={styles.placeholderTitle}>All caught up</p>
                         <p style={styles.placeholderText}>
                             All cases allocated to this employee for this service are already QC
                             checked.
@@ -669,7 +710,7 @@ export default function QualityCheck() {
 }
 
 const styles: Record<string, CSSProperties> = {
-    root: { display: "flex", flexDirection: "column", width: "100%" },
+    root: { display: "flex", flexDirection: "column", width: "100%", flex: 1, minHeight: "100%" },
     topBar: {
         height: 4,
         background: GRADIENT,
@@ -682,10 +723,12 @@ const styles: Record<string, CSSProperties> = {
         gap: 16,
         width: "100%",
         boxSizing: "border-box",
+        flex: 1,
+        minHeight: 0,
     },
     pageTitle: {
         margin: 0,
-        fontSize: fontSize["4xl"],
+        fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
         textAlign: "left",
@@ -698,17 +741,46 @@ const styles: Record<string, CSSProperties> = {
         textAlign: "left",
     },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
+    filterCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
+        padding: "20px 22px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        width: "100%",
+        boxSizing: "border-box",
+    },
+    filterCardHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+    },
+    filterCardTitle: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    labelIcon: { fontSize: 13, color: "#9ca3af", marginRight: 2 },
     label: {
-        display: "block",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
         color: "#374151",
         margin: "0 0 6px",
     },
     select: {
-        padding: "9px 12px",
+        padding: "10px 12px",
         borderRadius: radius.sm,
-        border: "1px solid #ececf5",
+        border: "1px solid #e5e7eb",
         fontSize: fontSize.sm,
         background: "#fafafa",
         width: "100%",
@@ -797,13 +869,33 @@ const styles: Record<string, CSSProperties> = {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 10,
+        gap: 6,
         padding: "48px 20px",
         borderRadius: radius.lg,
         background: "#fff",
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
+        flex: 1,
+        minHeight: 320,
+        width: "100%",
+        boxSizing: "border-box",
     },
-    placeholderText: { margin: 0, fontSize: fontSize.base, color: "#9ca3af" },
+    placeholderIconCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: "50%",
+        background: "rgba(59,130,246,0.1)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginBottom: 6,
+    },
+    placeholderTitle: {
+        margin: 0,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    placeholderText: { margin: 0, fontSize: fontSize.sm, color: "#9ca3af" },
 
     // ---- New compact case card (matches reference design) ----
     caseCard: {

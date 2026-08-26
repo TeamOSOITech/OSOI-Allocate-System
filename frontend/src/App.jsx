@@ -35,6 +35,7 @@ const QC = lazy(() => import("./pages/admin/qc"));
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 const History = lazy(() => import("./pages/admin/history"));
+const Billing = lazy(() => import("./pages/admin/billing"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
 // Backend base URL, same source every other page uses for API calls.
@@ -122,30 +123,6 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
 // these pages before the migration to the 6-role system.
 const ADMIN_TIER_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
 const ADMIN_AND_VERTICAL_HEAD_ROLES = [...ADMIN_TIER_ROLES, "VERTICAL_HEAD"];
-
-// Small inline placeholder — replaces the deleted pages/workinprogress.tsx
-// for the couple of routes (Billing, History) the sidebar still links to
-// but that don't have a real page built yet. Kept here instead of as its
-// own file since it's just a few lines; swap in a real page component
-// as each one gets built.
-const ComingSoon = ({ title }) => (
-    <div
-        style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100%",
-            gap: 8,
-            color: "#767F92",
-            textAlign: "center",
-            padding: 24,
-        }}
-    >
-        <h2 style={{ margin: 0, color: "#17181C" }}>{title}</h2>
-        <p style={{ margin: 0 }}>This page is coming soon.</p>
-    </div>
-);
 
 const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
@@ -393,13 +370,14 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Billing — Admin only */}
+                        {/* Billing — Admin only. Real page: client-wise
+                        service pricing, read-only, sourced from GET /api/clients. */}
                         <Route
                             path="/billing"
                             element={
                                 <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                     <AppLayout onLogout={handleLogout}>
-                                        <ComingSoon title="Billing" />
+                                        <Billing />
                                     </AppLayout>
                                 </PrivateRoute>
                             }
