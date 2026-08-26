@@ -182,9 +182,18 @@ export default function TodaysAllocationCases({
     // but zero employees currently have a matching Team, this is meant to
     // come up empty rather than silently allocating to everyone present.
     const selectedProduct = useMemo(
-        () => products.find((p) => p.id === productId) || null,
+        () => products.find((p) => String(p.id) === String(productId)) || null,
         [products, productId]
     );
+    // DEBUG AID: if two services share the same name (e.g. "Billings"
+    // created twice by mistake), the dropdown looks identical for both
+    // but only ONE of them may have Teams linked. This flags that case
+    // so it's visible instead of silently confusing.
+    const duplicateNameCount = useMemo(() => {
+        if (!selectedProduct) return 0;
+        const name = selectedProduct.product_name.trim().toLowerCase();
+        return products.filter((p) => p.product_name.trim().toLowerCase() === name).length;
+    }, [products, selectedProduct]);
     const eligibleEmployees = useMemo(() => {
         const productTeams = (selectedProduct?.teams || []).filter(Boolean);
         if (productTeams.length === 0) return employees;
@@ -411,11 +420,19 @@ export default function TodaysAllocationCases({
                             value={productId}
                             onChange={(e) => onChangeProductId(e.target.value)}
                         >
-                            {products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                    {p.product_name}
-                                </option>
-                            ))}
+                            {products.map((p) => {
+                                const nameLower = p.product_name.trim().toLowerCase();
+                                const isDup =
+                                    products.filter(
+                                        (x) => x.product_name.trim().toLowerCase() === nameLower
+                                    ).length > 1;
+                                return (
+                                    <option key={p.id} value={p.id}>
+                                        {p.product_name}
+                                        {isDup ? ` (#${p.id.toString().slice(-4)})` : ""}
+                                    </option>
+                                );
+                            })}
                         </select>
                     </div>
                     <div>
@@ -500,7 +517,22 @@ export default function TodaysAllocationCases({
                             )}
                         </>
                     ) : (
-                        <>No team linked to this service — every employee is eligible.</>
+                        <>
+                            No team linked to this service{" "}
+                            <span style={{ color: BRAND.grey }}>
+                                (id …{selectedProduct?.id?.toString().slice(-6) || "?"})
+                            </span>
+                            {duplicateNameCount > 1 ? (
+                                <span style={{ color: BRAND.red }}>
+                                    {" "}
+                                    — heads up: {duplicateNameCount} services are named "
+                                    {selectedProduct?.product_name}". Check the Services page for a
+                                    duplicate entry that has no Teams set.
+                                </span>
+                            ) : (
+                                <> — every employee is eligible.</>
+                            )}
+                        </>
                     )}{" "}
                     <button
                         type="button"

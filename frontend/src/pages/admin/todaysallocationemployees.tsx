@@ -133,7 +133,7 @@ export default function TodaysAllocationEmployees({
     }, [fetchAttendance]);
 
     const selectedProduct = useMemo(
-        () => products.find((p) => p.id === productId) || null,
+        () => products.find((p) => String(p.id) === String(productId)) || null,
         [products, productId]
     );
 
