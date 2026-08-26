@@ -26,7 +26,7 @@
 // one shot, swap out fetchAllMatchingForExport() only — nothing else
 // needs to change.
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
@@ -73,14 +73,6 @@ function firstOfMonthStr() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
-
-const fmtNum = (n: number | null | undefined) =>
-    n === null || n === undefined ? "—" : n.toLocaleString("en-IN");
-
-const fmtAmount = (n: number | null | undefined) =>
-    n === null || n === undefined
-        ? "—"
-        : `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function ProductionReport() {
     const [products, setProducts] = useState<Product[]>([]);
@@ -216,22 +208,7 @@ export default function ProductionReport() {
                 Date: r.workDate,
                 Employee: r.assignedEmployeeName || "Unallocated",
                 Status: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
-                Quantity: r.quantity ?? "",
-                Amount: r.amount ?? "",
             }));
-
-            const totalQty = allRows.reduce((s, r) => s + (r.quantity || 0), 0);
-            const totalAmt = allRows.reduce((s, r) => s + (r.amount || 0), 0);
-            sheetData.push({
-                "Case #": "",
-                Client: "",
-                Service: "",
-                Date: "",
-                Employee: "",
-                Status: "TOTAL",
-                Quantity: totalQty,
-                Amount: totalAmt,
-            } as any);
 
             const ws = XLSX.utils.json_to_sheet(sheetData);
             ws["!cols"] = [
@@ -241,8 +218,6 @@ export default function ProductionReport() {
                 { wch: 12 }, // Date
                 { wch: 18 }, // Employee
                 { wch: 12 }, // Status
-                { wch: 10 }, // Quantity
-                { wch: 14 }, // Amount
             ];
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Production Report");
@@ -266,11 +241,6 @@ export default function ProductionReport() {
         setClientNameInput("");
         setClientName("");
     };
-
-    // on-screen page totals (server totals would need a separate summary
-    // endpoint — this sums whatever is currently loaded on this page)
-    const pageQtyTotal = useMemo(() => rows.reduce((s, r) => s + (r.quantity || 0), 0), [rows]);
-    const pageAmtTotal = useMemo(() => rows.reduce((s, r) => s + (r.amount || 0), 0), [rows]);
 
     return (
         <div style={styles.root}>
@@ -385,8 +355,6 @@ export default function ProductionReport() {
                         <span style={styles.colDate}>Date</span>
                         <span style={styles.colEmployee}>Employee</span>
                         <span style={styles.colStatus}>Status</span>
-                        <span style={{ ...styles.colQty, textAlign: "right" }}>Quantity</span>
-                        <span style={{ ...styles.colAmt, textAlign: "right" }}>Amount</span>
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading report…</div>
@@ -421,12 +389,6 @@ export default function ProductionReport() {
                                             : "Pending"}
                                     </span>
                                 </span>
-                                <span style={{ ...styles.colQty, textAlign: "right" }}>
-                                    {fmtNum(r.quantity)}
-                                </span>
-                                <span style={{ ...styles.colAmt, textAlign: "right" }}>
-                                    {fmtAmount(r.amount)}
-                                </span>
                             </div>
                         ))
                     )}
@@ -434,24 +396,6 @@ export default function ProductionReport() {
                         <div style={styles.totalsRow}>
                             <span style={{ flex: 1 }}>
                                 Page total ({rows.length} case{rows.length !== 1 ? "s" : ""})
-                            </span>
-                            <span
-                                style={{
-                                    ...styles.colQty,
-                                    textAlign: "right",
-                                    fontWeight: fontWeight.semibold,
-                                }}
-                            >
-                                {fmtNum(pageQtyTotal)}
-                            </span>
-                            <span
-                                style={{
-                                    ...styles.colAmt,
-                                    textAlign: "right",
-                                    fontWeight: fontWeight.semibold,
-                                }}
-                            >
-                                {fmtAmount(pageAmtTotal)}
                             </span>
                         </div>
                     )}
@@ -487,7 +431,7 @@ export default function ProductionReport() {
     );
 }
 
-const GRID_COLS = "100px 1fr 1fr 100px 1fr 100px 90px 110px";
+const GRID_COLS = "100px 1fr 1fr 100px 1fr 100px";
 
 const styles: Record<string, CSSProperties> = {
     root: { display: "flex", flexDirection: "column" },
@@ -625,8 +569,6 @@ const styles: Record<string, CSSProperties> = {
     colDate: { whiteSpace: "nowrap" },
     colEmployee: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     colStatus: {},
-    colQty: {},
-    colAmt: {},
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",
