@@ -732,14 +732,16 @@ async function uploadCustomServiceCases(req, res) {
       });
     });
 
-    // Check which of the surviving candidates already exist anywhere
-    // in this org (case_number is org-unique, not just per-service).
+    // Check which of the surviving candidates already exist for THIS
+    // service (product_id) — same case number is fine under a
+    // different service, it only clashes within the same service.
     let existingSet = new Set();
     if (candidates.length > 0) {
       const { data: existingRows, error: existingErr } = await supabase
         .from("service_cases")
         .select("case_number")
         .eq("organization_id", req.user.organizationId)
+        .eq("product_id", productId)
         .in(
           "case_number",
           candidates.map((c) => c.caseNumber),
@@ -756,7 +758,7 @@ async function uploadCustomServiceCases(req, res) {
           row: c.row,
           caseNumber: c.caseNumber,
           status: "skipped",
-          message: "Case number already exists",
+          message: "Case number already exists for this service",
         });
       } else {
         toInsert.push(c);
@@ -988,11 +990,16 @@ async function manualCreateServiceCases(req, res) {
         .json({ success: false, message: "Enter at least one case number" });
     }
 
+    // Duplicate check is scoped to THIS service only (product_id) —
+    // the same case number is allowed to exist under a different
+    // service in the same org; it only clashes if it already exists
+    // for this same service.
     let existingSet = new Set();
     const { data: existingRows, error: existingErr } = await supabase
       .from("service_cases")
       .select("case_number")
       .eq("organization_id", req.user.organizationId)
+      .eq("product_id", productId)
       .in(
         "case_number",
         candidates.map((c) => c.caseNumber),
@@ -1006,7 +1013,7 @@ async function manualCreateServiceCases(req, res) {
         results.push({
           caseNumber: c.caseNumber,
           status: "skipped",
-          message: "Case number already exists",
+          message: "Case number already exists for this service",
         });
       } else {
         toInsert.push(c);
