@@ -1,10 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties, FormEvent } from "react";
+import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 10;
+// Export pulls every case matching the current filter/search in
+// batches of this size (not just the 10 rows on screen), same
+// approach as productionreports.tsx's Excel export. NOTE: this must
+// match the backend's actual max pageSize (servicecases.controller.js
+// clamps to 100 unless mine=true) — asking for more than the backend
+// will actually return would make the "batch shorter than requested
+// -> stop" check below stop after the first page and silently drop
+// every case past #100.
+const EXPORT_PAGE_SIZE = 100;
 const MOBILE_BREAKPOINT = 768;
 // Manual Entry mode: how many case numbers can be typed in and
 // submitted together in one go.
@@ -239,6 +249,9 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         });
     };
     const [bulkDeleting, setBulkDeleting] = useState(false);
+    // NEW: "Export Excel" — downloads every case matching the current
+    // filter/search as a real .xlsx file, not just the current page.
+    const [exporting, setExporting] = useState(false);
 
     const fetchProducts = useCallback(async () => {
         setProductsLoading(true);
@@ -356,6 +369,71 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             setCasesLoading(false);
         }
     }, [page, filterProductId, debouncedSearch]);
+
+    // NEW: pulls every case matching the current filter/search across
+    // all pages (not just the 10 rows currently on screen) so Export
+    // Excel always reflects the full result set, same pattern as
+    // productionreports.tsx's fetchAllMatchingForExport.
+    const fetchAllMatchingForExport = async (): Promise<ServiceCase[]> => {
+        const all: ServiceCase[] = [];
+        let exportPage = 1;
+        // hard safety cap so a runaway filter can't loop forever
+        for (let i = 0; i < 200; i++) {
+            const params = new URLSearchParams();
+            params.set("page", String(exportPage));
+            params.set("pageSize", String(EXPORT_PAGE_SIZE));
+            if (filterProductId) params.set("productId", filterProductId);
+            if (debouncedSearch) params.set("search", debouncedSearch);
+
+            const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "Export fetch failed");
+            const batch: ServiceCase[] = json.data || [];
+            all.push(...batch);
+            if (batch.length < EXPORT_PAGE_SIZE) break;
+            exportPage++;
+        }
+        return all;
+    };
+
+    const handleExportExcel = async () => {
+        setExporting(true);
+        setCasesError("");
+        try {
+            const allRows = await fetchAllMatchingForExport();
+            if (allRows.length === 0) {
+                setCasesError("No matching cases to export.");
+                return;
+            }
+
+            const sheetData = allRows.map((c) => ({
+                "Case No.": c.caseNumber,
+                Client: c.clientName || "",
+                Subclient: c.subclientName || "",
+                Service: c.productName || "",
+                Date: c.workDate,
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(sheetData);
+            ws["!cols"] = [
+                { wch: 14 }, // Case No.
+                { wch: 22 }, // Client
+                { wch: 22 }, // Subclient
+                { wch: 18 }, // Service
+                { wch: 12 }, // Date
+            ];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Case Register");
+
+            const fname = `case-register_${todayStr()}.xlsx`;
+            XLSX.writeFile(wb, fname);
+        } catch (err: any) {
+            console.error("Failed to export case register:", err);
+            setCasesError(err?.message || "Export failed.");
+        } finally {
+            setExporting(false);
+        }
+    };
 
     useEffect(() => {
         fetchProducts();
@@ -1189,6 +1267,25 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         style={{ fontSize: fontSize.sm }}
                                     />
                                     {selectMode ? "Cancel" : "Select"}
+                                </button>
+                                {/* NEW: downloads every case matching the current
+                                    filter/search as a real .xlsx file (not just the
+                                    10 rows on screen). */}
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.selectModeBtn,
+                                        opacity: exporting ? 0.6 : 1,
+                                        cursor: exporting ? "not-allowed" : "pointer",
+                                    }}
+                                    disabled={exporting}
+                                    onClick={handleExportExcel}
+                                >
+                                    <i
+                                        className="ti ti-file-spreadsheet"
+                                        style={{ fontSize: fontSize.sm }}
+                                    />
+                                    {exporting ? "Exporting…" : "Export Excel"}
                                 </button>
                             </div>
                         </div>
