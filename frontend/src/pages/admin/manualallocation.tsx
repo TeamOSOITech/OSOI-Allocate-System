@@ -588,10 +588,11 @@ export default function ManualAllocation() {
     const serviceMatched = useMemo(() => {
         const productTeams = products
             .find((p) => String(p.id) === String(productId))
-            ?.teams?.filter(Boolean);
+            ?.teams?.map((t) => (t || "").trim())
+            .filter(Boolean);
         if (!productTeams || productTeams.length === 0) return employees;
         const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
-        return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
+        return employees.filter((e) => e.team && allowed.has(e.team.trim().toLowerCase()));
     }, [employees, products, productId]);
 
     const teams = useMemo(

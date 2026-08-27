@@ -184,6 +184,19 @@ export default function TodaysAllocationCases({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
+    // FIX: re-fetch Products (with their Teams) and Employees whenever
+    // the person switches the Service dropdown — not just once when this
+    // tab first mounts. Without this, linking a Team to a service on the
+    // Products/Services page mid-session wouldn't show up here until a
+    // full page reload or a manual "Refresh" click, even after picking
+    // that exact service again.
+    useEffect(() => {
+        if (!productId) return;
+        fetchProducts();
+        fetchEmployees();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [productId]);
+
     useEffect(() => {
         if (!productId && products.length > 0) onChangeProductId(products[0].id);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,17 +210,26 @@ export default function TodaysAllocationCases({
     // (Products/Services -> Teams multi-select) are eligible here — same
     // narrowing as the Employees tab. Falls back to every employee ONLY
     // when the service has no teams linked at all — if teams ARE linked
-    // but zero employees currently have a matching Team, this is meant to
-    // come up empty rather than silently allocating to everyone present.
+    // but zero employees currently have a matching Team, the list is
+    // meant to come up empty rather than silently allocating to everyone
+    // present.
+    // FIX: match on String(p.id) === String(productId) — productId can
+    // arrive here as a string from the <select>'s value while p.id (from
+    // the API) may not always be, so a strict `===` could silently fail
+    // to find the product and fall back to showing every employee even
+    // though Teams ARE linked. Same defensive pattern already used for
+    // this exact lookup in manualallocation.tsx.
     const selectedProduct = useMemo(
-        () => products.find((p) => p.id === productId) || null,
+        () => products.find((p) => String(p.id) === String(productId)) || null,
         [products, productId]
     );
     const eligibleEmployees = useMemo(() => {
-        const productTeams = (selectedProduct?.teams || []).filter(Boolean);
+        const productTeams = (selectedProduct?.teams || [])
+            .map((t) => (t || "").trim())
+            .filter(Boolean);
         if (productTeams.length === 0) return employees;
         const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
-        return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
+        return employees.filter((e) => e.team && allowed.has(e.team.trim().toLowerCase()));
     }, [employees, selectedProduct]);
 
     useEffect(() => {
