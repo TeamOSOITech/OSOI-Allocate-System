@@ -175,16 +175,23 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // of the system auto-generating them — one per line (or comma
     // separated), up to MAX_MANUAL_CASE_NUMBERS at once.
     const [caseNumbersText, setCaseNumbersText] = useState("");
+    // Auto Generate mode: how many cases to create + the prefix each
+    // generated case number should start with (numbering then starts
+    // at 001 for a prefix that's never been used before).
+    const [autoQuantity, setAutoQuantity] = useState("");
+    const [autoPrefix, setAutoPrefix] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
 
     // ---- "Manual Entry" (type the case number(s) yourself) vs "Upload"
-    // (bring in custom/random case numbers via an Excel sheet) — for
-    // orgs that already have their own case numbering (e.g. a
-    // client-provided case ID). Service + Date still come from the same
-    // dropdown/date picker either way.
-    const [formMode, setFormMode] = useState<"manual" | "upload">("manual");
+    // (bring in custom/random case numbers via an Excel sheet) vs
+    // "Auto Generate" (system generates <prefix><001, 002, ...> for you,
+    // just pick service/client/subclient/quantity/prefix) — for orgs
+    // that already have their own case numbering (e.g. a client-provided
+    // case ID). Service + Date still come from the same dropdown/date
+    // picker in every mode.
+    const [formMode, setFormMode] = useState<"manual" | "upload" | "auto">("manual");
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadResult, setUploadResult] = useState<{
         createdCount: number;
@@ -450,6 +457,68 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             // Switch the filter to the service just logged, so the newly
             // created cases are immediately visible (services are always
             // shown separately now, never mixed together).
+            setFilterProductId(productId);
+            setPage(1);
+            fetchCases();
+        } catch (err: any) {
+            setFormError(err?.message || "Something went wrong.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    // Auto Generate: system creates `autoQuantity` cases numbered
+    // "<autoPrefix>001", "<autoPrefix>002", ... — numbering starts at
+    // 001 the first time a given prefix is used, and continues from
+    // wherever it left off if the same prefix is used again later.
+    const handleAutoSubmit = async (e: FormEvent) => {
+        e.preventDefault();
+        setFormError("");
+        setFormSuccess("");
+
+        if (!productId) {
+            setFormError("Select a service.");
+            return;
+        }
+        const prefix = autoPrefix.trim();
+        if (!prefix) {
+            setFormError("Type a prefix (e.g. 12F).");
+            return;
+        }
+        if (!/^[A-Za-z0-9_-]{1,20}$/.test(prefix)) {
+            setFormError("Prefix can only contain letters, numbers, - and _, up to 20 characters.");
+            return;
+        }
+        const quantity = Number(autoQuantity);
+        if (!Number.isInteger(quantity) || quantity <= 0) {
+            setFormError("Quantity must be a whole number greater than 0.");
+            return;
+        }
+        if (quantity > 2000) {
+            setFormError("Quantity cannot exceed 2000 in a single submission.");
+            return;
+        }
+
+        setSubmitting(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    productId,
+                    quantity,
+                    workDate,
+                    clientId: formClientId || null,
+                    subclientId: formSubclientId || null,
+                    casePrefix: prefix,
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Failed to create cases");
+            setFormSuccess(json.message || "Cases created.");
+            setUploadResult(null);
+            setAutoQuantity("");
             setFilterProductId(productId);
             setPage(1);
             fetchCases();
@@ -799,12 +868,19 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
 
                         <form
                             style={styles.form}
-                            onSubmit={formMode === "manual" ? handleSubmit : handleUploadSubmit}
+                            onSubmit={
+                                formMode === "manual"
+                                    ? handleSubmit
+                                    : formMode === "auto"
+                                      ? handleAutoSubmit
+                                      : handleUploadSubmit
+                            }
                         >
                             {/* Mode toggle — Manual Entry (type the case number(s)
                             yourself, up to MAX_MANUAL_CASE_NUMBERS at once) vs
-                            Upload (custom case numbers from an Excel/CSV sheet,
-                            for orgs with their own numbering). */}
+                            Auto Generate (system generates prefix+001, 002, ...
+                            for you) vs Upload (custom case numbers from an
+                            Excel/CSV sheet, for orgs with their own numbering). */}
                             <div style={styles.modeToggleRow}>
                                 <button
                                     type="button"
@@ -822,6 +898,21 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                     }}
                                 >
                                     Manual Entry
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.modeToggleBtn,
+                                        ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
+                                    }}
+                                    onClick={() => {
+                                        setFormMode("auto");
+                                        setFormError("");
+                                        setFormSuccess("");
+                                        setUploadResult(null);
+                                    }}
+                                >
+                                    Auto Generate
                                 </button>
                                 <button
                                     type="button"
@@ -865,7 +956,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 ))}
                             </select>
 
-                            {formMode === "manual" ? (
+                            {formMode === "manual" || formMode === "auto" ? (
                                 <>
                                     <label style={styles.label}>Client</label>
                                     <select
@@ -912,7 +1003,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 </p>
                             )}
 
-                            {formMode === "manual" ? (
+                            {formMode === "manual" && (
                                 <>
                                     <label style={styles.label}>Case Numbers</label>
                                     <textarea
@@ -928,7 +1019,39 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         comma-separated both work.
                                     </p>
                                 </>
-                            ) : (
+                            )}
+
+                            {formMode === "auto" && (
+                                <>
+                                    <label style={styles.label}>Prefix</label>
+                                    <input
+                                        type="text"
+                                        style={styles.input}
+                                        value={autoPrefix}
+                                        onChange={(e) => setAutoPrefix(e.target.value)}
+                                        placeholder="e.g. 12F"
+                                        maxLength={20}
+                                    />
+
+                                    <label style={styles.label}>Quantity</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={2000}
+                                        style={styles.input}
+                                        value={autoQuantity}
+                                        onChange={(e) => setAutoQuantity(e.target.value)}
+                                        placeholder="How many cases to generate"
+                                    />
+                                    <p style={styles.helperNote}>
+                                        {autoPrefix.trim()
+                                            ? `Generates ${autoPrefix.trim()}001, ${autoPrefix.trim()}002, ... — numbering starts at 001 the first time this prefix is used, and continues on if you use it again later.`
+                                            : "Numbering starts at 001 the first time a prefix is used, and continues on if you use the same prefix again later."}
+                                    </p>
+                                </>
+                            )}
+
+                            {formMode === "upload" && (
                                 <>
                                     <label style={styles.label}>Case Numbers File</label>
                                     <input
@@ -960,12 +1083,12 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                             >
                                 <i className="ti ti-plus" style={{ fontSize: fontSize.md }} />
                                 {submitting
-                                    ? formMode === "manual"
-                                        ? "Creating..."
-                                        : "Uploading..."
-                                    : formMode === "manual"
-                                      ? "Create Cases"
-                                      : "Upload Cases"}
+                                    ? formMode === "upload"
+                                        ? "Uploading..."
+                                        : "Creating..."
+                                    : formMode === "upload"
+                                      ? "Upload Cases"
+                                      : "Create Cases"}
                             </button>
                         </form>
                     </div>
