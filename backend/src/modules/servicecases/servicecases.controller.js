@@ -109,6 +109,64 @@ async function validateSubclient(subclientId, organizationId, clientId) {
   return { ok: true };
 }
 
+// NEW: splits an array into fixed-size chunks — used below so a huge
+// case-number list doesn't get crammed into one giant query filter.
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// FIX: case-insensitive duplicate detection for case numbers. Postgres
+// text comparison is case-sensitive by default, so a plain `.in()`
+// match let "CASEB021" and "caseb021" both get created as if they were
+// different case numbers — same real case, two rows. `ilike` WITHOUT
+// any % wildcards does an exact but case-insensitive match, so this
+// reuses that to treat them as the same case number while still
+// storing whatever casing the person actually typed. Batches candidates
+// into chunks of 150 so a large upload (thousands of rows) doesn't
+// build one unworkably long filter string.
+// FIX: guards the exact-match use of `ilike` below (no % added) against
+// SQL LIKE's own wildcard characters appearing INSIDE a real case
+// number. Postgres treats a literal "_" as "any one character" and "%"
+// as "any run of characters" in a LIKE/ILIKE pattern — so a case number
+// like "CASE_021" would, without this, also match "CASEX021" or
+// "CASE9021" since "_" isn't being compared literally. Escaping them
+// with a backslash makes the match exact-character, case-insensitive
+// only (as intended for a duplicate check).
+function escapeLikeWildcards(value) {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+async function findExistingCaseNumbersCI(
+  caseNumbers,
+  productId,
+  organizationId,
+) {
+  const found = new Set();
+  const chunks = chunkArray(caseNumbers, 150);
+  const results = await Promise.all(
+    chunks.map(async (chunk) => {
+      const orExpr = chunk
+        .map(
+          (cn) =>
+            `case_number.ilike.${escapeOrFilterValue(escapeLikeWildcards(cn))}`,
+        )
+        .join(",");
+      const { data, error } = await supabase
+        .from("service_cases")
+        .select("case_number")
+        .eq("organization_id", organizationId)
+        .eq("product_id", productId)
+        .or(orExpr);
+      if (error) throw error;
+      return data || [];
+    }),
+  );
+  results.flat().forEach((r) => found.add(r.case_number.toUpperCase()));
+  return found;
+}
+
 async function getProduct(productId, organizationId) {
   const { data, error } = await supabase
     .from("service_master")
@@ -139,6 +197,22 @@ async function findMatchingIds(table, nameColumn, term, organizationId) {
 // shows — this normalizes either into ISO so it can be matched
 // exactly against the work_date column. Returns null if `term`
 // doesn't look like a full date in either format.
+// NEW: the Case Register search box passes its raw text straight into a
+// PostgREST `.or()` filter string below, where commas and parentheses
+// are the DSL's own separators/grouping characters. Someone searching
+// for something containing either — a case number with a comma, a
+// client name with "(India)" in it — would otherwise silently break
+// that whole request (PostgREST fails to parse the filter and errors
+// out). Per PostgREST's escaping rules, wrapping the value in double
+// quotes (and escaping any literal double quote inside it) makes it
+// safe again.
+function escapeOrFilterValue(value) {
+  if (/[,()"]/.test(value)) {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+  return value;
+}
+
 function tryParseSearchDate(term) {
   const iso = term.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) return term;
@@ -242,7 +316,7 @@ async function listServiceCases(req, res) {
         ]);
       const matchedDate = tryParseSearchDate(term);
 
-      searchOrParts = [`case_number.ilike.%${term}%`];
+      searchOrParts = [`case_number.ilike.${escapeOrFilterValue(`%${term}%`)}`];
       if (matchingProductIds.length) {
         searchOrParts.push(`product_id.in.(${matchingProductIds.join(",")})`);
       }
@@ -696,8 +770,11 @@ async function uploadCustomServiceCases(req, res) {
       });
     }
 
-    // Dedupe within the sheet itself first, keeping the first
-    // occurrence's row number for reporting.
+    // FIX: dedupe within the sheet is now case-insensitive — "CASEB021"
+    // and "caseb021" on two different rows of the same sheet are the
+    // same case number, not two different ones. Original casing from
+    // the sheet is still what gets stored; only the comparison ignores
+    // case. Keeps the first occurrence's row number for reporting.
     const seenInFile = new Set();
     const candidates = [];
     sheetRows.forEach((row, i) => {
@@ -713,7 +790,8 @@ async function uploadCustomServiceCases(req, res) {
         });
         return;
       }
-      if (seenInFile.has(caseNumber)) {
+      const key = caseNumber.toUpperCase();
+      if (seenInFile.has(key)) {
         skippedCount++;
         results.push({
           row: rowNum,
@@ -723,7 +801,7 @@ async function uploadCustomServiceCases(req, res) {
         });
         return;
       }
-      seenInFile.add(caseNumber);
+      seenInFile.add(key);
       candidates.push({
         row: rowNum,
         caseNumber,
@@ -735,24 +813,20 @@ async function uploadCustomServiceCases(req, res) {
     // Check which of the surviving candidates already exist for THIS
     // service (product_id) — same case number is fine under a
     // different service, it only clashes within the same service.
-    let existingSet = new Set();
-    if (candidates.length > 0) {
-      const { data: existingRows, error: existingErr } = await supabase
-        .from("service_cases")
-        .select("case_number")
-        .eq("organization_id", req.user.organizationId)
-        .eq("product_id", productId)
-        .in(
-          "case_number",
-          candidates.map((c) => c.caseNumber),
-        );
-      if (existingErr) throw existingErr;
-      existingSet = new Set((existingRows || []).map((r) => r.case_number));
-    }
+    // FIX: now case-insensitive too (see findExistingCaseNumbersCI) —
+    // "CASEB021" already in the DB now correctly blocks "caseb021".
+    const existingSet =
+      candidates.length > 0
+        ? await findExistingCaseNumbersCI(
+            candidates.map((c) => c.caseNumber),
+            productId,
+            req.user.organizationId,
+          )
+        : new Set();
 
     const toInsert = [];
     candidates.forEach((c) => {
-      if (existingSet.has(c.caseNumber)) {
+      if (existingSet.has(c.caseNumber.toUpperCase())) {
         skippedCount++;
         results.push({
           row: c.row,
@@ -964,23 +1038,28 @@ async function manualCreateServiceCases(req, res) {
 
     const norm = (v) => (v || "").toString().trim();
 
-    // Dedupe within the submitted list first, keeping the first
-    // occurrence — same pattern as the Upload flow.
+    // FIX: dedupe within the submitted list is now case-insensitive —
+    // "CASEB021" and "caseb021" typed in the same batch are treated as
+    // the same case number (second one skipped), not two different
+    // ones. The ORIGINAL casing the person typed is still what gets
+    // stored; only the comparison ignores case.
     const seen = new Set();
     const results = [];
     const candidates = [];
     rawCaseNumbers.forEach((raw, i) => {
       const caseNumber = norm(raw);
       if (!caseNumber) return; // silently skip blank lines
-      if (seen.has(caseNumber)) {
+      const key = caseNumber.toUpperCase();
+      if (seen.has(key)) {
         results.push({
           caseNumber,
           status: "skipped",
+          reason: "duplicate_in_request",
           message: "Duplicate in this submission",
         });
         return;
       }
-      seen.add(caseNumber);
+      seen.add(key);
       candidates.push({ row: i + 1, caseNumber });
     });
 
@@ -990,29 +1069,24 @@ async function manualCreateServiceCases(req, res) {
         .json({ success: false, message: "Enter at least one case number" });
     }
 
-    // Duplicate check is scoped to THIS service only (product_id) —
-    // the same case number is allowed to exist under a different
-    // service in the same org; it only clashes if it already exists
-    // for this same service.
-    let existingSet = new Set();
-    const { data: existingRows, error: existingErr } = await supabase
-      .from("service_cases")
-      .select("case_number")
-      .eq("organization_id", req.user.organizationId)
-      .eq("product_id", productId)
-      .in(
-        "case_number",
-        candidates.map((c) => c.caseNumber),
-      );
-    if (existingErr) throw existingErr;
-    existingSet = new Set((existingRows || []).map((r) => r.case_number));
+    // Duplicate check is scoped to THIS service only (product_id) — the
+    // same case number is allowed to exist under a different service in
+    // the same org; it only clashes if it already exists for this same
+    // service. FIX: now case-insensitive too (see findExistingCaseNumbersCI)
+    // — "CASEB021" already in the DB now correctly blocks "caseb021".
+    const existingSet = await findExistingCaseNumbersCI(
+      candidates.map((c) => c.caseNumber),
+      productId,
+      req.user.organizationId,
+    );
 
     const toInsert = [];
     candidates.forEach((c) => {
-      if (existingSet.has(c.caseNumber)) {
+      if (existingSet.has(c.caseNumber.toUpperCase())) {
         results.push({
           caseNumber: c.caseNumber,
           status: "skipped",
+          reason: "already_exists",
           message: "Case number already exists for this service",
         });
       } else {
@@ -1059,19 +1133,19 @@ async function manualCreateServiceCases(req, res) {
     const skippedCount = results.filter((r) => r.status === "skipped").length;
     // NEW: spell out exactly WHY things were skipped instead of just a
     // bare count — the already-exists case in particular is the one
-    // people keep re-typing by mistake, so it gets called out by
-    // case number rather than left as a generic "X skipped".
+    // people keep re-typing by mistake, so it gets called out by case
+    // number rather than left as a generic "X skipped". FIX: this now
+    // matches on the stable `reason` CODE set above, not the display
+    // `message` text — matching on message text silently broke the
+    // moment the message wording above was edited (e.g. to add "for
+    // this service"), since a plain string-equality check has no way
+    // to warn you when it stops matching anything.
     const alreadyExisting = results
-      .filter(
-        (r) =>
-          r.status === "skipped" && r.message === "Case number already exists",
-      )
+      .filter((r) => r.status === "skipped" && r.reason === "already_exists")
       .map((r) => r.caseNumber);
     const duplicateInRequest = results
       .filter(
-        (r) =>
-          r.status === "skipped" &&
-          r.message === "Duplicate in this submission",
+        (r) => r.status === "skipped" && r.reason === "duplicate_in_request",
       )
       .map((r) => r.caseNumber);
 
