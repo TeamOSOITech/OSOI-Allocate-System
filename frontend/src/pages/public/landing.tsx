@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { useNavigate } from "react-router-dom";
 
 // Public marketing/landing page — this is now what "/" shows before
@@ -1107,7 +1108,9 @@ const Landing = () => {
                         <div className="lp-mock-card">
                             <div className="lp-mock-header">
                                 <span className="lp-mock-dot" />
-                                <span style={{ fontSize: 12, opacity: 0.7 }}>Dashboard</span>
+                                <span style={{ fontSize: fontSize.sm, opacity: 0.7 }}>
+                                    Dashboard
+                                </span>
                             </div>
                             <div className="lp-mock-stats-row">
                                 <div className="lp-mock-stat">

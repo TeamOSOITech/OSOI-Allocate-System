@@ -214,7 +214,7 @@ export default function Billing() {
                         <div style={styles.placeholderIconCircle}>
                             <i
                                 className="ti ti-file-invoice"
-                                style={{ fontSize: 26, color: BRAND.blue }}
+                                style={{ fontSize: fontSize["6xl"], color: BRAND.blue }}
                             />
                         </div>
                         <p style={styles.placeholderTitle}>
@@ -291,7 +291,10 @@ export default function Billing() {
                                                 <span style={styles.serviceNameCell}>
                                                     <i
                                                         className="ti ti-cube"
-                                                        style={{ color: "#14B8A6", fontSize: 14 }}
+                                                        style={{
+                                                            color: "#14B8A6",
+                                                            fontSize: fontSize.md,
+                                                        }}
                                                     />
                                                     {p.product_name}
                                                 </span>
@@ -372,7 +375,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 18,
+        fontSize: fontSize["2xl"],
         flexShrink: 0,
     },
     kpiValue: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, color: "#17181C" },
@@ -388,7 +391,7 @@ const styles: Record<string, CSSProperties> = {
         padding: "11px 16px",
         maxWidth: 420,
     },
-    searchIcon: { color: "#9ca3af", fontSize: 16, flexShrink: 0 },
+    searchIcon: { color: "#9ca3af", fontSize: fontSize.xl, flexShrink: 0 },
     searchInput: {
         border: "none",
         outline: "none",
@@ -467,7 +470,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 18,
+        fontSize: fontSize["2xl"],
         flexShrink: 0,
     },
     clientName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },

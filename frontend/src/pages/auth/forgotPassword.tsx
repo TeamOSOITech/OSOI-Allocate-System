@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { Link } from "react-router-dom";
 
 const ForgotPassword = () => {
@@ -66,13 +67,23 @@ const ForgotPassword = () => {
                         boxShadow: "0 8px 20px rgba(124,58,237,0.35)",
                     }}
                 >
-                    <i className="ti ti-lock" style={{ fontSize: 26, color: "#fff" }} />
+                    <i
+                        className="ti ti-lock"
+                        style={{ fontSize: fontSize["6xl"], color: "#fff" }}
+                    />
                 </div>
 
-                <h1 style={{ fontSize: 22, fontWeight: 800, color: "#1e1b3a", marginBottom: 6 }}>
+                <h1
+                    style={{
+                        fontSize: fontSize["4xl"],
+                        fontWeight: 800,
+                        color: "#1e1b3a",
+                        marginBottom: 6,
+                    }}
+                >
                     Forgot Password?
                 </h1>
-                <p style={{ color: "#9c96b8", marginBottom: 24, fontSize: 13 }}>
+                <p style={{ color: "#9c96b8", marginBottom: 24, fontSize: fontSize.base }}>
                     Enter your email and we'll send you a reset link. If you have multiple role
                     accounts under this email, you'll receive one link per role.
                 </p>
@@ -85,7 +96,7 @@ const ForgotPassword = () => {
                             color: "#15803d",
                             padding: 14,
                             borderRadius: 8,
-                            fontSize: 13,
+                            fontSize: fontSize.base,
                             textAlign: "left",
                         }}
                     >
@@ -102,7 +113,7 @@ const ForgotPassword = () => {
                                     color: "#dc2626",
                                     padding: 10,
                                     borderRadius: 8,
-                                    fontSize: 13,
+                                    fontSize: fontSize.base,
                                     marginBottom: 16,
                                     textAlign: "left",
                                 }}
@@ -116,7 +127,7 @@ const ForgotPassword = () => {
                                     display: "block",
                                     marginBottom: 6,
                                     color: "#4b4560",
-                                    fontSize: 12,
+                                    fontSize: fontSize.sm,
                                     fontWeight: 600,
                                 }}
                             >
@@ -134,7 +145,7 @@ const ForgotPassword = () => {
                                     background: "#fafafa",
                                     border: "1px solid #ececf5",
                                     borderRadius: 8,
-                                    fontSize: 14,
+                                    fontSize: fontSize.md,
                                     outline: "none",
                                     boxSizing: "border-box",
                                     color: "#1e1b3a",
@@ -151,7 +162,7 @@ const ForgotPassword = () => {
                                 color: "#fff",
                                 border: "none",
                                 borderRadius: 24,
-                                fontSize: 15,
+                                fontSize: fontSize.lg,
                                 fontWeight: 700,
                                 cursor: loading ? "not-allowed" : "pointer",
                                 boxShadow: "0 6px 16px rgba(124,58,237,0.3)",
@@ -167,7 +178,7 @@ const ForgotPassword = () => {
                     style={{
                         display: "block",
                         marginTop: 20,
-                        fontSize: 13,
+                        fontSize: fontSize.base,
                         color: "#6d28d9",
                         textDecoration: "none",
                         fontWeight: 600,

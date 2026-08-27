@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../config/supabaseClient";
 
@@ -145,10 +146,17 @@ const ResetPassword = () => {
                         boxShadow: "0 8px 20px rgba(32,66,151,0.35)",
                     }}
                 >
-                    <i className="ti ti-key" style={{ fontSize: 26, color: "#fff" }} />
+                    <i className="ti ti-key" style={{ fontSize: fontSize["6xl"], color: "#fff" }} />
                 </div>
 
-                <h1 style={{ fontSize: 22, fontWeight: 800, color: "#1e2a4a", marginBottom: 6 }}>
+                <h1
+                    style={{
+                        fontSize: fontSize["4xl"],
+                        fontWeight: 800,
+                        color: "#1e2a4a",
+                        marginBottom: 6,
+                    }}
+                >
                     Set New Password
                 </h1>
 
@@ -160,7 +168,7 @@ const ResetPassword = () => {
                             color: "#1f8f7d",
                             padding: 14,
                             borderRadius: 8,
-                            fontSize: 13,
+                            fontSize: fontSize.base,
                         }}
                     >
                         ✓ Password updated! Redirecting to login...
@@ -173,13 +181,15 @@ const ResetPassword = () => {
                             color: "#dc2626",
                             padding: 14,
                             borderRadius: 8,
-                            fontSize: 13,
+                            fontSize: fontSize.base,
                         }}
                     >
                         ⚠️ {verifyError}
                     </div>
                 ) : !ready ? (
-                    <p style={{ color: "#8a93a8", fontSize: 13 }}>Verifying your reset link...</p>
+                    <p style={{ color: "#8a93a8", fontSize: fontSize.base }}>
+                        Verifying your reset link...
+                    </p>
                 ) : (
                     <form onSubmit={handleSubmit}>
                         {error && (
@@ -190,7 +200,7 @@ const ResetPassword = () => {
                                     color: "#dc2626",
                                     padding: 10,
                                     borderRadius: 8,
-                                    fontSize: 13,
+                                    fontSize: fontSize.base,
                                     marginBottom: 16,
                                     textAlign: "left",
                                 }}
@@ -204,7 +214,7 @@ const ResetPassword = () => {
                                     display: "block",
                                     marginBottom: 6,
                                     color: "#374361",
-                                    fontSize: 12,
+                                    fontSize: fontSize.sm,
                                     fontWeight: 600,
                                 }}
                             >
@@ -223,7 +233,7 @@ const ResetPassword = () => {
                                     background: "#fafbfc",
                                     border: "1px solid #dde6f0",
                                     borderRadius: 8,
-                                    fontSize: 14,
+                                    fontSize: fontSize.md,
                                     outline: "none",
                                     boxSizing: "border-box",
                                     color: "#1e2a4a",
@@ -232,7 +242,7 @@ const ResetPassword = () => {
                             <p
                                 style={{
                                     margin: "6px 0 0",
-                                    fontSize: 12,
+                                    fontSize: fontSize.sm,
                                     color:
                                         password && !isValidPassword(password)
                                             ? "#dc2626"
@@ -252,7 +262,7 @@ const ResetPassword = () => {
                                 color: "#fff",
                                 border: "none",
                                 borderRadius: 24,
-                                fontSize: 15,
+                                fontSize: fontSize.lg,
                                 fontWeight: 700,
                                 cursor: loading ? "not-allowed" : "pointer",
                                 boxShadow: "0 6px 16px rgba(32,66,151,0.3)",

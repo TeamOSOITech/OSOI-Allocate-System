@@ -276,7 +276,7 @@ export default function Header({
                                                                 className="ti ti-check"
                                                                 style={{
                                                                     color: "#fff",
-                                                                    fontSize: 14,
+                                                                    fontSize: fontSize.md,
                                                                 }}
                                                             />
                                                         )}
@@ -325,11 +325,14 @@ function MenuItem({
             style={danger ? styles.menuItemDanger : styles.menuItem}
             onClick={onClick}
         >
-            <i className={`ti ${icon}`} style={{ fontSize: 16 }} />
+            <i className={`ti ${icon}`} style={{ fontSize: fontSize.xl }} />
             <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
-            {check && <i className="ti ti-check" style={{ fontSize: 15 }} />}
+            {check && <i className="ti ti-check" style={{ fontSize: fontSize.lg }} />}
             {chevron && (
-                <i className="ti ti-chevron-right" style={{ fontSize: 14, opacity: 0.5 }} />
+                <i
+                    className="ti ti-chevron-right"
+                    style={{ fontSize: fontSize.md, opacity: 0.5 }}
+                />
             )}
         </button>
     );
@@ -535,7 +538,7 @@ function getStyles(BRAND: {
             border: "none",
             borderRadius: radius.md,
             padding: "10px 10px",
-            fontSize: 13.5,
+            fontSize: fontSize.md,
             color: "#16233c",
             cursor: "pointer",
             textAlign: "left",
@@ -549,7 +552,7 @@ function getStyles(BRAND: {
             border: "none",
             borderRadius: radius.md,
             padding: "10px 10px",
-            fontSize: 13.5,
+            fontSize: fontSize.md,
             color: "#DC2626",
             cursor: "pointer",
             textAlign: "left",
@@ -563,7 +566,7 @@ function getStyles(BRAND: {
             background: "transparent",
             border: "none",
             padding: "8px 10px",
-            fontSize: 12.5,
+            fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
             color: "#5a6c85",
             cursor: "pointer",
@@ -598,7 +601,7 @@ function getStyles(BRAND: {
             justifyContent: "center",
         },
         swatchLabel: {
-            fontSize: 10,
+            fontSize: fontSize.xxs,
             color: "#5a6c85",
             textAlign: "center",
         },

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 
@@ -458,9 +459,9 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 48,
     },
     pageTitleBlock: { textAlign: "center" },
-    title: { fontSize: 24, fontWeight: 800, color: "#17181C", margin: 0 },
+    title: { fontSize: fontSize["5xl"], fontWeight: 800, color: "#17181C", margin: 0 },
     subtitle: {
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#767F92",
         margin: "4px 0 0",
         display: "flex",
@@ -482,7 +483,7 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #e5e7eb",
         borderRadius: 10,
         padding: "9px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         color: "#374151",
         fontWeight: 500,
     },
@@ -495,7 +496,7 @@ const styles: Record<string, CSSProperties> = {
         border: "none",
         borderRadius: 10,
         padding: "10px 16px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         fontWeight: 600,
         cursor: "pointer",
     },
@@ -505,7 +506,7 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #FECACA",
         borderRadius: 8,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         marginBottom: 16,
     },
     successBanner: {
@@ -514,7 +515,7 @@ const styles: Record<string, CSSProperties> = {
         border: `1px solid ${BRAND.green}`,
         borderRadius: 8,
         padding: "10px 14px",
-        fontSize: 13,
+        fontSize: fontSize.base,
         marginBottom: 16,
     },
     summaryRow: {
@@ -547,8 +548,8 @@ const styles: Record<string, CSSProperties> = {
         justifyContent: "center",
         flexShrink: 0,
     },
-    chipValue: { fontSize: 22, fontWeight: 800, lineHeight: 1.1 },
-    chipLabel: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+    chipValue: { fontSize: fontSize["4xl"], fontWeight: 800, lineHeight: 1.1 },
+    chipLabel: { fontSize: fontSize.sm, color: "#6b7280", marginTop: 2 },
     quickActions: { display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" },
     quickBtn: {
         display: "flex",
@@ -558,7 +559,7 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: 8,
         border: "1px solid",
         background: "#fff",
-        fontSize: 12.5,
+        fontSize: fontSize.base,
         fontWeight: 600,
         cursor: "pointer",
     },
@@ -575,7 +576,7 @@ const styles: Record<string, CSSProperties> = {
         padding: "14px 20px",
         background: "#fafafa",
         borderBottom: "1px solid #f1f1f1",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         fontWeight: 700,
         color: "#6b7280",
         textTransform: "uppercase",
@@ -599,11 +600,11 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         fontWeight: 700,
         flexShrink: 0,
     },
-    empName: { fontSize: 13.5, color: "#1a1a2e", fontWeight: 600 },
+    empName: { fontSize: fontSize.md, color: "#1a1a2e", fontWeight: 600 },
     empCode: { color: "#9ca3af", fontWeight: 500 },
     pillGroup: { display: "flex", gap: 8 },
     pill: {
@@ -613,11 +614,11 @@ const styles: Record<string, CSSProperties> = {
         padding: "7px 13px",
         borderRadius: 20,
         border: "1px solid",
-        fontSize: 12,
+        fontSize: fontSize.sm,
         fontWeight: 600,
         cursor: "pointer",
     },
-    emptyNote: { padding: "30px", textAlign: "center", color: "#9ca3af", fontSize: 13 },
+    emptyNote: { padding: "30px", textAlign: "center", color: "#9ca3af", fontSize: fontSize.base },
     saveButton: {
         marginTop: 20,
         width: "100%",
@@ -631,7 +632,7 @@ const styles: Record<string, CSSProperties> = {
         background: GRADIENT,
         color: "#fff",
         fontWeight: 700,
-        fontSize: 14,
+        fontSize: fontSize.md,
         cursor: "pointer",
     },
 };

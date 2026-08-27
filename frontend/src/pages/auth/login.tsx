@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { setCsrfToken } from "../../utils/authFetch";
 
 const MOBILE_BREAKPOINT = 860;
@@ -450,11 +451,14 @@ const Login = () => {
                                             borderRadius: 999,
                                             background: "rgba(255,255,255,.12)",
                                             border: "1px solid rgba(255,255,255,.25)",
-                                            fontSize: 12,
+                                            fontSize: fontSize.sm,
                                             fontWeight: 600,
                                         }}
                                     >
-                                        <i className={`ti ${f.icon}`} style={{ fontSize: 13 }} />
+                                        <i
+                                            className={`ti ${f.icon}`}
+                                            style={{ fontSize: fontSize.base }}
+                                        />
                                         {f.label}
                                     </div>
                                 ))}
@@ -524,7 +528,7 @@ const Login = () => {
                             >
                                 <i
                                     className="ti ti-check"
-                                    style={{ color: "#fff", fontSize: 18 }}
+                                    style={{ color: "#fff", fontSize: fontSize["2xl"] }}
                                 />
                             </div>
 
@@ -533,7 +537,7 @@ const Login = () => {
                                     margin: 0,
                                     textAlign: "center",
                                     color: "#17181C",
-                                    fontSize: 16,
+                                    fontSize: fontSize.xl,
                                     fontWeight: 700,
                                 }}
                             >
@@ -546,7 +550,7 @@ const Login = () => {
                                     marginBottom: 10,
                                     textAlign: "center",
                                     color: "#767F92",
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                     lineHeight: 1.5,
                                 }}
                             >
@@ -563,7 +567,7 @@ const Login = () => {
                                     textAlign: "center",
                                     color: "#2A2F8F",
                                     fontWeight: 700,
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                     background: "none",
                                     border: "none",
                                     cursor: "pointer",
@@ -589,7 +593,10 @@ const Login = () => {
                                     boxShadow: "0 8px 20px rgba(42,47,143,.28)",
                                 }}
                             >
-                                <i className="ti ti-lock" style={{ color: "#fff", fontSize: 18 }} />
+                                <i
+                                    className="ti ti-lock"
+                                    style={{ color: "#fff", fontSize: fontSize["2xl"] }}
+                                />
                             </div>
 
                             <h2
@@ -597,7 +604,7 @@ const Login = () => {
                                     margin: 0,
                                     textAlign: "center",
                                     color: "#17181C",
-                                    fontSize: 16,
+                                    fontSize: fontSize.xl,
                                     fontWeight: 700,
                                 }}
                             >
@@ -610,7 +617,7 @@ const Login = () => {
                                     marginBottom: 10,
                                     textAlign: "center",
                                     color: "#767F92",
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                 }}
                             >
                                 We'll send a reset link to the email below.
@@ -622,7 +629,7 @@ const Login = () => {
                                     marginBottom: 4,
                                     color: "#3D4459",
                                     fontWeight: 600,
-                                    fontSize: 11.5,
+                                    fontSize: fontSize.sm,
                                 }}
                             >
                                 Email Address
@@ -641,7 +648,7 @@ const Login = () => {
                                     background: "#EDF3FB",
                                     color: "#2A2F8F",
                                     outline: "none",
-                                    fontSize: 13,
+                                    fontSize: fontSize.base,
                                     fontWeight: 600,
                                     marginBottom: 12,
                                     boxSizing: "border-box",
@@ -658,7 +665,7 @@ const Login = () => {
                                         padding: "8px 12px",
                                         borderRadius: 10,
                                         marginBottom: 12,
-                                        fontSize: 12.5,
+                                        fontSize: fontSize.base,
                                         fontWeight: 600,
                                     }}
                                 >
@@ -678,7 +685,7 @@ const Login = () => {
                                     cursor: resetSending ? "default" : "pointer",
                                     color: "#fff",
                                     fontWeight: 700,
-                                    fontSize: 13.5,
+                                    fontSize: fontSize.md,
                                     background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                     boxShadow: "0 10px 24px rgba(42,47,143,.28)",
                                     marginBottom: 22,
@@ -697,7 +704,7 @@ const Login = () => {
                                     textAlign: "center",
                                     color: "#2A2F8F",
                                     fontWeight: 700,
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                     background: "none",
                                     border: "none",
                                     cursor: "pointer",
@@ -725,7 +732,7 @@ const Login = () => {
                             >
                                 <i
                                     className="ti ti-shield-lock"
-                                    style={{ color: "#fff", fontSize: 18 }}
+                                    style={{ color: "#fff", fontSize: fontSize["2xl"] }}
                                 />
                             </div>
 
@@ -734,7 +741,7 @@ const Login = () => {
                                     margin: 0,
                                     textAlign: "center",
                                     color: "#17181C",
-                                    fontSize: 16,
+                                    fontSize: fontSize.xl,
                                     fontWeight: 700,
                                 }}
                             >
@@ -747,7 +754,7 @@ const Login = () => {
                                     marginBottom: 10,
                                     textAlign: "center",
                                     color: "#767F92",
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                 }}
                             >
                                 Sign in to continue to your dashboard
@@ -762,7 +769,7 @@ const Login = () => {
                                         padding: "8px 12px",
                                         borderRadius: 10,
                                         marginBottom: 12,
-                                        fontSize: 12.5,
+                                        fontSize: fontSize.base,
                                         fontWeight: 600,
                                     }}
                                 >
@@ -777,7 +784,7 @@ const Login = () => {
                                         marginBottom: 4,
                                         color: "#3D4459",
                                         fontWeight: 600,
-                                        fontSize: 11.5,
+                                        fontSize: fontSize.sm,
                                         width: "100%",
                                         maxWidth: 380,
                                         margin: "0 auto",
@@ -821,7 +828,7 @@ const Login = () => {
                                         marginBottom: 4,
                                         color: "#3D4459",
                                         fontWeight: 600,
-                                        fontSize: 11.5,
+                                        fontSize: fontSize.sm,
                                     }}
                                 >
                                     Password
@@ -869,7 +876,7 @@ const Login = () => {
                                             background: "transparent",
                                             cursor: "pointer",
                                             color: "#2A2F8F",
-                                            fontSize: 16,
+                                            fontSize: fontSize.xl,
                                         }}
                                     >
                                         <i
@@ -889,7 +896,7 @@ const Login = () => {
                                         cursor: loading ? "default" : "pointer",
                                         color: "#fff",
                                         fontWeight: 700,
-                                        fontSize: 13.5,
+                                        fontSize: fontSize.md,
                                         background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
                                         boxShadow: "0 10px 24px rgba(42,47,143,.28)",
                                     }}
@@ -906,7 +913,7 @@ const Login = () => {
                                     textAlign: "center",
                                     color: "#2A2F8F",
                                     fontWeight: 700,
-                                    fontSize: 12.5,
+                                    fontSize: fontSize.base,
                                     background: "none",
                                     border: "none",
                                     cursor: "pointer",
@@ -922,7 +929,7 @@ const Login = () => {
                                     marginTop: 8,
                                     textAlign: "center",
                                     color: "#9CA3AF",
-                                    fontSize: 10.5,
+                                    fontSize: fontSize.xs,
                                 }}
                             >
                                 © 2026 Daily Work Allocation System

@@ -529,7 +529,7 @@ export default function QualityCheck() {
                         <div style={styles.placeholderIconCircle}>
                             <i
                                 className="ti ti-checkbox"
-                                style={{ fontSize: 26, color: BRAND.blue }}
+                                style={{ fontSize: fontSize["6xl"], color: BRAND.blue }}
                             />
                         </div>
                         <p style={styles.placeholderTitle}>No employee/service selected yet</p>
@@ -547,7 +547,7 @@ export default function QualityCheck() {
                             <div style={styles.placeholderIconCircle}>
                                 <i
                                     className="ti ti-hand-click"
-                                    style={{ fontSize: 26, color: BRAND.blue }}
+                                    style={{ fontSize: fontSize["6xl"], color: BRAND.blue }}
                                 />
                             </div>
                             <p style={styles.placeholderTitle}>Ready when you are</p>
@@ -567,7 +567,7 @@ export default function QualityCheck() {
                         >
                             <i
                                 className="ti ti-circle-check"
-                                style={{ fontSize: 26, color: BRAND.green }}
+                                style={{ fontSize: fontSize["6xl"], color: BRAND.green }}
                             />
                         </div>
                         <p style={styles.placeholderTitle}>All caught up</p>
@@ -695,7 +695,10 @@ export default function QualityCheck() {
 
                 {selectedCases.length > 0 && (
                     <div style={styles.infoBanner}>
-                        <i className="ti ti-info-circle" style={{ flexShrink: 0, fontSize: 16 }} />
+                        <i
+                            className="ti ti-info-circle"
+                            style={{ flexShrink: 0, fontSize: fontSize.xl }}
+                        />
                         <span>
                             Please review all selected cases carefully before marking them as Passed
                             or Failed.
@@ -767,7 +770,7 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         color: "#17181C",
     },
-    labelIcon: { fontSize: 13, color: "#9ca3af", marginRight: 2 },
+    labelIcon: { fontSize: fontSize.base, color: "#9ca3af", marginRight: 2 },
     label: {
         display: "flex",
         alignItems: "center",
@@ -927,7 +930,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 18,
+        fontSize: fontSize["2xl"],
         flexShrink: 0,
     },
     cardCaseNum: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },
@@ -962,7 +965,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 15,
+        fontSize: fontSize.lg,
         flexShrink: 0,
     },
     infoText: { display: "flex", flexDirection: "column", gap: 2 },
