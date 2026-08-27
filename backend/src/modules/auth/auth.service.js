@@ -7,6 +7,18 @@ const supabase = require("../../config/supabaseClient");
 // cause of the intermittent "row-level security policy" errors on writes.
 const supabaseAuthClient = require("../../config/supabaseAuthClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
+// FIX: was building the reset-password redirect URL from the raw
+// FRONTEND_URL env var (see the bug this exact pattern caused,
+// documented in config/frontendUrl.js) — FRONTEND_URL is a
+// comma-separated list of allowed CORS origins, so on any deployment
+// with more than one (prod + local dev, the documented setup), the old
+// `${process.env.FRONTEND_URL}/reset-password` produced a broken link
+// like "https://prod.app,http://localhost:5173/reset-password" and
+// nobody using "Forgot Password" from the login page could actually
+// reset their password. user.service.js and
+// registerOrganization.controller.js already use this same helper;
+// this was the one remaining spot still doing it the broken way.
+const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
 const login = async (email, password) => {
   const { data: candidates, error: candidatesError } = await supabase
@@ -142,7 +154,7 @@ const forgotPassword = async (email) => {
             type: "recovery",
             email: loginEmail,
             options: {
-              redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
+              redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
             },
           });
 

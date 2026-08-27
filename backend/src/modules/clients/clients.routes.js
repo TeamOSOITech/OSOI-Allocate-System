@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const path = require("path");
 
 // MULTI-TENANCY + SECURITY FIX: this file previously had NO auth
 // middleware at all — every endpoint below was reachable by anyone,
@@ -26,7 +27,29 @@ const { approvalGate } = require("../../middlewares/approvalGate");
 
 const clientsController = require("./clients.controller");
 
-const upload = multer({ storage: multer.memoryStorage() });
+// SECURITY FIX (Finding #16): this had NO fileFilter or size limit —
+// same gap already patched in subclients.routes.js and
+// products.routes.js (those fixes even say "mirrors clients.routes.js"
+// in their comments, incorrectly assuming this file already had it).
+// Without this, the bulk-upload endpoint below accepted ANY file type
+// and ANY size from an authenticated user — e.g. a multi-GB upload
+// that exhausts server memory (multer.memoryStorage() holds the whole
+// file in RAM), or a non-spreadsheet file that then fails deep inside
+// the Excel-parsing library in an unexpected way. Restricted to the
+// spreadsheet types this endpoint actually parses, with a 10MB cap.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowed = [".xlsx", ".xls", ".csv"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 // Require a valid session for every route in this file, and make
 // req.user (incl. organizationId) available to every handler below.

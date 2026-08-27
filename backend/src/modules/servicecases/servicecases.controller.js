@@ -54,6 +54,39 @@ function formatCaseNumber(letter, sequenceNumber) {
   return `CASE${letter}${String(sequenceNumber).padStart(3, "0")}`;
 }
 
+// NEW: Auto Generate mode — person types their own prefix (e.g. "12F")
+// instead of using the default CASE+letter format, and numbering for
+// THAT prefix starts at 001 (padded to at least 3 digits, grows past
+// 999 automatically). Escapes regex-special characters so a prefix
+// like "A.B" can't break the lookup below.
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Looks at every case_number already used anywhere in this org that
+// starts with `prefix` immediately followed by digits (e.g. prefix
+// "12F" matches "12F001", "12F002", ... but not "12FOO1"), and returns
+// one past the highest number found — or 1 if the prefix has never
+// been used before, so a brand-new prefix always starts at 001.
+async function getNextPrefixNumber(prefix, organizationId) {
+  const { data, error } = await supabase
+    .from("service_cases")
+    .select("case_number")
+    .eq("organization_id", organizationId)
+    .ilike("case_number", `${prefix}%`);
+  if (error) throw error;
+  const re = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`, "i");
+  let max = 0;
+  (data || []).forEach((row) => {
+    const m = (row.case_number || "").match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+  });
+  return max + 1;
+}
+
 // NEW: Case Register — Client column. Same shape as getProductNameMap
 // above, just pointed at the clients table instead of service_master.
 async function getClientNameMap(clientIds, organizationId) {
@@ -518,6 +551,22 @@ async function createServiceCases(req, res) {
     // NEW: Subclient — only meaningful alongside a client, validated
     // below to actually belong to it.
     const subclientId = req.body.subclientId || null;
+    // NEW: Auto Generate mode — optional custom prefix. When given,
+    // case numbers are "<prefix><number>" (numbering restarts at 001
+    // for a never-before-used prefix) instead of the default
+    // CASE+service-letter format.
+    const rawCasePrefix = (req.body.casePrefix || "").toString().trim();
+    let casePrefix = null;
+    if (rawCasePrefix) {
+      if (!/^[A-Za-z0-9_-]{1,20}$/.test(rawCasePrefix)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Prefix can only contain letters, numbers, - and _, up to 20 characters.",
+        });
+      }
+      casePrefix = rawCasePrefix;
+    }
 
     if (!productId) {
       return res
@@ -589,8 +638,20 @@ async function createServiceCases(req, res) {
 
     const startSeq = (maxRow?.sequence_number || 0) + 1;
 
+    // NEW: when a custom prefix is given, the visible case NUMBER is
+    // numbered independently of `sequence_number` (which stays a plain
+    // internal running counter, same as always, used only for
+    // ordering) — this is what makes a fresh prefix start at 001
+    // instead of continuing wherever this service's counter is at.
+    const startCaseNum = casePrefix
+      ? await getNextPrefixNumber(casePrefix, req.user.organizationId)
+      : null;
+
     const rowsToInsert = Array.from({ length: quantity }, (_, i) => {
       const seq = startSeq + i;
+      const caseNumber = casePrefix
+        ? `${casePrefix}${String(startCaseNum + i).padStart(3, "0")}`
+        : formatCaseNumber(letter, seq);
       return {
         organization_id: req.user.organizationId,
         product_id: productId,
@@ -598,7 +659,7 @@ async function createServiceCases(req, res) {
         subclient_id: subclientId,
         work_date: workDate,
         sequence_number: seq,
-        case_number: formatCaseNumber(letter, seq),
+        case_number: caseNumber,
         created_by: req.user.userId,
       };
     });
