@@ -384,17 +384,13 @@ export default function ManualAllocation() {
     const isMobile = useIsMobile();
 
     // ---- filter bar state ----
-    // FIX: date + selected service used to reset to defaults ("" / today)
-    // on every visit, since they were plain useState with no persistence.
-    // That meant even though the row-level draft (qty per employee) was
-    // being restored correctly, the page showed the empty "Select a
-    // service above" state instead — because nothing had re-selected the
-    // service that draft belongs to. Restoring the last-used date/service
-    // from localStorage here means the row draft's own restore logic
-    // (further down) actually gets a chance to run.
-    const [date, setDate] = useState(
-        () => localStorage.getItem("manualalloc_last_date") || todayStr()
-    );
+    // Date always defaults to TODAY on every visit/reload — it used to
+    // restore whatever date was last used (via localStorage), which
+    // meant re-opening this page days later could silently land on a
+    // stale past date instead of today. Service selection still
+    // restores from localStorage below (only the date no longer does).
+    const [date, setDate] = useState(() => todayStr());
+
     const [products, setProducts] = useState<Product[]>([]);
     const [productId, setProductId] = useState(
         () => localStorage.getItem("manualalloc_last_productId") || ""
@@ -404,10 +400,8 @@ export default function ManualAllocation() {
     const [filtersOpen, setFiltersOpen] = useState(true);
 
     // Keep localStorage in sync so the NEXT visit restores this same
-    // date/service instead of resetting to today/"All".
-    useEffect(() => {
-        localStorage.setItem("manualalloc_last_date", date);
-    }, [date]);
+    // service instead of resetting to "All" (date no longer persists —
+    // see the comment above the `date` state; it always starts on today).
     useEffect(() => {
         localStorage.setItem("manualalloc_last_productId", productId);
     }, [productId]);
