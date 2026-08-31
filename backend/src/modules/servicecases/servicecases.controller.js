@@ -408,6 +408,13 @@ async function listServiceCases(req, res) {
       if (req.query.allocationStatus) {
         filtered = filtered.eq("allocation_status", req.query.allocationStatus);
       }
+      // NEW: Quality Scores (QC) page — filter to one employee's cases.
+      // This was missing entirely before, so selecting "Administrator"
+      // in the Employee dropdown did nothing server-side; combined with
+      // other filters this is very likely why the count looked wrong.
+      if (req.query.employeeId) {
+        filtered = filtered.eq("assigned_employee_id", req.query.employeeId);
+      }
       // NEW: Case Register search box — one input that searches Case
       // Number, Service, Client, and Subclient (and the work date, in
       // either 2026-08-26 or 26-08-2026 form) all at once, across the
@@ -426,6 +433,19 @@ async function listServiceCases(req, res) {
       }
       if (req.query.submissionStatus) {
         filtered = filtered.eq("submission_status", req.query.submissionStatus);
+      }
+      // NEW: Quality Scores (QC) page filter. Confirmed via Supabase's
+      // service_cases_qc_status_check constraint that qc_status only
+      // ever holds the plain values 'PENDING' / 'PASSED' / 'FAILED' (NOT
+      // the 'QC_PASS'/'QC_FAIL' convention the separate QC & Audit
+      // workflow uses on its own qc_status-like fields) — so this reads
+      // and writes those three values directly, no translation.
+      if (req.query.qcStatus === "PENDING") {
+        filtered = filtered.or("qc_status.is.null,qc_status.eq.PENDING");
+      } else if (req.query.qcStatus === "PASSED") {
+        filtered = filtered.eq("qc_status", "PASSED");
+      } else if (req.query.qcStatus === "FAILED") {
+        filtered = filtered.eq("qc_status", "FAILED");
       }
       return filtered;
     };
@@ -515,6 +535,11 @@ async function listServiceCases(req, res) {
       submissionType: r.submission_type || null,
       queryText: r.query_text || "",
       submittedAt: r.submitted_at || null,
+      // NEW: Quality Scores (QC) page — direct passthrough now that the
+      // Supabase check constraint confirms qc_status only ever holds
+      // 'PENDING' / 'PASSED' / 'FAILED' (no translation needed).
+      qcStatus: r.qc_status || "PENDING",
+      marks: r.qc_marks ?? null,
     }));
 
     res.json({
@@ -1791,6 +1816,89 @@ async function submitServiceCase(req, res) {
 }
 
 // ------------------------------------------------------------
+// PATCH /api/service-cases/:id/qc
+// Quality Scores (QC) page — Pass/Fail a case + optional marks.
+// Writes the same qc_status/qc_marks/qc_reviewed_at/qc_employee_id
+// columns the QC & Audit workflow uses, so both features stay in sync
+// on the same source of truth.
+//   body: { qcStatus: "PASSED" | "FAILED", marks: number | null }
+// A case can only be QC'd once it has actually been submitted
+// (submission_status = 'SUBMITTED') — this is enforced here too, not
+// just in the GET filter above, so the check can't be bypassed by
+// calling this endpoint directly with an arbitrary case id.
+// ------------------------------------------------------------
+async function updateServiceCaseQc(req, res) {
+  try {
+    const { id } = req.params;
+    const qcStatus = (req.body.qcStatus || "").toString().trim().toUpperCase();
+    const rawMarks = req.body.marks;
+    const marks =
+      rawMarks === undefined || rawMarks === null || rawMarks === ""
+        ? null
+        : Number(rawMarks);
+
+    if (!["PASSED", "FAILED"].includes(qcStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "qcStatus must be 'PASSED' or 'FAILED'.",
+      });
+    }
+    if (marks !== null && (Number.isNaN(marks) || marks < 0 || marks > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: "marks must be a number between 0 and 100.",
+      });
+    }
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("service_cases")
+      .select("id, submission_status")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found." });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        qc_status: qcStatus,
+        qc_marks: marks,
+        qc_employee_id: req.user.userId,
+        qc_reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found." });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} marked ${qcStatus === "PASSED" ? "Passed" : "Failed"}.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        qcStatus,
+        marks: data.qc_marks,
+      },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseQc error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
 // POST /api/service-cases/bulk-submit
 // body: { items: [{ id, submissionType, queryText }, ...] }
 // Same as above but for many cases at once — the "Bulk Submit" button
@@ -1879,4 +1987,5 @@ module.exports = {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  updateServiceCaseQc,
 };

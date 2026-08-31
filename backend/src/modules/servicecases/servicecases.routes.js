@@ -24,6 +24,7 @@ const {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  updateServiceCaseQc,
 } = require("./servicecases.controller");
 
 // Same memory-storage + extension-filter pattern as clients/subclients
@@ -92,6 +93,14 @@ router.post(
 // so it can never be shadowed.
 router.post("/bulk-submit", bulkSubmitServiceCases);
 router.patch("/:id/submit", submitServiceCase);
+// NEW: Quality Scores (QC) page — Pass/Fail + marks. Fixes the page
+// calling a route that never existed before (was returning Express's
+// HTML 404 page, which the frontend then failed to parse as JSON).
+router.patch(
+  "/:id/qc",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  updateServiceCaseQc,
+);
 router.patch(
   "/:id/profile",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),

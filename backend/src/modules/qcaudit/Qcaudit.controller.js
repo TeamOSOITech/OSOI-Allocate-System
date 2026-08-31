@@ -252,9 +252,9 @@ async function getSummary(req, res) {
           if (r.error) throw r.error;
           return r.count || 0;
         }),
-      countWhere("qc_status", "QC_PENDING"),
-      countWhere("qc_status", "QC_PASS"),
-      countWhere("qc_status", "QC_FAIL"),
+      countWhere("qc_status", "PENDING"),
+      countWhere("qc_status", "PASSED"),
+      countWhere("qc_status", "FAILED"),
       countWhere("audit_status", "AUDIT_PENDING"),
       countWhere("audit_status", "AUDIT_PASS"),
       countWhere("audit_status", "AUDIT_FAIL"),
@@ -590,7 +590,13 @@ async function listAuditQueue(req, res) {
       .from("service_cases")
       .select("*", { count: "exact" })
       .eq("organization_id", req.user.organizationId)
-      .eq("qc_status", "QC_PASS");
+      // FIX: this was checking qc_status = 'QC_PASS', but the
+      // service_cases_qc_status_check constraint in Supabase only
+      // allows 'PENDING' / 'PASSED' / 'FAILED' — so a case marked
+      // Passed on the Quality Check page (qc_status = 'PASSED') was
+      // never matching this filter and could never reach the Audit
+      // Queue. Confirmed via `pg_get_constraintdef` on the constraint.
+      .eq("qc_status", "PASSED");
 
     if (req.query.status === "pending") {
       query = query.or("audit_status.is.null,audit_status.eq.AUDIT_PENDING");
