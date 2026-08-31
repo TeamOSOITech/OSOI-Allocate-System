@@ -207,6 +207,13 @@ app.use(
   loadRoute("attendance", "./src/modules/attendance/attendance.routes"),
 );
 app.use("/api/qc", loadRoute("qc", "./src/modules/qualitychecks/qc.routes"));
+// NEW: QC + Audit workflow on top of service_cases (Employee submits ->
+// QC review -> Audit review). Deliberately separate from /api/qc above
+// (the older standalone Quality Scores log, untouched by this).
+app.use(
+  "/api/qc-audit",
+  loadRoute("qcaudit", "./src/modules/qcaudit/qcaudit.routes"),
+);
 app.use("/api", loadRoute("profile", "./src/modules/profiles/profile.route"));
 
 // ========================

@@ -69,6 +69,12 @@ const ROLE_PERMISSIONS = {
     "users.onboard",
     "verticals.start_for_existing_user",
     "qc_permission.request", // still needs approval — see APPROVAL_RULES
+    // NEW: Process Lead can also push submitted cases into the QC
+    // queue (Assign to QC) — same permission Vertical Head already
+    // holds for this. Business decision: QC allocation is done by
+    // QC-team members themselves, Vertical Head, or Process Lead —
+    // never a plain Team Member.
+    "tasks.qc_allocate.team",
     "reports.materialisation.view.org",
     // NEW: Process Lead HOLDS these permissions (so it can reach the
     // routes at all) but every create/update/delete it attempts is
