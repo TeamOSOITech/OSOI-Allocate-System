@@ -244,14 +244,14 @@ export default function TodaysAllocationEmployees({
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1
+                        <h2
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             Employees
-                        </h1>
+                        </h2>
                         <p style={styles.headerSubtext}>
                             Select a service, mark who's Present / Absent / Leave today, and save —
                             Smart Allocation on the Cases tab splits pending cases equally across

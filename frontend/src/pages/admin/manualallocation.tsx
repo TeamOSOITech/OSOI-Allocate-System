@@ -1092,7 +1092,7 @@ export default function ManualAllocation() {
                     there's only ever one view on this page now. ---- */}
                         <div style={isMobile ? styles.headerCardMobile : styles.headerCard}>
                             <div>
-                                <h1 style={styles.title}>Today's Allocation</h1>
+                                <h2 style={styles.title}>Today's Allocation</h2>
                                 <p style={styles.headerSubtext}>
                                     Pick a date and service, then Smart Allocate or hand out
                                     quantities by hand.

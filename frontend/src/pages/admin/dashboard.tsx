@@ -313,7 +313,7 @@ export default function Dashboard({ user }: DashboardProps) {
                     dailywork.tsx / employees.tsx page headers. */}
                         <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                             <div>
-                                <h1 style={styles.pageTitle}>Dashboard</h1>
+                                <h2 style={styles.pageTitle}>Dashboard</h2>
                                 <p style={styles.headerSubtext}>
                                     Welcome, <strong>{user?.name || user?.role}</strong> — here's
                                     today's snapshot.

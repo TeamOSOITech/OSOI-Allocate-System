@@ -273,14 +273,14 @@ export default function TodaysAllocationHistory() {
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1
+                        <h2
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             History
-                        </h1>
+                        </h2>
                         <p style={styles.headerSubtext}>
                             Every day's allocation (including today), service by service — Total,
                             Allocated and Pending are counted by case number. Clear here unassigns

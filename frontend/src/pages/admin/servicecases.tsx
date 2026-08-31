@@ -862,7 +862,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div>
-                            <h1 style={styles.pageTitle}>Case Register</h1>
+                            <h2 style={styles.pageTitle}>Daily Work</h2>
                             <p style={styles.headerSubtext}>
                                 Log a service and type in the case number(s) yourself — up to{" "}
                                 {MAX_MANUAL_CASE_NUMBERS} at once.

@@ -456,14 +456,14 @@ export default function TodaysAllocationCases({
                         <div style={styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h1
+                                    <h2
                                         style={{
                                             ...styles.pageTitle,
                                             fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                                         }}
                                     >
                                         Cases
-                                    </h1>
+                                    </h2>
                                     <p style={styles.headerSubtext}>
                                         Every logged case for the selected service/date — allocate
                                         each one manually below, or run Smart Allocation to split

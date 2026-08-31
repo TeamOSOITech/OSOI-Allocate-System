@@ -325,7 +325,7 @@ export default function History() {
                 {/* Header */}
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div>
-                        <h1 style={styles.pageTitle}>History</h1>
+                        <h2 style={styles.pageTitle}>History</h2>
                         <p style={styles.headerSubtext}>
                             Every allocation, filterable by employee, service, client, subclient,
                             date, and status.

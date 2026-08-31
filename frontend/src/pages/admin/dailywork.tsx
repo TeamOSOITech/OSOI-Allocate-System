@@ -453,7 +453,7 @@ export default function DailyWork() {
                         <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h1 style={styles.pageTitle}>Daily Work</h1>
+                                    <h2 style={styles.pageTitle}>Daily Work</h2>
                                     <p style={styles.headerSubtext}>
                                         Log today's total quantity received per service — this is
                                         the pool that Smart Auto Allocation and Manual Allocation
