@@ -18,6 +18,19 @@ import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
 
 const BRAND = {
     blue: "var(--brand-blue)",
@@ -56,6 +69,7 @@ function formatMoney(amount: number | string | null, currency: string | null): s
 }
 
 export default function Billing() {
+    const isMobile = useIsMobile();
     const [clients, setClients] = useState<ClientRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -123,9 +137,21 @@ export default function Billing() {
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
-            <div style={styles.contentBody}>
+            <div
+                style={{
+                    ...styles.contentBody,
+                    padding: isMobile ? "16px" : "20px 24px",
+                }}
+            >
                 <div>
-                    <h1 style={styles.pageTitle}>Billing</h1>
+                    <h1
+                        style={{
+                            ...styles.pageTitle,
+                            fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
+                        }}
+                    >
+                        Billing
+                    </h1>
                     <p style={styles.headerSubtext}>
                         Every client, the services they're linked to, and the rate charged for each
                         — pulled straight from each client's Services setup.

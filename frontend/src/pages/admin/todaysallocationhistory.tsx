@@ -39,6 +39,19 @@ import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
 
 const BRAND = {
     blue: "var(--brand-blue)",
@@ -77,6 +90,7 @@ function formatDisplayDate(iso: string) {
 }
 
 export default function TodaysAllocationHistory() {
+    const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [groups, setGroups] = useState<HistoryGroup[]>([]);
     const [loading, setLoading] = useState(true);
@@ -251,10 +265,22 @@ export default function TodaysAllocationHistory() {
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
-            <div style={styles.contentBody}>
+            <div
+                style={{
+                    ...styles.contentBody,
+                    padding: isMobile ? "16px" : "20px 24px",
+                }}
+            >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1 style={styles.pageTitle}>History</h1>
+                        <h1
+                            style={{
+                                ...styles.pageTitle,
+                                fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
+                            }}
+                        >
+                            History
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Every day's allocation (including today), service by service — Total,
                             Allocated and Pending are counted by case number. Clear here unassigns

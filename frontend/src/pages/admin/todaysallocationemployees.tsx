@@ -17,6 +17,19 @@ import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
 
 const BRAND = {
     blue: "var(--brand-blue)",
@@ -62,6 +75,7 @@ export default function TodaysAllocationEmployees({
     onChangeProductId,
     workDate,
 }: Props) {
+    const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [teamFilter, setTeamFilter] = useState("");
@@ -222,10 +236,22 @@ export default function TodaysAllocationEmployees({
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
-            <div style={styles.contentBody}>
+            <div
+                style={{
+                    ...styles.contentBody,
+                    padding: isMobile ? "16px" : "20px 24px",
+                }}
+            >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1 style={styles.pageTitle}>Employees</h1>
+                        <h1
+                            style={{
+                                ...styles.pageTitle,
+                                fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
+                            }}
+                        >
+                            Employees
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Select a service, mark who's Present / Absent / Leave today, and save —
                             Smart Allocation on the Cases tab splits pending cases equally across

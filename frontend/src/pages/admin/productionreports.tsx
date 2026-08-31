@@ -35,6 +35,19 @@ import { fontSize, fontWeight, radius } from "../../styles/theme";
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
 const EXPORT_PAGE_SIZE = 5000; // fetched in batches until a short page comes back
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
 
 const BRAND = {
     blue: "var(--brand-blue)",
@@ -75,6 +88,7 @@ function firstOfMonthStr() {
 }
 
 export default function ProductionReport() {
+    const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
 
@@ -242,13 +256,31 @@ export default function ProductionReport() {
         setClientName("");
     };
 
+    // On the 2-column mobile filter grid, select/input's fixed minWidth
+    // (150px, meant for the desktop flex-wrap row) can exceed the
+    // actual column width on narrow screens and push content past the
+    // card's edge. Drop it to 0 on mobile so fields shrink to fit.
+    const filterFieldStyle = isMobile ? { ...styles.select, minWidth: 0 } : styles.select;
+
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
-            <div style={styles.contentBody}>
+            <div
+                style={{
+                    ...styles.contentBody,
+                    padding: isMobile ? "16px" : "20px 24px",
+                }}
+            >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1 style={styles.pageTitle}>Production Report</h1>
+                        <h1
+                            style={{
+                                ...styles.pageTitle,
+                                fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
+                            }}
+                        >
+                            Production Report
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Case-number-wise production across all services — filter by service,
                             date range, employee, status, or client, then browse on screen or export
@@ -266,11 +298,22 @@ export default function ProductionReport() {
                     </button>
                 </div>
 
-                <div style={styles.filterBar}>
-                    <div>
+                <div
+                    style={
+                        isMobile
+                            ? {
+                                  ...styles.filterBar,
+                                  display: "grid",
+                                  gridTemplateColumns: "1fr 1fr",
+                                  alignItems: "start",
+                              }
+                            : styles.filterBar
+                    }
+                >
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
                         <label style={styles.label}>Service</label>
                         <select
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={productId}
                             onChange={(e) => setProductId(e.target.value)}
                         >
@@ -282,30 +325,30 @@ export default function ProductionReport() {
                             ))}
                         </select>
                     </div>
-                    <div>
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
                         <label style={styles.label}>From</label>
                         <input
                             type="date"
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={fromDate}
                             max={toDate || undefined}
                             onChange={(e) => setFromDate(e.target.value)}
                         />
                     </div>
-                    <div>
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
                         <label style={styles.label}>To</label>
                         <input
                             type="date"
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={toDate}
                             min={fromDate || undefined}
                             onChange={(e) => setToDate(e.target.value)}
                         />
                     </div>
-                    <div>
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
                         <label style={styles.label}>Employee</label>
                         <select
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={employeeId}
                             onChange={(e) => setEmployeeId(e.target.value)}
                         >
@@ -317,10 +360,10 @@ export default function ProductionReport() {
                             ))}
                         </select>
                     </div>
-                    <div>
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
                         <label style={styles.label}>Status</label>
                         <select
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value as any)}
                         >
@@ -329,17 +372,24 @@ export default function ProductionReport() {
                             <option value="ALLOCATED">Allocated</option>
                         </select>
                     </div>
-                    <div style={{ flex: 1, minWidth: 180 }}>
+                    <div style={isMobile ? { gridColumn: "1 / -1" } : { flex: 1, minWidth: 180 }}>
                         <label style={styles.label}>Client</label>
                         <input
                             type="text"
                             placeholder="Search client…"
-                            style={styles.select}
+                            style={filterFieldStyle}
                             value={clientNameInput}
                             onChange={(e) => setClientNameInput(e.target.value)}
                         />
                     </div>
-                    <button type="button" style={styles.resetBtn} onClick={resetFilters}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.resetBtn,
+                            ...(isMobile ? { gridColumn: "1 / -1", justifyContent: "center" } : {}),
+                        }}
+                        onClick={resetFilters}
+                    >
                         <i className="ti ti-refresh" />
                         Reset
                     </button>
@@ -477,7 +527,17 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
         whiteSpace: "nowrap",
     },
-    filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
+    filterBar: {
+        display: "flex",
+        alignItems: "flex-end",
+        gap: 14,
+        flexWrap: "wrap",
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "16px 18px",
+        boxShadow: "0 4px 16px rgba(var(--brand-blue-rgb),.06)",
+        border: "1px solid #dfeaf5",
+    },
     label: {
         display: "block",
         fontSize: fontSize.sm,
@@ -487,10 +547,10 @@ const styles: Record<string, CSSProperties> = {
     },
     select: {
         padding: "9px 12px",
-        borderRadius: radius.sm,
-        border: "1px solid #ececf5",
+        borderRadius: radius.md,
+        border: "1px solid #dbe6f0",
         fontSize: fontSize.sm,
-        background: "#fafafa",
+        background: "#f7fafc",
         minWidth: 150,
         width: "100%",
         boxSizing: "border-box",

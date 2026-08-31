@@ -1,6 +1,20 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+
+// Same brand tokens as the rest of the admin pages (employees.tsx,
+// servicecases.tsx, etc.) — pulls from the CSS vars set by
+// ThemeContext so white-label colors stay in sync app-wide.
+const BRAND = {
+    blue: "var(--brand-blue)",
+    lightBlue: "var(--brand-light-blue)",
+    green: "var(--brand-green)",
+    red: "#DC2626",
+    amber: "#D97706",
+    grey: "#9CA3AF",
+};
+const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
 interface StatCardData {
     title: string;
@@ -175,7 +189,7 @@ const billableData = [
     { name: "In Progress", value: 200 },
     { name: "Cancelled", value: 100 },
 ];
-const PIE_COLORS = ["#e24b4a", "#2b2b3d", "#185fa5", "#f4a93c"];
+const PIE_COLORS = [BRAND.green, BRAND.blue, BRAND.lightBlue, BRAND.amber];
 
 function BillableChart() {
     return (
@@ -207,7 +221,7 @@ const workProgressData = [
     { name: "In Progress", value: 310 },
     { name: "Not Started", value: 130 },
 ];
-const WORK_COLORS = ["#3B6D11", "#185fa5", "#f4a93c", "#9ca3af"];
+const WORK_COLORS = [BRAND.green, BRAND.blue, BRAND.amber, BRAND.grey];
 
 function WorkProgressChart() {
     return (
@@ -243,16 +257,16 @@ const styles: Record<string, CSSProperties> = {
         height: "100vh",
         maxHeight: "100vh",
         overflow: "hidden",
-        background: "#f5f3ff",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        background: "#f4f7fb",
+        fontFamily: fontFamily.base,
     },
     rootMobile: {
         display: "flex",
         flexDirection: "column",
         minHeight: "100%",
         width: "100%",
-        background: "#ececec",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        background: "#f4f7fb",
+        fontFamily: fontFamily.base,
         position: "relative",
     },
     mobileTopbar: {
@@ -261,7 +275,7 @@ const styles: Record<string, CSSProperties> = {
         gap: "12px",
         padding: "12px 16px",
         background: "#fff",
-        borderBottom: "1px solid #e5e7eb",
+        borderBottom: "1px solid #e4e9f2",
         position: "sticky",
         top: 0,
         zIndex: 30,
@@ -269,11 +283,11 @@ const styles: Record<string, CSSProperties> = {
     hamburgerBtn: {
         border: "none",
         background: "transparent",
-        fontSize: "20px",
+        fontSize: fontSize.xl,
         cursor: "pointer",
         padding: 4,
     },
-    mobileTitle: { fontSize: "15px", fontWeight: 700, color: "#1a1a2e" },
+    mobileTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#16233a" },
     overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 40 },
     sidebarDrawer: {
         position: "fixed",
@@ -303,37 +317,44 @@ const styles: Record<string, CSSProperties> = {
     contentBody: {
         display: "flex",
         flexDirection: "column",
-        gap: "14px",
-        padding: "16px",
+        gap: "16px",
+        padding: "24px 28px",
         flex: 1,
         minHeight: 0,
+        boxSizing: "border-box",
     },
 
-    statsRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" },
+    statsRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" },
     statsRowMobile: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" },
-    statCard: { background: "#fff", borderRadius: "8px", overflow: "hidden" },
-    statHead: {
-        background: "#2b2b3d",
-        color: "#fff",
-        fontSize: "11px",
-        fontWeight: 500,
-        textAlign: "center",
-        padding: "7px",
+    statCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        overflow: "hidden",
+        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
     },
-    statBody: { padding: "10px 14px" },
+    statHead: {
+        background: GRADIENT,
+        color: "#fff",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        textAlign: "center",
+        padding: "8px",
+        letterSpacing: "0.02em",
+    },
+    statBody: { padding: "12px 16px" },
     statLine: {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         marginBottom: "6px",
     },
-    statLabel: { fontSize: "11px", color: "#185fa5", fontWeight: 500 },
-    statNum: { fontSize: "20px", fontWeight: 700, color: "#1a1a2e" },
-    statBar: { height: "3px", background: "#e24b4a", borderRadius: "2px", margin: "4px 0 8px" },
+    statLabel: { fontSize: fontSize.xs, color: BRAND.blue, fontWeight: fontWeight.medium },
+    statNum: { fontSize: fontSize["5xl"], fontWeight: fontWeight.bold, color: "#16233a" },
+    statBar: { height: "3px", background: "#eef1f7", borderRadius: "2px", margin: "4px 0 8px" },
     contentRow: {
         display: "grid",
         gridTemplateColumns: "1.6fr 1fr",
-        gap: "14px",
+        gap: "16px",
         flex: 1,
         minHeight: 0,
         alignItems: "stretch",
@@ -342,22 +363,23 @@ const styles: Record<string, CSSProperties> = {
     leftCol: {
         display: "flex",
         flexDirection: "column",
-        gap: "14px",
+        gap: "16px",
         flex: 1,
         height: "100%",
     },
     panel: {
         background: "#fff",
-        borderRadius: "8px",
-        padding: "14px 16px",
+        borderRadius: radius.lg,
+        padding: "16px 18px",
         flex: 1,
         display: "flex",
         flexDirection: "column",
+        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
     },
     panelTitle: {
-        fontSize: "13px",
-        fontWeight: 600,
-        color: "#1a1a2e",
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        color: "#16233a",
         textAlign: "center",
         margin: "0 0 8px",
     },
@@ -372,28 +394,35 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: "#999",
-        fontSize: "12px",
+        color: "#7d90a6",
+        fontSize: fontSize.sm,
         padding: "24px",
         minHeight: 140,
     },
     rightCol: {
         background: "#fff",
-        borderRadius: "8px",
+        borderRadius: radius.lg,
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
     },
     tableHead: {
         display: "flex",
         justifyContent: "space-between",
-        padding: "10px 16px",
-        borderBottom: "2px solid #e24b4a",
-        background: "#f3f3f3",
+        padding: "12px 18px",
+        borderBottom: "1px solid #e4e9f2",
+        background: "#F4F8FD",
         gap: "12px",
     },
-    tableHeadLabel: { fontSize: "12px", fontWeight: 600, color: "#a32d2d" },
+    tableHeadLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#767F92",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+    },
     tableBody: {
         flex: 1,
         overflowY: "auto",
@@ -401,9 +430,9 @@ const styles: Record<string, CSSProperties> = {
     tableRow: {
         display: "flex",
         justifyContent: "space-between",
-        padding: "10px 16px",
+        padding: "12px 18px",
         borderBottom: "1px solid #f1f1f1",
-        fontSize: "13px",
+        fontSize: fontSize.base,
         color: "#374151",
     },
 };

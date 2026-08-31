@@ -20,6 +20,19 @@ import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 10;
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
 
 const BRAND = {
     blue: "var(--brand-blue)",
@@ -88,6 +101,7 @@ export default function TodaysAllocationCases({
     hideHeader = false,
     onCasesChanged,
 }: Props) {
+    const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
 
@@ -431,13 +445,25 @@ export default function TodaysAllocationCases({
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
-            <div style={styles.contentBody}>
+            <div
+                style={{
+                    ...styles.contentBody,
+                    padding: isMobile ? "16px" : "20px 24px",
+                }}
+            >
                 {!hideHeader && (
                     <>
                         <div style={styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h1 style={styles.pageTitle}>Cases</h1>
+                                    <h1
+                                        style={{
+                                            ...styles.pageTitle,
+                                            fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
+                                        }}
+                                    >
+                                        Cases
+                                    </h1>
                                     <p style={styles.headerSubtext}>
                                         Every logged case for the selected service/date — allocate
                                         each one manually below, or run Smart Allocation to split
