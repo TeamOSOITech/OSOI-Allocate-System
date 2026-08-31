@@ -447,6 +447,17 @@ async function listServiceCases(req, res) {
       } else if (req.query.qcStatus === "FAILED") {
         filtered = filtered.eq("qc_status", "FAILED");
       }
+      // NEW: Audit — same page, second pass over cases that already
+      // passed QC (see updateServiceCaseAudit below). audit_status
+      // follows the exact same PENDING/PASSED/FAILED convention as
+      // qc_status above, so the same filter shape applies.
+      if (req.query.auditStatus === "PENDING") {
+        filtered = filtered.or("audit_status.is.null,audit_status.eq.PENDING");
+      } else if (req.query.auditStatus === "PASSED") {
+        filtered = filtered.eq("audit_status", "PASSED");
+      } else if (req.query.auditStatus === "FAILED") {
+        filtered = filtered.eq("audit_status", "FAILED");
+      }
       return filtered;
     };
 
@@ -495,8 +506,16 @@ async function listServiceCases(req, res) {
       rows.map((r) => r.product_id),
       req.user.organizationId,
     );
+    // FIX: this used to only resolve assigned_employee_id, so the QC
+    // Result summary on the Audit tab always showed a blank Reviewer —
+    // qc_employee_id and audit_employee_id were never even looked up.
+    // Same map, just fed every employee id that can appear on a row.
     const employeeMap = await getEmployeeNameMap(
-      rows.map((r) => r.assigned_employee_id),
+      rows.flatMap((r) => [
+        r.assigned_employee_id,
+        r.qc_employee_id,
+        r.audit_employee_id,
+      ]),
       req.user.organizationId,
     );
     // NEW: Client column — resolves client_id on each case to its name,
@@ -540,6 +559,21 @@ async function listServiceCases(req, res) {
       // 'PENDING' / 'PASSED' / 'FAILED' (no translation needed).
       qcStatus: r.qc_status || "PENDING",
       marks: r.qc_marks ?? null,
+      // NEW: exposed so the Audit tab's "QC Result" summary (reviewer /
+      // marks / remarks) can actually show something instead of "—".
+      qcMarks: r.qc_marks ?? null,
+      qcNotes: r.qc_notes || null,
+      qcEmployeeId: r.qc_employee_id || null,
+      qcEmployeeName: employeeMap[r.qc_employee_id] || null,
+      qcReviewedAt: r.qc_reviewed_at || null,
+      // NEW: Audit — second pass over QC-passed cases, same shape as
+      // the QC fields above.
+      auditStatus: r.audit_status || null,
+      auditMarks: r.audit_marks ?? null,
+      auditNotes: r.audit_notes || null,
+      auditEmployeeId: r.audit_employee_id || null,
+      auditEmployeeName: employeeMap[r.audit_employee_id] || null,
+      auditReviewedAt: r.audit_reviewed_at || null,
     }));
 
     res.json({
@@ -1817,15 +1851,18 @@ async function submitServiceCase(req, res) {
 
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/qc
-// Quality Scores (QC) page — Pass/Fail a case + optional marks.
-// Writes the same qc_status/qc_marks/qc_reviewed_at/qc_employee_id
-// columns the QC & Audit workflow uses, so both features stay in sync
-// on the same source of truth.
-//   body: { qcStatus: "PASSED" | "FAILED", marks: number | null }
+// Quality Scores (QC) page — Pass/Fail a case + optional marks + an
+// optional remarks note. Writes the same qc_status/qc_marks/qc_notes/
+// qc_reviewed_at/qc_employee_id columns the QC & Audit workflow uses,
+// so both features stay in sync on the same source of truth.
+//   body: { qcStatus: "PASSED" | "FAILED", marks: number | null, notes?: string }
 // A case can only be QC'd once it has actually been submitted
 // (submission_status = 'SUBMITTED') — this is enforced here too, not
 // just in the GET filter above, so the check can't be bypassed by
 // calling this endpoint directly with an arbitrary case id.
+//
+// Requires a new column on service_cases (see migration note):
+//   qc_notes  text, nullable
 // ------------------------------------------------------------
 async function updateServiceCaseQc(req, res) {
   try {
@@ -1836,6 +1873,7 @@ async function updateServiceCaseQc(req, res) {
       rawMarks === undefined || rawMarks === null || rawMarks === ""
         ? null
         : Number(rawMarks);
+    const notes = (req.body.notes ?? "").toString().trim();
 
     if (!["PASSED", "FAILED"].includes(qcStatus)) {
       return res.status(400).json({
@@ -1868,6 +1906,7 @@ async function updateServiceCaseQc(req, res) {
       .update({
         qc_status: qcStatus,
         qc_marks: marks,
+        qc_notes: notes,
         qc_employee_id: req.user.userId,
         qc_reviewed_at: new Date().toISOString(),
       })
@@ -1890,10 +1929,109 @@ async function updateServiceCaseQc(req, res) {
         caseNumber: data.case_number,
         qcStatus,
         marks: data.qc_marks,
+        notes: data.qc_notes,
       },
     });
   } catch (err) {
     console.error("updateServiceCaseQc error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/audit
+// QC & Audit page — second pass, Pass/Fail a case + optional marks +
+// an optional remarks note. Only meaningful on a case that has already
+// passed QC (audit is a re-check of QC's work, not a substitute for
+// it), so this refuses to run on anything else.
+//   body: { auditStatus: "PASSED" | "FAILED", marks: number | null, notes?: string }
+//
+// Requires four new columns on service_cases (see migration note):
+//   audit_status       text, nullable ('PENDING' | 'PASSED' | 'FAILED')
+//   audit_marks        numeric, nullable
+//   audit_notes        text, nullable
+//   audit_employee_id  uuid, nullable, references user_master
+//   audit_reviewed_at  timestamptz, nullable
+// ------------------------------------------------------------
+async function updateServiceCaseAudit(req, res) {
+  try {
+    const { id } = req.params;
+    const auditStatus = (req.body.auditStatus || "")
+      .toString()
+      .trim()
+      .toUpperCase();
+    const rawMarks = req.body.marks;
+    const marks =
+      rawMarks === undefined || rawMarks === null || rawMarks === ""
+        ? null
+        : Number(rawMarks);
+    const notes = (req.body.notes ?? "").toString().trim();
+
+    if (!["PASSED", "FAILED"].includes(auditStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "auditStatus must be 'PASSED' or 'FAILED'.",
+      });
+    }
+    if (marks !== null && (Number.isNaN(marks) || marks < 0 || marks > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: "marks must be a number between 0 and 100.",
+      });
+    }
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("service_cases")
+      .select("id, qc_status")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found." });
+    }
+    if (existing.qc_status !== "PASSED") {
+      return res.status(400).json({
+        success: false,
+        message: "Only QC-passed cases can be audited.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({
+        audit_status: auditStatus,
+        audit_marks: marks,
+        audit_notes: notes,
+        audit_employee_id: req.user.userId,
+        audit_reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found." });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} marked ${auditStatus === "PASSED" ? "Passed" : "Failed"}.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        auditStatus,
+        marks: data.audit_marks,
+        notes: data.audit_notes,
+      },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseAudit error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -1988,4 +2126,5 @@ module.exports = {
   submitServiceCase,
   bulkSubmitServiceCases,
   updateServiceCaseQc,
+  updateServiceCaseAudit,
 };

@@ -25,6 +25,7 @@ const {
   submitServiceCase,
   bulkSubmitServiceCases,
   updateServiceCaseQc,
+  updateServiceCaseAudit,
 } = require("./servicecases.controller");
 
 // Same memory-storage + extension-filter pattern as clients/subclients
@@ -100,6 +101,13 @@ router.patch(
   "/:id/qc",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
   updateServiceCaseQc,
+);
+// NEW: QC & Audit page's Audit Queue — Pass/Fail + marks + remarks,
+// same shape as /:id/qc above, one step later in the workflow.
+router.patch(
+  "/:id/audit",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  updateServiceCaseAudit,
 );
 router.patch(
   "/:id/profile",
