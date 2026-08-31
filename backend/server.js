@@ -212,7 +212,7 @@ app.use("/api/qc", loadRoute("qc", "./src/modules/qualitychecks/qc.routes"));
 // (the older standalone Quality Scores log, untouched by this).
 app.use(
   "/api/qc-audit",
-  loadRoute("qcaudit", "./src/modules/qcaudit/qcaudit.routes"),
+  loadRoute("qcaudit", "./src/modules/qcaudit/Qcaudit.routes"),
 );
 app.use("/api", loadRoute("profile", "./src/modules/profiles/profile.route"));
 
