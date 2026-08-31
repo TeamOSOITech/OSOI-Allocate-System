@@ -167,13 +167,12 @@ export default function QcAudit() {
     // Audit Queue tab is Audit Manager territory end to end.
     const canManageAudit = ["SUPER_ADMIN", "AUDIT_MANAGER"].includes(currentUser?.role || "");
 
-    // NOTE: this page used to have two tabs (QC Queue + Audit Queue).
-    // QC now happens on the separate Quality Check page instead, so
-    // this page only shows Audit Queue. Defaulting straight to "audit"
-    // and no longer rendering the QC Queue toggle button — the "qc"
-    // tab code below is left in place (not deleted) in case it's
-    // needed again, it's just unreachable from the UI now.
-    const [activeTab, setActiveTab] = useState<"qc" | "audit">("audit");
+    // Two tabs on one page: QC Queue + Audit Queue, switched with the
+    // toggle buttons below. QC Queue is open to everyone (a plain Team
+    // Member can review cases specifically assigned to them); Audit
+    // Queue is Audit Manager territory, so that button/tab only shows
+    // for canManageAudit.
+    const [activeTab, setActiveTab] = useState<"qc" | "audit">("qc");
 
     // ---- QC Queue state ----
     const [qcCases, setQcCases] = useState<CaseRow[]>([]);
@@ -358,10 +357,13 @@ export default function QcAudit() {
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div>
-                            <h1 style={styles.pageTitle}>Audit</h1>
+                            <h1 style={styles.pageTitle}>
+                                {activeTab === "qc" ? "Quality Check" : "Audit"}
+                            </h1>
                             <p style={styles.headerSubtext}>
-                                Cases that passed QC (on the Quality Check page) land here — an
-                                Audit Manager hand-picks some of them for a second review.
+                                {activeTab === "qc"
+                                    ? "Cases an employee has submitted, waiting to be reviewed for QC (Pass/Fail + marks + remarks)."
+                                    : "Cases that passed QC land here — an Audit Manager hand-picks some of them for a second review."}
                             </p>
                         </div>
                     </div>
@@ -371,29 +373,41 @@ export default function QcAudit() {
                             <span style={styles.breadcrumbSep}>/</span>
                             <span style={styles.breadcrumbItem}>Dashboard</span>
                             <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbActive}>Audit</span>
+                            <span style={styles.breadcrumbActive}>
+                                {activeTab === "qc" ? "Quality Check" : "Audit"}
+                            </span>
                         </div>
                     )}
                 </div>
 
-                {/* NOTE: "QC Queue" tab button removed from the UI — QC
-                now happens on the Quality Check page. Only Audit Queue
-                is shown here, so the toggle row is skipped entirely
-                when there's nothing to toggle between. */}
-                {canManageAudit && (
-                    <div style={styles.modeToggleRow}>
+                {/* QC Queue + Audit Queue on the same page, switched with
+                these two toggle buttons. QC Queue is always shown (open
+                to everyone); Audit Queue button only shows for roles
+                that can manage audit. */}
+                <div style={styles.modeToggleRow}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.modeToggleBtn,
+                            ...(activeTab === "qc" ? styles.modeToggleBtnActive : {}),
+                        }}
+                        onClick={() => setActiveTab("qc")}
+                    >
+                        QC Queue
+                    </button>
+                    {canManageAudit && (
                         <button
                             type="button"
                             style={{
                                 ...styles.modeToggleBtn,
-                                ...styles.modeToggleBtnActive,
+                                ...(activeTab === "audit" ? styles.modeToggleBtnActive : {}),
                             }}
-                            disabled
+                            onClick={() => setActiveTab("audit")}
                         >
                             Audit Queue
                         </button>
-                    </div>
-                )}
+                    )}
+                </div>
 
                 {activeTab === "qc" && (
                     <div style={styles.tableCard}>

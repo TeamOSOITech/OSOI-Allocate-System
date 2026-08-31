@@ -38,6 +38,20 @@
 //       body: { qcStatus: "PASSED" | "FAILED", marks: number | null }
 //     If your route/param names differ, only fetchUncheckedCases() and
 //     handleQcDecision() need to change — nothing else depends on them.
+//
+// AUDIT MODE (added): same page, same flow, toggled with the QC
+// Queue / Audit Queue buttons up top. Mirrors the QC assumptions
+// above, one level over — audit only makes sense on cases that
+// already passed QC:
+//   - `service_cases` gets:
+//       auditStatus: "PENDING" | "PASSED" | "FAILED"   (default "PENDING")
+//   - GET /api/service-cases in audit mode additionally sends
+//       qcStatus=PASSED (only QC-passed cases are eligible for audit)
+//       auditStatus=PENDING
+//   - PATCH /api/service-cases/:id/audit
+//       body: { auditStatus: "PASSED" | "FAILED", marks: number | null }
+//     If your route/param names differ, only fetchUncheckedCases() and
+//     handleDecision() need to change.
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
@@ -60,6 +74,7 @@ type Product = { id: string; product_name: string };
 type Employee = { id: string; name: string; employeeCode: string | null };
 
 type QcStatus = "PENDING" | "PASSED" | "FAILED";
+type Mode = "qc" | "audit";
 
 type ServiceCase = {
     id: string;
@@ -72,6 +87,13 @@ type ServiceCase = {
     assignedEmployeeName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
     qcStatus: QcStatus;
+    qcEmployeeName?: string | null;
+    qcMarks?: number | null;
+    qcNotes?: string | null;
+    auditStatus?: QcStatus;
+    auditEmployeeName?: string | null;
+    auditMarks?: number | null;
+    auditNotes?: string | null;
 };
 
 // ---------------------------------------------------------------------
@@ -218,18 +240,22 @@ function InfoItem({
 const QC_STORAGE_KEY = "qc_page_state_v1";
 
 type PersistedQcState = {
+    mode: Mode;
     employeeId: string;
     productId: string;
     selectedCaseIds: string[];
     marksByCaseId: Record<string, string>;
+    notesByCaseId: Record<string, string>;
 };
 
 function loadPersistedQcState(): PersistedQcState {
     const fallback: PersistedQcState = {
+        mode: "qc",
         employeeId: "",
         productId: "",
         selectedCaseIds: [],
         marksByCaseId: {},
+        notesByCaseId: {},
     };
     if (typeof window === "undefined") return fallback;
     try {
@@ -237,12 +263,17 @@ function loadPersistedQcState(): PersistedQcState {
         if (!raw) return fallback;
         const parsed = JSON.parse(raw);
         return {
+            mode: parsed.mode === "audit" ? "audit" : "qc",
             employeeId: typeof parsed.employeeId === "string" ? parsed.employeeId : "",
             productId: typeof parsed.productId === "string" ? parsed.productId : "",
             selectedCaseIds: Array.isArray(parsed.selectedCaseIds) ? parsed.selectedCaseIds : [],
             marksByCaseId:
                 parsed.marksByCaseId && typeof parsed.marksByCaseId === "object"
                     ? parsed.marksByCaseId
+                    : {},
+            notesByCaseId:
+                parsed.notesByCaseId && typeof parsed.notesByCaseId === "object"
+                    ? parsed.notesByCaseId
                     : {},
         };
     } catch {
@@ -256,6 +287,10 @@ export default function QualityCheck() {
 
     const persisted = useRef(loadPersistedQcState()).current;
 
+    // "qc" = QC Queue (this page's original behaviour), "audit" = Audit
+    // Queue — same page, same flow, switched with the toggle buttons.
+    const [mode, setMode] = useState<Mode>(persisted.mode);
+
     const [employeeId, setEmployeeId] = useState(persisted.employeeId);
     const [productId, setProductId] = useState(persisted.productId);
 
@@ -267,6 +302,9 @@ export default function QualityCheck() {
     const [marksByCaseId, setMarksByCaseId] = useState<Record<string, string>>(
         persisted.marksByCaseId
     );
+    const [notesByCaseId, setNotesByCaseId] = useState<Record<string, string>>(
+        persisted.notesByCaseId
+    );
     const [decidingCaseId, setDecidingCaseId] = useState<string | null>(null);
     const [toast, setToast] = useState("");
 
@@ -275,19 +313,38 @@ export default function QualityCheck() {
         setTimeout(() => setToast(""), 3000);
     };
 
-    // Persist filters/selection/marks on every change so they survive
-    // navigating away to another page and back.
+    // Persist filters/selection/marks/remarks on every change so they
+    // survive navigating away to another page and back.
     useEffect(() => {
         try {
             sessionStorage.setItem(
                 QC_STORAGE_KEY,
-                JSON.stringify({ employeeId, productId, selectedCaseIds, marksByCaseId })
+                JSON.stringify({
+                    mode,
+                    employeeId,
+                    productId,
+                    selectedCaseIds,
+                    marksByCaseId,
+                    notesByCaseId,
+                })
             );
         } catch {
             // sessionStorage can throw in private/incognito edge cases —
             // non-fatal, selection just won't survive navigation this time.
         }
-    }, [employeeId, productId, selectedCaseIds, marksByCaseId]);
+    }, [mode, employeeId, productId, selectedCaseIds, marksByCaseId, notesByCaseId]);
+
+    // Switching QC Queue <-> Audit Queue means a different set of cases
+    // (and different ids) — drop the current selection/marks/remarks so
+    // nothing stale carries over into the other mode.
+    const handleModeChange = (next: Mode) => {
+        if (next === mode) return;
+        setMode(next);
+        setSelectedCaseIds([]);
+        setMarksByCaseId({});
+        setNotesByCaseId({});
+        setError("");
+    };
 
     const fetchProducts = useCallback(async () => {
         try {
@@ -346,8 +403,14 @@ export default function QualityCheck() {
             params.set("employeeId", employeeId);
             params.set("productId", productId);
             params.set("allocationStatus", "ALLOCATED");
-            params.set("qcStatus", "PENDING");
             params.set("pageSize", "500");
+            if (mode === "qc") {
+                params.set("qcStatus", "PENDING");
+            } else {
+                // Audit only makes sense on cases that already passed QC.
+                params.set("qcStatus", "PASSED");
+                params.set("auditStatus", "PENDING");
+            }
 
             const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`, {
                 signal: controller.signal,
@@ -368,12 +431,12 @@ export default function QualityCheck() {
         } catch (err: any) {
             if (err?.name === "AbortError") return;
             if (myFetchId !== fetchIdRef.current) return;
-            setError(err?.message || "Failed to load unchecked cases.");
+            setError(err?.message || `Failed to load ${mode === "qc" ? "QC" : "audit"} cases.`);
             setUncheckedCases([]);
         } finally {
             if (myFetchId === fetchIdRef.current) setLoadingCases(false);
         }
-    }, [employeeId, productId]);
+    }, [employeeId, productId, mode]);
 
     useEffect(() => {
         fetchUncheckedCases();
@@ -382,19 +445,27 @@ export default function QualityCheck() {
 
     const selectedCases = uncheckedCases.filter((c) => selectedCaseIds.includes(c.id));
 
-    const handleQcDecision = async (caseItem: ServiceCase, decision: "PASSED" | "FAILED") => {
+    const handleDecision = async (caseItem: ServiceCase, decision: "PASSED" | "FAILED") => {
         setDecidingCaseId(caseItem.id);
         try {
             const rawMarks = marksByCaseId[caseItem.id];
             const marks = rawMarks === undefined || rawMarks === "" ? null : Number(rawMarks);
+            const notes = notesByCaseId[caseItem.id] || "";
 
-            const res = await authFetch(`${API_BASE}/api/service-cases/${caseItem.id}/qc`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ qcStatus: decision, marks }),
-            });
+            const endpoint = mode === "qc" ? "qc" : "audit";
+            const statusKey = mode === "qc" ? "qcStatus" : "auditStatus";
+
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/${caseItem.id}/${endpoint}`,
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ [statusKey]: decision, marks, notes }),
+                }
+            );
             const json = await res.json();
-            if (!res.ok || !json.success) throw new Error(json?.message || "QC update failed");
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || `${mode === "qc" ? "QC" : "Audit"} update failed`);
             showToast(
                 `${caseItem.caseNumber} marked ${decision === "PASSED" ? "Passed ✓" : "Failed ✗"}.`
             );
@@ -405,8 +476,13 @@ export default function QualityCheck() {
                 delete next[caseItem.id];
                 return next;
             });
+            setNotesByCaseId((prev) => {
+                const next = { ...prev };
+                delete next[caseItem.id];
+                return next;
+            });
         } catch (err: any) {
-            showToast(err?.message || "Failed to update QC status.");
+            showToast(err?.message || `Failed to update ${mode === "qc" ? "QC" : "audit"} status.`);
         } finally {
             setDecidingCaseId(null);
         }
@@ -419,11 +495,38 @@ export default function QualityCheck() {
             <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div>
-                    <h1 style={styles.pageTitle}>Quality Check</h1>
+                    <h1 style={styles.pageTitle}>{mode === "qc" ? "Quality Check" : "Audit"}</h1>
                     <p style={styles.headerSubtext}>
-                        Select an employee and a service, then pick one or more case numbers still
-                        pending QC. Review each, enter marks, and mark it Passed or Failed.
+                        {mode === "qc"
+                            ? "Select an employee and a service, then pick one or more case numbers still pending QC. Review each, enter marks, and mark it Passed or Failed."
+                            : "Select an employee and a service, then pick one or more QC-passed case numbers still pending audit. Review each, enter marks, and mark it Passed or Failed."}
                     </p>
+                </div>
+
+                {/* QC Queue / Audit Queue — same page, same flow, switched here. */}
+                <div style={styles.modeToggleRow}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.modeToggleBtn,
+                            ...(mode === "qc" ? styles.modeToggleBtnActive : {}),
+                        }}
+                        onClick={() => handleModeChange("qc")}
+                    >
+                        <i className="ti ti-clipboard-check" style={{ marginRight: 6 }} />
+                        QC Queue
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.modeToggleBtn,
+                            ...(mode === "audit" ? styles.modeToggleBtnActive : {}),
+                        }}
+                        onClick={() => handleModeChange("audit")}
+                    >
+                        <i className="ti ti-shield-check" style={{ marginRight: 6 }} />
+                        Audit Queue
+                    </button>
                 </div>
 
                 <div style={styles.filterCard}>
@@ -435,7 +538,8 @@ export default function QualityCheck() {
                         {bothSelected && (
                             <div style={styles.pendingBadge}>
                                 <i className="ti ti-clipboard-list" />
-                                {loadingCases ? "…" : uncheckedCases.length} pending QC
+                                {loadingCases ? "…" : uncheckedCases.length} pending{" "}
+                                {mode === "qc" ? "QC" : "audit"}
                             </div>
                         )}
                     </div>
@@ -502,7 +606,9 @@ export default function QualityCheck() {
                                             : loadingCases
                                               ? "Loading…"
                                               : uncheckedCases.length === 0
-                                                ? "No unchecked cases"
+                                                ? mode === "qc"
+                                                    ? "No unchecked cases"
+                                                    : "No cases pending audit"
                                                 : "Select case(s)…"
                                     }
                                 />
@@ -534,7 +640,9 @@ export default function QualityCheck() {
                         </div>
                         <p style={styles.placeholderTitle}>No employee/service selected yet</p>
                         <p style={styles.placeholderText}>
-                            Pick an employee and a service above to load their unchecked cases.
+                            {mode === "qc"
+                                ? "Pick an employee and a service above to load their unchecked cases."
+                                : "Pick an employee and a service above to load their QC-passed cases waiting on audit."}
                         </p>
                     </div>
                 )}
@@ -572,8 +680,9 @@ export default function QualityCheck() {
                         </div>
                         <p style={styles.placeholderTitle}>All caught up</p>
                         <p style={styles.placeholderText}>
-                            All cases allocated to this employee for this service are already QC
-                            checked.
+                            {mode === "qc"
+                                ? "All cases allocated to this employee for this service are already QC checked."
+                                : "There are no QC-passed cases for this employee/service waiting on audit right now."}
                         </p>
                     </div>
                 )}
@@ -596,11 +705,41 @@ export default function QualityCheck() {
                                 </div>
                                 <span style={styles.qcPendingPill}>
                                     <i className="ti ti-hourglass" />
-                                    QC Pending
+                                    {mode === "qc" ? "QC Pending" : "Audit Pending"}
                                 </span>
                             </div>
 
                             <div style={styles.cardDivider} />
+
+                            {/* Audit mode: show what QC already found on this
+                            case (reviewer, marks, remarks) so the auditor has
+                            full context before making their own call. */}
+                            {mode === "audit" && (
+                                <div style={styles.qcSummaryBox}>
+                                    <div style={styles.qcSummaryHeader}>
+                                        <i className="ti ti-clipboard-check" />
+                                        QC Result
+                                    </div>
+                                    <div style={styles.qcSummaryRow}>
+                                        <span style={styles.qcSummaryLabel}>Reviewer</span>
+                                        <span style={styles.qcSummaryValue}>
+                                            {c.qcEmployeeName || "—"}
+                                        </span>
+                                    </div>
+                                    <div style={styles.qcSummaryRow}>
+                                        <span style={styles.qcSummaryLabel}>Marks</span>
+                                        <span style={styles.qcSummaryValue}>
+                                            {c.qcMarks ?? "—"}
+                                        </span>
+                                    </div>
+                                    <div style={styles.qcSummaryRow}>
+                                        <span style={styles.qcSummaryLabel}>Remarks</span>
+                                        <span style={styles.qcSummaryValue}>
+                                            {c.qcNotes || "—"}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
 
                             <div style={styles.infoRow}>
                                 <InfoItem
@@ -657,6 +796,24 @@ export default function QualityCheck() {
                                 </div>
                             </div>
 
+                            <div style={styles.remarksBlock}>
+                                <div style={styles.infoLabel}>
+                                    {mode === "qc" ? "QC REMARKS" : "AUDIT REMARKS"}
+                                </div>
+                                <textarea
+                                    style={styles.remarksTextarea}
+                                    placeholder="Optional for Pass, recommended for Fail"
+                                    rows={2}
+                                    value={notesByCaseId[c.id] ?? ""}
+                                    onChange={(e) =>
+                                        setNotesByCaseId((prev) => ({
+                                            ...prev,
+                                            [c.id]: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </div>
+
                             <div style={styles.cardDivider} />
 
                             <div style={styles.decisionRow}>
@@ -669,7 +826,7 @@ export default function QualityCheck() {
                                         opacity: deciding ? 0.6 : 1,
                                     }}
                                     disabled={deciding}
-                                    onClick={() => handleQcDecision(c, "FAILED")}
+                                    onClick={() => handleDecision(c, "FAILED")}
                                 >
                                     <i className="ti ti-x" />
                                     Fail
@@ -683,7 +840,7 @@ export default function QualityCheck() {
                                         opacity: deciding ? 0.6 : 1,
                                     }}
                                     disabled={deciding}
-                                    onClick={() => handleQcDecision(c, "PASSED")}
+                                    onClick={() => handleDecision(c, "PASSED")}
                                 >
                                     <i className="ti ti-check" />
                                     {deciding ? "Saving…" : "Pass"}
@@ -742,6 +899,24 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         maxWidth: 640,
         textAlign: "left",
+    },
+    modeToggleRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+    modeToggleBtn: {
+        display: "flex",
+        alignItems: "center",
+        padding: "9px 18px",
+        borderRadius: radius.pill,
+        border: "1px solid #ececf5",
+        background: "#fff",
+        color: "#767F92",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    modeToggleBtnActive: {
+        background: GRADIENT,
+        border: "1px solid transparent",
+        color: "#fff",
     },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
     filterCard: {
@@ -949,6 +1124,41 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
     },
     cardDivider: { height: 1, background: "#f1f1f1", width: "100%" },
+    qcSummaryBox: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        background: "rgba(59,130,246,0.06)",
+        border: "1px solid rgba(59,130,246,0.15)",
+        borderRadius: radius.md,
+        padding: "12px 14px",
+    },
+    qcSummaryHeader: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        marginBottom: 2,
+    },
+    qcSummaryRow: { display: "flex", gap: 8, fontSize: fontSize.sm },
+    qcSummaryLabel: { color: "#767F92", minWidth: 70, fontWeight: fontWeight.medium },
+    qcSummaryValue: { color: "#17181C", fontWeight: fontWeight.medium, flex: 1 },
+    remarksBlock: { display: "flex", flexDirection: "column", gap: 6 },
+    remarksTextarea: {
+        padding: "8px 10px",
+        borderRadius: radius.sm,
+        border: "1px solid #ececf5",
+        fontSize: fontSize.sm,
+        background: "#fafafa",
+        width: "100%",
+        boxSizing: "border-box",
+        resize: "vertical",
+        fontFamily: "inherit",
+    },
     infoRow: {
         display: "flex",
         alignItems: "flex-start",

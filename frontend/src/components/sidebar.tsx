@@ -111,21 +111,14 @@ const menuItems: MenuItem[] = [
     },
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
     {
-        label: "Quality Scores",
+        // Renamed from "Quality Scores" — this page now has a QC Queue
+        // / Audit Queue toggle (see pages/admin/qc.tsx), not just marks.
+        // REMOVED: the separate "Audit" sidebar entry (/qc-audit) — that
+        // page no longer exists, Audit lives here now too.
+        label: "QC & Audit",
         icon: "ti ti-star",
         path: "/quality-scores",
         roles: SUPER_ADMIN_ONLY,
-    },
-    {
-        // NEW: QC + Audit workflow. Open to everyone — the /qc-audit
-        // route itself has no requiredRole because a plain Team Member
-        // can be a QC-team member with cases assigned specifically to
-        // them (see App.jsx and qcaudit.tsx for the per-role UI gating
-        // within the page itself).
-        label: "Audit",
-        icon: "ti ti-checkup-list",
-        path: "/qc-audit",
-        roles: EVERYONE,
     },
     {
         // FIX: /profile route in App.jsx has no requiredRole (every logged-in
@@ -152,8 +145,7 @@ const pathToLabel: Record<string, string> = {
     "/admin/add-user": "Add User",
     "/history": "History",
     "/billing": "Billing",
-    "/quality-scores": "Quality Scores",
-    "/qc-audit": "Audit",
+    "/quality-scores": "QC & Audit",
     "/profile": "Profile",
 };
 

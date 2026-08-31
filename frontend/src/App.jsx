@@ -32,10 +32,10 @@ const SelfAllocation = lazy(() => import("./pages/selfallocation"));
 // Attendance is no longer a standalone page — leave-marking lives inside
 // manualallocation.tsx instead.
 const QC = lazy(() => import("./pages/admin/qc"));
-// NEW: QC + Audit workflow (Employee submit -> QC review -> Audit
-// review) — separate page from QC above, which is the older standalone
-// Quality Scores log.
-const QcAudit = lazy(() => import("./pages/admin/Qcaudit"));
+// REMOVED: separate QcAudit page/route (pages/admin/Qcaudit.tsx, was
+// "/qc-audit") — QC and Audit are now both on this same Quality Check
+// page (see the QC Queue / Audit Queue toggle inside qc.tsx). The old
+// file is left in place, just no longer imported/routed.
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 const History = lazy(() => import("./pages/admin/history"));
@@ -400,21 +400,8 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: QC + Audit workflow. Open to everyone (no
-                    requiredRole) — a plain Team Member can still be a
-                    QC-team member with cases specifically assigned to
-                    them to review; the page itself hides the
-                    assign/audit-manager-only controls based on role. */}
-                        <Route
-                            path="/qc-audit"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <QcAudit />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                        {/* REMOVED: /qc-audit route (QcAudit component) —
+                    QC + Audit now both live on /quality-scores instead. */}
 
                         {/* REMOVED: /workinprogress, /admin, /tasks routes — they
                     pointed at pages/workinprogress.tsx, which has been
