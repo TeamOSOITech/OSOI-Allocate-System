@@ -30,7 +30,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
-import { fontSize, fontWeight, radius } from "../../styles/theme";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
@@ -264,7 +264,6 @@ export default function ProductionReport() {
 
     return (
         <div style={styles.root}>
-            <div style={styles.topBar} />
             <div
                 style={{
                     ...styles.contentBody,
@@ -273,14 +272,14 @@ export default function ProductionReport() {
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h2
+                        <h1
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             Production Report
-                        </h2>
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Case-number-wise production across all services — filter by service,
                             date range, employee, status, or client, then browse on screen or export
@@ -484,13 +483,30 @@ export default function ProductionReport() {
 const GRID_COLS = "100px 1fr 1fr 100px 1fr 100px";
 
 const styles: Record<string, CSSProperties> = {
-    root: { display: "flex", flexDirection: "column" },
-    topBar: {
-        height: 4,
-        background: GRADIENT,
-        borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
+    // Matches employees.tsx's root exactly — same light blue-grey page
+    // background and base font, no decorative gradient bar at the top.
+    root: {
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        height: "100%",
+        flex: 1,
+        minHeight: 0,
+        background: "#eff4fa",
+        fontFamily: fontFamily.base,
+        position: "relative",
+        overflow: "hidden",
     },
-    contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
+    contentBody: {
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        overflowY: "auto",
+        minHeight: 0,
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        gap: 16,
+    },
     headerRow: {
         display: "flex",
         alignItems: "flex-start",

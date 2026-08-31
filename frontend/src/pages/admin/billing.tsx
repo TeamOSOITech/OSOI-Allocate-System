@@ -350,7 +350,18 @@ export default function Billing() {
 }
 
 const styles: Record<string, CSSProperties> = {
-    root: { display: "flex", flexDirection: "column", width: "100%", flex: 1, minHeight: "100%" },
+    // Explicit opaque light background so the page never shows the OS/
+    // browser's dark <html> background (see index.css's
+    // `prefers-color-scheme: dark` rule) bleeding through in the gaps
+    // around the white cards — matches employees.tsx / productionreports.tsx.
+    root: {
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        flex: 1,
+        minHeight: "100%",
+        background: "#eff4fa",
+    },
     topBar: {
         height: 4,
         background: GRADIENT,
