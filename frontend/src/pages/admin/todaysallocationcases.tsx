@@ -640,83 +640,88 @@ export default function TodaysAllocationCases({
                 {error && <p style={styles.errorText}>{error}</p>}
 
                 <div style={styles.tableCard}>
-                    <div style={styles.tableHeadRow}>
-                        <span style={styles.colCase}>Case #</span>
-                        <span style={styles.colClient}>Client</span>
-                        <span style={styles.colSubclient}>Sub-Client</span>
-                        <span style={styles.colService}>Service</span>
-                        <span style={styles.colDate}>Date</span>
-                        <span style={styles.colStatus}>Status</span>
-                        <span style={styles.colAssign}>Allocate to</span>
-                    </div>
-                    {loading ? (
-                        <div style={styles.emptyNote}>Loading cases…</div>
-                    ) : cases.length === 0 ? (
-                        <div style={styles.emptyNote}>No cases found for this filter.</div>
-                    ) : (
-                        cases.map((c) => (
-                            <div key={c.id} style={styles.tableRow}>
-                                <span style={styles.colCase}>{c.caseNumber}</span>
-                                <span style={styles.colClient}>{c.clientName || "—"}</span>
-                                <span style={styles.colSubclient}>{c.subclientName || "—"}</span>
-                                <span style={styles.colService}>{c.productName || "—"}</span>
-                                <span style={styles.colDate}>{c.workDate}</span>
-                                <span style={styles.colStatus}>
-                                    <span
-                                        style={{
-                                            ...styles.statusPill,
-                                            background:
-                                                c.allocationStatus === "ALLOCATED"
-                                                    ? "rgba(var(--brand-green-rgb),0.12)"
-                                                    : "rgba(156,163,175,0.15)",
-                                            color:
-                                                c.allocationStatus === "ALLOCATED"
-                                                    ? BRAND.green
-                                                    : BRAND.grey,
-                                        }}
-                                    >
-                                        {c.allocationStatus === "ALLOCATED"
-                                            ? "Allocated"
-                                            : "Pending"}
+                    <div style={styles.tableScroll}>
+                        <div style={styles.tableHeadRow}>
+                            <span style={styles.colCase}>Case #</span>
+                            <span style={styles.colClient}>Client</span>
+                            <span style={styles.colSubclient}>Sub-Client</span>
+                            <span style={styles.colService}>Service</span>
+                            <span style={styles.colDate}>Date</span>
+                            <span style={styles.colStatus}>Status</span>
+                            <span style={styles.colAssign}>Allocate to</span>
+                        </div>
+                        {loading ? (
+                            <div style={styles.emptyNote}>Loading cases…</div>
+                        ) : cases.length === 0 ? (
+                            <div style={styles.emptyNote}>No cases found for this filter.</div>
+                        ) : (
+                            cases.map((c) => (
+                                <div key={c.id} style={styles.tableRow}>
+                                    <span style={styles.colCase}>{c.caseNumber}</span>
+                                    <span style={styles.colClient}>{c.clientName || "—"}</span>
+                                    <span style={styles.colSubclient}>
+                                        {c.subclientName || "—"}
                                     </span>
-                                </span>
-                                <span style={styles.colAssign}>
-                                    <select
-                                        style={styles.assignSelect}
-                                        value={
-                                            pendingSelection[c.id] ?? (c.assignedEmployeeId || "")
-                                        }
-                                        disabled={allocatingId === c.id || bulkSaving}
-                                        onChange={(e) =>
-                                            setPendingSelection((prev) => ({
-                                                ...prev,
-                                                [c.id]: e.target.value,
-                                            }))
-                                        }
-                                    >
-                                        <option value="">Unallocated</option>
-                                        {(eligibleEmployees.some(
-                                            (e) => e.id === c.assignedEmployeeId
-                                        )
-                                            ? eligibleEmployees
-                                            : [
-                                                  ...(c.assignedEmployeeId
-                                                      ? employees.filter(
-                                                            (e) => e.id === c.assignedEmployeeId
-                                                        )
-                                                      : []),
-                                                  ...eligibleEmployees,
-                                              ]
-                                        ).map((emp) => (
-                                            <option key={emp.id} value={emp.id}>
-                                                {emp.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </span>
-                            </div>
-                        ))
-                    )}
+                                    <span style={styles.colService}>{c.productName || "—"}</span>
+                                    <span style={styles.colDate}>{c.workDate}</span>
+                                    <span style={styles.colStatus}>
+                                        <span
+                                            style={{
+                                                ...styles.statusPill,
+                                                background:
+                                                    c.allocationStatus === "ALLOCATED"
+                                                        ? "rgba(var(--brand-green-rgb),0.12)"
+                                                        : "rgba(156,163,175,0.15)",
+                                                color:
+                                                    c.allocationStatus === "ALLOCATED"
+                                                        ? BRAND.green
+                                                        : BRAND.grey,
+                                            }}
+                                        >
+                                            {c.allocationStatus === "ALLOCATED"
+                                                ? "Allocated"
+                                                : "Pending"}
+                                        </span>
+                                    </span>
+                                    <span style={styles.colAssign}>
+                                        <select
+                                            style={styles.assignSelect}
+                                            value={
+                                                pendingSelection[c.id] ??
+                                                (c.assignedEmployeeId || "")
+                                            }
+                                            disabled={allocatingId === c.id || bulkSaving}
+                                            onChange={(e) =>
+                                                setPendingSelection((prev) => ({
+                                                    ...prev,
+                                                    [c.id]: e.target.value,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">Unallocated</option>
+                                            {(eligibleEmployees.some(
+                                                (e) => e.id === c.assignedEmployeeId
+                                            )
+                                                ? eligibleEmployees
+                                                : [
+                                                      ...(c.assignedEmployeeId
+                                                          ? employees.filter(
+                                                                (e) => e.id === c.assignedEmployeeId
+                                                            )
+                                                          : []),
+                                                      ...eligibleEmployees,
+                                                  ]
+                                            ).map((emp) => (
+                                                <option key={emp.id} value={emp.id}>
+                                                    {emp.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </span>
+                                </div>
+                            ))
+                        )}
+                    </div>
                     {!loading && cases.length > 0 && (
                         <div style={styles.bulkAllocateRow}>
                             <button
@@ -998,6 +1003,15 @@ const styles: Record<string, CSSProperties> = {
         marginLeft: -8,
         marginRight: -8,
     },
+    // FIX: the table's columns have fixed pixel widths totalling well
+    // over 1000px (Case #, Client, Sub-Client, Service, Date, Status,
+    // Allocate-to) — on a narrow/mobile screen, tableCard's
+    // overflow:hidden above was silently CLIPPING every column past
+    // what fit on screen instead of letting the person scroll to see
+    // them. This inner wrapper scrolls horizontally on its own — the
+    // outer card still clips at its own (rounded) edges, but this
+    // scrollable region inside it stays fully reachable.
+    tableScroll: { overflowX: "auto" },
     tableHeadRow: {
         display: "flex",
         alignItems: "center",

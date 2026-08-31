@@ -106,6 +106,24 @@ export default function Dashboard({ user }: DashboardProps) {
     };
     const styles = getStyles(BRAND);
 
+    // NEW: two dashboard "views" sharing this one page — Manager (the
+    // existing daily-work snapshot below) and Quality Manager (QC/Audit
+    // stats). Which toggle button(s) show depends on role:
+    //   - OPS_MANAGER / PROCESS_LEAD -> Manager only
+    //   - AUDIT_MANAGER              -> Quality Manager only
+    //   - SUPER_ADMIN                -> both, can switch freely
+    // A role that only has one view available never sees the other
+    // button at all (not just disabled) — there's nothing to switch to.
+    const role = user?.role;
+    const isSuperAdmin = role === "SUPER_ADMIN";
+    const isAuditManager = role === "AUDIT_MANAGER";
+    const isManagerRole = role === "OPS_MANAGER" || role === "PROCESS_LEAD";
+    const showManagerBtn = isSuperAdmin || isManagerRole;
+    const showQualityBtn = isSuperAdmin || isAuditManager;
+    const [viewMode, setViewMode] = useState<"manager" | "quality">(
+        isAuditManager && !isSuperAdmin ? "quality" : "manager"
+    );
+
     const [employeeCount, setEmployeeCount] = useState<number | null>(null);
     const [batches, setBatches] = useState<DailyWorkBatch[]>([]);
     const [loading, setLoading] = useState(true);
@@ -146,6 +164,46 @@ export default function Dashboard({ user }: DashboardProps) {
         fetchEmployeeCount();
         fetchTodayBatches();
     }, []);
+
+    // ---- Quality Manager view state/fetch ----
+    interface QcSummary {
+        submittedTotal: number;
+        qcNotSent: number;
+        qcPending: number;
+        qcPass: number;
+        qcFail: number;
+        qcAvgMarks: number | null;
+        auditPending: number;
+        auditPass: number;
+        auditFail: number;
+        auditAvgMarks: number | null;
+    }
+    const [qcSummary, setQcSummary] = useState<QcSummary | null>(null);
+    const [qcLoading, setQcLoading] = useState(false);
+    const [qcError, setQcError] = useState("");
+
+    useEffect(() => {
+        if (viewMode !== "quality") return;
+        let cancelled = false;
+        (async () => {
+            setQcLoading(true);
+            setQcError("");
+            try {
+                const res = await authFetch(`${API_BASE}/api/qc-audit/summary`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json?.message || `HTTP ${res.status}`);
+                if (!cancelled) setQcSummary(json.data);
+            } catch (err: any) {
+                if (!cancelled) setQcError(err?.message || "Failed to load quality summary.");
+            } finally {
+                if (!cancelled) setQcLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [viewMode]);
 
     const totalQtyToday = useMemo(
         () => batches.reduce((sum, b) => sum + (b.totalQty || 0), 0),
@@ -210,209 +268,474 @@ export default function Dashboard({ user }: DashboardProps) {
             <div style={styles.topBar} />
 
             <div style={isMobile ? styles.contentBodyMobile : styles.contentBody}>
-                {/* Page header: icon badge + title + subtitle, same layout as
-                    dailywork.tsx / employees.tsx page headers. */}
-                <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                    <div>
-                        <h1 style={styles.pageTitle}>Dashboard</h1>
-                        <p style={styles.headerSubtext}>
-                            Welcome, <strong>{user?.name || user?.role}</strong> — here's today's
-                            snapshot.
-                        </p>
-                    </div>
-                    <div style={styles.dateBadge}>
-                        <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
-                        {formatDisplayDate(todayStr())}
-                    </div>
-                </div>
-
-                {error && !errorDismissed && (
-                    <div style={styles.errorBanner}>
-                        <i className="ti ti-alert-triangle" style={{ fontSize: fontSize.lg }} />
-                        <span style={{ flex: 1 }}>{error}</span>
+                {/* NEW: Manager / Quality Manager toggle — only shown when the
+                    person actually has more than one view available (Super
+                    Admin). A single-view role just never sees a button for
+                    the view they don't have. */}
+                {showManagerBtn && showQualityBtn && (
+                    <div style={styles.viewToggleRow}>
                         <button
-                            style={styles.errorDismissBtn}
-                            onClick={() => setErrorDismissed(true)}
-                            aria-label="Dismiss"
                             type="button"
+                            style={{
+                                ...styles.viewToggleBtn,
+                                ...(viewMode === "manager" ? styles.viewToggleBtnActive : {}),
+                            }}
+                            onClick={() => setViewMode("manager")}
                         >
-                            <i className="ti ti-x" style={{ fontSize: fontSize.base }} />
+                            Manager
+                        </button>
+                        <button
+                            type="button"
+                            style={{
+                                ...styles.viewToggleBtn,
+                                ...(viewMode === "quality" ? styles.viewToggleBtnActive : {}),
+                            }}
+                            onClick={() => setViewMode("quality")}
+                        >
+                            Quality Manager
                         </button>
                     </div>
                 )}
 
-                {/* KPI cards */}
-                <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
-                    {kpis.map((kpi) => (
-                        <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
-                            <div style={styles.kpiTop}>
-                                <div style={{ ...styles.kpiIconWrap, background: kpi.gradient }}>
-                                    <i
-                                        className={kpi.icon}
-                                        style={{ fontSize: fontSize["2xl"], color: "#fff" }}
-                                    />
-                                </div>
-                                <i
-                                    className="ti ti-info-circle"
-                                    style={{ fontSize: fontSize.md, color: "#c7cbe0" }}
-                                    aria-hidden="true"
-                                />
+                {viewMode === "quality" ? (
+                    <QualityManagerView
+                        isMobile={isMobile}
+                        styles={styles}
+                        BRAND={BRAND}
+                        summary={qcSummary}
+                        loading={qcLoading}
+                        error={qcError}
+                        userName={user?.name || user?.role}
+                    />
+                ) : (
+                    <>
+                        {/* Page header: icon badge + title + subtitle, same layout as
+                    dailywork.tsx / employees.tsx page headers. */}
+                        <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
+                            <div>
+                                <h1 style={styles.pageTitle}>Dashboard</h1>
+                                <p style={styles.headerSubtext}>
+                                    Welcome, <strong>{user?.name || user?.role}</strong> — here's
+                                    today's snapshot.
+                                </p>
                             </div>
-                            <div style={styles.kpiValue}>
-                                {loading && kpi.label !== "Total Employees" ? "…" : kpi.value}
+                            <div style={styles.dateBadge}>
+                                <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
+                                {formatDisplayDate(todayStr())}
                             </div>
-                            <div style={styles.kpiLabel}>{kpi.label}</div>
                         </div>
-                    ))}
-                </div>
 
-                {/* Chart */}
-                <div style={styles.panel}>
-                    <div style={styles.panelTitleRow}>
-                        <div style={styles.panelTitle}>
-                            Today's Work — Total vs Allocated vs Pending
-                        </div>
-                        <div style={styles.panelTitleUnderline} />
-                    </div>
-                    {chartData.length === 0 && !loading ? (
-                        <div style={styles.emptyState}>
-                            <div style={styles.emptyIconCircle}>
+                        {error && !errorDismissed && (
+                            <div style={styles.errorBanner}>
                                 <i
-                                    className="ti ti-chart-bar"
-                                    style={{ fontSize: fontSize["5xl"], color: BRAND.lightBlue }}
+                                    className="ti ti-alert-triangle"
+                                    style={{ fontSize: fontSize.lg }}
                                 />
+                                <span style={{ flex: 1 }}>{error}</span>
+                                <button
+                                    style={styles.errorDismissBtn}
+                                    onClick={() => setErrorDismissed(true)}
+                                    aria-label="Dismiss"
+                                    type="button"
+                                >
+                                    <i className="ti ti-x" style={{ fontSize: fontSize.base }} />
+                                </button>
                             </div>
-                            <div style={styles.emptyText}>No daily work logged for today yet.</div>
-                        </div>
-                    ) : (
-                        <ResponsiveContainer width="100%" height={280}>
-                            <BarChart
-                                data={chartData}
-                                margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-                                <XAxis
-                                    dataKey="name"
-                                    tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
-                                />
-                                <YAxis
-                                    tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
-                                    allowDecimals={false}
-                                />
-                                <Tooltip />
-                                <Legend />
-                                <Bar dataKey="Total" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
-                                <Bar dataKey="Allocated" fill={BRAND.green} radius={[4, 4, 0, 0]} />
-                                <Bar dataKey="Pending" fill={BRAND.amber} radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    )}
-                </div>
+                        )}
 
-                {/* Pending table */}
-                <div style={styles.panel}>
-                    <div style={styles.panelTitleRow}>
-                        <div style={styles.panelTitle}>Pending Allocations (Today)</div>
-                        <div style={styles.panelTitleUnderline} />
-                    </div>
-
-                    {loading ? (
-                        <div style={styles.emptyState}>
-                            <div style={styles.emptyText}>Loading…</div>
-                        </div>
-                    ) : pendingBatches.length === 0 ? (
-                        <div style={styles.emptyState}>
-                            <div
-                                style={{
-                                    ...styles.emptyIconCircle,
-                                    background: withAlpha(BRAND.green, 0.1),
-                                }}
-                            >
-                                <i
-                                    className="ti ti-mood-smile"
-                                    style={{ fontSize: fontSize["6xl"], color: BRAND.green }}
-                                />
-                            </div>
-                            <div style={styles.emptyText}>
-                                Nothing pending — all of today's work is fully allocated.
-                            </div>
-                        </div>
-                    ) : isMobile ? (
-                        <div style={styles.cardList}>
-                            {pendingBatches.map((b) => (
-                                <div key={b.id} style={styles.pendingCard}>
-                                    <div style={styles.pendingCardTop}>
-                                        <span style={styles.pendingCardProduct}>
-                                            {b.productName || "Unnamed"}
-                                        </span>
-                                        <span
+                        {/* KPI cards */}
+                        <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
+                            {kpis.map((kpi) => (
+                                <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
+                                    <div style={styles.kpiTop}>
+                                        <div
                                             style={{
-                                                ...styles.statusBadge,
-                                                ...statusBadgeStyle(b.status, BRAND),
+                                                ...styles.kpiIconWrap,
+                                                background: kpi.gradient,
                                             }}
                                         >
-                                            {b.status}
-                                        </span>
+                                            <i
+                                                className={kpi.icon}
+                                                style={{ fontSize: fontSize["2xl"], color: "#fff" }}
+                                            />
+                                        </div>
+                                        <i
+                                            className="ti ti-info-circle"
+                                            style={{ fontSize: fontSize.md, color: "#c7cbe0" }}
+                                            aria-hidden="true"
+                                        />
                                     </div>
-                                    <div style={styles.pendingCardRow}>
-                                        <span>Total: {b.totalQty}</span>
-                                        <span>Allocated: {b.allocatedQty}</span>
-                                        <span
-                                            style={{
-                                                color: BRAND.amber,
-                                                fontWeight: fontWeight.semibold,
-                                            }}
-                                        >
-                                            Pending: {b.pendingQty}
-                                        </span>
+                                    <div style={styles.kpiValue}>
+                                        {loading && kpi.label !== "Total Employees"
+                                            ? "…"
+                                            : kpi.value}
                                     </div>
+                                    <div style={styles.kpiLabel}>{kpi.label}</div>
                                 </div>
                             ))}
                         </div>
-                    ) : (
-                        <table style={styles.table}>
-                            <thead>
-                                <tr>
-                                    <th style={styles.th}>Product</th>
-                                    <th style={styles.th}>Total Qty</th>
-                                    <th style={styles.th}>Allocated</th>
-                                    <th style={styles.th}>Pending</th>
-                                    <th style={styles.th}>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {pendingBatches.map((b) => (
-                                    <tr key={b.id}>
-                                        <td style={styles.td}>{b.productName || "Unnamed"}</td>
-                                        <td style={styles.td}>{b.totalQty}</td>
-                                        <td style={styles.td}>{b.allocatedQty}</td>
-                                        <td
+
+                        {/* Chart */}
+                        <div style={styles.panel}>
+                            <div style={styles.panelTitleRow}>
+                                <div style={styles.panelTitle}>
+                                    Today's Work — Total vs Allocated vs Pending
+                                </div>
+                                <div style={styles.panelTitleUnderline} />
+                            </div>
+                            {chartData.length === 0 && !loading ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyIconCircle}>
+                                        <i
+                                            className="ti ti-chart-bar"
                                             style={{
-                                                ...styles.td,
-                                                fontWeight: fontWeight.semibold,
-                                                color: BRAND.amber,
+                                                fontSize: fontSize["5xl"],
+                                                color: BRAND.lightBlue,
                                             }}
-                                        >
-                                            {b.pendingQty}
-                                        </td>
-                                        <td style={styles.td}>
-                                            <span
-                                                style={{
-                                                    ...styles.statusBadge,
-                                                    ...statusBadgeStyle(b.status, BRAND),
-                                                }}
-                                            >
-                                                {b.status}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
+                                        />
+                                    </div>
+                                    <div style={styles.emptyText}>
+                                        No daily work logged for today yet.
+                                    </div>
+                                </div>
+                            ) : (
+                                <ResponsiveContainer width="100%" height={280}>
+                                    <BarChart
+                                        data={chartData}
+                                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
+                                        <XAxis
+                                            dataKey="name"
+                                            tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
+                                        />
+                                        <YAxis
+                                            tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
+                                            allowDecimals={false}
+                                        />
+                                        <Tooltip />
+                                        <Legend />
+                                        <Bar
+                                            dataKey="Total"
+                                            fill={BRAND.blue}
+                                            radius={[4, 4, 0, 0]}
+                                        />
+                                        <Bar
+                                            dataKey="Allocated"
+                                            fill={BRAND.green}
+                                            radius={[4, 4, 0, 0]}
+                                        />
+                                        <Bar
+                                            dataKey="Pending"
+                                            fill={BRAND.amber}
+                                            radius={[4, 4, 0, 0]}
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            )}
+                        </div>
+
+                        {/* Pending table */}
+                        <div style={styles.panel}>
+                            <div style={styles.panelTitleRow}>
+                                <div style={styles.panelTitle}>Pending Allocations (Today)</div>
+                                <div style={styles.panelTitleUnderline} />
+                            </div>
+
+                            {loading ? (
+                                <div style={styles.emptyState}>
+                                    <div style={styles.emptyText}>Loading…</div>
+                                </div>
+                            ) : pendingBatches.length === 0 ? (
+                                <div style={styles.emptyState}>
+                                    <div
+                                        style={{
+                                            ...styles.emptyIconCircle,
+                                            background: withAlpha(BRAND.green, 0.1),
+                                        }}
+                                    >
+                                        <i
+                                            className="ti ti-mood-smile"
+                                            style={{
+                                                fontSize: fontSize["6xl"],
+                                                color: BRAND.green,
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={styles.emptyText}>
+                                        Nothing pending — all of today's work is fully allocated.
+                                    </div>
+                                </div>
+                            ) : isMobile ? (
+                                <div style={styles.cardList}>
+                                    {pendingBatches.map((b) => (
+                                        <div key={b.id} style={styles.pendingCard}>
+                                            <div style={styles.pendingCardTop}>
+                                                <span style={styles.pendingCardProduct}>
+                                                    {b.productName || "Unnamed"}
+                                                </span>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusBadge,
+                                                        ...statusBadgeStyle(b.status, BRAND),
+                                                    }}
+                                                >
+                                                    {b.status}
+                                                </span>
+                                            </div>
+                                            <div style={styles.pendingCardRow}>
+                                                <span>Total: {b.totalQty}</span>
+                                                <span>Allocated: {b.allocatedQty}</span>
+                                                <span
+                                                    style={{
+                                                        color: BRAND.amber,
+                                                        fontWeight: fontWeight.semibold,
+                                                    }}
+                                                >
+                                                    Pending: {b.pendingQty}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <table style={styles.table}>
+                                    <thead>
+                                        <tr>
+                                            <th style={styles.th}>Product</th>
+                                            <th style={styles.th}>Total Qty</th>
+                                            <th style={styles.th}>Allocated</th>
+                                            <th style={styles.th}>Pending</th>
+                                            <th style={styles.th}>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {pendingBatches.map((b) => (
+                                            <tr key={b.id}>
+                                                <td style={styles.td}>
+                                                    {b.productName || "Unnamed"}
+                                                </td>
+                                                <td style={styles.td}>{b.totalQty}</td>
+                                                <td style={styles.td}>{b.allocatedQty}</td>
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontWeight: fontWeight.semibold,
+                                                        color: BRAND.amber,
+                                                    }}
+                                                >
+                                                    {b.pendingQty}
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusBadge,
+                                                            ...statusBadgeStyle(b.status, BRAND),
+                                                        }}
+                                                    >
+                                                        {b.status}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                    </>
+                )}
             </div>
         </div>
+    );
+}
+
+// ------------------------------------------------------------
+// Quality Manager Dashboard — QC/Audit stage counts + average marks,
+// pulled from GET /api/qc-audit/summary. Kept in this same file (not
+// its own page) since it's just an alternate view toggled on the
+// existing Dashboard route, not a separate route/page of its own.
+// ------------------------------------------------------------
+function QualityManagerView({
+    isMobile,
+    styles,
+    BRAND,
+    summary,
+    loading,
+    error,
+    userName,
+}: {
+    isMobile: boolean;
+    styles: Record<string, CSSProperties>;
+    BRAND: { blue: string; lightBlue: string; green: string; amber: string };
+    summary: {
+        submittedTotal: number;
+        qcNotSent: number;
+        qcPending: number;
+        qcPass: number;
+        qcFail: number;
+        qcAvgMarks: number | null;
+        auditPending: number;
+        auditPass: number;
+        auditFail: number;
+        auditAvgMarks: number | null;
+    } | null;
+    loading: boolean;
+    error: string;
+    userName?: string;
+}) {
+    const qcCards = [
+        {
+            label: "Awaiting QC",
+            value: summary?.qcNotSent ?? "—",
+            icon: "ti ti-inbox",
+            gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
+            tip: "Submitted cases not yet sent to a QC reviewer",
+        },
+        {
+            label: "QC In Progress",
+            value: summary?.qcPending ?? "—",
+            icon: "ti ti-clock",
+            gradient: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            tip: "Assigned to a QC reviewer, decision pending",
+        },
+        {
+            label: "QC Passed",
+            value: summary?.qcPass ?? "—",
+            icon: "ti ti-circle-check",
+            gradient: `linear-gradient(135deg, ${BRAND.green}, ${BRAND.lightBlue})`,
+            tip: "Cases that passed QC review",
+        },
+        {
+            label: "QC Failed",
+            value: summary?.qcFail ?? "—",
+            icon: "ti ti-circle-x",
+            gradient: "linear-gradient(135deg, #DC2626, #EA580C)",
+            tip: "Cases that failed QC review",
+        },
+    ];
+    const auditCards = [
+        {
+            label: "Awaiting Audit Pick",
+            value:
+                summary && summary.qcPass != null && summary.auditPending != null
+                    ? Math.max(summary.qcPass - summary.auditPending - 0, 0)
+                    : "—",
+            icon: "ti ti-list-search",
+            gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
+            tip: "QC-passed cases not yet picked for audit (approx.)",
+        },
+        {
+            label: "Audit In Progress",
+            value: summary?.auditPending ?? "—",
+            icon: "ti ti-clock",
+            gradient: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            tip: "Assigned to an auditor, decision pending",
+        },
+        {
+            label: "Audit Passed",
+            value: summary?.auditPass ?? "—",
+            icon: "ti ti-shield-check",
+            gradient: `linear-gradient(135deg, ${BRAND.green}, ${BRAND.lightBlue})`,
+            tip: "Cases that passed audit",
+        },
+        {
+            label: "Audit Failed",
+            value: summary?.auditFail ?? "—",
+            icon: "ti ti-shield-x",
+            gradient: "linear-gradient(135deg, #DC2626, #EA580C)",
+            tip: "Cases that failed audit",
+        },
+    ];
+
+    return (
+        <>
+            <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
+                <div>
+                    <h1 style={styles.pageTitle}>Quality Dashboard</h1>
+                    <p style={styles.headerSubtext}>
+                        Welcome, <strong>{userName}</strong> — QC and Audit stage snapshot,
+                        org-wide.
+                    </p>
+                </div>
+                <div style={styles.dateBadge}>
+                    <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
+                    {formatDisplayDate(todayStr())}
+                </div>
+            </div>
+
+            {error && (
+                <div style={styles.errorBanner}>
+                    <i className="ti ti-alert-triangle" style={{ fontSize: fontSize.lg }} />
+                    <span style={{ flex: 1 }}>{error}</span>
+                </div>
+            )}
+
+            {loading ? (
+                <div style={styles.emptyState}>
+                    <div style={styles.emptyText}>Loading…</div>
+                </div>
+            ) : (
+                <>
+                    <div style={styles.panelTitleRow}>
+                        <div style={styles.panelTitle}>QC Stage</div>
+                        <div style={styles.panelTitleUnderline} />
+                    </div>
+                    <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
+                        {qcCards.map((kpi) => (
+                            <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
+                                <div style={styles.kpiTop}>
+                                    <div
+                                        style={{ ...styles.kpiIconWrap, background: kpi.gradient }}
+                                    >
+                                        <i
+                                            className={kpi.icon}
+                                            style={{ fontSize: fontSize.xl, color: "#fff" }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={styles.kpiValue}>{kpi.value}</div>
+                                <div style={styles.kpiLabel}>{kpi.label}</div>
+                            </div>
+                        ))}
+                    </div>
+                    {summary?.qcAvgMarks != null && (
+                        <div style={styles.headerSubtext}>
+                            Average QC marks (decided cases): <strong>{summary.qcAvgMarks}</strong>
+                            /100
+                        </div>
+                    )}
+
+                    <div style={{ ...styles.panelTitleRow, marginTop: 8 }}>
+                        <div style={styles.panelTitle}>Audit Stage</div>
+                        <div style={styles.panelTitleUnderline} />
+                    </div>
+                    <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
+                        {auditCards.map((kpi) => (
+                            <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
+                                <div style={styles.kpiTop}>
+                                    <div
+                                        style={{ ...styles.kpiIconWrap, background: kpi.gradient }}
+                                    >
+                                        <i
+                                            className={kpi.icon}
+                                            style={{ fontSize: fontSize.xl, color: "#fff" }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={styles.kpiValue}>{kpi.value}</div>
+                                <div style={styles.kpiLabel}>{kpi.label}</div>
+                            </div>
+                        ))}
+                    </div>
+                    {summary?.auditAvgMarks != null && (
+                        <div style={styles.headerSubtext}>
+                            Average Audit marks (decided cases):{" "}
+                            <strong>{summary.auditAvgMarks}</strong>/100
+                        </div>
+                    )}
+                </>
+            )}
+        </>
     );
 }
 
@@ -633,6 +956,24 @@ function getStyles(BRAND: {
             justifyContent: "space-between",
             fontSize: fontSize.sm,
             color: "#7d90a6",
+        },
+        // NEW: Manager / Quality Manager toggle at the top of the page.
+        viewToggleRow: { display: "flex", gap: 8 },
+        viewToggleBtn: {
+            padding: "8px 18px",
+            borderRadius: radius.md,
+            border: "1px solid #e4e9f2",
+            background: "#fff",
+            color: "#3b4a63",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
+        viewToggleBtnActive: {
+            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            color: "#fff",
+            border: "1px solid transparent",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
         },
     };
 }

@@ -293,93 +293,98 @@ export default function TodaysAllocationHistory() {
                 </div>
 
                 <div style={styles.tableCard}>
-                    <div style={styles.tableHeadRow}>
-                        <span style={styles.colDate}>Date</span>
-                        <span style={styles.colService}>Service</span>
-                        <span style={styles.colNum}>Total</span>
-                        <span style={styles.colNum}>Allocated</span>
-                        <span style={styles.colNum}>Pending</span>
-                        <span style={styles.colAction}>Actions</span>
-                    </div>
-                    {loading ? (
-                        <div style={styles.emptyNote}>Loading history…</div>
-                    ) : filteredGroups.length === 0 ? (
-                        <div style={styles.emptyNote}>
-                            No allocations logged yet — entries show up here as soon as cases are
-                            logged for a service/date.
+                    <div style={styles.tableScroll}>
+                        <div style={styles.tableHeadRow}>
+                            <span style={styles.colDate}>Date</span>
+                            <span style={styles.colService}>Service</span>
+                            <span style={styles.colNum}>Total</span>
+                            <span style={styles.colNum}>Allocated</span>
+                            <span style={styles.colNum}>Pending</span>
+                            <span style={styles.colAction}>Actions</span>
                         </div>
-                    ) : (
-                        filteredGroups.map((g) => {
-                            const isClearing = clearingKey === g.key;
-                            return (
-                                <div key={g.key} style={styles.tableRow}>
-                                    <span style={styles.colDate}>
-                                        {formatDisplayDate(g.workDate)}
-                                    </span>
-                                    <span style={styles.colService}>{g.productName || "—"}</span>
-                                    <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                        <span
-                                            style={{
-                                                ...styles.pill,
-                                                background: "#eef2ff",
-                                                color: BRAND.blue,
-                                            }}
-                                        >
-                                            {g.total}
+                        {loading ? (
+                            <div style={styles.emptyNote}>Loading history…</div>
+                        ) : filteredGroups.length === 0 ? (
+                            <div style={styles.emptyNote}>
+                                No allocations logged yet — entries show up here as soon as cases
+                                are logged for a service/date.
+                            </div>
+                        ) : (
+                            filteredGroups.map((g) => {
+                                const isClearing = clearingKey === g.key;
+                                return (
+                                    <div key={g.key} style={styles.tableRow}>
+                                        <span style={styles.colDate}>
+                                            {formatDisplayDate(g.workDate)}
                                         </span>
-                                    </span>
-                                    <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                        <span
-                                            style={{
-                                                ...styles.pill,
-                                                background: "#eaf7ec",
-                                                color: "#1f7a34",
-                                            }}
-                                        >
-                                            {g.allocated}
+                                        <span style={styles.colService}>
+                                            {g.productName || "—"}
                                         </span>
-                                    </span>
-                                    <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                        <span
-                                            style={{
-                                                ...styles.pill,
-                                                background: "#fef3e2",
-                                                color: "#b45309",
-                                            }}
-                                        >
-                                            {g.pending}
+                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                            <span
+                                                style={{
+                                                    ...styles.pill,
+                                                    background: "#eef2ff",
+                                                    color: BRAND.blue,
+                                                }}
+                                            >
+                                                {g.total}
+                                            </span>
                                         </span>
-                                    </span>
-                                    <span style={styles.colAction}>
-                                        <button
-                                            type="button"
-                                            disabled={isClearing || g.allocated === 0}
-                                            onClick={() => setConfirmTarget(g)}
-                                            style={{
-                                                ...styles.clearBtn,
-                                                opacity: isClearing || g.allocated === 0 ? 0.5 : 1,
-                                                cursor:
-                                                    isClearing || g.allocated === 0
-                                                        ? "not-allowed"
-                                                        : "pointer",
-                                            }}
-                                            title={
-                                                g.allocated === 0
-                                                    ? "Nothing allocated for this service/date"
-                                                    : "Unassign every allocated case for this service/date back to Pending"
-                                            }
-                                        >
-                                            <i
-                                                className="ti ti-trash"
-                                                style={{ fontSize: fontSize.sm }}
-                                            />
-                                            {isClearing ? "Clearing…" : "Clear"}
-                                        </button>
-                                    </span>
-                                </div>
-                            );
-                        })
-                    )}
+                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                            <span
+                                                style={{
+                                                    ...styles.pill,
+                                                    background: "#eaf7ec",
+                                                    color: "#1f7a34",
+                                                }}
+                                            >
+                                                {g.allocated}
+                                            </span>
+                                        </span>
+                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                            <span
+                                                style={{
+                                                    ...styles.pill,
+                                                    background: "#fef3e2",
+                                                    color: "#b45309",
+                                                }}
+                                            >
+                                                {g.pending}
+                                            </span>
+                                        </span>
+                                        <span style={styles.colAction}>
+                                            <button
+                                                type="button"
+                                                disabled={isClearing || g.allocated === 0}
+                                                onClick={() => setConfirmTarget(g)}
+                                                style={{
+                                                    ...styles.clearBtn,
+                                                    opacity:
+                                                        isClearing || g.allocated === 0 ? 0.5 : 1,
+                                                    cursor:
+                                                        isClearing || g.allocated === 0
+                                                            ? "not-allowed"
+                                                            : "pointer",
+                                                }}
+                                                title={
+                                                    g.allocated === 0
+                                                        ? "Nothing allocated for this service/date"
+                                                        : "Unassign every allocated case for this service/date back to Pending"
+                                                }
+                                            >
+                                                <i
+                                                    className="ti ti-trash"
+                                                    style={{ fontSize: fontSize.sm }}
+                                                />
+                                                {isClearing ? "Clearing…" : "Clear"}
+                                            </button>
+                                        </span>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -500,6 +505,12 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
     },
+    // FIX: same overflow:hidden-clips-content-on-mobile issue as the
+    // Cases tab (todaysallocationcases.tsx) — fixed-width columns
+    // (Date/Service/Total/Allocated/Pending/Actions) add up past what a
+    // phone screen fits, and overflow:hidden was silently cutting off
+    // whatever didn't fit instead of letting it scroll into view.
+    tableScroll: { overflowX: "auto" },
     // Matches the Cases tab's flex-based row layout (todaysallocationcases
     // tsx's tableHeadRow/tableRow) instead of the CSS-grid layout this
     // used before, so the two tabs read as one consistent table style.

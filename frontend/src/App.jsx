@@ -32,6 +32,10 @@ const SelfAllocation = lazy(() => import("./pages/selfallocation"));
 // Attendance is no longer a standalone page — leave-marking lives inside
 // manualallocation.tsx instead.
 const QC = lazy(() => import("./pages/admin/qc"));
+// NEW: QC + Audit workflow (Employee submit -> QC review -> Audit
+// review) — separate page from QC above, which is the older standalone
+// Quality Scores log.
+const QcAudit = lazy(() => import("./pages/admin/Qcaudit"));
 const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 const History = lazy(() => import("./pages/admin/history"));
@@ -391,6 +395,22 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
                                     <AppLayout onLogout={handleLogout}>
                                         <QC />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: QC + Audit workflow. Open to everyone (no
+                    requiredRole) — a plain Team Member can still be a
+                    QC-team member with cases specifically assigned to
+                    them to review; the page itself hides the
+                    assign/audit-manager-only controls based on role. */}
+                        <Route
+                            path="/qc-audit"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <QcAudit />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

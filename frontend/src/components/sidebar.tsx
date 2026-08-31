@@ -117,6 +117,17 @@ const menuItems: MenuItem[] = [
         roles: SUPER_ADMIN_ONLY,
     },
     {
+        // NEW: QC + Audit workflow. Open to everyone — the /qc-audit
+        // route itself has no requiredRole because a plain Team Member
+        // can be a QC-team member with cases assigned specifically to
+        // them (see App.jsx and qcaudit.tsx for the per-role UI gating
+        // within the page itself).
+        label: "QC & Audit",
+        icon: "ti ti-checkup-list",
+        path: "/qc-audit",
+        roles: EVERYONE,
+    },
+    {
         // FIX: /profile route in App.jsx has no requiredRole (every logged-in
         // user, including TEAM_MEMBER via NORMAL_USER_ALLOWED_PATHS, can
         // already reach it directly) — but this sidebar entry was gated to
@@ -142,6 +153,7 @@ const pathToLabel: Record<string, string> = {
     "/history": "History",
     "/billing": "Billing",
     "/quality-scores": "Quality Scores",
+    "/qc-audit": "QC & Audit",
     "/profile": "Profile",
 };
 
