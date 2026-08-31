@@ -122,7 +122,7 @@ const menuItems: MenuItem[] = [
         // can be a QC-team member with cases assigned specifically to
         // them (see App.jsx and qcaudit.tsx for the per-role UI gating
         // within the page itself).
-        label: "QC & Audit",
+        label: "Audit",
         icon: "ti ti-checkup-list",
         path: "/qc-audit",
         roles: EVERYONE,
@@ -153,7 +153,7 @@ const pathToLabel: Record<string, string> = {
     "/history": "History",
     "/billing": "Billing",
     "/quality-scores": "Quality Scores",
-    "/qc-audit": "QC & Audit",
+    "/qc-audit": "Audit",
     "/profile": "Profile",
 };
 

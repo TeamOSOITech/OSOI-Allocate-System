@@ -167,7 +167,13 @@ export default function QcAudit() {
     // Audit Queue tab is Audit Manager territory end to end.
     const canManageAudit = ["SUPER_ADMIN", "AUDIT_MANAGER"].includes(currentUser?.role || "");
 
-    const [activeTab, setActiveTab] = useState<"qc" | "audit">("qc");
+    // NOTE: this page used to have two tabs (QC Queue + Audit Queue).
+    // QC now happens on the separate Quality Check page instead, so
+    // this page only shows Audit Queue. Defaulting straight to "audit"
+    // and no longer rendering the QC Queue toggle button — the "qc"
+    // tab code below is left in place (not deleted) in case it's
+    // needed again, it's just unreachable from the UI now.
+    const [activeTab, setActiveTab] = useState<"qc" | "audit">("audit");
 
     // ---- QC Queue state ----
     const [qcCases, setQcCases] = useState<CaseRow[]>([]);
@@ -352,10 +358,10 @@ export default function QcAudit() {
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div>
-                            <h1 style={styles.pageTitle}>QC & Audit</h1>
+                            <h1 style={styles.pageTitle}>Audit</h1>
                             <p style={styles.headerSubtext}>
-                                Cases move here after an employee submits — QC review first, then an
-                                Audit Manager hand-picks some QC-passed cases for a second check.
+                                Cases that passed QC (on the Quality Check page) land here — an
+                                Audit Manager hand-picks some of them for a second review.
                             </p>
                         </div>
                     </div>
@@ -365,36 +371,29 @@ export default function QcAudit() {
                             <span style={styles.breadcrumbSep}>/</span>
                             <span style={styles.breadcrumbItem}>Dashboard</span>
                             <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbActive}>QC & Audit</span>
+                            <span style={styles.breadcrumbActive}>Audit</span>
                         </div>
                     )}
                 </div>
 
-                {/* ---- tab switcher (same look as Manual Entry / Upload toggle) ---- */}
-                <div style={styles.modeToggleRow}>
-                    <button
-                        type="button"
-                        style={{
-                            ...styles.modeToggleBtn,
-                            ...(activeTab === "qc" ? styles.modeToggleBtnActive : {}),
-                        }}
-                        onClick={() => setActiveTab("qc")}
-                    >
-                        QC Queue
-                    </button>
-                    {canManageAudit && (
+                {/* NOTE: "QC Queue" tab button removed from the UI — QC
+                now happens on the Quality Check page. Only Audit Queue
+                is shown here, so the toggle row is skipped entirely
+                when there's nothing to toggle between. */}
+                {canManageAudit && (
+                    <div style={styles.modeToggleRow}>
                         <button
                             type="button"
                             style={{
                                 ...styles.modeToggleBtn,
-                                ...(activeTab === "audit" ? styles.modeToggleBtnActive : {}),
+                                ...styles.modeToggleBtnActive,
                             }}
-                            onClick={() => setActiveTab("audit")}
+                            disabled
                         >
                             Audit Queue
                         </button>
-                    )}
-                </div>
+                    </div>
+                )}
 
                 {activeTab === "qc" && (
                     <div style={styles.tableCard}>
