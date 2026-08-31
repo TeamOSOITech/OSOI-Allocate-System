@@ -495,7 +495,7 @@ export default function QualityCheck() {
             <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div>
-                    <h1 style={styles.pageTitle}>{mode === "qc" ? "Quality Check" : "Audit"}</h1>
+                    <h2 style={styles.pageTitle}>{mode === "qc" ? "Quality Check" : "Audit"}</h2>
                     <p style={styles.headerSubtext}>
                         {mode === "qc"
                             ? "Select an employee and a service, then pick one or more case numbers still pending QC. Review each, enter marks, and mark it Passed or Failed."

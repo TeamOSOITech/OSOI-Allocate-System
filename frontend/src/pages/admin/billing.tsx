@@ -144,14 +144,14 @@ export default function Billing() {
                 }}
             >
                 <div>
-                    <h1
+                    <h2
                         style={{
                             ...styles.pageTitle,
                             fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                         }}
                     >
                         Billing
-                    </h1>
+                    </h2>
                     <p style={styles.headerSubtext}>
                         Every client, the services they're linked to, and the rate charged for each
                         — pulled straight from each client's Services setup.
