@@ -19,6 +19,7 @@ const {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,
@@ -48,6 +49,16 @@ router.get("/", listServiceCases);
 // NEW: sample .xlsx for Upload mode — literal path registered before
 // "/:id/*" routes so it can never be shadowed.
 router.get("/upload/template", downloadUploadTemplate);
+// NEW: Cleared Allocations log — the past record of every case that
+// was allocated and then Cleared, so the History tab has a place to
+// show "who had this before it was cleared" instead of that
+// information just disappearing. Same permission as the rest of this
+// module's allocate actions.
+router.get(
+  "/clear-log",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  listAllocationClearLog,
+);
 router.post(
   "/",
   requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),

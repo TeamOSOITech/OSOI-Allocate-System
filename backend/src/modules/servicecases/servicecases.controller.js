@@ -63,16 +63,22 @@ function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Looks at every case_number already used anywhere in this org that
-// starts with `prefix` immediately followed by digits (e.g. prefix
-// "12F" matches "12F001", "12F002", ... but not "12FOO1"), and returns
-// one past the highest number found — or 1 if the prefix has never
-// been used before, so a brand-new prefix always starts at 001.
-async function getNextPrefixNumber(prefix, organizationId) {
+// Looks at every case_number already used by THIS SERVICE in this org
+// that starts with `prefix` immediately followed by digits (e.g. prefix
+// "12F0" matches "12F0001", "12F0002", ... but not "12F0OO1"), and
+// returns one past the highest number found for that service — or 1 if
+// this service has never used this prefix before, so a new service
+// always starts fresh at 001 even when the SAME prefix text is reused
+// for it. Scoped by product_id (not just organization_id) so two
+// different services sharing one prefix (e.g. both typed "12F0") each
+// get their own independent 001, 002, 003... instead of one service's
+// numbers continuing into the other's.
+async function getNextPrefixNumber(prefix, organizationId, productId) {
   const { data, error } = await supabase
     .from("service_cases")
     .select("case_number")
     .eq("organization_id", organizationId)
+    .eq("product_id", productId)
     .ilike("case_number", `${prefix}%`);
   if (error) throw error;
   const re = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`, "i");
@@ -515,6 +521,9 @@ async function listServiceCases(req, res) {
         r.assigned_employee_id,
         r.qc_employee_id,
         r.audit_employee_id,
+        // NEW: "Allocated By" — who ran the allocate/auto-allocate
+        // action, not just who it landed on.
+        r.allocated_by,
       ]),
       req.user.organizationId,
     );
@@ -546,6 +555,11 @@ async function listServiceCases(req, res) {
       assignedEmployeeName: employeeMap[r.assigned_employee_id] || null,
       allocationStatus: r.allocation_status || "PENDING",
       allocatedAt: r.allocated_at || null,
+      // NEW: who performed the allocation (manual or auto) — shown next
+      // to the assigned employee so it's visible who is doing the
+      // allocating, not just who ended up with the case.
+      allocatedById: r.allocated_by || null,
+      allocatedByName: employeeMap[r.allocated_by] || null,
       profile: r.profile || "",
       // NEW: employee's own submission of their work on this case —
       // separate from allocation_status (which just means "assigned to
@@ -703,7 +717,11 @@ async function createServiceCases(req, res) {
     // ordering) — this is what makes a fresh prefix start at 001
     // instead of continuing wherever this service's counter is at.
     const startCaseNum = casePrefix
-      ? await getNextPrefixNumber(casePrefix, req.user.organizationId)
+      ? await getNextPrefixNumber(
+          casePrefix,
+          req.user.organizationId,
+          productId,
+        )
       : null;
 
     const rowsToInsert = Array.from({ length: quantity }, (_, i) => {
@@ -1354,12 +1372,71 @@ async function allocateServiceCase(req, res) {
       }
     }
 
+    // NEW: fetch the current row BEFORE overwriting it. This is the only
+    // chance to see who this case was assigned to prior to a "Clear"
+    // (employeeId === null) — the update below wipes
+    // assigned_employee_id/allocated_at, so if we don't log it now that
+    // information is gone forever, which was the whole complaint: "Clear"
+    // deleted the allocation with no trace anywhere.
+    const { data: existing, error: existingError } = await supabase
+      .from("service_cases")
+      .select(
+        "case_number, product_id, work_date, assigned_employee_id, allocated_at",
+      )
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    // Only a real "Clear" (going from someone assigned -> nobody) gets
+    // logged — allocating for the first time, or re-allocating from one
+    // employee straight to another, isn't a clear and has nothing to
+    // preserve.
+    if (!employeeId && existing.assigned_employee_id) {
+      const [productMap, prevEmployeeMap] = await Promise.all([
+        getProductNameMap([existing.product_id], req.user.organizationId),
+        getEmployeeNameMap(
+          [existing.assigned_employee_id],
+          req.user.organizationId,
+        ),
+      ]);
+      const { error: logError } = await supabase
+        .from("allocation_clear_log")
+        .insert({
+          organization_id: req.user.organizationId,
+          case_id: id,
+          case_number: existing.case_number,
+          product_id: existing.product_id,
+          product_name: productMap[existing.product_id] || null,
+          work_date: existing.work_date,
+          employee_id: existing.assigned_employee_id,
+          employee_name: prevEmployeeMap[existing.assigned_employee_id] || null,
+          allocated_at: existing.allocated_at,
+          cleared_by: req.user.userId,
+        });
+      // Don't let a logging failure block the actual clear action —
+      // losing the log entry for one case is far better than an admin
+      // being unable to clear anything because a log table hiccuped.
+      if (logError) {
+        console.error("Failed to write allocation_clear_log:", logError);
+      }
+    }
+
     const { data, error } = await supabase
       .from("service_cases")
       .update({
         assigned_employee_id: employeeId,
         allocation_status: employeeId ? "ALLOCATED" : "PENDING",
         allocated_at: employeeId ? new Date().toISOString() : null,
+        // NEW: who performed THIS allocation (manual, one case at a
+        // time) — cleared back to null on "Clear" since nobody is
+        // allocating anything anymore.
+        allocated_by: employeeId ? req.user.userId : null,
       })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
@@ -1373,7 +1450,7 @@ async function allocateServiceCase(req, res) {
     }
 
     const employeeMap = await getEmployeeNameMap(
-      [data.assigned_employee_id],
+      [data.assigned_employee_id, data.allocated_by],
       req.user.organizationId,
     );
 
@@ -1389,10 +1466,93 @@ async function allocateServiceCase(req, res) {
         assignedEmployeeName: employeeMap[data.assigned_employee_id] || null,
         allocationStatus: data.allocation_status || "PENDING",
         allocatedAt: data.allocated_at || null,
+        allocatedById: data.allocated_by || null,
+        allocatedByName: employeeMap[data.allocated_by] || null,
       },
     });
   } catch (err) {
     console.error("allocateServiceCase error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// GET /api/service-cases/clear-log
+// Query params: dateFrom, dateTo, productId, employeeId, page, pageSize
+//
+// NEW: "where did the cleared allocation go?" — every time
+// allocateServiceCase (above) clears a case that had someone assigned,
+// it writes a row here FIRST. This endpoint is the read side of that:
+// a past record of every clear action (who had the case, who cleared
+// it, and when), newest first, so clearing is no longer a silent,
+// unrecoverable delete.
+// ------------------------------------------------------------
+async function listAllocationClearLog(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const { dateFrom, dateTo, productId, employeeId } = req.query;
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const pageSize = Math.min(
+      Math.max(parseInt(req.query.pageSize, 10) || 50, 1),
+      200,
+    );
+
+    let query = supabase
+      .from("allocation_clear_log")
+      .select("*", { count: "exact" })
+      .eq("organization_id", orgId);
+
+    if (dateFrom) query = query.gte("work_date", dateFrom);
+    if (dateTo) query = query.lte("work_date", dateTo);
+    if (productId) query = query.eq("product_id", productId);
+    if (employeeId) query = query.eq("employee_id", employeeId);
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await query
+      .order("cleared_at", { ascending: false })
+      .range(from, to);
+    if (error) throw error;
+
+    const rows = data || [];
+    // Product/employee names are snapshotted at clear-time in the log
+    // row itself (product_name/employee_name), so they still read
+    // correctly even if the product or employee is later renamed or
+    // removed. Only "cleared_by" needs a fresh lookup here.
+    const clearedByMap = await getEmployeeNameMap(
+      rows.map((r) => r.cleared_by),
+      orgId,
+    );
+
+    const enriched = rows.map((r) => ({
+      id: r.id,
+      caseId: r.case_id,
+      caseNumber: r.case_number,
+      productId: r.product_id,
+      productName: r.product_name,
+      workDate: r.work_date,
+      employeeId: r.employee_id,
+      employeeName: r.employee_name,
+      allocatedAt: r.allocated_at,
+      clearedById: r.cleared_by,
+      clearedByName: clearedByMap[r.cleared_by] || null,
+      clearedAt: r.cleared_at,
+    }));
+
+    res.json({
+      success: true,
+      data: enriched,
+      pagination: {
+        page,
+        pageSize,
+        total: count || 0,
+        totalPages: Math.max(Math.ceil((count || 0) / pageSize), 1),
+      },
+    });
+  } catch (err) {
+    console.error("listAllocationClearLog error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -1464,6 +1624,9 @@ async function autoAllocateServiceCases(req, res) {
             assigned_employee_id: u.employeeId,
             allocation_status: "ALLOCATED",
             allocated_at: now,
+            // NEW: same "who allocated this" tracking as the manual
+            // one-case-at-a-time path in allocateServiceCase.
+            allocated_by: req.user.userId,
           })
           .eq("id", u.id)
           .eq("organization_id", req.user.organizationId),
@@ -2120,6 +2283,7 @@ module.exports = {
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,

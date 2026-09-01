@@ -31,6 +31,12 @@ async function listDailyWork(req, res) {
       orgId,
       ids,
     );
+    // NEW: "who logged this / who last updated it" — resolves
+    // created_by AND updated_by in one batched name lookup so the table
+    // can show both without a query per row.
+    const userNames = await dailyWorkService.getUserNameMap(
+      batches.flatMap((b) => [b.created_by, b.updated_by]),
+    );
 
     const data = batches.map((b) => {
       const allocatedQty = allocatedByBatch[b.id] || 0;
@@ -38,6 +44,8 @@ async function listDailyWork(req, res) {
         productName: productNames[b.product_id] || null,
         allocatedQty,
         pendingQty: b.total_qty - allocatedQty,
+        createdByName: userNames[b.created_by] || null,
+        updatedByName: userNames[b.updated_by] || null,
       });
     });
 
@@ -62,14 +70,17 @@ async function getDailyWorkById(req, res) {
         .json({ success: false, message: "Daily work batch not found" });
     }
 
-    const productNames = await dailyWorkService.getProductNameMap([
-      data.product_id,
+    const [productNames, userNames] = await Promise.all([
+      dailyWorkService.getProductNameMap([data.product_id]),
+      dailyWorkService.getUserNameMap([data.created_by, data.updated_by]),
     ]);
 
     res.json({
       success: true,
       data: dailyWorkService.mapRow(data, {
         productName: productNames[data.product_id] || null,
+        createdByName: userNames[data.created_by] || null,
+        updatedByName: userNames[data.updated_by] || null,
       }),
     });
   } catch (err) {
@@ -189,14 +200,21 @@ async function updateDailyWork(req, res) {
         .json({ success: false, message: "No valid fields to update" });
     }
 
+    // NEW: stamp who made this edit and when — the "Updated By" the
+    // person asked for, so an edited batch shows who touched it last,
+    // not just who originally logged it (created_by never changes).
+    updatePayload.updated_by = req.user.userId;
+    updatePayload.updated_at = new Date().toISOString();
+
     const data = await dailyWorkService.updateDailyWorkRow(
       id,
       orgId,
       updatePayload,
     );
 
-    const productNames = await dailyWorkService.getProductNameMap([
-      data.product_id,
+    const [productNames, userNames] = await Promise.all([
+      dailyWorkService.getProductNameMap([data.product_id]),
+      dailyWorkService.getUserNameMap([data.created_by, data.updated_by]),
     ]);
 
     res.json({
@@ -205,6 +223,8 @@ async function updateDailyWork(req, res) {
         productName: productNames[data.product_id] || null,
         allocatedQty: alreadyAllocated,
         pendingQty: data.total_qty - alreadyAllocated,
+        createdByName: userNames[data.created_by] || null,
+        updatedByName: userNames[data.updated_by] || null,
       }),
     });
   } catch (err) {

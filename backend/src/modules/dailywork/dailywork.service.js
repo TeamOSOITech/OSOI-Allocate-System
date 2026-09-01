@@ -55,10 +55,46 @@ function mapRow(row, extra = {}) {
     totalQty: row.total_qty,
     status: row.status,
     createdBy: row.created_by,
+    createdByName: extra.createdByName ?? null,
     createdAt: row.created_at,
+    // NEW: who last edited this batch (Edit button on the Daily Work
+    // table) and when — separate from createdBy/createdAt, which never
+    // change after the row is first logged.
+    updatedBy: row.updated_by ?? null,
+    updatedByName: extra.updatedByName ?? null,
+    updatedAt: row.updated_at ?? null,
     allocatedQty: extra.allocatedQty,
     pendingQty: extra.pendingQty,
   };
+}
+
+// ------------------------------------------------------------
+// Given a list of user ids (created_by / updated_by), fetch their
+// display names in ONE query — same manual-join pattern as
+// getProductNameMap above and servicecases.controller.js's
+// getEmployeeNameMap (user_master has no PostgREST FK relationship set
+// up here to embed through).
+// ------------------------------------------------------------
+async function getUserNameMap(userIds) {
+  const uniqueIds = [...new Set((userIds || []).filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from("user_master")
+    .select('"Auth User Id", "First Name", "Last Name"')
+    .in("Auth User Id", uniqueIds);
+
+  if (error) {
+    console.error("Failed to fetch user names for daily work:", error);
+    return {};
+  }
+
+  return (data || []).reduce((acc, u) => {
+    const firstName = u["First Name"] ?? "";
+    const lastName = u["Last Name"] ?? "";
+    acc[u["Auth User Id"]] = `${firstName} ${lastName}`.trim() || null;
+    return acc;
+  }, {});
 }
 
 // ---------- list / read ----------
@@ -261,6 +297,7 @@ async function insertSingleDailyWorkRow(payload) {
 
 module.exports = {
   getProductNameMap,
+  getUserNameMap,
   mapRow,
   fetchDailyWorkBatches,
   fetchAllocatedByBatch,
