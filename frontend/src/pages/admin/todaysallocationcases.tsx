@@ -61,10 +61,6 @@ type ServiceCase = {
     workDate: string;
     assignedEmployeeId: string | null;
     assignedEmployeeName: string | null;
-    // NEW: who ran the allocate action (manual or Smart Allocation) —
-    // separate from assignedEmployeeName, which is who the case landed
-    // on. Shown as a small "by <name>" caption under the Assign dropdown.
-    allocatedByName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
 };
 
@@ -135,6 +131,19 @@ export default function TodaysAllocationCases({
     // here instead of hunting it down on the History tab.
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [clearing, setClearing] = useState(false);
+    // NEW: Smart Allocation no longer allocates anything by itself — it
+    // only computes a suggested case -> employee split and drops each
+    // suggestion into that row's dropdown (via pendingSelection above).
+    // This tracks which case IDs came from that preview specifically —
+    // including ones on a page not currently loaded/visible — so the
+    // bottom "Allocate" button can save ALL of them (not just whatever
+    // happens to be on the current page) when pressed, and so the
+    // success popup can tell the person how many were actually saved.
+    const [autoPreviewCaseIds, setAutoPreviewCaseIds] = useState<string[]>([]);
+    // NEW: success popup shown after the bottom "Allocate" button
+    // actually saves something — replaces relying on the toast alone so
+    // it's unmistakable that cases were saved (vs. just previewed).
+    const [successPopup, setSuccessPopup] = useState<{ count: number } | null>(null);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -253,6 +262,10 @@ export default function TodaysAllocationCases({
     useEffect(() => {
         setPage(1);
         setAutoResult(null);
+        // A preview from a different service/date no longer applies —
+        // drop it so a stray "Allocate" click after switching filters
+        // can't save leftover suggestions for the wrong service/date.
+        setAutoPreviewCaseIds([]);
     }, [productId, workDate, statusFilter]);
 
     const handleManualAllocate = async (caseId: string, employeeId: string) => {
@@ -293,14 +306,18 @@ export default function TodaysAllocationCases({
 
     // NEW: single bottom "Allocate" button for the whole page — instead
     // of one button per row, it saves every row whose dropdown selection
-    // actually changed from what's saved, in one click.
+    // actually changed from what's saved, in one click. Also picks up
+    // any case IDs staged by a Smart Allocation preview even if they're
+    // sitting on a page that isn't currently loaded, so a preview that
+    // spans more cases than fit on one page still gets saved in full.
     const [bulkSaving, setBulkSaving] = useState(false);
-    const changedCaseIds = cases
+    const changedOnPage = cases
         .filter((c) => {
             const picked = pendingSelection[c.id] ?? (c.assignedEmployeeId || "");
             return picked !== (c.assignedEmployeeId || "");
         })
         .map((c) => c.id);
+    const changedCaseIds = Array.from(new Set([...changedOnPage, ...autoPreviewCaseIds]));
 
     const handleAllocateAll = async () => {
         if (changedCaseIds.length === 0) return;
@@ -311,7 +328,18 @@ export default function TodaysAllocationCases({
                 const ok = await handleManualAllocate(caseId, pendingSelection[caseId] ?? "");
                 if (ok) okCount++;
             }
-            if (okCount > 0) showToast(`${okCount} case(s) allocated.`);
+            setAutoPreviewCaseIds([]);
+            setAutoResult(null);
+            if (okCount > 0) {
+                showToast(`${okCount} case(s) allocated.`);
+                setSuccessPopup({ count: okCount });
+                // Refresh so status pills / pending-count on this page
+                // reflect what was just saved (mirrors what Smart
+                // Allocation used to do for itself before it became a
+                // preview-only step).
+                fetchCases();
+                onCasesChanged?.();
+            }
         } finally {
             setBulkSaving(false);
         }
@@ -348,6 +376,9 @@ export default function TodaysAllocationCases({
                 return;
             }
 
+            // This call only computes a suggested split — it does NOT
+            // allocate anything on the server. See the backend
+            // controller's comment on autoAllocateServiceCases for why.
             const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -357,14 +388,27 @@ export default function TodaysAllocationCases({
             if (!res.ok || !json.success)
                 throw new Error(json?.message || "Auto allocation failed");
             setAutoResult(json.data);
-            showToast(json.message || "Cases allocated.");
-            setPage(1);
-            // Auto-allocation reassigns many rows at once — drop any
-            // stale pending dropdown selections so they reseed fresh
-            // from the server on the next fetchCases().
-            setPendingSelection({});
-            fetchCases();
-            onCasesChanged?.();
+
+            // Drop the suggested employee straight into each case's
+            // dropdown (pendingSelection) WITHOUT saving anything yet —
+            // and remember which case IDs came from this preview so the
+            // bottom "Allocate" button can save all of them, even ones
+            // on a page that isn't loaded right now.
+            const assignments: { caseId: string; employeeId: string }[] =
+                json.data?.assignments || [];
+            setPendingSelection((prev) => {
+                const next = { ...prev };
+                assignments.forEach((a) => {
+                    next[a.caseId] = a.employeeId;
+                });
+                return next;
+            });
+            setAutoPreviewCaseIds(assignments.map((a) => a.caseId));
+
+            showToast(
+                json.message ||
+                    "Cases distributed — review the dropdowns and press Allocate to confirm."
+            );
         } catch (err: any) {
             showToast(err?.message || "Auto allocation failed.");
         } finally {
@@ -460,19 +504,21 @@ export default function TodaysAllocationCases({
                         <div style={styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h1
+                                    <h2
                                         style={{
                                             ...styles.pageTitle,
                                             fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                                         }}
                                     >
                                         Cases
-                                    </h1>
+                                    </h2>
                                     <p style={styles.headerSubtext}>
                                         Every logged case for the selected service/date — allocate
-                                        each one manually below, or run Smart Allocation to split
-                                        all pending cases equally across every employee (except
-                                        anyone marked Absent or Leave on the Employees tab).
+                                        each one manually below, or run Smart Allocation to preview
+                                        an equal split of all pending cases across every employee
+                                        (except anyone marked Absent or Leave on the Employees tab).
+                                        Smart Allocation only fills in the dropdowns below — nothing
+                                        is saved until you press Allocate.
                                     </p>
                                 </div>
                             </div>
@@ -602,11 +648,14 @@ export default function TodaysAllocationCases({
 
                         {autoResult && (
                             <div style={styles.autoSummary}>
-                                <strong>{autoResult.allocatedCount}</strong> case(s) allocated
+                                <strong>Preview:</strong>{" "}
+                                <strong>{autoResult.allocatedCount}</strong> case(s) would be split
                                 across {autoResult.perEmployee.length} employee(s):{" "}
                                 {autoResult.perEmployee
                                     .map((e) => `${e.employeeName || "Unknown"} (${e.caseCount})`)
                                     .join(", ")}
+                                . Nothing is saved yet — review the dropdowns below and press{" "}
+                                <strong>Allocate</strong> to confirm.
                             </div>
                         )}
                     </>
@@ -657,11 +706,14 @@ export default function TodaysAllocationCases({
                         </button>
                         {autoResult && (
                             <div style={{ ...styles.autoSummary, width: "100%" }}>
-                                <strong>{autoResult.allocatedCount}</strong> case(s) allocated
+                                <strong>Preview:</strong>{" "}
+                                <strong>{autoResult.allocatedCount}</strong> case(s) would be split
                                 across {autoResult.perEmployee.length} employee(s):{" "}
                                 {autoResult.perEmployee
                                     .map((e) => `${e.employeeName || "Unknown"} (${e.caseCount})`)
                                     .join(", ")}
+                                . Nothing is saved yet — review the dropdowns below and press{" "}
+                                <strong>Allocate</strong> to confirm.
                             </div>
                         )}
                     </div>
@@ -747,14 +799,6 @@ export default function TodaysAllocationCases({
                                                 </option>
                                             ))}
                                         </select>
-                                        {/* NEW: "who allocated this" — only shown once a case is
-                                            actually ALLOCATED and we know who ran that action. */}
-                                        {c.allocationStatus === "ALLOCATED" &&
-                                            c.allocatedByName && (
-                                                <span style={styles.allocatedByCaption}>
-                                                    by {c.allocatedByName}
-                                                </span>
-                                            )}
                                     </span>
                                 </div>
                             ))
@@ -839,6 +883,52 @@ export default function TodaysAllocationCases({
                                 onClick={handleClearAllocations}
                             >
                                 Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Success popup — shown after the bottom "Allocate" button
+                actually saves cases (manual picks and/or a Smart
+                Allocation preview). This is the only point cases are
+                really written to the server, so this is the only place
+                a "success" popup is shown. */}
+            {successPopup && (
+                <div style={styles.overlay} onClick={() => setSuccessPopup(null)}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>Allocated successfully</h2>
+                            <button
+                                type="button"
+                                style={styles.modalCloseBtn}
+                                onClick={() => setSuccessPopup(null)}
+                                aria-label="Close"
+                            >
+                                <i className="ti ti-x" style={{ fontSize: fontSize.md }} />
+                            </button>
+                        </div>
+                        <div style={styles.modalDivider} />
+                        <p style={styles.modalBody}>
+                            <i
+                                className="ti ti-circle-check"
+                                style={{
+                                    fontSize: 40,
+                                    color: BRAND.green,
+                                    display: "block",
+                                    marginBottom: 8,
+                                }}
+                            />
+                            <strong>{successPopup.count}</strong> case
+                            {successPopup.count === 1 ? "" : "s"} allocated successfully.
+                        </p>
+                        <div style={styles.modalActions}>
+                            <button
+                                type="button"
+                                style={{ ...styles.modalCancelBtn, flex: "none", width: "100%" }}
+                                onClick={() => setSuccessPopup(null)}
+                            >
+                                OK
                             </button>
                         </div>
                     </div>
@@ -1079,15 +1169,6 @@ const styles: Record<string, CSSProperties> = {
     colDate: { width: 100, flexShrink: 0 },
     colStatus: { width: 110, flexShrink: 0 },
     colAssign: { width: 220, flexShrink: 0, textAlign: "right", marginLeft: "auto" },
-    // NEW: small "by <name>" line under the Assign dropdown, showing who
-    // ran the allocate action.
-    allocatedByCaption: {
-        display: "block",
-        marginTop: 4,
-        fontSize: "11px",
-        color: "#9CA3AF",
-        textAlign: "right",
-    },
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",
