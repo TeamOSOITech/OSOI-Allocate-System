@@ -503,36 +503,45 @@ async function listServiceCases(req, res) {
     if (error) throw error;
 
     const rows = data || [];
-    const productMap = await getProductNameMap(
-      rows.map((r) => r.product_id),
-      req.user.organizationId,
-    );
-    // FIX: this used to only resolve assigned_employee_id, so the QC
-    // Result summary on the Audit tab always showed a blank Reviewer —
-    // qc_employee_id and audit_employee_id were never even looked up.
-    // Same map, just fed every employee id that can appear on a row.
-    const employeeMap = await getEmployeeNameMap(
-      rows.flatMap((r) => [
-        r.assigned_employee_id,
-        r.qc_employee_id,
-        r.audit_employee_id,
-        // NEW: "Allocated By" — who ran the allocate/auto-allocate
-        // action, not just who it landed on.
-        r.allocated_by,
-      ]),
-      req.user.organizationId,
-    );
-    // NEW: Client column — resolves client_id on each case to its name,
-    // same pattern as productMap/employeeMap above.
-    const clientMap = await getClientNameMap(
-      rows.map((r) => r.client_id),
-      req.user.organizationId,
-    );
-    // NEW: Subclient column.
-    const subclientMap = await getSubclientNameMap(
-      rows.map((r) => r.subclient_id),
-      req.user.organizationId,
-    );
+    // PERF FIX: these 4 lookups don't depend on each other (each is
+    // derived only from `rows`, none reads another's result), so they
+    // were running back-to-back for no reason — every call to this
+    // endpoint (Case Register, Today's Allocation, QC, Audit, History
+    // all hit it) paid the sum of all 4 round-trips instead of the max
+    // of them. Promise.all runs them concurrently instead.
+    const [productMap, employeeMap, clientMap, subclientMap] =
+      await Promise.all([
+        getProductNameMap(
+          rows.map((r) => r.product_id),
+          req.user.organizationId,
+        ),
+        // FIX: this used to only resolve assigned_employee_id, so the QC
+        // Result summary on the Audit tab always showed a blank Reviewer —
+        // qc_employee_id and audit_employee_id were never even looked up.
+        // Same map, just fed every employee id that can appear on a row.
+        getEmployeeNameMap(
+          rows.flatMap((r) => [
+            r.assigned_employee_id,
+            r.qc_employee_id,
+            r.audit_employee_id,
+            // NEW: "Allocated By" — who ran the allocate/auto-allocate
+            // action, not just who it landed on.
+            r.allocated_by,
+          ]),
+          req.user.organizationId,
+        ),
+        // NEW: Client column — resolves client_id on each case to its
+        // name, same pattern as productMap/employeeMap above.
+        getClientNameMap(
+          rows.map((r) => r.client_id),
+          req.user.organizationId,
+        ),
+        // NEW: Subclient column.
+        getSubclientNameMap(
+          rows.map((r) => r.subclient_id),
+          req.user.organizationId,
+        ),
+      ]);
 
     const enriched = rows.map((r) => ({
       id: r.id,
@@ -1802,14 +1811,13 @@ async function updateServiceCaseClient(req, res) {
         .json({ success: false, message: "Case not found" });
     }
 
-    const clientMap = await getClientNameMap(
-      [data.client_id],
-      req.user.organizationId,
-    );
-    const subclientMap = await getSubclientNameMap(
-      [data.subclient_id],
-      req.user.organizationId,
-    );
+    // PERF FIX: same independent-lookups pattern as listServiceCases —
+    // client and subclient maps don't depend on each other, run them
+    // concurrently instead of back-to-back.
+    const [clientMap, subclientMap] = await Promise.all([
+      getClientNameMap([data.client_id], req.user.organizationId),
+      getSubclientNameMap([data.subclient_id], req.user.organizationId),
+    ]);
 
     res.json({
       success: true,
