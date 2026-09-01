@@ -83,10 +83,39 @@ type HistoryGroup = {
     pending: number;
 };
 
+// NEW: one row = one past "Clear" action — the case that was cleared,
+// who had it before, and who cleared it. Powers the "Cleared Log"
+// sub-view below, backed by GET /api/service-cases/clear-log.
+type ClearLogRow = {
+    id: string;
+    caseNumber: string | null;
+    productId: string | null;
+    productName: string | null;
+    workDate: string | null;
+    employeeName: string | null;
+    allocatedAt: string | null;
+    clearedByName: string | null;
+    clearedAt: string;
+};
+
 function formatDisplayDate(iso: string) {
     const [y, m, d] = iso.split("-");
     if (!y || !m || !d) return iso;
     return `${d}-${m}-${y}`;
+}
+
+// NEW: for the Cleared Log's "Allocated At" / "Cleared At" columns —
+// those are full timestamps, not plain dates.
+function formatDisplayDateTime(iso: string | null) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, "0");
+    const mins = String(d.getMinutes()).padStart(2, "0");
+    return `${day}-${month}-${year} ${hours}:${mins}`;
 }
 
 export default function TodaysAllocationHistory() {
@@ -96,6 +125,15 @@ export default function TodaysAllocationHistory() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [toast, setToast] = useState("");
+
+    // NEW: "By Date" (existing groups view, live allocation state) vs
+    // "Cleared Log" (past record of every Clear action — the thing that
+    // used to just disappear with no trace once you hit Clear).
+    const [subView, setSubView] = useState<"groups" | "cleared">("groups");
+    const [clearLog, setClearLog] = useState<ClearLogRow[]>([]);
+    const [clearLogLoading, setClearLogLoading] = useState(false);
+    const [clearLogError, setClearLogError] = useState("");
+    const [clearLogLoaded, setClearLogLoaded] = useState(false);
 
     const [productFilter, setProductFilter] = useState("");
     const [searchText, setSearchText] = useState("");
@@ -183,6 +221,69 @@ export default function TodaysAllocationHistory() {
         fetchProducts();
         fetchCaseHistory();
     }, [fetchProducts, fetchCaseHistory]);
+
+    // NEW: loads every past "Clear" action (org-wide), newest first,
+    // looping pages the same way fetchCaseHistory does above. Only
+    // fetched once, the first time someone opens the Cleared Log
+    // sub-tab, not on initial page load — this data isn't needed until
+    // asked for.
+    const fetchClearLog = useCallback(async () => {
+        setClearLogLoading(true);
+        setClearLogError("");
+        try {
+            const pageSize = 100;
+            let page = 1;
+            let totalPages = 1;
+            const allRows: ClearLogRow[] = [];
+            do {
+                const params = new URLSearchParams();
+                params.set("page", String(page));
+                params.set("pageSize", String(pageSize));
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/clear-log?${params.toString()}`
+                );
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json.message || "Failed to load cleared allocations");
+                allRows.push(...(json.data || []));
+                totalPages = json.pagination?.totalPages || 1;
+                page += 1;
+            } while (page <= totalPages);
+
+            setClearLog(allRows);
+            setClearLogLoaded(true);
+        } catch (err: any) {
+            setClearLogError(err.message || "Failed to load cleared allocations");
+        } finally {
+            setClearLogLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (subView === "cleared" && !clearLogLoaded) {
+            fetchClearLog();
+        }
+    }, [subView, clearLogLoaded, fetchClearLog]);
+
+    // Same filters (Service / Search) apply to the Cleared Log view too,
+    // so switching tabs doesn't lose whatever the person had picked.
+    const filteredClearLog = useMemo(() => {
+        let list = clearLog;
+        if (productFilter) {
+            list = list.filter((r) => r.productId === productFilter);
+        }
+        const q = searchText.trim().toLowerCase();
+        if (q) {
+            list = list.filter((r) =>
+                [r.productName, r.workDate, r.caseNumber, r.employeeName, r.clearedByName]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase()
+                    .includes(q)
+            );
+        }
+        return list;
+    }, [clearLog, productFilter, searchText]);
 
     // Every service+date group with logged cases, newest date first —
     // includes today (no longer excluded), since the whole point of this
@@ -273,14 +374,14 @@ export default function TodaysAllocationHistory() {
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h2
+                        <h1
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             History
-                        </h2>
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Every day's allocation (including today), service by service — Total,
                             Allocated and Pending are counted by case number. Clear here unassigns
@@ -290,6 +391,33 @@ export default function TodaysAllocationHistory() {
                 </div>
 
                 {error && <div style={styles.errorBanner}>{error}</div>}
+
+                {/* NEW: "By Date" (existing groups view) vs "Cleared Log"
+                    (past record of every Clear action) — same tab-button
+                    pattern used elsewhere in the app (see manualallocation
+                    tsx's mainTabBar). */}
+                <div style={styles.subTabBar}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.subTabBtn,
+                            ...(subView === "groups" ? styles.subTabBtnActive : {}),
+                        }}
+                        onClick={() => setSubView("groups")}
+                    >
+                        By Date
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.subTabBtn,
+                            ...(subView === "cleared" ? styles.subTabBtnActive : {}),
+                        }}
+                        onClick={() => setSubView("cleared")}
+                    >
+                        Cleared Log
+                    </button>
+                </div>
 
                 <div style={styles.filterBar}>
                     <div>
@@ -318,100 +446,153 @@ export default function TodaysAllocationHistory() {
                     </div>
                 </div>
 
-                <div style={styles.tableCard}>
-                    <div style={styles.tableScroll}>
-                        <div style={styles.tableHeadRow}>
-                            <span style={styles.colDate}>Date</span>
-                            <span style={styles.colService}>Service</span>
-                            <span style={styles.colNum}>Total</span>
-                            <span style={styles.colNum}>Allocated</span>
-                            <span style={styles.colNum}>Pending</span>
-                            <span style={styles.colAction}>Actions</span>
-                        </div>
-                        {loading ? (
-                            <div style={styles.emptyNote}>Loading history…</div>
-                        ) : filteredGroups.length === 0 ? (
-                            <div style={styles.emptyNote}>
-                                No allocations logged yet — entries show up here as soon as cases
-                                are logged for a service/date.
+                {subView === "groups" ? (
+                    <div style={styles.tableCard}>
+                        <div style={styles.tableScroll}>
+                            <div style={styles.tableHeadRow}>
+                                <span style={styles.colDate}>Date</span>
+                                <span style={styles.colService}>Service</span>
+                                <span style={styles.colNum}>Total</span>
+                                <span style={styles.colNum}>Allocated</span>
+                                <span style={styles.colNum}>Pending</span>
+                                <span style={styles.colAction}>Actions</span>
                             </div>
-                        ) : (
-                            filteredGroups.map((g) => {
-                                const isClearing = clearingKey === g.key;
-                                return (
-                                    <div key={g.key} style={styles.tableRow}>
+                            {loading ? (
+                                <div style={styles.emptyNote}>Loading history…</div>
+                            ) : filteredGroups.length === 0 ? (
+                                <div style={styles.emptyNote}>
+                                    No allocations logged yet — entries show up here as soon as
+                                    cases are logged for a service/date.
+                                </div>
+                            ) : (
+                                filteredGroups.map((g) => {
+                                    const isClearing = clearingKey === g.key;
+                                    return (
+                                        <div key={g.key} style={styles.tableRow}>
+                                            <span style={styles.colDate}>
+                                                {formatDisplayDate(g.workDate)}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {g.productName || "—"}
+                                            </span>
+                                            <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                                <span
+                                                    style={{
+                                                        ...styles.pill,
+                                                        background: "#eef2ff",
+                                                        color: BRAND.blue,
+                                                    }}
+                                                >
+                                                    {g.total}
+                                                </span>
+                                            </span>
+                                            <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                                <span
+                                                    style={{
+                                                        ...styles.pill,
+                                                        background: "#eaf7ec",
+                                                        color: "#1f7a34",
+                                                    }}
+                                                >
+                                                    {g.allocated}
+                                                </span>
+                                            </span>
+                                            <span style={{ ...styles.colNum, ...styles.pillWrap }}>
+                                                <span
+                                                    style={{
+                                                        ...styles.pill,
+                                                        background: "#fef3e2",
+                                                        color: "#b45309",
+                                                    }}
+                                                >
+                                                    {g.pending}
+                                                </span>
+                                            </span>
+                                            <span style={styles.colAction}>
+                                                <button
+                                                    type="button"
+                                                    disabled={isClearing || g.allocated === 0}
+                                                    onClick={() => setConfirmTarget(g)}
+                                                    style={{
+                                                        ...styles.clearBtn,
+                                                        opacity:
+                                                            isClearing || g.allocated === 0
+                                                                ? 0.5
+                                                                : 1,
+                                                        cursor:
+                                                            isClearing || g.allocated === 0
+                                                                ? "not-allowed"
+                                                                : "pointer",
+                                                    }}
+                                                    title={
+                                                        g.allocated === 0
+                                                            ? "Nothing allocated for this service/date"
+                                                            : "Unassign every allocated case for this service/date back to Pending"
+                                                    }
+                                                >
+                                                    <i
+                                                        className="ti ti-trash"
+                                                        style={{ fontSize: fontSize.sm }}
+                                                    />
+                                                    {isClearing ? "Clearing…" : "Clear"}
+                                                </button>
+                                            </span>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    <div style={styles.tableCard}>
+                        <div style={styles.tableScroll}>
+                            <div style={styles.tableHeadRow}>
+                                <span style={styles.colCase}>Case No.</span>
+                                <span style={styles.colService}>Service</span>
+                                <span style={styles.colDate}>Date</span>
+                                <span style={styles.colService}>Was Allocated To</span>
+                                <span style={styles.colDateTime}>Allocated At</span>
+                                <span style={styles.colService}>Cleared By</span>
+                                <span style={styles.colDateTime}>Cleared At</span>
+                            </div>
+                            {clearLogLoading ? (
+                                <div style={styles.emptyNote}>Loading cleared allocations…</div>
+                            ) : clearLogError ? (
+                                <div style={styles.emptyNote}>{clearLogError}</div>
+                            ) : filteredClearLog.length === 0 ? (
+                                <div style={styles.emptyNote}>
+                                    No cleared allocations yet — every time a "Clear" is done (here
+                                    or on the Cases tab), the past record shows up here instead of
+                                    disappearing.
+                                </div>
+                            ) : (
+                                filteredClearLog.map((r) => (
+                                    <div key={r.id} style={styles.tableRow}>
+                                        <span style={styles.colCase}>{r.caseNumber || "—"}</span>
+                                        <span style={styles.colService}>
+                                            {r.productName || "—"}
+                                        </span>
                                         <span style={styles.colDate}>
-                                            {formatDisplayDate(g.workDate)}
+                                            {r.workDate ? formatDisplayDate(r.workDate) : "—"}
                                         </span>
                                         <span style={styles.colService}>
-                                            {g.productName || "—"}
+                                            {r.employeeName || "—"}
                                         </span>
-                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                            <span
-                                                style={{
-                                                    ...styles.pill,
-                                                    background: "#eef2ff",
-                                                    color: BRAND.blue,
-                                                }}
-                                            >
-                                                {g.total}
-                                            </span>
+                                        <span style={styles.colDateTime}>
+                                            {formatDisplayDateTime(r.allocatedAt)}
                                         </span>
-                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                            <span
-                                                style={{
-                                                    ...styles.pill,
-                                                    background: "#eaf7ec",
-                                                    color: "#1f7a34",
-                                                }}
-                                            >
-                                                {g.allocated}
-                                            </span>
+                                        <span style={styles.colService}>
+                                            {r.clearedByName || "—"}
                                         </span>
-                                        <span style={{ ...styles.colNum, ...styles.pillWrap }}>
-                                            <span
-                                                style={{
-                                                    ...styles.pill,
-                                                    background: "#fef3e2",
-                                                    color: "#b45309",
-                                                }}
-                                            >
-                                                {g.pending}
-                                            </span>
-                                        </span>
-                                        <span style={styles.colAction}>
-                                            <button
-                                                type="button"
-                                                disabled={isClearing || g.allocated === 0}
-                                                onClick={() => setConfirmTarget(g)}
-                                                style={{
-                                                    ...styles.clearBtn,
-                                                    opacity:
-                                                        isClearing || g.allocated === 0 ? 0.5 : 1,
-                                                    cursor:
-                                                        isClearing || g.allocated === 0
-                                                            ? "not-allowed"
-                                                            : "pointer",
-                                                }}
-                                                title={
-                                                    g.allocated === 0
-                                                        ? "Nothing allocated for this service/date"
-                                                        : "Unassign every allocated case for this service/date back to Pending"
-                                                }
-                                            >
-                                                <i
-                                                    className="ti ti-trash"
-                                                    style={{ fontSize: fontSize.sm }}
-                                                />
-                                                {isClearing ? "Clearing…" : "Clear"}
-                                            </button>
+                                        <span style={styles.colDateTime}>
+                                            {formatDisplayDateTime(r.clearedAt)}
                                         </span>
                                     </div>
-                                );
-                            })
-                        )}
+                                ))
+                            )}
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
 
             {/* Confirmation popup — matches the app's other "Delete X?"
@@ -506,6 +687,28 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.sm,
     },
     filterBar: { display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" },
+    // NEW: "By Date" / "Cleared Log" sub-tab buttons.
+    subTabBar: {
+        display: "flex",
+        gap: 8,
+        borderBottom: "1px solid #ececf5",
+        paddingBottom: 2,
+    },
+    subTabBtn: {
+        padding: "8px 16px",
+        borderRadius: `${radius.sm}px ${radius.sm}px 0 0`,
+        border: "none",
+        borderBottom: "2px solid transparent",
+        background: "transparent",
+        color: "#767F92",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    subTabBtnActive: {
+        color: BRAND.blue,
+        borderBottom: `2px solid ${BRAND.blue}`,
+    },
     label: {
         display: "block",
         fontSize: fontSize.sm,
@@ -563,6 +766,11 @@ const styles: Record<string, CSSProperties> = {
         color: "#17181C",
     },
     colDate: { width: 100, flexShrink: 0, color: "#374151", textAlign: "left" },
+    // NEW: Cleared Log columns — Case No. (narrower than Service) and
+    // Allocated At / Cleared At (wider than a plain date, since these
+    // show a full date+time).
+    colCase: { width: 110, flexShrink: 0, color: "#374151", textAlign: "left" },
+    colDateTime: { width: 150, flexShrink: 0, color: "#374151", textAlign: "left" },
     colService: {
         width: 200,
         flexShrink: 0,

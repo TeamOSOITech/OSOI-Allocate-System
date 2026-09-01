@@ -46,6 +46,11 @@ type DailyWorkBatch = {
     pendingQty: number;
     status: string;
     createdAt?: string;
+    // NEW: who logged this batch and who last edited it — createdByName
+    // never changes; updatedByName only appears once someone hits Edit.
+    createdByName?: string | null;
+    updatedByName?: string | null;
+    updatedAt?: string | null;
 };
 
 function todayStr() {
@@ -453,7 +458,7 @@ export default function DailyWork() {
                         <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h2 style={styles.pageTitle}>Daily Work</h2>
+                                    <h1 style={styles.pageTitle}>Daily Work</h1>
                                     <p style={styles.headerSubtext}>
                                         Log today's total quantity received per service — this is
                                         the pool that Smart Auto Allocation and Manual Allocation
@@ -725,6 +730,25 @@ export default function DailyWork() {
                                                         }}
                                                     >
                                                         {b.productName || "-"}
+                                                        {/* NEW: who logged / last updated this batch —
+                                                            shown as a small caption under the Service
+                                                            name so it's visible without needing a
+                                                            whole new column. */}
+                                                        {(b.updatedByName || b.createdByName) && (
+                                                            <span
+                                                                style={{
+                                                                    display: "block",
+                                                                    marginTop: 2,
+                                                                    fontSize: "11px",
+                                                                    fontWeight: fontWeight.regular,
+                                                                    color: "#9CA3AF",
+                                                                }}
+                                                            >
+                                                                {b.updatedByName
+                                                                    ? `Updated by ${b.updatedByName}`
+                                                                    : `Logged by ${b.createdByName}`}
+                                                            </span>
+                                                        )}
                                                     </span>
                                                     <span style={{ flex: 1 }}>
                                                         <Pill value={b.totalQty} tone="blue" />

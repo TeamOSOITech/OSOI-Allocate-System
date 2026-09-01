@@ -61,6 +61,10 @@ type ServiceCase = {
     workDate: string;
     assignedEmployeeId: string | null;
     assignedEmployeeName: string | null;
+    // NEW: who ran the allocate action (manual or Smart Allocation) —
+    // separate from assignedEmployeeName, which is who the case landed
+    // on. Shown as a small "by <name>" caption under the Assign dropdown.
+    allocatedByName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
 };
 
@@ -456,14 +460,14 @@ export default function TodaysAllocationCases({
                         <div style={styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h2
+                                    <h1
                                         style={{
                                             ...styles.pageTitle,
                                             fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                                         }}
                                     >
                                         Cases
-                                    </h2>
+                                    </h1>
                                     <p style={styles.headerSubtext}>
                                         Every logged case for the selected service/date — allocate
                                         each one manually below, or run Smart Allocation to split
@@ -743,6 +747,14 @@ export default function TodaysAllocationCases({
                                                 </option>
                                             ))}
                                         </select>
+                                        {/* NEW: "who allocated this" — only shown once a case is
+                                            actually ALLOCATED and we know who ran that action. */}
+                                        {c.allocationStatus === "ALLOCATED" &&
+                                            c.allocatedByName && (
+                                                <span style={styles.allocatedByCaption}>
+                                                    by {c.allocatedByName}
+                                                </span>
+                                            )}
                                     </span>
                                 </div>
                             ))
@@ -1067,6 +1079,15 @@ const styles: Record<string, CSSProperties> = {
     colDate: { width: 100, flexShrink: 0 },
     colStatus: { width: 110, flexShrink: 0 },
     colAssign: { width: 220, flexShrink: 0, textAlign: "right", marginLeft: "auto" },
+    // NEW: small "by <name>" line under the Assign dropdown, showing who
+    // ran the allocate action.
+    allocatedByCaption: {
+        display: "block",
+        marginTop: 4,
+        fontSize: "11px",
+        color: "#9CA3AF",
+        textAlign: "right",
+    },
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",

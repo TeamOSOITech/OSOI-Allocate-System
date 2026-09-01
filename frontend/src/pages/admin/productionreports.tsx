@@ -30,7 +30,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
-import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
@@ -70,6 +70,10 @@ type ServiceCaseRow = {
     workDate: string;
     assignedEmployeeId: string | null;
     assignedEmployeeName: string | null;
+    // NEW: who ran the allocate action (manual or Smart/auto allocate) —
+    // separate from assignedEmployeeName, which is who the case ended
+    // up with.
+    allocatedByName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
     quantity: number | null;
     amount: number | null;
@@ -221,6 +225,7 @@ export default function ProductionReport() {
                 Service: r.productName || "",
                 Date: r.workDate,
                 Employee: r.assignedEmployeeName || "Unallocated",
+                "Allocated By": r.allocatedByName || "",
                 Status: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
             }));
 
@@ -231,6 +236,7 @@ export default function ProductionReport() {
                 { wch: 16 }, // Service
                 { wch: 12 }, // Date
                 { wch: 18 }, // Employee
+                { wch: 18 }, // Allocated By
                 { wch: 12 }, // Status
             ];
             const wb = XLSX.utils.book_new();
@@ -264,6 +270,7 @@ export default function ProductionReport() {
 
     return (
         <div style={styles.root}>
+            <div style={styles.topBar} />
             <div
                 style={{
                     ...styles.contentBody,
@@ -272,14 +279,14 @@ export default function ProductionReport() {
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h2
+                        <h1
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             Production Report
-                        </h2>
+                        </h1>
                         <p style={styles.headerSubtext}>
                             Case-number-wise production across all services — filter by service,
                             date range, employee, status, or client, then browse on screen or export
@@ -403,6 +410,9 @@ export default function ProductionReport() {
                         <span style={styles.colService}>Service</span>
                         <span style={styles.colDate}>Date</span>
                         <span style={styles.colEmployee}>Employee</span>
+                        {/* NEW: who ran the allocation — added next to Employee (who
+                            it landed on) so both are visible in the report. */}
+                        <span style={styles.colAllocatedBy}>Allocated By</span>
                         <span style={styles.colStatus}>Status</span>
                     </div>
                     {loading ? (
@@ -418,6 +428,10 @@ export default function ProductionReport() {
                                 <span style={styles.colDate}>{r.workDate}</span>
                                 <span style={styles.colEmployee}>
                                     {r.assignedEmployeeName || "Unallocated"}
+                                </span>
+                                {/* NEW: "Allocated By" — who performed the allocate action. */}
+                                <span style={styles.colAllocatedBy}>
+                                    {r.allocatedByName || "—"}
                                 </span>
                                 <span style={styles.colStatus}>
                                     <span
@@ -480,33 +494,16 @@ export default function ProductionReport() {
     );
 }
 
-const GRID_COLS = "100px 1fr 1fr 100px 1fr 100px";
+const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px";
 
 const styles: Record<string, CSSProperties> = {
-    // Matches employees.tsx's root exactly — same light blue-grey page
-    // background and base font, no decorative gradient bar at the top.
-    root: {
-        display: "flex",
-        flexDirection: "column",
-        width: "100%",
-        height: "100%",
-        flex: 1,
-        minHeight: 0,
-        background: "#eff4fa",
-        fontFamily: fontFamily.base,
-        position: "relative",
-        overflow: "hidden",
+    root: { display: "flex", flexDirection: "column" },
+    topBar: {
+        height: 4,
+        background: GRADIENT,
+        borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
     },
-    contentBody: {
-        display: "flex",
-        flexDirection: "column",
-        flex: 1,
-        overflowY: "auto",
-        minHeight: 0,
-        maxWidth: "100%",
-        boxSizing: "border-box",
-        gap: 16,
-    },
+    contentBody: { padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 },
     headerRow: {
         display: "flex",
         alignItems: "flex-start",
@@ -643,6 +640,9 @@ const styles: Record<string, CSSProperties> = {
     colService: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     colDate: { whiteSpace: "nowrap" },
     colEmployee: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    // NEW: "Allocated By" column — who ran the allocation, next to
+    // Employee (who it landed on).
+    colAllocatedBy: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     colStatus: {},
     statusPill: {
         display: "inline-flex",
