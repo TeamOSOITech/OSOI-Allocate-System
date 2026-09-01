@@ -279,14 +279,14 @@ export default function ProductionReport() {
             >
                 <div style={styles.headerRow}>
                     <div>
-                        <h1
+                        <h2
                             style={{
                                 ...styles.pageTitle,
                                 fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
                             }}
                         >
                             Production Report
-                        </h1>
+                        </h2>
                         <p style={styles.headerSubtext}>
                             Case-number-wise production across all services — filter by service,
                             date range, employee, status, or client, then browse on screen or export
