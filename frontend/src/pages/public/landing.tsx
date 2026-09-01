@@ -28,7 +28,7 @@ const FEATURES = [
     {
         icon: "ti-plug",
         title: "Easy Integration",
-        desc: "Seamlessly integrate with your existing tools and workflows for a smooth experience.",
+        desc: "Connects with the tools your team already uses, so nothing feels new.",
     },
 ];
 
@@ -70,7 +70,7 @@ const PLANS = [
         name: "Enterprise",
         price: "Custom Pricing",
         period: "",
-        desc: "Custom solutions for large organizations with unique needs.",
+        desc: "Custom setup for large teams with their own needs.",
         features: ["Unlimited Users", "Custom Features", "Dedicated Support", "SLA & Onboarding"],
         cta: "Contact Sales",
         highlighted: false,
@@ -775,6 +775,19 @@ const Landing = () => {
                 }
                 .lp-testimonial-name { font-weight: 700; font-size: 14.5px; }
                 .lp-testimonial-role { font-size: 13px; color: var(--lp-muted); }
+                .lp-testimonial-stat {
+                    margin-left: auto;
+                    text-align: right;
+                    padding-left: 12px;
+                }
+                .lp-testimonial-stat-num {
+                    font-size: 22px;
+                    font-weight: 800;
+                    color: var(--lp-blue);
+                    font-family: 'Sora', sans-serif;
+                    line-height: 1;
+                }
+                .lp-testimonial-stat-label { font-size: 12px; color: var(--lp-muted); margin-top: 2px; }
 
                 /* ---------- Pricing ---------- */
                 .lp-pricing-section { background: var(--lp-bg); }
@@ -882,6 +895,12 @@ const Landing = () => {
                     border: 1px solid #CBD5E1;
                     border-radius: 9px;
                     padding: 12px 14px;
+                    /* FIX (#1, tap targets round 2): 12px padding + 14px
+                       text landed around 41px tall — min-height guarantees
+                       the full 44px regardless of font metrics, and this
+                       class covers every text input on the page (login,
+                       checkout, org signup). */
+                    min-height: 44px;
                     font-size: 14px;
                     outline: none;
                     font-family: inherit;
@@ -894,10 +913,31 @@ const Landing = () => {
                 .lp-login-remember {
                     display: flex;
                     align-items: center;
-                    gap: 6px;
+                    gap: 4px;
                     color: #475569;
                     min-height: 44px;
                     box-sizing: border-box;
+                }
+                /* FIX (#1, tap targets round 2): a native checkbox is
+                   ~13-16px regardless of its parent's min-height — the
+                   label around it doesn't stretch it. Wrapping it in a
+                   fixed 44x44 flex box gives it a real 44px hit area
+                   (clicks anywhere in the box still toggle it, since it's
+                   nested inside the same <label>) without changing how
+                   big the checkbox itself looks. */
+                .lp-checkbox-hit {
+                    width: 44px;
+                    height: 44px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                    margin-left: -12px;
+                }
+                .lp-checkbox-hit input {
+                    width: 16px;
+                    height: 16px;
+                    cursor: pointer;
                 }
                 .lp-login-forgot {
                     background: none;
@@ -996,11 +1036,14 @@ const Landing = () => {
                 }
                 .lp-checkout-close {
                     position: absolute;
-                    top: 14px;
-                    right: 14px;
-                    width: 30px;
-                    height: 30px;
-                    border-radius: 8px;
+                    top: 8px;
+                    right: 8px;
+                    /* FIX (#1, tap targets round 2): 30x30 -> 44x44. Also
+                       shifted top/right in from 14px to 8px so the bigger
+                       button doesn't overhang the modal's rounded corner. */
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 10px;
                     border: 1px solid var(--lp-border);
                     background: #fff;
                     color: var(--lp-muted);
@@ -1056,7 +1099,7 @@ const Landing = () => {
                     <span className="lp-icon-badge">
                         <i className="ti ti-hexagon" />
                     </span>
-                    <span>Workforce Alookate</span>
+                    <span>Workforce Allocate</span>
                 </div>
                 <nav className="lp-nav-links">
                     <a
@@ -1220,11 +1263,9 @@ const Landing = () => {
                         <span>Better Allocation.</span>
                     </h1>
                     <p className="lp-hero-subtitle">
-                        ALOOKATE is a custom business solution designed to simplify the daily
-                        allocation and tracking of tasks for handlers. This application allows
-                        Admins, Vertical Heads, and Process Heads to assign tasks based on dynamic
-                        criteria, such as the time of day and the vertical (department or process)
-                        the task belongs to.
+                        OSOI Allocate assigns daily work to the right person, automatically.
+                        Managers set the rules — time of day, department, or task type — and the
+                        system handles the rest.
                     </p>
                     <div className="lp-hero-ctas">
                         <button className="lp-btn-primary" onClick={() => scrollTo("pricing")}>
@@ -1327,6 +1368,15 @@ const Landing = () => {
                             <div className="lp-testimonial-name">Ritu Kapoor</div>
                             <div className="lp-testimonial-role">Operations Manager</div>
                         </div>
+                        {/* TODO: replace with a real, current number once you
+                            have one — this is placeholder copy alongside the
+                            placeholder quote above. */}
+                        <div className="lp-testimonial-stat">
+                            <div className="lp-testimonial-stat-num">30+</div>
+                            <div className="lp-testimonial-stat-label">
+                                teams allocating with OSOI
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1379,7 +1429,7 @@ const Landing = () => {
                 <div className="lp-login-card">
                     <h3 className="lp-login-title">Existing User? Login Here</h3>
                     <p className="lp-login-subtitle">
-                        Access your workspace and continue managing your workforce efficiently.
+                        Log in to your workspace and pick up where you left off.
                     </p>
 
                     {error && <div className="lp-login-error">{error}</div>}
@@ -1418,11 +1468,13 @@ const Landing = () => {
                         </div>
                         <div className="lp-login-row">
                             <label className="lp-login-remember">
-                                <input
-                                    type="checkbox"
-                                    checked={remember}
-                                    onChange={(e) => setRemember(e.target.checked)}
-                                />
+                                <span className="lp-checkbox-hit">
+                                    <input
+                                        type="checkbox"
+                                        checked={remember}
+                                        onChange={(e) => setRemember(e.target.checked)}
+                                    />
+                                </span>
                                 Remember me
                             </label>
                             <button
