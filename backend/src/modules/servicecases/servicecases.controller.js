@@ -231,11 +231,6 @@ async function findMatchingIds(table, nameColumn, term, organizationId) {
   return (data || []).map((r) => r.id);
 }
 
-// NEW: the Case Register search box accepts either the ISO date
-// (2026-08-26) or the display date (26-08-2026) the table itself
-// shows — this normalizes either into ISO so it can be matched
-// exactly against the work_date column. Returns null if `term`
-// doesn't look like a full date in either format.
 // NEW: the Case Register search box passes its raw text straight into a
 // PostgREST `.or()` filter string below, where commas and parentheses
 // are the DSL's own separators/grouping characters. Someone searching
@@ -1562,11 +1557,21 @@ async function listAllocationClearLog(req, res) {
 // body: { productId, workDate, employeeIds: [...] }
 //
 // "Smart Allocation" for the Cases tab: takes every still-PENDING case
-// for the given service+date and splits them as evenly as possible,
-// round-robin, across the given employee list — the same people marked
-// PRESENT on the Employees tab. Case #1 to employee #1, #2 to #2, ...
-// wrapping back to #1 once the employee list is exhausted, so counts
-// differ by at most 1 across employees.
+// for the given service+date and works out an even, round-robin split
+// across the given employee list — the same people marked PRESENT on
+// the Employees tab. Case #1 to employee #1, #2 to #2, ... wrapping
+// back to #1 once the employee list is exhausted, so counts differ by
+// at most 1 across employees.
+//
+// IMPORTANT: this is a PREVIEW only — it does NOT write anything to
+// the database. It just returns the computed case -> employee split so
+// the frontend can drop each suggestion into that row's "Allocate to"
+// dropdown. Nothing is actually allocated until the person reviews the
+// dropdowns and presses the page's own "Allocate" button, which saves
+// each row through the normal single-case PATCH
+// (/api/service-cases/:id/allocate) endpoint above. This keeps a
+// single write path for allocation instead of two, and means clicking
+// "Smart Allocation" by itself can never change a case's status.
 // ------------------------------------------------------------
 async function autoAllocateServiceCases(req, res) {
   try {
@@ -1605,40 +1610,20 @@ async function autoAllocateServiceCases(req, res) {
       });
     }
 
-    const now = new Date().toISOString();
+    // NOTE: preview only — no DB write here. Cases stay PENDING until
+    // the frontend's "Allocate" button saves them via allocateServiceCase.
     const updates = pendingCases.map((c, idx) => ({
       id: c.id,
       caseNumber: c.case_number,
       employeeId: employeeIds[idx % employeeIds.length],
     }));
 
-    // Supabase JS has no bulk "update many rows with different values"
-    // in one call, so this fires one update per case — fine at the
-    // scale a single day's case list runs at (Daily Work caps a single
-    // submission at 2000 cases).
-    await Promise.all(
-      updates.map((u) =>
-        supabase
-          .from("service_cases")
-          .update({
-            assigned_employee_id: u.employeeId,
-            allocation_status: "ALLOCATED",
-            allocated_at: now,
-            // NEW: same "who allocated this" tracking as the manual
-            // one-case-at-a-time path in allocateServiceCase.
-            allocated_by: req.user.userId,
-          })
-          .eq("id", u.id)
-          .eq("organization_id", req.user.organizationId),
-      ),
-    );
-
     const employeeMap = await getEmployeeNameMap(
       employeeIds,
       req.user.organizationId,
     );
     // Per-employee summary — how many cases + which case numbers each
-    // employee ended up with, so the UI can show it right after running
+    // employee WOULD get, so the UI can show it right after running
     // Smart Allocation without a second fetch.
     const perEmployee = employeeIds.map((empId) => {
       const cases = updates.filter((u) => u.employeeId === empId);
@@ -1652,8 +1637,19 @@ async function autoAllocateServiceCases(req, res) {
 
     res.json({
       success: true,
-      message: `${updates.length} case(s) allocated across ${employeeIds.length} employee(s).`,
-      data: { allocatedCount: updates.length, perEmployee },
+      message: `${updates.length} case(s) distributed across ${employeeIds.length} employee(s) — review below and press Allocate to confirm.`,
+      data: {
+        // Full case -> employee map (every case, not just per-employee
+        // groupings above) so the frontend can seed each row's dropdown
+        // without a second lookup.
+        assignments: updates.map((u) => ({
+          caseId: u.id,
+          caseNumber: u.caseNumber,
+          employeeId: u.employeeId,
+        })),
+        allocatedCount: updates.length,
+        perEmployee,
+      },
     });
   } catch (err) {
     console.error("autoAllocateServiceCases error:", err);
@@ -1713,15 +1709,6 @@ async function updateServiceCaseProfile(req, res) {
   }
 }
 
-// ------------------------------------------------------------
-// PATCH /api/service-cases/:id/client
-// body: { clientId }
-//
-// NEW: Case Register table's inline-editable Client column. Only the
-// client link is editable in place — case number, service, and date
-// stay read-only, set once at creation time. Passing clientId: null
-// (or "") clears the client on the case.
-// ------------------------------------------------------------
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/client
 // body: { clientId?, subclientId? }
