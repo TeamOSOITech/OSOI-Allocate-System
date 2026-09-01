@@ -77,6 +77,17 @@ const PLANS = [
     },
 ];
 
+// Fix (#4, social profiles linked): no social profiles exist for this
+// product yet, so this array is intentionally empty — the `.filter()`
+// below means the footer's social icon row won't render at all until a
+// real URL is added, rather than linking to a dead/placeholder profile.
+// When a profile exists, just fill in its url below.
+const SOCIAL_LINKS = [
+    { label: "LinkedIn", icon: "ti-brand-linkedin", url: "" },
+    { label: "X (Twitter)", icon: "ti-brand-x", url: "" },
+    { label: "Instagram", icon: "ti-brand-instagram", url: "" },
+].filter((s) => s.url.trim().length > 0);
+
 const Landing = () => {
     const navigate = useNavigate();
     const API_URL = import.meta.env.VITE_API_URL;
@@ -297,10 +308,16 @@ const Landing = () => {
                     --lp-bg: #F6F9FC;
                     --lp-border: #E3E9F3;
                     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                    /* FIX (#7, no text under 12px): explicit 16px base so
+                       nothing on the page inherits a smaller default. */
+                    font-size: 16px;
                     color: var(--lp-text);
                     background: #fff;
                     overflow-x: hidden;
                 }
+                /* New: visible field labels for the login form (fix #2) */
+                .lp-field { display: flex; flex-direction: column; gap: 6px; }
+                .lp-field-label { font-size: 13px; font-weight: 600; color: #334155; }
                 .lp-page h1, .lp-page h2, .lp-page h3 {
                     font-family: 'Sora', 'Inter', sans-serif;
                 }
@@ -379,7 +396,23 @@ const Landing = () => {
                     display: flex;
                     gap: 30px;
                 }
+                .lp-nav-links {
+                    /* FIX (#1, tap targets + spacing): nav links now carry
+                       real hit-area padding via .lp-nav-link, so the 30px
+                       gap keeps 8px+ of dead space between them even with
+                       the bigger boxes. */
+                    gap: 22px;
+                }
                 .lp-nav-link {
+                    display: inline-flex;
+                    align-items: center;
+                    /* FIX (#1): was plain text with no padding — the
+                       clickable box was just the glyph height (~20px).
+                       min-height + vertical padding brings the real hit
+                       area up to 44px without changing how the link looks. */
+                    min-height: 44px;
+                    padding: 4px 6px;
+                    box-sizing: border-box;
                     color: #B9C4DA;
                     text-decoration: none;
                     font-size: 14px;
@@ -393,6 +426,14 @@ const Landing = () => {
                     border: none;
                     border-radius: 8px;
                     padding: 9px 22px;
+                    /* FIX (#1): 9px padding + 14px text landed around 35px
+                       tall — min-height with flex-centering guarantees 44px
+                       regardless of font metrics. */
+                    min-height: 44px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-sizing: border-box;
                     font-weight: 600;
                     cursor: pointer;
                     font-size: 14px;
@@ -407,6 +448,11 @@ const Landing = () => {
                     border: 1px solid #33415F;
                     border-radius: 8px;
                     padding: 9px 22px;
+                    min-height: 44px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-sizing: border-box;
                     font-weight: 600;
                     cursor: pointer;
                     font-size: 14px;
@@ -420,8 +466,9 @@ const Landing = () => {
                     background: none;
                     border: 1px solid #26314F;
                     border-radius: 8px;
-                    width: 38px;
-                    height: 38px;
+                    /* FIX (#1): 38x38 -> 44x44, the full recommended box. */
+                    width: 44px;
+                    height: 44px;
                     color: #fff;
                     font-size: 18px;
                     cursor: pointer;
@@ -435,6 +482,12 @@ const Landing = () => {
                     padding: 14px clamp(20px, 5vw, 56px) 20px;
                 }
                 .lp-mobile-panel a {
+                    display: flex;
+                    align-items: center;
+                    /* FIX (#1): 12px top/bottom padding + ~18px text line
+                       was ~42px; min-height locks it to 44px. */
+                    min-height: 44px;
+                    box-sizing: border-box;
                     color: #DCE4F2;
                     text-decoration: none;
                     padding: 12px 0;
@@ -529,6 +582,11 @@ const Landing = () => {
                     border: none;
                     border-radius: 9px;
                     padding: 13px 26px;
+                    min-height: 44px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-sizing: border-box;
                     font-weight: 600;
                     cursor: pointer;
                     font-size: 15px;
@@ -543,6 +601,11 @@ const Landing = () => {
                     border: 1px solid #33415F;
                     border-radius: 9px;
                     padding: 13px 26px;
+                    min-height: 44px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-sizing: border-box;
                     font-weight: 600;
                     cursor: pointer;
                     font-size: 15px;
@@ -608,7 +671,7 @@ const Landing = () => {
                     background-clip: text;
                     color: transparent;
                 }
-                .lp-mock-stat-label { font-size: 10px; color: #7C8AA5; margin-top: 4px; }
+                .lp-mock-stat-label { font-size: 12px; color: #7C8AA5; margin-top: 4px; }
                 .lp-mock-bars { display: flex; align-items: flex-end; gap: 8px; height: 90px; }
                 .lp-mock-bar { flex: 1; background: var(--lp-gradient); border-radius: 5px 5px 2px 2px; }
 
@@ -621,7 +684,7 @@ const Landing = () => {
                     color: var(--lp-text);
                     border-radius: 10px;
                     padding: 8px 12px;
-                    font-size: 11.5px;
+                    font-size: 12px;
                     font-weight: 600;
                     box-shadow: 0 14px 30px rgba(0,0,0,0.3);
                     z-index: 2;
@@ -679,6 +742,40 @@ const Landing = () => {
                 .lp-feature-title { font-weight: 700; font-size: 16px; margin-bottom: 8px; font-family: 'Sora', sans-serif; }
                 .lp-feature-desc { font-size: 13.5px; color: var(--lp-muted); line-height: 1.55; }
 
+                /* ---------- Testimonial (social proof) ---------- */
+                .lp-testimonial-card {
+                    max-width: 640px;
+                    margin: 0 auto;
+                    background: #fff;
+                    border: 1px solid var(--lp-border);
+                    border-radius: 16px;
+                    padding: clamp(28px, 5vw, 40px);
+                    text-align: left;
+                    box-shadow: 0 14px 34px rgba(32,66,151,0.08);
+                }
+                .lp-testimonial-quote {
+                    font-size: 17px;
+                    line-height: 1.6;
+                    color: var(--lp-text);
+                    margin: 0 0 22px;
+                }
+                .lp-testimonial-person { display: flex; align-items: center; gap: 12px; }
+                .lp-testimonial-avatar {
+                    width: 46px;
+                    height: 46px;
+                    border-radius: 50%;
+                    background: var(--lp-gradient);
+                    color: #fff;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: 700;
+                    font-size: 15px;
+                    flex-shrink: 0;
+                }
+                .lp-testimonial-name { font-weight: 700; font-size: 14.5px; }
+                .lp-testimonial-role { font-size: 13px; color: var(--lp-muted); }
+
                 /* ---------- Pricing ---------- */
                 .lp-pricing-section { background: var(--lp-bg); }
                 .lp-pricing-grid {
@@ -709,7 +806,7 @@ const Landing = () => {
                     left: 22px;
                     background: var(--lp-gradient);
                     color: #fff;
-                    font-size: 11px;
+                    font-size: 12px;
                     font-weight: 700;
                     padding: 5px 12px;
                     border-radius: 999px;
@@ -725,6 +822,11 @@ const Landing = () => {
                     border: none;
                     border-radius: 9px;
                     padding: 11px 0;
+                    min-height: 44px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-sizing: border-box;
                     font-weight: 600;
                     cursor: pointer;
                     margin-top: auto;
@@ -789,14 +891,37 @@ const Landing = () => {
                 }
                 .lp-login-input:focus { border-color: var(--lp-cyan); box-shadow: 0 0 0 3px rgba(8,161,206,0.15); }
                 .lp-login-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; flex-wrap: wrap; gap: 8px; }
-                .lp-login-remember { display: flex; align-items: center; gap: 6px; color: #475569; }
-                .lp-login-forgot { background: none; border: none; color: var(--lp-blue); cursor: pointer; font-size: 13px; padding: 0; font-family: inherit; font-weight: 600; }
+                .lp-login-remember {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    color: #475569;
+                    min-height: 44px;
+                    box-sizing: border-box;
+                }
+                .lp-login-forgot {
+                    background: none;
+                    border: none;
+                    color: var(--lp-blue);
+                    cursor: pointer;
+                    font-size: 13px;
+                    /* FIX (#1): was padding:0, so the click box was just the
+                       text glyph height. Vertical padding + min-height take
+                       it to 44px without shifting the visible label. */
+                    padding: 12px 4px;
+                    min-height: 44px;
+                    box-sizing: border-box;
+                    font-family: inherit;
+                    font-weight: 600;
+                }
                 .lp-login-submit {
                     background: var(--lp-gradient);
                     color: #fff;
                     border: none;
                     border-radius: 9px;
                     padding: 13px 0;
+                    min-height: 44px;
+                    box-sizing: border-box;
                     font-weight: 700;
                     cursor: pointer;
                     font-size: 14.5px;
@@ -822,8 +947,31 @@ const Landing = () => {
                     gap: 12px;
                 }
                 .lp-footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
-                .lp-footer a { color: #8FA3C4; text-decoration: none; }
+                .lp-footer a {
+                    display: inline-flex;
+                    align-items: center;
+                    /* FIX (#1): footer links were bare text with no
+                       padding — this brings the hit area to 44px tall. */
+                    min-height: 44px;
+                    padding: 4px 2px;
+                    box-sizing: border-box;
+                    color: #8FA3C4;
+                    text-decoration: none;
+                }
                 .lp-footer a:hover { color: #fff; }
+                /* New: social profile links (fix #4) */
+                .lp-footer-social { display: flex; gap: 8px; }
+                .lp-footer-social a {
+                    width: 44px;
+                    height: 44px;
+                    min-height: 44px;
+                    border-radius: 10px;
+                    border: 1px solid #26314F;
+                    justify-content: center;
+                    font-size: 16px;
+                    padding: 0;
+                }
+                .lp-footer-social a:hover { border-color: #08A1CE; }
 
                 /* ---------- Checkout modal ---------- */
                 .lp-checkout-overlay {
@@ -1160,6 +1308,29 @@ const Landing = () => {
                 </div>
             </section>
 
+            {/* ---------- Testimonial (social proof) ---------- */}
+            {/* TODO: swap in a real customer quote, name, role, and photo
+                once you have one on record — this is placeholder copy in
+                the meantime, written to match the product rather than left
+                generic. Replace .lp-testimonial-avatar's initials with an
+                <img> tag once you have a real photo. */}
+            <section className="lp-section" style={{ paddingTop: 0 }}>
+                <div className="lp-testimonial-card">
+                    <p className="lp-testimonial-quote">
+                        "Allocation used to be a spreadsheet three of us fought over every morning.
+                        Now every case gets assigned automatically and I can see who's overloaded
+                        before it becomes a problem."
+                    </p>
+                    <div className="lp-testimonial-person">
+                        <div className="lp-testimonial-avatar">RK</div>
+                        <div>
+                            <div className="lp-testimonial-name">Ritu Kapoor</div>
+                            <div className="lp-testimonial-role">Operations Manager</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             {/* ---------- Pricing ---------- */}
             <section id="pricing" className="lp-section lp-pricing-section">
                 <h2 className="lp-section-title">Plans &amp; Pricing</h2>
@@ -1217,22 +1388,34 @@ const Landing = () => {
                         onSubmit={handleLogin}
                         style={{ display: "flex", flexDirection: "column", gap: 12 }}
                     >
-                        <input
-                            type="email"
-                            placeholder="Enter your email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                            className="lp-login-input"
-                        />
-                        <input
-                            type="password"
-                            placeholder="Enter your password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            className="lp-login-input"
-                        />
+                        <div className="lp-field">
+                            <label htmlFor="lp-login-email" className="lp-field-label">
+                                Email
+                            </label>
+                            <input
+                                id="lp-login-email"
+                                type="email"
+                                placeholder="Enter your email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                required
+                                className="lp-login-input"
+                            />
+                        </div>
+                        <div className="lp-field">
+                            <label htmlFor="lp-login-password" className="lp-field-label">
+                                Password
+                            </label>
+                            <input
+                                id="lp-login-password"
+                                type="password"
+                                placeholder="Enter your password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                                className="lp-login-input"
+                            />
+                        </div>
                         <div className="lp-login-row">
                             <label className="lp-login-remember">
                                 <input
@@ -1277,6 +1460,21 @@ const Landing = () => {
                     <a href="#">Terms of Use</a>
                     <a href="#">Contact Us</a>
                 </div>
+                {SOCIAL_LINKS.length > 0 && (
+                    <div className="lp-footer-social">
+                        {SOCIAL_LINKS.map((s) => (
+                            <a
+                                key={s.label}
+                                href={s.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={s.label}
+                            >
+                                <i className={`ti ${s.icon}`} aria-hidden="true" />
+                            </a>
+                        ))}
+                    </div>
+                )}
             </footer>
 
             {/* ---------- Checkout email modal (Basic / Professional) ---------- */}

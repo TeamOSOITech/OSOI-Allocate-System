@@ -330,7 +330,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     style={{
                         display: "flex",
                         flexDirection: "column",
-                        gap: "6px",
+                        gap: "4px",
                         overflow: "hidden",
                         minHeight: 0,
                         flex: 1,

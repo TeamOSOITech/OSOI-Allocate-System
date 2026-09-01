@@ -4,28 +4,38 @@
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>OSOI Aloocate</title>
+        <!-- FIX (#6, page title length): old title was "OSOI Aloocate" — a
+             typo, and at 13 chars too short to name the product's benefit.
+             Now names the thing (OSOI Allocate) + the benefit (workforce
+             allocation, tracking and reporting), 54 chars, under the 60
+             truncation limit. -->
+        <title>OSOI Allocate — Workforce Allocation &amp; Tracking</title>
         <meta
             name="description"
-            content="OSOI Aloocate — work allocation, tracking and reporting system."
+            content="OSOI Allocate — work allocation, tracking and reporting system."
         />
+        <!-- FIX (#5, canonical URL missing): declares the single canonical
+             path so duplicate paths / tracking query params (?utm_source=...,
+             ?signup=1, etc.) don't split ranking across near-duplicate URLs. -->
+        <link rel="canonical" href="https://osoi-allocate-system.vercel.app/" />
 
         <!-- Open Graph / link-preview tags (WhatsApp, Telegram, Slack, etc.)
          Without these, sharing a link only showed the raw <title> ("frontend")
          with no proper preview. -->
         <meta property="og:type" content="website" />
-        <meta property="og:title" content="OSOI Aloocate" />
+        <meta property="og:title" content="OSOI Allocate — Workforce Allocation & Tracking" />
         <meta
             property="og:description"
-            content="OSOI Aloocate — work aloocation, tracking and reporting system."
+            content="OSOI Allocate — work allocation, tracking and reporting system."
         />
         <meta property="og:image" content="/Logo.jpg" />
+        <meta property="og:url" content="https://osoi-allocate-system.vercel.app/" />
 
         <meta name="twitter:card" content="summary" />
-        <meta name="twitter:title" content="OSOI Aloocate" />
+        <meta name="twitter:title" content="OSOI Allocate — Workforce Allocation & Tracking" />
         <meta
             name="twitter:description"
-            content="OSOI Aloocate — work aloocation, tracking and reporting system."
+            content="OSOI Allocate — work allocation, tracking and reporting system."
         />
         <meta name="twitter:image" content="/Logo.jpg" />
     </head>
