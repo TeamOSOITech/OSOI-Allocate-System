@@ -170,7 +170,7 @@ export default function Employees() {
     // backend — Ops Manager / Super Admin). Everyone else gets a
     // read-only view. Role values are the new 6-tier codes — see
     // backend src/config/permissions.js.
-    let currentUser: { role?: string } | null = null;
+    let currentUser: { role?: string; id?: string | number } | null = null;
     try {
         const userStr = localStorage.getItem("user");
         currentUser = userStr ? JSON.parse(userStr) : null;
@@ -240,6 +240,13 @@ export default function Employees() {
 
     const [search, setSearch] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("All");
+    // NEW: "My Team" vs "Organisation" scope. Defaults to My Team — the
+    // page opens showing only people on the logged-in user's own team,
+    // same as everyone is used to from their own day-to-day view.
+    // Switching to "Organisation" lifts that restriction and shows
+    // everyone, exactly like this page behaved before this toggle
+    // existed (still subject to the search/department filters below).
+    const [scope, setScope] = useState<"myteam" | "org">("myteam");
     // Grid/list toggle — same pattern as the Clients and Products (Services)
     // pages, so switching between admin pages feels consistent.
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -589,6 +596,15 @@ export default function Employees() {
         [employees]
     );
 
+    // NEW: the logged-in user's own team — looked up from the same
+    // employees list this page already fetches (Employee.id is the same
+    // "Auth User Id" as currentUser.id, see backend employees.service.js
+    // mapRow), so no extra API call is needed just to know "my team".
+    const myTeam = useMemo(() => {
+        const me = employees.find((e) => String(e.id) === String(currentUser?.id ?? ""));
+        return me?.team || null;
+    }, [employees, currentUser]);
+
     // Reporting Manager dropdown options — built from the employees
     // already loaded on this page rather than a separate fetch. Value is
     // the manager's email (matches how reportingManager is already stored
@@ -638,9 +654,15 @@ export default function Employees() {
                 (e.department || "").toLowerCase().includes(q);
             const matchesDepartment =
                 departmentFilter === "All" || e.department === departmentFilter;
-            return matchesSearch && matchesDepartment;
+            // NEW: "My Team" scope — only apply the restriction when we
+            // actually know the logged-in user's own team (myTeam). If
+            // their record has no team set, there's nothing to narrow
+            // down to, so scope quietly behaves like "Organisation"
+            // instead of showing an empty page.
+            const matchesScope = scope === "org" || !myTeam || e.team === myTeam;
+            return matchesSearch && matchesDepartment && matchesScope;
         });
-    }, [employees, search, departmentFilter]);
+    }, [employees, search, departmentFilter, scope, myTeam]);
 
     // Ids eligible for bulk selection: currently visible (matches
     // search/department filters) AND this role is actually allowed to
@@ -670,7 +692,9 @@ export default function Employees() {
                                     <span style={styles.pageTitleCount}>({employees.length})</span>
                                 </h2>
                                 <p style={styles.headerSubtext}>
-                                    Browse your organization by department and team.
+                                    {scope === "myteam" && myTeam
+                                        ? `Showing your team (${myTeam}). Switch to "Organisation" to browse everyone.`
+                                        : "Browse your organization by department and team."}
                                 </p>
                             </div>
                         </div>
@@ -703,6 +727,27 @@ export default function Employees() {
                                 </button>
                             )}
                         </div>
+
+                        {/* NEW: My Team / Organisation scope toggle. Opens on
+                            "My Team" — only people who share the logged-in
+                            user's own team are shown. Switching to
+                            "Organisation" removes that restriction and shows
+                            everyone, same as this page always used to. */}
+                        <select
+                            className="emp-select"
+                            style={styles.filterSelect}
+                            value={scope}
+                            onChange={(e) => setScope(e.target.value as "myteam" | "org")}
+                            aria-label="Scope"
+                            title={
+                                scope === "myteam" && !myTeam
+                                    ? "Your account has no team set, so this currently shows everyone."
+                                    : undefined
+                            }
+                        >
+                            <option value="myteam">My Team</option>
+                            <option value="org">Organisation</option>
+                        </select>
 
                         <select
                             className="emp-select"
