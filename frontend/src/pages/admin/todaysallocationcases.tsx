@@ -415,20 +415,19 @@ export default function TodaysAllocationCases({
         if (changedCaseIds.length === 0) return;
         setBulkSaving(true);
         try {
-            let okCount = 0;
-            for (const caseId of changedCaseIds) {
-                const ok = await handleManualAllocate(caseId, pendingSelection[caseId] ?? "");
-                if (ok) okCount++;
-            }
+            // Parallel — pehle ye ek-ek karke (sequential) allocate ho raha
+            // tha, isliye N cases x per-request latency time lag raha tha.
+            const results = await Promise.all(
+                changedCaseIds.map((caseId) =>
+                    handleManualAllocate(caseId, pendingSelection[caseId] ?? "")
+                )
+            );
+            const okCount = results.filter(Boolean).length;
             setAutoPreviewCaseIds([]);
             setAutoResult(null);
             if (okCount > 0) {
                 showToast(`${okCount} case(s) allocated.`);
                 setSuccessPopup({ count: okCount });
-                // Refresh so status pills / pending-count on this page
-                // reflect what was just saved (mirrors what Smart
-                // Allocation used to do for itself before it became a
-                // preview-only step).
                 fetchCases();
                 onCasesChanged?.();
             }

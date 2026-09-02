@@ -18,6 +18,11 @@ const Register = lazy(() => import("./pages/auth/register"));
 const ForgotPassword = lazy(() => import("./pages/auth/forgotPassword"));
 const ResetPassword = lazy(() => import("./pages/auth/resetPassword"));
 //const ReportDashboard = lazy(() => import("./pages/admin/reportdashboard"));
+// NEW: Home page — Holidays + Birthdays sections (Keka-style). This is
+// what "/report" (NORMAL_USER_HOME below) now actually renders — that
+// route existed in the allow-list/home-redirect logic for a while with
+// no page behind it.
+const Home = lazy(() => import("./pages/home"));
 const Dashboard = lazy(() => import("./pages/admin/dashboard"));
 const Products = lazy(() => import("./pages/admin/products"));
 const DailyWork = lazy(() => import("./pages/admin/dailywork"));
@@ -255,6 +260,20 @@ function App() {
                 <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
                     <Routes>
                         <Route path="/login" element={<Login />} />
+
+                        {/* NEW: Home page — Holidays + Birthdays. Open to every logged-in
+                        role (no requiredRole), same as Profile. This is also
+                        NORMAL_USER_HOME above, so Team Member lands here right after login. */}
+                        <Route
+                            path="/report"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Home user={user} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
 
                         <Route path="/forgot-password" element={<ForgotPassword />} />
                         <Route path="/reset-password" element={<ResetPassword />} />

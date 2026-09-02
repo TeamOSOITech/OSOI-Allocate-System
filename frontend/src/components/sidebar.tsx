@@ -22,6 +22,16 @@ const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
 const SUPER_ADMIN_ONLY = ["SUPER_ADMIN"];
 
 const menuItems: MenuItem[] = [
+    // NEW: Home — Holidays + Birthdays (see pages/home.tsx). Points at
+    // /report, open to any logged-in user (no requiredRole in App.jsx),
+    // and is NORMAL_USER_HOME — so it's shown to every role, not just
+    // TEAM_MEMBER, as their landing page.
+    {
+        label: "Home",
+        icon: "ti ti-smart-home",
+        path: "/report",
+        roles: EVERYONE,
+    },
     // /dashboard route is gated to ADMIN_TIER_ROLES in App.jsx, so this
     // link uses the same role list to avoid showing it to someone who'd
     // just hit a 403 clicking through.
@@ -35,17 +45,6 @@ const menuItems: MenuItem[] = [
         // page directly by URL but never saw the sidebar link.
         roles: [...SUPER_ADMIN_ONLY, "OPS_MANAGER"],
     },
-    // Role-based access Phase 1: Normal User's own landing page. Points
-    // at /report (open to any logged-in user, no requiredRole in
-    // App.jsx) rather than /dashboard, which is the admin-tier metrics
-    // dashboard. Shown only to TEAM_MEMBER — admin-tier roles already
-    // have "Dashboard" above.
-    /*{
-        label: "User Dashboard",
-        icon: "ti ti-smart-home",
-        path: "/report",
-        roles: ["TEAM_MEMBER"],
-    },*/
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
     // previously shown to the full ADMIN_TIER group, so Ops Manager/Audit
@@ -135,7 +134,7 @@ const menuItems: MenuItem[] = [
 
 const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
-    "/report": "User Dashboard",
+    "/report": "Home",
     "/products": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
