@@ -225,6 +225,15 @@ app.use(
   loadRoute("qcaudit", "./src/modules/qcaudit/Qcaudit.routes"),
 );
 app.use("/api", loadRoute("profile", "./src/modules/profiles/profile.route"));
+// NEW: Home page "Holidays" card — company holiday calendar. Anyone
+// logged in can view; only SUPER_ADMIN can add/bulk-upload/delete. The
+// "Birthdays" card next to it on the Home page needs no new module —
+// it reads dateOfBirth straight off GET /api/employees, already open to
+// every logged-in user.
+app.use(
+  "/api/holidays",
+  loadRoute("holidays", "./src/modules/holidays/holidays.routes"),
+);
 
 // ========================
 // ⚠️ REMOVED: /test-auth
