@@ -80,6 +80,19 @@ export default function TodaysAllocationEmployees({
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [teamFilter, setTeamFilter] = useState("");
     const [searchText, setSearchText] = useState("");
+    // NEW: "External Members" — lets an admin pull in employees whose own
+    // Team ISN'T linked to the selected service, for just this one
+    // service/date (e.g. borrowing someone to help clear a backlog).
+    // Chosen via the multi-select next to Search; reset whenever the
+    // service changes since "external" only means anything relative to
+    // whichever service is currently selected.
+    const [externalIds, setExternalIds] = useState<Set<string>>(new Set());
+    const [externalMenuOpen, setExternalMenuOpen] = useState(false);
+    const [externalSearch, setExternalSearch] = useState("");
+    // NEW: view filter shown just above the employee table — "All" (team
+    // + any external adds), "My Team" (service-matched only), or
+    // "External" (only the manually added ones).
+    const [viewScope, setViewScope] = useState<"all" | "team" | "external">("all");
 
     const [statusByEmployee, setStatusByEmployee] = useState<Record<string, AttStatus>>({});
     const [loading, setLoading] = useState(true);
@@ -164,13 +177,62 @@ export default function TodaysAllocationEmployees({
         return employees.filter((e) => e.team && allowed.has(e.team.toLowerCase()));
     }, [employees, selectedProduct]);
 
+    const serviceMatchedIds = useMemo(
+        () => new Set(serviceMatched.map((e) => e.id)),
+        [serviceMatched]
+    );
+
+    // NEW: reset the External picks whenever the selected service changes
+    // — an employee "external" to Service A isn't necessarily external
+    // to Service B, so carrying the selection over would be misleading.
+    useEffect(() => {
+        setExternalIds(new Set());
+    }, [productId]);
+
+    // Candidates for the External multi-select: everyone NOT already
+    // team-matched to this service, optionally narrowed by the search
+    // box inside that dropdown.
+    const externalCandidates = useMemo(() => {
+        const pool = employees.filter((e) => !serviceMatchedIds.has(e.id));
+        const q = externalSearch.trim().toLowerCase();
+        if (!q) return pool;
+        return pool.filter((e) =>
+            [e.name, e.employeeCode, e.department, e.team]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase()
+                .includes(q)
+        );
+    }, [employees, serviceMatchedIds, externalSearch]);
+
+    const toggleExternal = (id: string) => {
+        setExternalIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    // Team-matched employees + whichever externals were manually added —
+    // this is what the "All" scope (and the base for Team/External below)
+    // is built from.
+    const combinedList = useMemo(() => {
+        if (viewScope === "team") return serviceMatched;
+        if (viewScope === "external") return employees.filter((e) => externalIds.has(e.id));
+        const extras = employees.filter(
+            (e) => externalIds.has(e.id) && !serviceMatchedIds.has(e.id)
+        );
+        return [...serviceMatched, ...extras];
+    }, [viewScope, serviceMatched, employees, externalIds, serviceMatchedIds]);
+
     const teams = useMemo(
         () => Array.from(new Set(serviceMatched.map((e) => e.team).filter(Boolean))) as string[],
         [serviceMatched]
     );
 
     const filteredEmployees = useMemo(() => {
-        let list = serviceMatched;
+        let list = combinedList;
         if (teamFilter) list = list.filter((e) => e.team === teamFilter);
         const q = searchText.trim().toLowerCase();
         if (!q) return list;
@@ -181,7 +243,7 @@ export default function TodaysAllocationEmployees({
                 .toLowerCase()
                 .includes(q)
         );
-    }, [serviceMatched, teamFilter, searchText]);
+    }, [combinedList, teamFilter, searchText]);
 
     const setStatus = (employeeId: string, status: AttStatus) => {
         setStatusByEmployee((prev) => ({ ...prev, [employeeId]: status }));
@@ -300,6 +362,62 @@ export default function TodaysAllocationEmployees({
                             onChange={(e) => setSearchText(e.target.value)}
                         />
                     </div>
+                    {/* NEW: External Members — multi-select of employees NOT
+                        on this service's own team, so they can be pulled
+                        in just for today/this service. */}
+                    <div style={{ position: "relative" }}>
+                        <label style={styles.label}>External Members</label>
+                        <button
+                            type="button"
+                            style={{ ...styles.select, textAlign: "left", cursor: "pointer" }}
+                            onClick={() => setExternalMenuOpen((o) => !o)}
+                        >
+                            {externalIds.size === 0
+                                ? "Add from other teams…"
+                                : `${externalIds.size} added`}
+                        </button>
+                        {externalMenuOpen && (
+                            <div style={styles.externalPanel}>
+                                <input
+                                    autoFocus
+                                    style={{ ...styles.select, marginBottom: 8 }}
+                                    placeholder="Search other teams…"
+                                    value={externalSearch}
+                                    onChange={(e) => setExternalSearch(e.target.value)}
+                                />
+                                <div style={styles.externalList}>
+                                    {externalCandidates.length === 0 ? (
+                                        <div style={styles.externalEmpty}>
+                                            No other employees found.
+                                        </div>
+                                    ) : (
+                                        externalCandidates.map((e) => (
+                                            <label key={e.id} style={styles.externalRow}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={externalIds.has(e.id)}
+                                                    onChange={() => toggleExternal(e.id)}
+                                                />
+                                                <span>
+                                                    {e.name}{" "}
+                                                    <span style={styles.externalRowTeam}>
+                                                        ({e.team || "No team"})
+                                                    </span>
+                                                </span>
+                                            </label>
+                                        ))
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    style={styles.externalDoneBtn}
+                                    onClick={() => setExternalMenuOpen(false)}
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
+                    </div>
                     <button type="button" style={styles.ghostBtn} onClick={markAllPresent}>
                         <i className="ti ti-checks" /> Mark all Present
                     </button>
@@ -315,6 +433,23 @@ export default function TodaysAllocationEmployees({
                     <span style={{ ...styles.countPill, color: BRAND.grey }}>
                         {counts.leave} Leave
                     </span>
+                </div>
+
+                {/* NEW: All / My Team / External — filters the table below
+                    without touching who's actually included in the
+                    combined list (that's driven by the External Members
+                    picker above), just what's currently visible. */}
+                <div style={{ maxWidth: 220 }}>
+                    <label style={styles.label}>Show</label>
+                    <select
+                        style={styles.select}
+                        value={viewScope}
+                        onChange={(e) => setViewScope(e.target.value as any)}
+                    >
+                        <option value="all">All (My Team + External)</option>
+                        <option value="team">My Team only</option>
+                        <option value="external">External only</option>
+                    </select>
                 </div>
 
                 <div style={styles.tableCard}>
@@ -335,7 +470,15 @@ export default function TodaysAllocationEmployees({
                                     <span style={styles.colName}>
                                         <span style={styles.avatar}>{initials(emp.name)}</span>
                                         <span>
-                                            <div style={styles.empName}>{emp.name}</div>
+                                            <div style={styles.empName}>
+                                                {emp.name}
+                                                {externalIds.has(emp.id) && (
+                                                    <span style={styles.externalTag}>
+                                                        {" "}
+                                                        (External)
+                                                    </span>
+                                                )}
+                                            </div>
                                             {emp.employeeCode && (
                                                 <div style={styles.empCode}>{emp.employeeCode}</div>
                                             )}
@@ -501,6 +644,47 @@ const styles: Record<string, CSSProperties> = {
     },
     empName: { fontSize: fontSize.base, color: "#1a1a2e", fontWeight: fontWeight.medium },
     empCode: { fontSize: fontSize.xs, color: "#9ca3af", marginTop: 1 },
+    // NEW: External Members multi-select + row tag.
+    externalTag: { fontSize: fontSize.xs, fontWeight: fontWeight.regular, color: BRAND.amber },
+    externalPanel: {
+        position: "absolute",
+        top: "100%",
+        left: 0,
+        marginTop: 4,
+        width: 280,
+        maxHeight: 320,
+        background: "#fff",
+        border: "1px solid #ececf5",
+        borderRadius: radius.sm,
+        boxShadow: "0 10px 30px rgba(0,0,0,.12)",
+        padding: 10,
+        zIndex: 20,
+        display: "flex",
+        flexDirection: "column",
+    },
+    externalList: { overflowY: "auto", maxHeight: 200, display: "flex", flexDirection: "column" },
+    externalEmpty: { padding: "10px 4px", color: "#9ca3af", fontSize: fontSize.sm },
+    externalRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 4px",
+        fontSize: fontSize.sm,
+        color: "#17181C",
+        cursor: "pointer",
+    },
+    externalRowTeam: { color: "#9ca3af", fontSize: fontSize.xs },
+    externalDoneBtn: {
+        marginTop: 8,
+        padding: "8px 12px",
+        borderRadius: radius.sm,
+        border: "none",
+        background: BRAND.blue,
+        color: "#fff",
+        fontWeight: fontWeight.medium,
+        fontSize: fontSize.sm,
+        cursor: "pointer",
+    },
     statusBtn: {
         display: "inline-flex",
         alignItems: "center",
