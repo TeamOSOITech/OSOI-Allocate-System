@@ -1137,7 +1137,9 @@ export default function ManualAllocation() {
                         {filtersOpen && (
                             <div style={styles.card}>
                                 <div style={isMobile ? styles.filterBarMobile : styles.filterBar}>
-                                    <div style={styles.filterField}>
+                                    <div
+                                        style={{ ...styles.filterField, width: 190, flexShrink: 0 }}
+                                    >
                                         <label style={styles.label}>
                                             <Box size={12} color={BRAND.blue} /> Service
                                         </label>
@@ -1154,7 +1156,9 @@ export default function ManualAllocation() {
                                             ))}
                                         </select>
                                     </div>
-                                    <div style={styles.filterField}>
+                                    <div
+                                        style={{ ...styles.filterField, width: 190, flexShrink: 0 }}
+                                    >
                                         <label style={styles.label}>
                                             <Users size={12} color={BRAND.blue} /> Team
                                         </label>
@@ -1170,7 +1174,7 @@ export default function ManualAllocation() {
                                             {alignedTeamsLabel}
                                         </div>
                                     </div>
-                                    <div style={styles.filterField}>
+                                    <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
                                         <label style={styles.label}>
                                             <Search size={12} color={BRAND.blue} /> Search
                                         </label>
@@ -2030,8 +2034,8 @@ const styles: Record<string, CSSProperties> = {
         marginBottom: 16,
     },
     filterBar: {
-        display: "grid",
-        gridTemplateColumns: "0.8fr 0.8fr 0.8fr 1.6fr",
+        display: "flex",
+        alignItems: "flex-end",
         gap: 14,
     },
     filterBarMobile: { display: "flex", flexDirection: "column", gap: 12 },

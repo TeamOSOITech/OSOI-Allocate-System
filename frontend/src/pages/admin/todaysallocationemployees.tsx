@@ -196,9 +196,53 @@ export default function TodaysAllocationEmployees({
     // NEW: reset the External picks whenever the selected service changes
     // — an employee "external" to Service A isn't necessarily external
     // to Service B, so carrying the selection over would be misleading.
+    // Persisted server-side (external_service_members table) so the same
+    // picks come back automatically next time this service+date is
+    // opened, instead of resetting on every reload.
+    const fetchExternalMembers = useCallback(async () => {
+        if (!productId) {
+            setExternalIds(new Set());
+            return;
+        }
+        try {
+            const res = await authFetch(
+                `${API_BASE}/api/external-members?productId=${productId}&workDate=${workDate}`
+            );
+            const json = await res.json();
+            setExternalIds(res.ok && json.success ? new Set(json.data || []) : new Set());
+        } catch (err) {
+            console.error("Failed to fetch external members:", err);
+            setExternalIds(new Set());
+        }
+    }, [productId, workDate]);
     useEffect(() => {
-        setExternalIds(new Set());
-    }, [productId]);
+        fetchExternalMembers();
+    }, [fetchExternalMembers]);
+
+    // Saves the FULL external set for this service+date right away on
+    // every toggle — no separate "save" step needed, and it means the
+    // Cases tab (which now also reads attendance + external status for
+    // Smart/Manual allocation) sees an up-to-date list as soon as
+    // someone's added or removed here.
+    const persistExternalMembers = useCallback(
+        async (ids: Set<string>) => {
+            if (!productId) return;
+            try {
+                await authFetch(`${API_BASE}/api/external-members`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        productId,
+                        workDate,
+                        employeeIds: Array.from(ids),
+                    }),
+                });
+            } catch (err) {
+                console.error("Failed to save external members:", err);
+            }
+        },
+        [productId, workDate]
+    );
 
     // Candidates for the External multi-select: everyone NOT already
     // team-matched to this service, optionally narrowed by the search
@@ -221,6 +265,7 @@ export default function TodaysAllocationEmployees({
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
+            persistExternalMembers(next);
             return next;
         });
     };
@@ -594,7 +639,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#374151",
         width: "100%",
         boxSizing: "border-box",
-        minHeight: 36,
+        lineHeight: "normal",
         display: "flex",
         alignItems: "center",
         whiteSpace: "nowrap",

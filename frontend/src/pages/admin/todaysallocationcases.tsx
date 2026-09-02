@@ -104,6 +104,61 @@ export default function TodaysAllocationCases({
     const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
+    // NEW: attendance for the selected date, fetched once here (not just
+    // inline inside handleAutoAllocate) so eligibleEmployees below can
+    // also use it — needed so anyone marked Present on the Employees tab
+    // as an "External Member" (someone whose own Team isn't linked to
+    // this service) still shows up here for both the manual per-case
+    // dropdown AND Smart Allocation, not just employees whose Team
+    // happens to match this service.
+    const [attendanceByEmployee, setAttendanceByEmployee] = useState<
+        Record<string, "PRESENT" | "ABSENT" | "LEAVE">
+    >({});
+    const fetchAttendance = useCallback(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/attendance?date=${workDate}`);
+            const json = await res.json();
+            if (!res.ok || !json.success) return;
+            const next: Record<string, "PRESENT" | "ABSENT" | "LEAVE"> = {};
+            (json.data || []).forEach((a: any) => {
+                if (["PRESENT", "ABSENT", "LEAVE"].includes(a.status)) {
+                    next[a.employeeId] = a.status;
+                }
+            });
+            setAttendanceByEmployee(next);
+        } catch {
+            setAttendanceByEmployee({});
+        }
+    }, [workDate]);
+    useEffect(() => {
+        fetchAttendance();
+    }, [fetchAttendance]);
+
+    // NEW: the persisted External Members list (external_service_members
+    // table) for this exact service+date — same data source
+    // todaysallocationemployees.tsx now saves to. Anyone on this list is
+    // eligible here even before attendance has been explicitly saved for
+    // them (attendance still wins if it explicitly marks someone
+    // ABSENT/LEAVE — see eligibleEmployees below).
+    const [externalMemberIds, setExternalMemberIds] = useState<Set<string>>(new Set());
+    const fetchExternalMembers = useCallback(async () => {
+        if (!productId) {
+            setExternalMemberIds(new Set());
+            return;
+        }
+        try {
+            const res = await authFetch(
+                `${API_BASE}/api/external-members?productId=${productId}&workDate=${workDate}`
+            );
+            const json = await res.json();
+            setExternalMemberIds(res.ok && json.success ? new Set(json.data || []) : new Set());
+        } catch {
+            setExternalMemberIds(new Set());
+        }
+    }, [productId, workDate]);
+    useEffect(() => {
+        fetchExternalMembers();
+    }, [fetchExternalMembers]);
 
     const [cases, setCases] = useState<ServiceCase[]>([]);
     const [loading, setLoading] = useState(true);
@@ -269,10 +324,32 @@ export default function TodaysAllocationCases({
         const productTeams = (selectedProduct?.teams || [])
             .map((t) => (t || "").trim())
             .filter(Boolean);
-        if (productTeams.length === 0) return employees;
-        const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
-        return employees.filter((e) => e.team && allowed.has(e.team.trim().toLowerCase()));
-    }, [employees, selectedProduct]);
+        const teamMatched =
+            productTeams.length === 0
+                ? employees
+                : employees.filter((e) => {
+                      const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
+                      return e.team && allowed.has(e.team.trim().toLowerCase());
+                  });
+        // NEW: also include anyone explicitly marked PRESENT in attendance
+        // for this date, OR persisted as an External Member for this
+        // exact service+date, even if their own Team doesn't match this
+        // service — this is exactly what "External Members" on the
+        // Employees tab does (borrowing someone from another team for
+        // just this service/date), so they need to be selectable here
+        // for manual allocation and counted in Smart Allocation too.
+        // Explicit ABSENT/LEAVE always wins and drops someone even if
+        // they'd otherwise be team-matched or externally added.
+        const combined = employees.filter((e) => {
+            const att = attendanceByEmployee[e.id];
+            if (att === "ABSENT" || att === "LEAVE") return false;
+            const isTeamMatched = teamMatched.some((t) => t.id === e.id);
+            const isExplicitlyPresent = att === "PRESENT";
+            const isExternalMember = externalMemberIds.has(e.id);
+            return isTeamMatched || isExplicitlyPresent || isExternalMember;
+        });
+        return combined;
+    }, [employees, selectedProduct, attendanceByEmployee, externalMemberIds]);
 
     useEffect(() => {
         setPage(1);
