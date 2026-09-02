@@ -37,8 +37,19 @@ const STAT_COLORS = {
     holidays: { icon: "#4F46E5", bg: "#EEF0FE" },
     birthdays: { icon: "#059669", bg: "#E7FBF3" },
     announcements: { icon: "#9333EA", bg: "#F5EBFE" },
-    tasks: { icon: "#EA8C00", bg: "#FEF3E2" },
 };
+
+// Rotating badge palette for the "All Holidays" grid (month/day chips) —
+// cycled by list position so the grid reads as colorful, not by any
+// particular meaning per color.
+const HOLIDAY_BADGE_COLORS = [
+    { bg: "#DFF3F0", text: "#0F766E" },
+    { bg: "#FCE7F3", text: "#BE185D" },
+    { bg: "#F1E9DC", text: "#92702D" },
+    { bg: "#FEE2E2", text: "#B91C1C" },
+    { bg: "#DCEAFE", text: "#1D4ED8" },
+    { bg: "#FEF3C7", text: "#92600A" },
+];
 
 function pad2(n: number) {
     return String(n).padStart(2, "0");
@@ -67,6 +78,17 @@ function daysUntilLabel(n: number) {
     if (n === 0) return "Today";
     if (n === 1) return "Tomorrow";
     return `In ${n} days`;
+}
+
+// Time-based greeting for the page header — before 12pm "Good Morning",
+// until 4pm "Good Afternoon", until 8pm "Good Evening", after that
+// "Good Night".
+function getGreeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 16) return "Good Afternoon";
+    if (hour < 20) return "Good Evening";
+    return "Good Night";
 }
 
 function initials(name: string) {
@@ -131,6 +153,13 @@ interface Birthday {
     daysUntil: number;
 }
 
+interface WishPost {
+    id: string;
+    photo: string | null;
+    message: string;
+    postedAt: string;
+}
+
 interface BulkRowResult {
     row: number;
     name: string;
@@ -167,6 +196,8 @@ export default function Home({ user }: { user: HomeUser }) {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [employeesLoading, setEmployeesLoading] = useState(true);
     const [showBirthdaysModal, setShowBirthdaysModal] = useState(false);
+    const [showPostModal, setShowPostModal] = useState(false);
+    const [wishPosts, setWishPosts] = useState<WishPost[]>([]);
 
     const fetchHolidays = async () => {
         setHolidaysLoading(true);
@@ -239,31 +270,25 @@ export default function Home({ user }: { user: HomeUser }) {
     const currentHoliday = holidays[holidayIndex] || null;
 
     // ---- Top stat cards ----
-    const holidaysUpcomingCount = holidays.filter((h) => h.daysUntil <= 30).length;
-    // Birthdays still remaining THIS calendar month (nextOccurrence already
-    // rolls a passed birthday to next year, so this stays correct across
-    // the Dec -> Jan boundary too).
-    const now = new Date();
-    const birthdaysThisMonthCount = allBirthdaysSorted.filter((b) => {
-        const d = new Date(`${b.nextOccurrence}T00:00:00`);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    }).length;
+    // Counts reflect TODAY only (daysUntil === 0), not the upcoming window.
+    const holidaysTodayCount = holidays.filter((h) => h.daysUntil === 0).length;
+    const birthdaysTodayCount = allBirthdaysSorted.filter((b) => b.daysUntil === 0).length;
 
     const statCards = [
         {
             key: "holidays",
             icon: "ti ti-calendar-event",
-            value: holidaysUpcomingCount,
+            value: holidaysTodayCount,
             label: "Holidays",
-            sub: "Upcoming",
+            sub: "Today",
             colors: STAT_COLORS.holidays,
         },
         {
             key: "birthdays",
             icon: "ti ti-cake",
-            value: birthdaysThisMonthCount,
+            value: birthdaysTodayCount,
             label: "Birthdays",
-            sub: "This Month",
+            sub: "Today",
             colors: STAT_COLORS.birthdays,
         },
         {
@@ -273,17 +298,8 @@ export default function Home({ user }: { user: HomeUser }) {
             icon: "ti ti-speakerphone",
             value: "—",
             label: "Announcements",
-            sub: "Coming soon",
+            sub: "Today",
             colors: STAT_COLORS.announcements,
-        },
-        {
-            // Placeholder — same reasoning as Announcements above.
-            key: "tasks",
-            icon: "ti ti-clipboard-check",
-            value: "—",
-            label: "Tasks",
-            sub: "Coming soon",
-            colors: STAT_COLORS.tasks,
         },
     ];
 
@@ -294,7 +310,9 @@ export default function Home({ user }: { user: HomeUser }) {
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div>
                         <h2 style={styles.pageTitle}>
-                            {displayName ? `Welcome back, ${displayName}` : "Welcome back"}
+                            {displayName
+                                ? `${getGreeting()}, ${displayName}! 👋`
+                                : `${getGreeting()}! 👋`}
                         </h2>
                         <p style={styles.headerSubtext}>Here's what's happening today.</p>
                     </div>
@@ -411,7 +429,7 @@ export default function Home({ user }: { user: HomeUser }) {
                                     </div>
                                 </div>
 
-                                <FestiveIllustration BRAND={BRAND} />
+                                <FestiveIllustration BRAND={BRAND} name={currentHoliday.name} />
 
                                 <button
                                     style={{
@@ -455,23 +473,51 @@ export default function Home({ user }: { user: HomeUser }) {
                                 </div>
                                 <span style={styles.cardEyebrow}>Birthdays</span>
                             </div>
-                            <button
-                                style={styles.viewAllLink}
-                                onClick={() => setShowBirthdaysModal(true)}
-                            >
-                                View All
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                <button
+                                    style={styles.manageLink}
+                                    onClick={() => setShowPostModal(true)}
+                                >
+                                    <i className="ti ti-plus" aria-hidden="true" /> Post
+                                </button>
+                                <button
+                                    style={styles.viewAllLink}
+                                    onClick={() => setShowBirthdaysModal(true)}
+                                >
+                                    View All
+                                </button>
+                            </div>
                         </div>
+
+                        {wishPosts.length > 0 && (
+                            <div style={styles.wishPostList}>
+                                {wishPosts.map((p) => (
+                                    <div key={p.id} style={styles.wishPostRow}>
+                                        {p.photo ? (
+                                            <img
+                                                src={p.photo}
+                                                alt=""
+                                                style={styles.wishPostPhoto}
+                                            />
+                                        ) : (
+                                            <div style={styles.wishPostPhotoFallback}>
+                                                <i className="ti ti-cake" aria-hidden="true" />
+                                            </div>
+                                        )}
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={styles.wishPostMessage}>{p.message}</div>
+                                            <div style={styles.wishPostMeta}>{p.postedAt}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
 
                         {employeesLoading ? (
                             <div style={styles.cardEmpty}>Loading…</div>
                         ) : upcomingBirthdays.length === 0 ? (
                             <div style={styles.cardEmpty}>
-                                <i
-                                    className="ti ti-cake"
-                                    style={styles.emptyIcon}
-                                    aria-hidden="true"
-                                />
+                                <BirthdayCakeIllustration BRAND={BRAND} />
                                 <span>No birthdays in the next month.</span>
                             </div>
                         ) : (
@@ -520,6 +566,18 @@ export default function Home({ user }: { user: HomeUser }) {
                     BRAND={BRAND}
                 />
             )}
+
+            {showPostModal && (
+                <PostWishModal
+                    onClose={() => setShowPostModal(false)}
+                    onPost={(post) => {
+                        setWishPosts((prev) => [post, ...prev]);
+                        setShowPostModal(false);
+                    }}
+                    styles={styles}
+                    BRAND={BRAND}
+                />
+            )}
         </div>
     );
 }
@@ -556,14 +614,53 @@ function BirthdayRow({ b, styles, BRAND }: { b: Birthday; styles: any; BRAND: an
     );
 }
 
-// Generic celebratory illustration (bunting + confetti) rendered in the
-// active theme's colors — deliberately generic rather than tied to any
-// one festival, since the featured holiday changes with every upload.
+// Detects which small icon set to use for a holiday name, so the
+// illustration on the Holidays card actually matches the festival
+// instead of showing one generic graphic for everything.
+function detectHolidayType(
+    name: string
+):
+    | "diwali"
+    | "holi"
+    | "christmas"
+    | "independence"
+    | "rakhi"
+    | "eid"
+    | "dussehra"
+    | "newyear"
+    | "gandhi"
+    | "guru"
+    | "default" {
+    const n = (name || "").toLowerCase();
+    if (n.includes("diwali") || n.includes("deepavali")) return "diwali";
+    if (n.includes("holi")) return "holi";
+    if (n.includes("christmas") || n.includes("xmas")) return "christmas";
+    if (n.includes("independence")) return "independence";
+    if (n.includes("republic")) return "independence";
+    if (n.includes("raksha") || n.includes("rakhi")) return "rakhi";
+    if (n.includes("eid") || n.includes("bakrid")) return "eid";
+    if (n.includes("dussehra") || n.includes("dasara") || n.includes("vijayadashami"))
+        return "dussehra";
+    if (n.includes("new year")) return "newyear";
+    if (n.includes("gandhi")) return "gandhi";
+    if (n.includes("guru nanak") || n.includes("gurpurab")) return "guru";
+    return "default";
+}
+
+// Festival-specific illustration for the Holidays card — swaps its inner
+// glyph based on the holiday name (diya for Diwali, tree for Christmas,
+// flag for Independence/Republic Day, etc.), falling back to a generic
+// celebratory graphic for anything unrecognised, so a brand-new/custom
+// holiday still looks intentional.
 function FestiveIllustration({
     BRAND,
+    name,
 }: {
     BRAND: { blue: string; lightBlue: string; green: string };
+    name?: string;
 }) {
+    const type = detectHolidayType(name || "");
+
     return (
         <svg
             width="96"
@@ -573,21 +670,262 @@ function FestiveIllustration({
             aria-hidden="true"
         >
             <circle cx="50" cy="50" r="46" fill={withAlpha(BRAND.lightBlue, 0.1)} />
-            <path d="M18 34 L34 44 L26 58 Z" fill={BRAND.blue} transform="rotate(-10 26 46)" />
-            <path d="M40 26 L56 34 L46 48 Z" fill={BRAND.lightBlue} transform="rotate(8 46 36)" />
-            <path d="M60 32 L76 40 L66 54 Z" fill={BRAND.green} transform="rotate(-6 68 42)" />
-            <circle cx="30" cy="70" r="4" fill={BRAND.green} />
-            <circle cx="68" cy="72" r="3" fill={BRAND.blue} />
-            <circle cx="50" cy="78" r="3.5" fill={BRAND.lightBlue} />
-            <circle cx="78" cy="58" r="3" fill={BRAND.blue} />
-            <circle cx="20" cy="56" r="2.5" fill={BRAND.lightBlue} />
-            <path
-                d="M32 62 Q50 78 68 62"
-                stroke={BRAND.blue}
-                strokeWidth="2.5"
-                fill="none"
-                strokeLinecap="round"
+
+            {type === "diwali" && (
+                <g>
+                    <ellipse cx="50" cy="66" rx="20" ry="7" fill="#C2410C" />
+                    <path d="M32 62 Q50 74 68 62 Q50 68 32 62 Z" fill="#EA580C" />
+                    <path d="M50 34 Q58 46 50 56 Q42 46 50 34 Z" fill="#FACC15" />
+                    <path d="M50 40 Q54 47 50 53 Q46 47 50 40 Z" fill="#FB923C" />
+                    <circle cx="26" cy="40" r="2.5" fill={BRAND.lightBlue} />
+                    <circle cx="74" cy="42" r="2" fill={BRAND.blue} />
+                    <circle cx="66" cy="26" r="2.5" fill={BRAND.green} />
+                    <circle cx="34" cy="24" r="2" fill={BRAND.blue} />
+                </g>
+            )}
+
+            {type === "holi" && (
+                <g>
+                    <circle cx="38" cy="40" r="11" fill="#EC4899" opacity="0.85" />
+                    <circle cx="62" cy="36" r="9" fill="#22C55E" opacity="0.85" />
+                    <circle cx="58" cy="60" r="12" fill="#F59E0B" opacity="0.85" />
+                    <circle cx="34" cy="64" r="8" fill="#3B82F6" opacity="0.85" />
+                    <circle cx="50" cy="50" r="6" fill="#A855F7" opacity="0.9" />
+                    <circle cx="24" cy="30" r="2.5" fill="#EC4899" />
+                    <circle cx="74" cy="56" r="2.5" fill="#22C55E" />
+                    <circle cx="70" cy="70" r="2" fill="#3B82F6" />
+                </g>
+            )}
+
+            {type === "christmas" && (
+                <g>
+                    <path
+                        d="M50 26 L60 44 L54 44 L64 58 L57 58 L68 74 L32 74 L43 58 L36 58 L46 44 L40 44 Z"
+                        fill={BRAND.green}
+                    />
+                    <rect x="46" y="74" width="8" height="8" rx="1.5" fill="#92400E" />
+                    <path
+                        d="M50 20 L52.5 25.5 L58 26 L54 30 L55 35.5 L50 32.5 L45 35.5 L46 30 L42 26 L47.5 25.5 Z"
+                        fill="#FACC15"
+                    />
+                    <circle cx="44" cy="54" r="2" fill="#EF4444" />
+                    <circle cx="57" cy="50" r="2" fill={BRAND.lightBlue} />
+                    <circle cx="47" cy="66" r="2" fill="#EF4444" />
+                    <circle cx="58" cy="68" r="2" fill="#FACC15" />
+                </g>
+            )}
+
+            {type === "independence" && (
+                <g>
+                    <rect x="40" y="24" width="3" height="50" rx="1.5" fill="#6B7280" />
+                    <rect x="43" y="26" width="26" height="7" fill="#F97316" />
+                    <rect
+                        x="43"
+                        y="33"
+                        width="26"
+                        height="7"
+                        fill="#F8FAFC"
+                        stroke="#e5e7eb"
+                        strokeWidth="0.5"
+                    />
+                    <rect x="43" y="40" width="26" height="7" fill="#16A34A" />
+                    <circle cx="56" cy="36.5" r="3" fill="none" stroke="#1D4ED8" strokeWidth="1" />
+                </g>
+            )}
+
+            {type === "guru" && (
+                <g>
+                    {/* domed shrine silhouette with a small pennant — kept generic/simple */}
+                    <rect
+                        x="34"
+                        y="52"
+                        width="32"
+                        height="24"
+                        rx="2"
+                        fill={withAlpha(BRAND.blue, 0.18)}
+                    />
+                    <path d="M34 52 Q50 30 66 52 Z" fill={withAlpha(BRAND.blue, 0.28)} />
+                    <circle cx="50" cy="28" r="3" fill={BRAND.blue} />
+                    <rect x="49" y="18" width="2" height="10" fill="#6B7280" />
+                    <path d="M51 19 L60 22 L51 25 Z" fill="#F97316" />
+                    <rect x="40" y="60" width="6" height="16" rx="1" fill="#fff" />
+                    <rect x="54" y="60" width="6" height="16" rx="1" fill="#fff" />
+                    <circle cx="30" cy="40" r="2" fill={BRAND.lightBlue} />
+                    <circle cx="70" cy="42" r="2" fill={BRAND.green} />
+                </g>
+            )}
+
+            {type === "rakhi" && (
+                <g>
+                    <circle cx="50" cy="48" r="14" fill="none" stroke="#DC2626" strokeWidth="3" />
+                    <circle cx="50" cy="48" r="7" fill="#FACC15" />
+                    <circle cx="50" cy="48" r="3" fill="#DC2626" />
+                    <path
+                        d="M50 34 L50 22"
+                        stroke="#DC2626"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                    />
+                    <path
+                        d="M50 62 L50 74"
+                        stroke="#DC2626"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                    />
+                    <circle cx="38" cy="40" r="2" fill={BRAND.lightBlue} />
+                    <circle cx="62" cy="56" r="2" fill={BRAND.green} />
+                </g>
+            )}
+
+            {type === "eid" && (
+                <g>
+                    <path d="M58 26 A22 22 0 1 0 58 74 A17 17 0 1 1 58 26 Z" fill="#16A34A" />
+                    <path
+                        d="M68 34 L70.5 40 L77 40.5 L72 44.5 L73.5 51 L68 47.3 L62.5 51 L64 44.5 L59 40.5 L65.5 40 Z"
+                        fill="#FACC15"
+                    />
+                </g>
+            )}
+
+            {type === "dussehra" && (
+                <g>
+                    <path
+                        d="M32 30 Q52 50 32 70"
+                        stroke="#92400E"
+                        strokeWidth="3"
+                        fill="none"
+                        strokeLinecap="round"
+                    />
+                    <path
+                        d="M32 30 L34 30 L32 50 L34 70 L32 70"
+                        stroke="#92400E"
+                        strokeWidth="1"
+                        fill="none"
+                    />
+                    <path d="M32 30 L74 50 L32 70" stroke="#78350F" strokeWidth="1.5" fill="none" />
+                    <path d="M60 46 L76 50 L60 54 L64 50 Z" fill="#B91C1C" />
+                </g>
+            )}
+
+            {type === "newyear" && (
+                <g>
+                    <circle cx="50" cy="46" r="4" fill="#F97316" />
+                    {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+                        <line
+                            key={deg}
+                            x1={50 + 8 * Math.cos((deg * Math.PI) / 180)}
+                            y1={46 + 8 * Math.sin((deg * Math.PI) / 180)}
+                            x2={50 + 18 * Math.cos((deg * Math.PI) / 180)}
+                            y2={46 + 18 * Math.sin((deg * Math.PI) / 180)}
+                            stroke={deg % 90 === 0 ? BRAND.blue : "#F59E0B"}
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                        />
+                    ))}
+                    <circle cx="26" cy="68" r="2.5" fill={BRAND.green} />
+                    <circle cx="72" cy="66" r="2" fill={BRAND.blue} />
+                    <circle cx="66" cy="76" r="2.5" fill="#F59E0B" />
+                </g>
+            )}
+
+            {type === "gandhi" && (
+                <g>
+                    <circle
+                        cx="50"
+                        cy="48"
+                        r="16"
+                        fill="none"
+                        stroke={BRAND.blue}
+                        strokeWidth="2.5"
+                    />
+                    <circle cx="50" cy="48" r="3" fill={BRAND.blue} />
+                    {[0, 60, 120, 180, 240, 300].map((deg) => (
+                        <line
+                            key={deg}
+                            x1={50 + 3 * Math.cos((deg * Math.PI) / 180)}
+                            y1={48 + 3 * Math.sin((deg * Math.PI) / 180)}
+                            x2={50 + 16 * Math.cos((deg * Math.PI) / 180)}
+                            y2={48 + 16 * Math.sin((deg * Math.PI) / 180)}
+                            stroke={BRAND.blue}
+                            strokeWidth="1.5"
+                        />
+                    ))}
+                    <rect x="30" y="66" width="40" height="4" rx="2" fill={BRAND.lightBlue} />
+                </g>
+            )}
+
+            {type === "default" && (
+                <g>
+                    <path
+                        d="M18 34 L34 44 L26 58 Z"
+                        fill={BRAND.blue}
+                        transform="rotate(-10 26 46)"
+                    />
+                    <path
+                        d="M40 26 L56 34 L46 48 Z"
+                        fill={BRAND.lightBlue}
+                        transform="rotate(8 46 36)"
+                    />
+                    <path
+                        d="M60 32 L76 40 L66 54 Z"
+                        fill={BRAND.green}
+                        transform="rotate(-6 68 42)"
+                    />
+                    <circle cx="30" cy="70" r="4" fill={BRAND.green} />
+                    <circle cx="68" cy="72" r="3" fill={BRAND.blue} />
+                    <circle cx="50" cy="78" r="3.5" fill={BRAND.lightBlue} />
+                    <circle cx="78" cy="58" r="3" fill={BRAND.blue} />
+                    <circle cx="20" cy="56" r="2.5" fill={BRAND.lightBlue} />
+                    <path
+                        d="M32 62 Q50 78 68 62"
+                        stroke={BRAND.blue}
+                        strokeWidth="2.5"
+                        fill="none"
+                        strokeLinecap="round"
+                    />
+                </g>
+            )}
+        </svg>
+    );
+}
+
+// Friendly birthday-cake illustration for the empty Birthdays state,
+// rendered in the active theme's colors — same visual family as the
+// other empty-state graphics on this page.
+function BirthdayCakeIllustration({
+    BRAND,
+}: {
+    BRAND: { blue: string; lightBlue: string; green: string };
+}) {
+    return (
+        <svg width="120" height="110" viewBox="0 0 120 110" aria-hidden="true">
+            <ellipse cx="60" cy="98" rx="38" ry="6" fill={withAlpha(BRAND.blue, 0.06)} />
+            {/* candles */}
+            <rect x="40" y="30" width="4" height="16" rx="1.5" fill={BRAND.lightBlue} />
+            <rect x="58" y="24" width="4" height="22" rx="1.5" fill={BRAND.blue} />
+            <rect x="76" y="30" width="4" height="16" rx="1.5" fill={BRAND.lightBlue} />
+            <path d="M42 30 Q46 24 42 18 Q38 24 42 30 Z" fill="#FACC15" />
+            <path d="M60 24 Q64 18 60 12 Q56 18 60 24 Z" fill="#FACC15" />
+            <path d="M78 30 Q82 24 78 18 Q74 24 78 30 Z" fill="#FACC15" />
+            {/* top tier */}
+            <rect
+                x="34"
+                y="46"
+                width="52"
+                height="18"
+                rx="4"
+                fill={withAlpha(BRAND.lightBlue, 0.35)}
             />
+            <path
+                d="M34 50 Q40 44 46 50 Q52 44 58 50 Q64 44 70 50 Q76 44 82 50 L86 50 L86 64 L34 64 Z"
+                fill="#fff"
+            />
+            {/* bottom tier */}
+            <rect x="22" y="64" width="76" height="26" rx="5" fill={BRAND.blue} />
+            <rect x="22" y="64" width="76" height="8" rx="4" fill={withAlpha(BRAND.blue, 0.55)} />
+            <circle cx="40" cy="80" r="3" fill={BRAND.green} />
+            <circle cx="60" cy="80" r="3" fill="#fff" />
+            <circle cx="80" cy="80" r="3" fill={BRAND.green} />
         </svg>
     );
 }
@@ -801,13 +1139,27 @@ function HolidaysModal({
         }
     };
 
-    const sorted = [...holidays].sort((a, b) => a.daysUntil - b.daysUntil);
+    // Only the current calendar year — no cross-year browsing.
+    const currentYear = new Date().getFullYear();
+    // Use the holiday's stored date (not the rolled-forward nextOccurrence)
+    // so already-passed holidays this year still show, and chronological
+    // order runs Jan -> Dec instead of "soonest first" (which would push
+    // passed dates to the bottom/wrap them into next year).
+    const sorted = [...holidays]
+        .filter((h) => new Date(`${h.date}T00:00:00`).getFullYear() === currentYear)
+        .sort(
+            (a, b) =>
+                new Date(`${a.date}T00:00:00`).getTime() - new Date(`${b.date}T00:00:00`).getTime()
+        );
 
     return (
         <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
-                    <h3 style={styles.modalTitle}>Holidays</h3>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        <h3 style={styles.modalTitle}>Holidays</h3>
+                        <span style={styles.modalYearTag}>{currentYear}</span>
+                    </div>
                     <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
                         <i className="ti ti-x" aria-hidden="true" />
                     </button>
@@ -838,27 +1190,43 @@ function HolidaysModal({
                     {tab === "list" && (
                         <>
                             {sorted.length === 0 ? (
-                                <div style={styles.cardEmpty}>No holidays added yet.</div>
+                                <div style={styles.cardEmpty}>No Holidays to show.</div>
                             ) : (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                    {sorted.map((h) => (
-                                        <div key={h.id} style={styles.modalListRow}>
-                                            <div>
-                                                <div style={styles.modalListRowName}>{h.name}</div>
-                                                <div style={styles.modalListRowDate}>
-                                                    {formatNiceDate(h.nextOccurrence)}
+                                <div style={styles.holidayGrid}>
+                                    {sorted.map((h, i) => {
+                                        const d = new Date(`${h.date}T00:00:00`);
+                                        const palette =
+                                            HOLIDAY_BADGE_COLORS[i % HOLIDAY_BADGE_COLORS.length];
+                                        return (
+                                            <div key={h.id} style={styles.holidayGridItem}>
+                                                <div
+                                                    style={{
+                                                        ...styles.holidayBadge,
+                                                        background: palette.bg,
+                                                        color: palette.text,
+                                                    }}
+                                                >
+                                                    <div style={styles.holidayBadgeMonth}>
+                                                        {d
+                                                            .toLocaleDateString("en-US", {
+                                                                month: "short",
+                                                            })
+                                                            .toUpperCase()}
+                                                    </div>
+                                                    <div style={styles.holidayBadgeDay}>
+                                                        {pad2(d.getDate())}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                            <div
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 10,
-                                                }}
-                                            >
-                                                <span style={styles.holidayDaysBadgeSmall}>
-                                                    {daysUntilLabel(h.daysUntil)}
-                                                </span>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={styles.modalListRowName}>
+                                                        {h.name}
+                                                    </div>
+                                                    <div style={styles.modalListRowDate}>
+                                                        {d.toLocaleDateString("en-US", {
+                                                            weekday: "long",
+                                                        })}
+                                                    </div>
+                                                </div>
                                                 {isSuperAdmin && (
                                                     <button
                                                         style={styles.rowDeleteBtn}
@@ -873,8 +1241,8 @@ function HolidaysModal({
                                                     </button>
                                                 )}
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </>
@@ -1009,6 +1377,112 @@ function BirthdaysModal({
     );
 }
 
+// Simple compose template — just a photo and a message, then Post.
+// Kept intentionally minimal per the requirement: no extra fields.
+function PostWishModal({
+    onClose,
+    onPost,
+    styles,
+    BRAND,
+}: {
+    onClose: () => void;
+    onPost: (post: WishPost) => void;
+    styles: any;
+    BRAND: any;
+}) {
+    const [photoFile, setPhotoFile] = useState<File | null>(null);
+    const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+    const [message, setMessage] = useState("");
+    const [error, setError] = useState("");
+
+    const handlePhotoChange = (file: File | null) => {
+        setPhotoFile(file);
+        if (!file) {
+            setPhotoPreview(null);
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => setPhotoPreview(reader.result as string);
+        reader.readAsDataURL(file);
+    };
+
+    const handleSubmit = () => {
+        if (!photoFile && !message.trim()) {
+            setError("Add a photo or write a message first.");
+            return;
+        }
+        onPost({
+            id: `${Date.now()}`,
+            photo: photoPreview,
+            message: message.trim(),
+            postedAt: "Just now",
+        });
+    };
+
+    return (
+        <div style={styles.modalOverlay} onClick={onClose}>
+            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                    <h3 style={styles.modalTitle}>Post a Wish</h3>
+                    <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
+                        <i className="ti ti-x" aria-hidden="true" />
+                    </button>
+                </div>
+                <div style={styles.modalBody}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        <div>
+                            <label style={styles.modalLabel}>Photo</label>
+                            {photoPreview ? (
+                                <div style={styles.postPhotoPreviewWrap}>
+                                    <img
+                                        src={photoPreview}
+                                        alt=""
+                                        style={styles.postPhotoPreview}
+                                    />
+                                    <button
+                                        style={styles.postPhotoRemoveBtn}
+                                        onClick={() => handlePhotoChange(null)}
+                                        aria-label="Remove photo"
+                                    >
+                                        <i className="ti ti-x" aria-hidden="true" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <label style={styles.postPhotoDrop}>
+                                    <i className="ti ti-camera-plus" aria-hidden="true" />
+                                    <span>Add a photo</span>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        style={{ display: "none" }}
+                                        onChange={(e) =>
+                                            handlePhotoChange(e.target.files?.[0] || null)
+                                        }
+                                    />
+                                </label>
+                            )}
+                        </div>
+                        <div>
+                            <label style={styles.modalLabel}>Message</label>
+                            <textarea
+                                style={styles.modalTextarea}
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                placeholder="Write a birthday wish…"
+                                rows={4}
+                            />
+                        </div>
+                        {error && <div style={styles.modalError}>{error}</div>}
+                        <button style={styles.modalPrimaryBtn(BRAND)} onClick={handleSubmit}>
+                            Post
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Styles                                                              */
 /* ------------------------------------------------------------------ */
@@ -1070,9 +1544,9 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
         },
 
-        // ---- Top stat cards (Holidays / Birthdays / Announcements / Tasks) ----
-        statGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 },
-        statGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+        // ---- Top stat cards (Holidays / Birthdays / Announcements) ----
+        statGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 },
+        statGridMobile: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
         statCard: {
             background: "#fff",
             borderRadius: radius.lg,
@@ -1113,7 +1587,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             borderRadius: radius.lg,
             padding: "18px 20px",
             boxShadow: "0 4px 16px rgba(0,0,0,.04)",
-            minHeight: 200,
+            minHeight: 260,
             display: "flex",
             flexDirection: "column",
         },
@@ -1268,6 +1742,100 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         arrowBtnDisabled: { opacity: 0.35, cursor: "default" },
 
+        // ---- Wish posts (shown inside the Birthdays card) ----
+        wishPostList: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            marginBottom: 10,
+            maxHeight: 130,
+            overflowY: "auto",
+        },
+        wishPostRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "#f7f8fc",
+            borderRadius: radius.md,
+            padding: "8px 10px",
+        },
+        wishPostPhoto: {
+            width: 40,
+            height: 40,
+            minWidth: 40,
+            borderRadius: radius.sm,
+            objectFit: "cover",
+        },
+        wishPostPhotoFallback: {
+            width: 40,
+            height: 40,
+            minWidth: 40,
+            borderRadius: radius.sm,
+            background: STAT_COLORS.birthdays.bg,
+            color: STAT_COLORS.birthdays.icon,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: fontSize.base,
+        },
+        wishPostMessage: {
+            fontSize: fontSize.sm,
+            color: "#16233a",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+        },
+        wishPostMeta: { fontSize: fontSize.xxs, color: "#9aa5b6", marginTop: 2 },
+
+        // ---- Post-a-wish compose template ----
+        postPhotoDrop: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            border: "1px dashed #cfd7e6",
+            borderRadius: radius.md,
+            padding: "22px 10px",
+            color: "#7d90a6",
+            fontSize: fontSize.sm,
+            cursor: "pointer",
+        },
+        postPhotoPreviewWrap: { position: "relative", width: "fit-content" },
+        postPhotoPreview: {
+            maxWidth: "100%",
+            maxHeight: 180,
+            borderRadius: radius.md,
+            display: "block",
+        },
+        postPhotoRemoveBtn: {
+            position: "absolute",
+            top: 6,
+            right: 6,
+            width: 24,
+            height: 24,
+            borderRadius: radius.circle,
+            border: "none",
+            background: "rgba(17,20,30,0.55)",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+        },
+        modalTextarea: {
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "9px 12px",
+            borderRadius: radius.sm,
+            border: "1px solid #e4e9f2",
+            fontSize: fontSize.base,
+            fontFamily: fontFamily.base,
+            resize: "vertical",
+        },
+
         birthdayList: {
             display: "flex",
             flexDirection: "column",
@@ -1342,6 +1910,11 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontWeight: fontWeight.bold,
             color: "#17181C",
         },
+        modalYearTag: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#9aa5b6",
+        },
         modalCloseBtn: {
             border: "none",
             background: "transparent",
@@ -1367,6 +1940,37 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             border: "1px solid transparent",
         }),
         modalBody: { padding: "16px 20px 20px", overflowY: "auto" },
+        holidayGrid: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "14px 24px",
+        },
+        holidayGridItem: {
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+        },
+        holidayBadge: {
+            width: 52,
+            height: 48,
+            minWidth: 52,
+            borderRadius: radius.md,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 1.1,
+        },
+        holidayBadgeMonth: {
+            fontSize: fontSize.xxs,
+            fontWeight: fontWeight.bold,
+            letterSpacing: "0.03em",
+        },
+        holidayBadgeDay: {
+            fontSize: fontSize.lg,
+            fontWeight: fontWeight.bold,
+            marginTop: 2,
+        },
         modalListRow: {
             display: "flex",
             justifyContent: "space-between",
