@@ -754,6 +754,12 @@ export default function ManualAllocation() {
                 baseParams.set("pageSize", "1");
                 if (productId) baseParams.set("productId", productId);
                 if (date) baseParams.set("workDate", date);
+                // NEW: keep these KPI counts in sync with the table below
+                // (TodaysAllocationCases), which now carries forward any
+                // still-PENDING case from an earlier date instead of
+                // hiding it — without this, "Total Cases"/"Remaining"
+                // would undercount versus what's actually listed.
+                baseParams.set("includeBacklog", "true");
 
                 const allocatedParams = new URLSearchParams(baseParams);
                 allocatedParams.set("allocationStatus", "ALLOCATED");
@@ -1111,17 +1117,6 @@ export default function ManualAllocation() {
                         {filtersOpen && (
                             <div style={styles.card}>
                                 <div style={isMobile ? styles.filterBarMobile : styles.filterBar}>
-                                    <div style={styles.filterField}>
-                                        <label style={styles.label}>
-                                            <Calendar size={12} color={BRAND.blue} /> Date
-                                        </label>
-                                        <input
-                                            type="date"
-                                            value={date}
-                                            onChange={(e) => setDate(e.target.value)}
-                                            style={styles.select}
-                                        />
-                                    </div>
                                     <div style={styles.filterField}>
                                         <label style={styles.label}>
                                             <Box size={12} color={BRAND.blue} /> Service

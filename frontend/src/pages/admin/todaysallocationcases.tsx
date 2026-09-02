@@ -110,6 +110,16 @@ export default function TodaysAllocationCases({
     const [error, setError] = useState("");
     const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">("");
     const [page, setPage] = useState(1);
+    // NEW: search box for the Smart Allocation/Clear row — matches Case
+    // #, Client, Sub-client, Service, Date, and Status (same `search`
+    // param the Case Register page already sends). Debounced so every
+    // keystroke doesn't fire a request.
+    const [searchInput, setSearchInput] = useState("");
+    const [searchText, setSearchText] = useState("");
+    useEffect(() => {
+        const t = setTimeout(() => setSearchText(searchInput.trim()), 300);
+        return () => clearTimeout(t);
+    }, [searchInput]);
 
     const [allocatingId, setAllocatingId] = useState<string | null>(null);
     // NEW: dropdown picks an employee but does NOT allocate immediately —
@@ -180,7 +190,12 @@ export default function TodaysAllocationCases({
             params.set("pageSize", String(PAGE_SIZE));
             if (productId) params.set("productId", productId);
             if (workDate) params.set("workDate", workDate);
+            // NEW: carry forward any case still PENDING from an earlier
+            // date instead of it disappearing once its day passes — see
+            // backend applyFilters' includeBacklog comment.
+            params.set("includeBacklog", "true");
             if (statusFilter) params.set("allocationStatus", statusFilter);
+            if (searchText) params.set("search", searchText);
 
             const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
             const json = await res.json();
@@ -204,7 +219,7 @@ export default function TodaysAllocationCases({
         } finally {
             setLoading(false);
         }
-    }, [page, productId, workDate, statusFilter]);
+    }, [page, productId, workDate, statusFilter, searchText]);
 
     useEffect(() => {
         fetchProducts();
@@ -266,7 +281,7 @@ export default function TodaysAllocationCases({
         // drop it so a stray "Allocate" click after switching filters
         // can't save leftover suggestions for the wrong service/date.
         setAutoPreviewCaseIds([]);
-    }, [productId, workDate, statusFilter]);
+    }, [productId, workDate, statusFilter, searchText]);
 
     const handleManualAllocate = async (caseId: string, employeeId: string) => {
         setAllocatingId(caseId);
@@ -601,6 +616,18 @@ export default function TodaysAllocationCases({
                                 <i className="ti ti-eraser" />
                                 {clearing ? "Clearing…" : "Clear"}
                             </button>
+                            {/* NEW: same search as the embedded (hideHeader)
+                                action row — Case #, Client, Sub-client,
+                                Service, Date, or Status. */}
+                            <div style={{ marginLeft: "auto", minWidth: 220 }}>
+                                <input
+                                    type="text"
+                                    value={searchInput}
+                                    onChange={(e) => setSearchInput(e.target.value)}
+                                    placeholder="Search case, client, service, date, status…"
+                                    style={styles.select}
+                                />
+                            </div>
                         </div>
 
                         {/* Eligibility hint — shows exactly who Smart Allocation
@@ -704,6 +731,18 @@ export default function TodaysAllocationCases({
                             <i className="ti ti-eraser" />
                             {clearing ? "Clearing…" : "Clear"}
                         </button>
+                        {/* NEW: right-aligned search — matches Case #, Client,
+                            Sub-client, Service, Date, or Status (type
+                            "pending"/"allocated") in one box. */}
+                        <div style={{ marginLeft: "auto", minWidth: 220 }}>
+                            <input
+                                type="text"
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                                placeholder="Search case, client, service, date, status…"
+                                style={styles.select}
+                            />
+                        </div>
                         {autoResult && (
                             <div style={{ ...styles.autoSummary, width: "100%" }}>
                                 <strong>Preview:</strong>{" "}
