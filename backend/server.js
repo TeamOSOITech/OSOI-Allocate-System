@@ -206,6 +206,16 @@ app.use(
   "/api/attendance",
   loadRoute("attendance", "./src/modules/attendance/attendance.routes"),
 );
+// NEW: "External Members" — persists who's been borrowed onto a service
+// for a given work date on the Employees tab (Today's Allocation page),
+// so the picks survive a page refresh/reopen instead of resetting.
+app.use(
+  "/api/external-members",
+  loadRoute(
+    "externalmembers",
+    "./src/modules/externalmembers/externalmembers.routes",
+  ),
+);
 app.use("/api/qc", loadRoute("qc", "./src/modules/qualitychecks/qc.routes"));
 // NEW: QC + Audit workflow on top of service_cases (Employee submits ->
 // QC review -> Audit review). Deliberately separate from /api/qc above
