@@ -189,21 +189,21 @@ export default function TodaysAllocationEmployees({
         setExternalIds(new Set());
     }, [productId]);
 
-    // Candidates for the External multi-select: everyone NOT already
-    // team-matched to this service, optionally narrowed by the search
-    // box inside that dropdown.
+    // Candidates for the External multi-select — the WHOLE organization's
+    // employee list (not narrowed to "not on this service's team"), so
+    // an admin can browse and add anyone, optionally narrowed by the
+    // search box inside that dropdown.
     const externalCandidates = useMemo(() => {
-        const pool = employees.filter((e) => !serviceMatchedIds.has(e.id));
         const q = externalSearch.trim().toLowerCase();
-        if (!q) return pool;
-        return pool.filter((e) =>
+        if (!q) return employees;
+        return employees.filter((e) =>
             [e.name, e.employeeCode, e.department, e.team]
                 .filter(Boolean)
                 .join(" ")
                 .toLowerCase()
                 .includes(q)
         );
-    }, [employees, serviceMatchedIds, externalSearch]);
+    }, [employees, externalSearch]);
 
     const toggleExternal = (id: string) => {
         setExternalIds((prev) => {
@@ -472,12 +472,13 @@ export default function TodaysAllocationEmployees({
                                         <span>
                                             <div style={styles.empName}>
                                                 {emp.name}
-                                                {externalIds.has(emp.id) && (
-                                                    <span style={styles.externalTag}>
-                                                        {" "}
-                                                        (External)
-                                                    </span>
-                                                )}
+                                                {externalIds.has(emp.id) &&
+                                                    !serviceMatchedIds.has(emp.id) && (
+                                                        <span style={styles.externalTag}>
+                                                            {" "}
+                                                            (External)
+                                                        </span>
+                                                    )}
                                             </div>
                                             {emp.employeeCode && (
                                                 <div style={styles.empCode}>{emp.employeeCode}</div>
