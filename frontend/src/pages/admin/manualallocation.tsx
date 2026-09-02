@@ -1096,10 +1096,15 @@ export default function ManualAllocation() {
                     onChangeWorkDate={setCaseWorkDate}
                 />
             ) : mainTab === "employees" ? (
+                // NEW: Service/Team here are no longer independent — they now
+                // mirror whatever's picked on the "Allocate" tab (shared
+                // productId/setProductId state above), and the Service field
+                // inside TodaysAllocationEmployees is read-only to match.
+                // Switch to the Allocate tab to actually change the service.
                 <TodaysAllocationEmployees
-                    productId={caseProductId}
-                    onChangeProductId={setCaseProductId}
-                    workDate={caseWorkDate}
+                    productId={productId}
+                    onChangeProductId={setProductId}
+                    workDate={date}
                 />
             ) : mainTab === "history" ? (
                 <TodaysAllocationHistory />

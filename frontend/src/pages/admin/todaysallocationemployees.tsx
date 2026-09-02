@@ -330,18 +330,17 @@ export default function TodaysAllocationEmployees({
                 <div style={styles.filterBar}>
                     <div style={{ width: 190 }}>
                         <label style={styles.label}>Service</label>
-                        <select
-                            style={styles.select}
-                            value={productId}
-                            onChange={(e) => onChangeProductId(e.target.value)}
+                        {/* NEW: read-only — Service is now pulled straight from
+                            whatever's selected on the Allocate tab (shared
+                            productId state in manualallocation.tsx), same as
+                            the Team box below. No dropdown here anymore; go
+                            to the Allocate tab to change the service. */}
+                        <div
+                            style={styles.teamAlignedLabel}
+                            title={selectedProduct?.product_name || "All Services"}
                         >
-                            <option value="">All</option>
-                            {products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                    {p.product_name}
-                                </option>
-                            ))}
-                        </select>
+                            {selectedProduct?.product_name || "All Services"}
+                        </div>
                     </div>
                     <div style={{ width: 190 }}>
                         <label style={styles.label}>Team</label>
