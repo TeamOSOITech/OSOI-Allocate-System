@@ -78,7 +78,6 @@ export default function TodaysAllocationEmployees({
     const isMobile = useIsMobile();
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
-    const [teamFilter, setTeamFilter] = useState("");
     const [searchText, setSearchText] = useState("");
     // NEW: "External Members" — lets an admin pull in employees whose own
     // Team ISN'T linked to the selected service, for just this one
@@ -182,6 +181,18 @@ export default function TodaysAllocationEmployees({
         [serviceMatched]
     );
 
+    // NEW: read-only label showing which team(s) the SELECTED SERVICE is
+    // aligned to (Products/Services -> Teams multi-select) — same pattern
+    // as manualallocation.tsx's Team field. Not a filter control; the
+    // table below is already narrowed to just these teams' employees via
+    // serviceMatched above.
+    const alignedTeamsLabel = useMemo(() => {
+        if (!productId) return "All teams";
+        const productTeams = (selectedProduct?.teams || []).filter(Boolean);
+        if (productTeams.length === 0) return "Not linked to any team yet";
+        return productTeams.join(", ");
+    }, [productId, selectedProduct]);
+
     // NEW: reset the External picks whenever the selected service changes
     // — an employee "external" to Service A isn't necessarily external
     // to Service B, so carrying the selection over would be misleading.
@@ -189,21 +200,21 @@ export default function TodaysAllocationEmployees({
         setExternalIds(new Set());
     }, [productId]);
 
-    // Candidates for the External multi-select — the WHOLE organization's
-    // employee list (not narrowed to "not on this service's team"), so
-    // an admin can browse and add anyone, optionally narrowed by the
-    // search box inside that dropdown.
+    // Candidates for the External multi-select: everyone NOT already
+    // team-matched to this service, optionally narrowed by the search
+    // box inside that dropdown.
     const externalCandidates = useMemo(() => {
+        const pool = employees.filter((e) => !serviceMatchedIds.has(e.id));
         const q = externalSearch.trim().toLowerCase();
-        if (!q) return employees;
-        return employees.filter((e) =>
+        if (!q) return pool;
+        return pool.filter((e) =>
             [e.name, e.employeeCode, e.department, e.team]
                 .filter(Boolean)
                 .join(" ")
                 .toLowerCase()
                 .includes(q)
         );
-    }, [employees, externalSearch]);
+    }, [employees, serviceMatchedIds, externalSearch]);
 
     const toggleExternal = (id: string) => {
         setExternalIds((prev) => {
@@ -226,14 +237,8 @@ export default function TodaysAllocationEmployees({
         return [...serviceMatched, ...extras];
     }, [viewScope, serviceMatched, employees, externalIds, serviceMatchedIds]);
 
-    const teams = useMemo(
-        () => Array.from(new Set(serviceMatched.map((e) => e.team).filter(Boolean))) as string[],
-        [serviceMatched]
-    );
-
     const filteredEmployees = useMemo(() => {
-        let list = combinedList;
-        if (teamFilter) list = list.filter((e) => e.team === teamFilter);
+        const list = combinedList;
         const q = searchText.trim().toLowerCase();
         if (!q) return list;
         return list.filter((e) =>
@@ -243,7 +248,7 @@ export default function TodaysAllocationEmployees({
                 .toLowerCase()
                 .includes(q)
         );
-    }, [combinedList, teamFilter, searchText]);
+    }, [combinedList, searchText]);
 
     const setStatus = (employeeId: string, status: AttStatus) => {
         setStatusByEmployee((prev) => ({ ...prev, [employeeId]: status }));
@@ -323,7 +328,7 @@ export default function TodaysAllocationEmployees({
                 </div>
 
                 <div style={styles.filterBar}>
-                    <div>
+                    <div style={{ width: 190 }}>
                         <label style={styles.label}>Service</label>
                         <select
                             style={styles.select}
@@ -338,20 +343,17 @@ export default function TodaysAllocationEmployees({
                             ))}
                         </select>
                     </div>
-                    <div>
+                    <div style={{ width: 190 }}>
                         <label style={styles.label}>Team</label>
-                        <select
-                            style={styles.select}
-                            value={teamFilter}
-                            onChange={(e) => setTeamFilter(e.target.value)}
-                        >
-                            <option value="">All teams</option>
-                            {teams.map((t) => (
-                                <option key={t} value={t}>
-                                    {t}
-                                </option>
-                            ))}
-                        </select>
+                        {/* NEW: read-only — states which team(s) the SELECTED
+                            SERVICE is aligned to. No dropdown, nothing to
+                            change here; Service above is the only control,
+                            and the table already only shows that team's
+                            employees. Fixed-width wrapper (same as Service)
+                            so long team names never grow this box. */}
+                        <div style={styles.teamAlignedLabel} title={alignedTeamsLabel}>
+                            {alignedTeamsLabel}
+                        </div>
                     </div>
                     <div style={{ flex: 1, minWidth: 180 }}>
                         <label style={styles.label}>Search</label>
@@ -472,13 +474,12 @@ export default function TodaysAllocationEmployees({
                                         <span>
                                             <div style={styles.empName}>
                                                 {emp.name}
-                                                {externalIds.has(emp.id) &&
-                                                    !serviceMatchedIds.has(emp.id) && (
-                                                        <span style={styles.externalTag}>
-                                                            {" "}
-                                                            (External)
-                                                        </span>
-                                                    )}
+                                                {externalIds.has(emp.id) && (
+                                                    <span style={styles.externalTag}>
+                                                        {" "}
+                                                        (External)
+                                                    </span>
+                                                )}
                                             </div>
                                             {emp.employeeCode && (
                                                 <div style={styles.empCode}>{emp.employeeCode}</div>
@@ -578,6 +579,28 @@ const styles: Record<string, CSSProperties> = {
         minWidth: 170,
         width: "100%",
         boxSizing: "border-box",
+    },
+    // NEW: read-only stand-in for the old Team <select> — same box shape
+    // so the filter row's alignment doesn't shift, but not a control.
+    // Text is clipped with an ellipsis (full text still available via the
+    // `title` tooltip) so a long list of aligned team names can never
+    // stretch this box wider than the fixed-width wrapper around it —
+    // that's what was making the row grow before.
+    teamAlignedLabel: {
+        padding: "9px 12px",
+        borderRadius: radius.sm,
+        border: "1px solid #ececf5",
+        fontSize: fontSize.sm,
+        background: "#f0f1f6",
+        color: "#374151",
+        width: "100%",
+        boxSizing: "border-box",
+        minHeight: 36,
+        display: "flex",
+        alignItems: "center",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
     },
     ghostBtn: {
         display: "flex",

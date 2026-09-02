@@ -396,7 +396,6 @@ export default function ManualAllocation() {
         () => localStorage.getItem("manualalloc_last_productId") || ""
     ); // "" = All
     const [searchText, setSearchText] = useState("");
-    const [teamFilter, setTeamFilter] = useState("");
     const [filtersOpen, setFiltersOpen] = useState(true);
 
     // Keep localStorage in sync so the NEXT visit restores this same
@@ -593,9 +592,25 @@ export default function ManualAllocation() {
         () => Array.from(new Set(serviceMatched.map((e) => e.team).filter(Boolean))) as string[],
         [serviceMatched]
     );
+    // NEW: what the "Team" field now shows — a plain, read-only label of
+    // which team(s) the SELECTED SERVICE is aligned to (Products/Services
+    // -> Teams multi-select), not a filter the person can change. Comes
+    // straight from the product's own `teams` list rather than `teams`
+    // above (which is derived from matched employees) so it still reads
+    // correctly even before any employees have loaded. Falls back to "All
+    // teams" when no service is selected, and "Not linked to any team yet"
+    // when a service IS selected but has no teams configured on it.
+    const alignedTeamsLabel = useMemo(() => {
+        if (!productId) return "All teams";
+        const productTeams = products
+            .find((p) => String(p.id) === String(productId))
+            ?.teams?.map((t) => (t || "").trim())
+            .filter(Boolean);
+        if (!productTeams || productTeams.length === 0) return "Not linked to any team yet";
+        return productTeams.join(", ");
+    }, [products, productId]);
     const filteredEmployees = useMemo(() => {
-        let list = serviceMatched;
-        if (teamFilter) list = list.filter((e) => e.team === teamFilter);
+        const list = serviceMatched;
 
         const q = searchText.trim().toLowerCase();
         if (!q) return list;
@@ -614,7 +629,7 @@ export default function ManualAllocation() {
                 .toLowerCase();
             return haystack.includes(q);
         });
-    }, [serviceMatched, teamFilter, searchText, rows, selectedBatch]);
+    }, [serviceMatched, searchText, rows, selectedBatch]);
 
     // ---- when the selected batch changes, prefill rows: restore a previous
     // save if one exists for this batch, otherwise default everyone to
@@ -1138,18 +1153,17 @@ export default function ManualAllocation() {
                                         <label style={styles.label}>
                                             <Users size={12} color={BRAND.blue} /> Team
                                         </label>
-                                        <select
-                                            value={teamFilter}
-                                            onChange={(e) => setTeamFilter(e.target.value)}
-                                            style={styles.select}
+                                        {/* NEW: read-only — just states which team(s) the
+                                            SELECTED SERVICE is aligned to (Products/Services ->
+                                            Teams multi-select). No dropdown, nothing to change
+                                            here anymore; the service picker above is the only
+                                            control. */}
+                                        <div
+                                            style={styles.teamAlignedLabel}
+                                            title={alignedTeamsLabel}
                                         >
-                                            <option value="">All Teams</option>
-                                            {teams.map((t) => (
-                                                <option key={t} value={t}>
-                                                    {t}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            {alignedTeamsLabel}
+                                        </div>
                                     </div>
                                     <div style={styles.filterField}>
                                         <label style={styles.label}>
@@ -2034,6 +2048,22 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         boxSizing: "border-box",
         background: "#fafbff",
+    },
+    // NEW: read-only stand-in for the old Team <select> — same box shape
+    // so the filter row's alignment doesn't shift, but not a control
+    // (no border-hover/focus states, text can wrap for multi-team labels).
+    teamAlignedLabel: {
+        width: "100%",
+        padding: "9px 10px",
+        borderRadius: radius.sm,
+        border: "1px solid #e2e4f0",
+        fontSize: fontSize.base,
+        boxSizing: "border-box",
+        background: "#f4f5f9",
+        color: "#374151",
+        minHeight: 38,
+        display: "flex",
+        alignItems: "center",
     },
     allNote: {
         display: "flex",
