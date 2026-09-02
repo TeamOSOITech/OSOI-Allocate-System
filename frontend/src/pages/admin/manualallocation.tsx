@@ -2051,7 +2051,8 @@ const styles: Record<string, CSSProperties> = {
     },
     select: {
         width: "100%",
-        padding: "9px 10px",
+        height: 38,
+        padding: "0 10px",
         borderRadius: radius.sm,
         border: "1px solid #e2e4f0",
         fontSize: fontSize.base,
@@ -2063,14 +2064,14 @@ const styles: Record<string, CSSProperties> = {
     // (no border-hover/focus states, text can wrap for multi-team labels).
     teamAlignedLabel: {
         width: "100%",
-        padding: "9px 10px",
+        height: 38,
+        padding: "0 10px",
         borderRadius: radius.sm,
         border: "1px solid #e2e4f0",
         fontSize: fontSize.base,
         boxSizing: "border-box",
         background: "#f4f5f9",
         color: "#374151",
-        minHeight: 38,
         display: "flex",
         alignItems: "center",
     },

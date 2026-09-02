@@ -492,7 +492,7 @@ export default function TodaysAllocationEmployees({
                         value={viewScope}
                         onChange={(e) => setViewScope(e.target.value as any)}
                     >
-                        <option value="all">All (My Team + External)</option>
+                        <option value="all">All </option>
                         <option value="team">My Team only</option>
                         <option value="external">External only</option>
                     </select>
