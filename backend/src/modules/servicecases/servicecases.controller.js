@@ -247,12 +247,35 @@ function escapeOrFilterValue(value) {
   return value;
 }
 
+// FIX: only recognized "YYYY-MM-DD" and "DD-MM-YYYY" — so typing a date
+// with slashes or dots (02/09/2026, 02.09.2026), which is exactly how a
+// date input/autofill or someone typing casually tends to format it,
+// silently matched nothing. Now accepts '-', '/', or '.' as the
+// separator in either order (ISO year-first, or day-first — the
+// convention the rest of this app's date-tag search already used).
 function tryParseSearchDate(term) {
-  const iso = term.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) return term;
-  const display = term.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  const t = term.trim();
+  // Year-first: 2026-09-02 / 2026/09/02 / 2026.09.02
+  const iso = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    if (isValidYmd(y, m, d))
+      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  // Day-first: 02-09-2026 / 02/09/2026 / 02.09.2026
+  const display = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (display) {
+    const [, d, m, y] = display;
+    if (isValidYmd(y, m, d))
+      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
   return null;
+}
+
+function isValidYmd(y, m, d) {
+  const mm = parseInt(m, 10);
+  const dd = parseInt(d, 10);
+  return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
 }
 
 async function getProductNameMap(productIds, organizationId) {
@@ -365,6 +388,20 @@ async function listServiceCases(req, res) {
       if (matchedDate) {
         searchOrParts.push(`work_date.eq.${matchedDate}`);
       }
+      // NEW: Cases tab's Smart Allocation/Clear row search — also
+      // matches allocation_status by typing "pending" or "allocated",
+      // so the same one box covers Case/Client/Subclient/Service/Date
+      // AND Status.
+      const lowerTerm = term.toLowerCase();
+      if (
+        "pending".startsWith(lowerTerm) ||
+        "unallocated".startsWith(lowerTerm)
+      ) {
+        searchOrParts.push("allocation_status.eq.PENDING");
+      }
+      if ("allocated".startsWith(lowerTerm)) {
+        searchOrParts.push("allocation_status.eq.ALLOCATED");
+      }
     }
 
     // Applies every filter (productId, date range, client/subclient,
@@ -381,8 +418,24 @@ async function listServiceCases(req, res) {
       // NEW: Cases tab filters — same work_date the Employees tab marks
       // attendance for, and allocation_status so "show only unallocated"
       // works without pulling every case ever logged.
+      //
+      // FIX: "Today's Allocation" used to hide any case logged on an
+      // earlier date the moment its day passed, even if it was never
+      // allocated — so work that didn't get done on time just vanished
+      // from view instead of carrying forward. includeBacklog=true (sent
+      // only by the Cases/Today's Allocation tab) widens the exact-date
+      // match into: this exact date (any status) OR an earlier date
+      // that's STILL PENDING. Other pages (Case Register, History, QC,
+      // Audit) don't send this flag, so they keep the old exact-date
+      // behaviour.
       if (req.query.workDate) {
-        filtered = filtered.eq("work_date", req.query.workDate);
+        if (req.query.includeBacklog === "true") {
+          filtered = filtered.or(
+            `work_date.eq.${req.query.workDate},and(work_date.lt.${req.query.workDate},allocation_status.eq.PENDING)`,
+          );
+        } else {
+          filtered = filtered.eq("work_date", req.query.workDate);
+        }
       }
       // NEW: Production Reports — History (case-number) view filters.
       // Date-RANGE variant of the exact-match workDate above, so a
@@ -1607,7 +1660,13 @@ async function autoAllocateServiceCases(req, res) {
       .select("id, case_number, sequence_number")
       .eq("organization_id", req.user.organizationId)
       .eq("product_id", productId)
-      .eq("work_date", workDate)
+      // FIX: was .eq("work_date", workDate) — Smart Allocation only ever
+      // saw today's own cases, so a case logged on an earlier date that
+      // never got allocated was invisible to it forever, even though
+      // it's still sitting there PENDING. lte() carries that backlog
+      // forward instead, matching the Cases tab's list view fix above
+      // (includeBacklog).
+      .lte("work_date", workDate)
       .eq("allocation_status", "PENDING")
       .order("sequence_number", { ascending: true });
     if (error) throw error;
