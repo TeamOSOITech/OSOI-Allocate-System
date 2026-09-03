@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import type { CSSProperties } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import type { CSSProperties, ChangeEvent } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
@@ -42,6 +42,13 @@ const STAT_COLORS = {
     newJoinees: { icon: "#3F7A5C", bg: "#E2F0E8" },
     announcements: { icon: "#5B7065", bg: "#EAF0EA" },
 };
+
+// Shared floor height for the New Joinees card and the Posts panel beside
+// it. With one post the panel matches New Joinees instead of looking
+// short; with more posts it's free to grow past this (up to its own
+// scroll cap) without pulling New Joinees taller too — see
+// cardsGridWithPosts, which intentionally doesn't stretch them to match.
+const SIDE_BY_SIDE_CARD_MIN_HEIGHT = 260;
 
 // Rotating badge palette for the "All Holidays" grid (month/day chips) —
 // cycled by list position so the grid reads as colorful, not by any
@@ -213,6 +220,18 @@ function yearsLabel(n: number) {
     return `${n}${suffix} anniversary`;
 }
 
+// Auto-generated wish text — used whenever a post is created straight
+// from a photo pick, so nobody has to type a message themselves.
+function buildWishMessage(kind: "birthday" | "anniversary", name: string, years?: number): string {
+    if (kind === "anniversary") {
+        const y = years ?? 1;
+        return `Happy ${y} year${y === 1 ? "" : "s"} anniversary, ${name}! 🎉 Thank you for ${y} amazing year${
+            y === 1 ? "" : "s"
+        } with us — here's to many more. Have fun celebrating! 🥳`;
+    }
+    return `Happy Birthday, ${name}! 🎂🎉 Wishing you a fantastic day and an even better year ahead. Have fun!`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -319,9 +338,15 @@ export default function Home({ user }: { user: HomeUser }) {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [employeesLoading, setEmployeesLoading] = useState(true);
     const [showBirthdaysModal, setShowBirthdaysModal] = useState(false);
-    const [showPostModal, setShowPostModal] = useState(false);
-    const [postModalKind, setPostModalKind] = useState<"birthday" | "anniversary">("birthday");
-    const [editingPost, setEditingPost] = useState<WishPost | null>(null);
+    // Posting a wish is just "pick a photo" — no dropdown, no message box.
+    // The hidden file input below is shared by every "+ Post" button and
+    // every pencil (edit-photo) button; postFilePickerContextRef records
+    // which occasion/post it was opened for so onChange knows what to do.
+    const postFileInputRef = useRef<HTMLInputElement | null>(null);
+    const postFilePickerContextRef = useRef<{
+        kind: "birthday" | "anniversary";
+        editingPost: WishPost | null;
+    }>({ kind: "birthday", editingPost: null });
     const WISH_POSTS_STORAGE_KEY = "osoi_home_wish_posts";
     const [wishPosts, setWishPosts] = useState<WishPost[]>(() => {
         // Load previously posted wishes from localStorage so they survive
@@ -347,13 +372,12 @@ export default function Home({ user }: { user: HomeUser }) {
     const [showAnniversariesModal, setShowAnniversariesModal] = useState(false);
     const [showNewJoineesModal, setShowNewJoineesModal] = useState(false);
 
-    // A post only shows to everyone once the occasion actually falls today
-    // (see isBirthdayToday/isAnniversaryToday below) — but the person who
-    // just created it should see it appear immediately, not wonder whether
-    // it saved. This tracks ids created in THIS session only (resets on
-    // refresh), so on reload the post goes back to following the
-    // date-only rule like everyone else sees it.
-    const [justPostedIds, setJustPostedIds] = useState<string[]>([]);
+    // A post stays visible for a fixed window after it's created — not
+    // tied to the actual birthday/anniversary date — so it survives page
+    // refreshes and doesn't vanish just because "today" moved on from the
+    // occasion. postedAt is saved in localStorage, so this holds up across
+    // reloads too.
+    const WISH_POST_VISIBLE_DAYS = 8;
 
     const fetchHolidays = async () => {
         setHolidaysLoading(true);
@@ -486,27 +510,85 @@ export default function Home({ user }: { user: HomeUser }) {
         [allAnniversariesSorted]
     );
 
-    // A wish post can be created any time in advance, but it should only
-    // be visible to everyone on the actual day of the occasion — so check
-    // the live birthday/anniversary lists (daysUntil === 0 means "today")
-    // rather than just showing every post that was ever created.
-    const isBirthdayToday = (employeeId: string) =>
-        allBirthdaysSorted.some((b) => b.id === employeeId && b.daysUntil === 0);
-    const isAnniversaryToday = (employeeId: string) =>
-        allAnniversariesSorted.some((a) => a.id === employeeId && a.daysUntil === 0);
-
-    // Same date check, but also lets a post through if it was just
-    // created in this session — so the person posting it sees it appear
-    // right away instead of it silently vanishing until the actual date.
-    const isBirthdayVisible = (p: WishPost) =>
-        isBirthdayToday(p.employeeId) || justPostedIds.includes(p.id);
-    const isAnniversaryVisible = (p: WishPost) =>
-        isAnniversaryToday(p.employeeId) || justPostedIds.includes(p.id);
+    // A post stays visible for WISH_POST_VISIBLE_DAYS from when it was
+    // created — simple elapsed-time check against the saved postedAt, so
+    // it works the same whether the occasion is today, still days away,
+    // or the page was just refreshed.
+    const isPostVisible = (p: WishPost) => {
+        const postedTime = new Date(p.postedAt).getTime();
+        if (isNaN(postedTime)) return true; // don't hide a post over a bad timestamp
+        const ageDays = (Date.now() - postedTime) / (24 * 60 * 60 * 1000);
+        return ageDays >= 0 && ageDays <= WISH_POST_VISIBLE_DAYS;
+    };
 
     const handleDeletePost = (id: string) => {
         if (!window.confirm("Delete this post?")) return;
         setWishPosts((prev) => prev.filter((p) => p.id !== id));
-        setJustPostedIds((prev) => prev.filter((pid) => pid !== id));
+    };
+
+    // Every post still inside its 8-day visibility window, newest first —
+    // this combined feed is what renders beside "New Joinees".
+    const visibleWishPosts = useMemo(
+        () =>
+            wishPosts
+                .filter(isPostVisible)
+                .sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime()),
+        [wishPosts] // eslint-disable-line react-hooks/exhaustive-deps
+    );
+
+    // Drop posts that have aged out of the visibility window from storage
+    // entirely (once, on load) so localStorage doesn't quietly accumulate
+    // old posts forever.
+    useEffect(() => {
+        setWishPosts((prev) => {
+            const kept = prev.filter(isPostVisible);
+            return kept.length === prev.length ? prev : kept;
+        });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // "+ Post" (and the pencil on an existing post) both just open the
+    // native file picker — no dropdown, no message box. The wish is
+    // always for whoever the card is currently featuring (the soonest
+    // birthday/anniversary), and the photo is the only thing to pick.
+    const triggerPostFilePicker = (
+        kind: "birthday" | "anniversary",
+        editingPost: WishPost | null = null
+    ) => {
+        const person = kind === "birthday" ? upcomingBirthdays[0] : upcomingAnniversaries[0];
+        if (!person && !editingPost) return; // nothing to post for right now
+        postFilePickerContextRef.current = { kind, editingPost };
+        postFileInputRef.current?.click();
+    };
+
+    const handlePostFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        e.target.value = ""; // allow re-picking the same file next time
+        if (!file) return;
+
+        const { kind, editingPost } = postFilePickerContextRef.current;
+        const person = kind === "birthday" ? upcomingBirthdays[0] : upcomingAnniversaries[0];
+        if (!person && !editingPost) return;
+
+        const years = kind === "anniversary" ? (person as Anniversary)?.years : undefined;
+        const name = person?.name || editingPost?.employeeName || "";
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const post: WishPost = {
+                id: editingPost?.id || `${Date.now()}`,
+                kind,
+                employeeId: person?.id || editingPost?.employeeId || "",
+                photo: reader.result as string,
+                message: editingPost?.message || buildWishMessage(kind, name, years),
+                employeeName: name,
+                postedAt: editingPost?.postedAt || new Date().toISOString(),
+            };
+            setWishPosts((prev) => {
+                const exists = prev.some((p) => p.id === post.id);
+                return exists ? prev.map((p) => (p.id === post.id ? post : p)) : [post, ...prev];
+            });
+        };
+        reader.readAsDataURL(file);
     };
 
     // "New Joinee" = joined in the last 30 days — most recent first.
@@ -572,7 +654,7 @@ export default function Home({ user }: { user: HomeUser }) {
             key: "newJoinees",
             icon: "ti ti-user-plus",
             value: newJoineesTodayCount,
-            label: "New Joiners",
+            label: "New Joinees",
             sub: "This month",
             colors: STAT_COLORS.newJoinees,
         },
@@ -633,7 +715,7 @@ export default function Home({ user }: { user: HomeUser }) {
                                         <FestiveIllustration
                                             BRAND={BRAND}
                                             name={currentHoliday.name}
-                                            size={112}
+                                            size={78}
                                         />
                                     </div>
                                     <GarlandLights />
@@ -820,94 +902,12 @@ export default function Home({ user }: { user: HomeUser }) {
                                 {isSuperAdmin && (
                                     <button
                                         style={styles.manageLink}
-                                        onClick={() => {
-                                            setPostModalKind("birthday");
-                                            setEditingPost(null);
-                                            setShowPostModal(true);
-                                        }}
+                                        onClick={() => triggerPostFilePicker("birthday")}
                                     >
                                         <i className="ti ti-plus" aria-hidden="true" /> Post
                                     </button>
                                 )}
                             </div>
-
-                            {isSuperAdmin &&
-                                wishPosts.filter(
-                                    (p) => p.kind === "birthday" && isBirthdayVisible(p)
-                                ).length > 0 && (
-                                    <div style={styles.wishPostList}>
-                                        {wishPosts
-                                            .filter(
-                                                (p) => p.kind === "birthday" && isBirthdayVisible(p)
-                                            )
-                                            .map((p) => (
-                                                <div key={p.id} style={styles.wishPostRowBirthday}>
-                                                    {p.photo ? (
-                                                        <img
-                                                            src={p.photo}
-                                                            alt=""
-                                                            style={styles.wishPostPhotoLarge}
-                                                        />
-                                                    ) : (
-                                                        <div
-                                                            style={
-                                                                styles.wishPostPhotoFallbackLarge
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-cake"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </div>
-                                                    )}
-                                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={styles.wishPostHeading}>
-                                                            <span style={styles.emojiGlyph}>
-                                                                🎉
-                                                            </span>{" "}
-                                                            {p.employeeName || "Happy Birthday"}
-                                                        </div>
-                                                        <div style={styles.wishPostMessageLarge}>
-                                                            {p.message}
-                                                        </div>
-                                                        <div style={styles.wishPostMeta}>
-                                                            {formatPostedAt(p.postedAt)}
-                                                        </div>
-                                                    </div>
-                                                    {isSuperAdmin && (
-                                                        <div style={styles.wishPostActions}>
-                                                            <button
-                                                                style={styles.wishPostActionBtn}
-                                                                aria-label="Edit post"
-                                                                onClick={() => {
-                                                                    setPostModalKind("birthday");
-                                                                    setEditingPost(p);
-                                                                    setShowPostModal(true);
-                                                                }}
-                                                            >
-                                                                <i
-                                                                    className="ti ti-pencil"
-                                                                    aria-hidden="true"
-                                                                />
-                                                            </button>
-                                                            <button
-                                                                style={styles.wishPostActionBtn}
-                                                                aria-label="Delete post"
-                                                                onClick={() =>
-                                                                    handleDeletePost(p.id)
-                                                                }
-                                                            >
-                                                                <i
-                                                                    className="ti ti-trash"
-                                                                    aria-hidden="true"
-                                                                />
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                    </div>
-                                )}
 
                             {employeesLoading ? (
                                 <div style={styles.cardEmpty}>Loading…</div>
@@ -992,99 +992,12 @@ export default function Home({ user }: { user: HomeUser }) {
                                 {isSuperAdmin && (
                                     <button
                                         style={styles.manageLink}
-                                        onClick={() => {
-                                            setPostModalKind("anniversary");
-                                            setEditingPost(null);
-                                            setShowPostModal(true);
-                                        }}
+                                        onClick={() => triggerPostFilePicker("anniversary")}
                                     >
                                         <i className="ti ti-plus" aria-hidden="true" /> Post
                                     </button>
                                 )}
                             </div>
-
-                            {isSuperAdmin &&
-                                wishPosts.filter(
-                                    (p) => p.kind === "anniversary" && isAnniversaryVisible(p)
-                                ).length > 0 && (
-                                    <div style={styles.wishPostList}>
-                                        {wishPosts
-                                            .filter(
-                                                (p) =>
-                                                    p.kind === "anniversary" &&
-                                                    isAnniversaryVisible(p)
-                                            )
-                                            .map((p) => (
-                                                <div
-                                                    key={p.id}
-                                                    style={styles.wishPostRowAnniversary}
-                                                >
-                                                    {p.photo ? (
-                                                        <img
-                                                            src={p.photo}
-                                                            alt=""
-                                                            style={styles.wishPostPhotoLarge}
-                                                        />
-                                                    ) : (
-                                                        <div
-                                                            style={
-                                                                styles.wishPostPhotoFallbackAnniv
-                                                            }
-                                                        >
-                                                            <i
-                                                                className="ti ti-award"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </div>
-                                                    )}
-                                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={styles.wishPostHeadingAnniv}>
-                                                            <span style={styles.emojiGlyph}>
-                                                                🏆
-                                                            </span>{" "}
-                                                            {p.employeeName || "Happy Anniversary"}
-                                                        </div>
-                                                        <div style={styles.wishPostMessageLarge}>
-                                                            {p.message}
-                                                        </div>
-                                                        <div style={styles.wishPostMeta}>
-                                                            {formatPostedAt(p.postedAt)}
-                                                        </div>
-                                                    </div>
-                                                    {isSuperAdmin && (
-                                                        <div style={styles.wishPostActions}>
-                                                            <button
-                                                                style={styles.wishPostActionBtn}
-                                                                aria-label="Edit post"
-                                                                onClick={() => {
-                                                                    setPostModalKind("anniversary");
-                                                                    setEditingPost(p);
-                                                                    setShowPostModal(true);
-                                                                }}
-                                                            >
-                                                                <i
-                                                                    className="ti ti-pencil"
-                                                                    aria-hidden="true"
-                                                                />
-                                                            </button>
-                                                            <button
-                                                                style={styles.wishPostActionBtn}
-                                                                aria-label="Delete post"
-                                                                onClick={() =>
-                                                                    handleDeletePost(p.id)
-                                                                }
-                                                            >
-                                                                <i
-                                                                    className="ti ti-trash"
-                                                                    aria-hidden="true"
-                                                                />
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                    </div>
-                                )}
 
                             {employeesLoading ? (
                                 <div style={styles.cardEmpty}>Loading…</div>
@@ -1106,14 +1019,29 @@ export default function Home({ user }: { user: HomeUser }) {
                     </div>
                 </div>
 
-                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGridSingle}>
+                <div
+                    style={
+                        isMobile
+                            ? styles.cardsGridMobile
+                            : visibleWishPosts.length > 0
+                              ? styles.cardsGridWithPosts
+                              : styles.cardsGridSingle
+                    }
+                >
                     {/* ---------------- New Joinees card ---------------- */}
+                    {/* Only shrinks (via cardsGridWithPosts, above) once there's
+                        an actual post to show beside it — otherwise it keeps
+                        the full row to itself. minHeight keeps it (and the
+                        Posts panel beside it) a consistent height when there's
+                        just one post, without forcing either to stretch to
+                        match the other (see cardsGridWithPosts/PostsPanel). */}
                     <div
                         style={{
                             ...styles.card,
                             borderTop: `3px solid ${STAT_COLORS.newJoinees.icon}`,
                             position: "relative",
                             overflow: "hidden",
+                            minHeight: SIDE_BY_SIDE_CARD_MIN_HEIGHT,
                         }}
                     >
                         <NewJoinersCardBg />
@@ -1131,7 +1059,7 @@ export default function Home({ user }: { user: HomeUser }) {
                                         aria-hidden="true"
                                     />
                                 </div>
-                                <span style={styles.cardEyebrow}>New Joiners</span>
+                                <span style={styles.cardEyebrow}>New Joinees</span>
                             </div>
                             <button
                                 style={styles.viewAllLink}
@@ -1161,7 +1089,30 @@ export default function Home({ user }: { user: HomeUser }) {
                             </div>
                         )}
                     </div>
+
+                    {/* ---------------- Posts panel (birthday/anniversary wishes) ---------------- */}
+                    {/* Sits to the right of New Joinees, and only exists at all
+                        once there's at least one visible post. */}
+                    {visibleWishPosts.length > 0 && (
+                        <PostsPanel
+                            posts={visibleWishPosts}
+                            isSuperAdmin={isSuperAdmin}
+                            onEdit={triggerPostFilePicker}
+                            onDelete={handleDeletePost}
+                            styles={styles}
+                        />
+                    )}
                 </div>
+
+                {/* Hidden file input shared by every "+ Post" / pencil (edit
+                    photo) button — clicking any of them just opens this. */}
+                <input
+                    ref={postFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={handlePostFileChange}
+                />
 
                 {/* ---------------- Bottom tip banner ---------------- */}
                 <div style={styles.tipBanner(BRAND)}>
@@ -1195,38 +1146,6 @@ export default function Home({ user }: { user: HomeUser }) {
                 <BirthdaysModal
                     birthdays={allBirthdaysSorted}
                     onClose={() => setShowBirthdaysModal(false)}
-                    styles={styles}
-                    BRAND={BRAND}
-                />
-            )}
-
-            {showPostModal && (
-                <PostWishModal
-                    kind={postModalKind}
-                    people={
-                        postModalKind === "birthday" ? allBirthdaysSorted : allAnniversariesSorted
-                    }
-                    editingPost={editingPost}
-                    onClose={() => {
-                        setShowPostModal(false);
-                        setEditingPost(null);
-                    }}
-                    onPost={(post) => {
-                        setWishPosts((prev) => {
-                            const exists = prev.some((p) => p.id === post.id);
-                            return exists
-                                ? prev.map((p) => (p.id === post.id ? post : p))
-                                : [post, ...prev];
-                        });
-                        // Show it to the creator right now, even if the
-                        // actual birthday/anniversary date is still days
-                        // away — see isBirthdayVisible/isAnniversaryVisible.
-                        setJustPostedIds((prev) =>
-                            prev.includes(post.id) ? prev : [...prev, post.id]
-                        );
-                        setShowPostModal(false);
-                        setEditingPost(null);
-                    }}
                     styles={styles}
                     BRAND={BRAND}
                 />
@@ -1437,7 +1356,7 @@ function AnniversariesCardBg() {
     );
 }
 
-// Soft decorative wave + leaf background for the New Joiners card,
+// Soft decorative wave + leaf background for the New Joinees card,
 // matching the sage-green palette.
 function NewJoinersCardBg() {
     return (
@@ -2020,7 +1939,7 @@ function TrophyIllustration() {
     );
 }
 
-// ID-badge-with-plant "Welcome" illustration for the empty "New Joiners"
+// ID-badge-with-plant "Welcome" illustration for the empty "New Joinees"
 // state — same flat, pastel treatment as the other empty-state graphics.
 function WelcomeBadgeIllustration() {
     return (
@@ -2503,7 +2422,7 @@ function NewJoineesModal({
         <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
-                    <h3 style={styles.modalTitle}>New Joiners</h3>
+                    <h3 style={styles.modalTitle}>New Joinees</h3>
                     <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
                         <i className="ti ti-x" aria-hidden="true" />
                     </button>
@@ -2524,198 +2443,117 @@ function NewJoineesModal({
     );
 }
 
-// Compose template for Birthday / Anniversary wish posts. Lets the poster
-// pick a person from the relevant list — auto-filling their profile photo
-// (if one exists) and a ready-made message (birthday greeting, or an
-// anniversary message that mentions their actual years of service) which
-// can still be edited before posting.
-function PostWishModal({
-    kind,
-    people,
-    editingPost,
-    onClose,
-    onPost,
+// Feed of birthday/anniversary wish posts, rendered beside "New Joinees"
+// once at least one post is visible. Each row is just a photo + the
+// auto-generated message — there's nothing else to edit here besides
+// swapping the photo (pencil) or removing the post (trash).
+function PostsPanel({
+    posts,
+    isSuperAdmin,
+    onEdit,
+    onDelete,
     styles,
-    BRAND,
 }: {
-    kind: "birthday" | "anniversary";
-    people: (Birthday | Anniversary)[];
-    editingPost?: WishPost | null;
-    onClose: () => void;
-    onPost: (post: WishPost) => void;
+    posts: WishPost[];
+    isSuperAdmin: boolean;
+    onEdit: (kind: "birthday" | "anniversary", editingPost: WishPost) => void;
+    onDelete: (id: string) => void;
     styles: any;
-    BRAND: any;
 }) {
-    const isEditing = !!editingPost;
-    const [selectedId, setSelectedId] = useState(editingPost?.employeeId || "");
-    const [photoFile, setPhotoFile] = useState<File | null>(null);
-    const [photoPreview, setPhotoPreview] = useState<string | null>(editingPost?.photo || null);
-    const [message, setMessage] = useState(editingPost?.message || "");
-    const [error, setError] = useState("");
-
-    const isAnniversary = kind === "anniversary";
-
-    const buildMessage = (name: string, years?: number) => {
-        if (isAnniversary) {
-            const y = years ?? 1;
-            return `Happy ${y} year${y === 1 ? "" : "s"} anniversary, ${name}! 🎉 Thank you for ${y} amazing year${
-                y === 1 ? "" : "s"
-            } with us — here's to many more. Have fun celebrating! 🥳`;
-        }
-        return `Happy Birthday, ${name}! 🎂🎉 Wishing you a fantastic day and an even better year ahead. Have fun!`;
-    };
-
-    const handlePersonSelect = (id: string) => {
-        setSelectedId(id);
-        const person = people.find((p) => p.id === id);
-        if (!person) return;
-        // Auto-fill photo from the employee's profile, if one exists.
-        if (person.photoUrl) {
-            setPhotoFile(null);
-            setPhotoPreview(person.photoUrl);
-        } else {
-            setPhotoFile(null);
-            setPhotoPreview(null);
-        }
-        const years = isAnniversary ? (person as Anniversary).years : undefined;
-        setMessage(buildMessage(person.name, years));
-        setError("");
-    };
-
-    const handlePhotoChange = (file: File | null) => {
-        setPhotoFile(file);
-        if (!file) {
-            // Falls back to the selected person's profile photo, if any.
-            const person = people.find((p) => p.id === selectedId);
-            setPhotoPreview(person?.photoUrl || null);
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => setPhotoPreview(reader.result as string);
-        reader.readAsDataURL(file);
-    };
-
-    const handleSubmit = () => {
-        if (!selectedId) {
-            setError("Pick who this wish is for.");
-            return;
-        }
-        if (!photoFile && !photoPreview && !message.trim()) {
-            setError("Add a photo or write a message first.");
-            return;
-        }
-        const person = people.find((p) => p.id === selectedId);
-        onPost({
-            id: editingPost?.id || `${Date.now()}`,
-            kind,
-            employeeId: selectedId,
-            photo: photoPreview,
-            message: message.trim(),
-            employeeName: person?.name || editingPost?.employeeName || "",
-            postedAt: editingPost?.postedAt || new Date().toISOString(),
-        });
-    };
-
     return (
-        <div style={styles.modalOverlay} onClick={onClose}>
-            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-                <div style={styles.modalHeader}>
-                    <h3 style={styles.modalTitle}>
-                        {isEditing
-                            ? isAnniversary
-                                ? "Edit Anniversary Wish"
-                                : "Edit Birthday Wish"
-                            : isAnniversary
-                              ? "Post an Anniversary Wish"
-                              : "Post a Birthday Wish"}
-                    </h3>
-                    <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
-                        <i className="ti ti-x" aria-hidden="true" />
-                    </button>
+        <div
+            style={{
+                ...styles.card,
+                borderTop: `3px solid ${STAT_COLORS.birthdays.icon}`,
+                position: "relative",
+                overflow: "hidden",
+                minHeight: SIDE_BY_SIDE_CARD_MIN_HEIGHT,
+            }}
+        >
+            <div style={styles.cardHeaderRow}>
+                <div style={styles.cardTitleWrap}>
+                    <div
+                        style={{
+                            ...styles.cardIconBadge,
+                            background: STAT_COLORS.birthdays.bg,
+                        }}
+                    >
+                        <i
+                            className="ti ti-confetti"
+                            style={{ color: STAT_COLORS.birthdays.icon }}
+                            aria-hidden="true"
+                        />
+                    </div>
+                    <span style={styles.cardEyebrow}>Posts</span>
                 </div>
-                <div style={styles.modalBody}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        <div>
-                            <label style={styles.modalLabel}>
-                                {isAnniversary
-                                    ? "Who's celebrating?"
-                                    : "Who's the birthday person?"}
-                            </label>
-                            <select
-                                style={styles.modalInput}
-                                value={selectedId}
-                                onChange={(e) => handlePersonSelect(e.target.value)}
-                            >
-                                <option value="">Select an employee…</option>
-                                {people.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.name}
-                                        {isAnniversary
-                                            ? ` — ${(p as Anniversary).years} yr${
-                                                  (p as Anniversary).years === 1 ? "" : "s"
-                                              }`
-                                            : ""}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label style={styles.modalLabel}>Photo</label>
-                            {photoPreview ? (
-                                <div style={styles.postPhotoPreviewWrap}>
-                                    <img
-                                        src={photoPreview}
-                                        alt=""
-                                        style={styles.postPhotoPreview}
+            </div>
+
+            <div style={{ ...styles.wishPostList, maxHeight: 440, marginBottom: 0 }}>
+                {posts.map((p) => {
+                    const isAnniversary = p.kind === "anniversary";
+                    return (
+                        <div
+                            key={p.id}
+                            style={
+                                isAnniversary
+                                    ? styles.wishPostRowAnniversary
+                                    : styles.wishPostRowBirthday
+                            }
+                        >
+                            {p.photo ? (
+                                <img src={p.photo} alt="" style={styles.wishPostPhotoLarge} />
+                            ) : (
+                                <div
+                                    style={
+                                        isAnniversary
+                                            ? styles.wishPostPhotoFallbackAnniv
+                                            : styles.wishPostPhotoFallbackLarge
+                                    }
+                                >
+                                    <i
+                                        className={isAnniversary ? "ti ti-award" : "ti ti-cake"}
+                                        aria-hidden="true"
                                     />
+                                </div>
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div
+                                    style={
+                                        isAnniversary
+                                            ? styles.wishPostHeadingAnniv
+                                            : styles.wishPostHeading
+                                    }
+                                >
+                                    <span style={styles.emojiGlyph}>
+                                        {isAnniversary ? "🏆" : "🎉"}
+                                    </span>{" "}
+                                    {p.employeeName ||
+                                        (isAnniversary ? "Happy Anniversary" : "Happy Birthday")}
+                                </div>
+                                <div style={styles.wishPostMessageLarge}>{p.message}</div>
+                                <div style={styles.wishPostMeta}>{formatPostedAt(p.postedAt)}</div>
+                            </div>
+                            {isSuperAdmin && (
+                                <div style={styles.wishPostActions}>
                                     <button
-                                        style={styles.postPhotoRemoveBtn}
-                                        onClick={() => handlePhotoChange(null)}
-                                        aria-label="Remove photo"
+                                        style={styles.wishPostActionBtn}
+                                        aria-label="Change photo"
+                                        onClick={() => onEdit(p.kind, p)}
                                     >
-                                        <i className="ti ti-x" aria-hidden="true" />
+                                        <i className="ti ti-pencil" aria-hidden="true" />
+                                    </button>
+                                    <button
+                                        style={styles.wishPostActionBtn}
+                                        aria-label="Delete post"
+                                        onClick={() => onDelete(p.id)}
+                                    >
+                                        <i className="ti ti-trash" aria-hidden="true" />
                                     </button>
                                 </div>
-                            ) : (
-                                <label style={styles.postPhotoDrop}>
-                                    <i className="ti ti-camera-plus" aria-hidden="true" />
-                                    <span>Add a photo</span>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        style={{ display: "none" }}
-                                        onChange={(e) =>
-                                            handlePhotoChange(e.target.files?.[0] || null)
-                                        }
-                                    />
-                                </label>
                             )}
-                            {!!selectedId &&
-                                !photoFile &&
-                                people.find((p) => p.id === selectedId)?.photoUrl && (
-                                    <p style={styles.modalHint}>Using their profile photo.</p>
-                                )}
                         </div>
-                        <div>
-                            <label style={styles.modalLabel}>Message</label>
-                            <textarea
-                                style={styles.modalTextarea}
-                                value={message}
-                                onChange={(e) => setMessage(e.target.value)}
-                                placeholder={
-                                    isAnniversary
-                                        ? "Write an anniversary wish…"
-                                        : "Write a birthday wish…"
-                                }
-                                rows={4}
-                            />
-                        </div>
-                        {error && <div style={styles.modalError}>{error}</div>}
-                        <button style={styles.modalPrimaryBtn(BRAND)} onClick={handleSubmit}>
-                            {isEditing ? "Save Changes" : "Post"}
-                        </button>
-                    </div>
-                </div>
+                    );
+                })}
             </div>
         </div>
     );
@@ -2921,6 +2759,18 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             gridTemplateColumns: "1fr",
             gap: 14,
         },
+        // New Joinees + the wish-posts panel beside it. New Joinees only
+        // gives up width here — when there are no posts, cardsGridSingle
+        // above keeps it full-width instead. alignItems is "start" (not
+        // "stretch") on purpose — New Joinees keeps its own natural
+        // height instead of growing/shrinking to match however tall the
+        // Posts panel gets as posts are added or removed.
+        cardsGridWithPosts: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 14,
+            alignItems: "start",
+        },
         programCard: {
             background: WARM.card,
             border: `1px solid ${WARM.border}`,
@@ -2960,7 +2810,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "center",
-            paddingTop: 18,
+            paddingTop: 6,
             opacity: 0.95,
         },
         programBadge: {
@@ -3117,7 +2967,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             textAlign: "center",
         },
         // Row-style empty state (illustration left, text right) — used by
-        // the Work Anniversaries / New Joiners cards to match the
+        // the Work Anniversaries / New Joinees cards to match the
         // reference layout, instead of the centered-stack style above.
         cardEmptyRow: {
             flex: 1,
@@ -3269,20 +3119,20 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         wishPostRowBirthday: {
             display: "flex",
             alignItems: "center",
-            gap: 14,
+            gap: 20,
             background: STAT_COLORS.birthdays.bg,
             border: `1px solid ${withAlpha(STAT_COLORS.birthdays.icon, 0.25)}`,
             borderRadius: radius.lg,
-            padding: "14px 16px",
+            padding: "28px 32px",
         },
         wishPostRowAnniversary: {
             display: "flex",
             alignItems: "center",
-            gap: 14,
+            gap: 20,
             background: STAT_COLORS.anniversaries.bg,
             border: `1px solid ${withAlpha(STAT_COLORS.anniversaries.icon, 0.25)}`,
             borderRadius: radius.lg,
-            padding: "14px 16px",
+            padding: "28px 32px",
         },
         wishPostPhoto: {
             width: 40,
@@ -3305,39 +3155,39 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         // Bigger circular photo/avatar for the new celebratory post rows.
         wishPostPhotoLarge: {
-            width: 64,
-            height: 64,
-            minWidth: 64,
+            width: 128,
+            height: 128,
+            minWidth: 128,
             borderRadius: radius.circle,
             objectFit: "cover",
             border: "2px solid #fff",
             boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
         },
         wishPostPhotoFallbackLarge: {
-            width: 64,
-            height: 64,
-            minWidth: 64,
+            width: 128,
+            height: 128,
+            minWidth: 128,
             borderRadius: radius.circle,
             background: "#fff",
             color: STAT_COLORS.birthdays.icon,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: fontSize["2xl"],
+            fontSize: fontSize["4xl"],
             border: "2px solid #fff",
             boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
         },
         wishPostPhotoFallbackAnniv: {
-            width: 64,
-            height: 64,
-            minWidth: 64,
+            width: 128,
+            height: 128,
+            minWidth: 128,
             borderRadius: radius.circle,
             background: "#fff",
             color: STAT_COLORS.anniversaries.icon,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: fontSize["2xl"],
+            fontSize: fontSize["4xl"],
             border: "2px solid #fff",
             boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
         },
