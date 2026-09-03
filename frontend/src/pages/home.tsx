@@ -56,22 +56,36 @@ const HOLIDAY_BADGE_COLORS = [
     { bg: "#F6E7D8", text: "#A8763F" },
 ];
 
-// Warm, editorial page palette (cream background, olive/tan accents,
-// serif headings) — the "featured program" / "action center" look.
+// Page palette — matches the neutral tones used across the rest of the
+// app (dashboard.tsx, employees.tsx, etc.): near-white page background,
+// white cards, light gray borders, dark-gray ink. The old version of
+// this page used its own warm cream/olive editorial palette here, which
+// made Home look like a different app from the rest of the site. The
+// brand accent color itself ("eyebrow") no longer lives here — it now
+// comes straight from BRAND.blue (the active theme color) wherever it's
+// used, so Home repaints with the rest of the app when the user switches
+// theme color, same as dashboard.tsx.
 const WARM = {
-    bg: "#F7F5F0",
+    bg: "#f4f5fb",
     card: "#FFFFFF",
-    border: "#EAE3D4",
-    ink: "#1F2A24",
-    subtext: "#6B7566",
-    eyebrow: "#8A6D3B",
-    pillBorder: "#DCD3BE",
+    border: "#e4e9f2",
+    ink: "#17181C",
+    subtext: "#767F92",
+    pillBorder: "#e4e9f2",
 };
 
-// Editorial serif for the warm Home-page headings — kept local to this
-// file (not in the shared theme.ts) since it's specific to this page's
-// look, not an app-wide token. Loaded via Google Fonts in index.html.
-const SERIF_FONT = "'Playfair Display', Georgia, 'Times New Roman', serif";
+// Was a decorative serif ("Playfair Display") unique to this page —
+// switched to the app's shared system font so headings match every
+// other page instead of standing out.
+const SERIF_FONT = fontFamily.base;
+
+// The theme's custom font (fontFamily.base) has no emoji glyphs, so
+// characters like 🎉 🏆 🎂 👋 render as empty "tofu" boxes anywhere that
+// font is applied. Appending the OS's native emoji fonts as fallbacks
+// lets the browser keep using fontFamily.base for normal text and only
+// reach into these fallback fonts for the specific glyphs it's missing
+// (i.e. the emoji) — so nothing else about the typography changes.
+const EMOJI_SAFE_FONT = `${fontFamily.base}, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif`;
 
 // Shared illustration sizing — kept in one place so the four "hero"
 // graphics (holiday icon, birthday cake, trophy, welcome badge) can be
@@ -333,6 +347,14 @@ export default function Home({ user }: { user: HomeUser }) {
     const [showAnniversariesModal, setShowAnniversariesModal] = useState(false);
     const [showNewJoineesModal, setShowNewJoineesModal] = useState(false);
 
+    // A post only shows to everyone once the occasion actually falls today
+    // (see isBirthdayToday/isAnniversaryToday below) — but the person who
+    // just created it should see it appear immediately, not wonder whether
+    // it saved. This tracks ids created in THIS session only (resets on
+    // refresh), so on reload the post goes back to following the
+    // date-only rule like everyone else sees it.
+    const [justPostedIds, setJustPostedIds] = useState<string[]>([]);
+
     const fetchHolidays = async () => {
         setHolidaysLoading(true);
         setHolidaysError("");
@@ -465,17 +487,26 @@ export default function Home({ user }: { user: HomeUser }) {
     );
 
     // A wish post can be created any time in advance, but it should only
-    // be visible on the actual day of the occasion — so check the live
-    // birthday/anniversary lists (daysUntil === 0 means "today") rather
-    // than just showing every post that was ever created.
+    // be visible to everyone on the actual day of the occasion — so check
+    // the live birthday/anniversary lists (daysUntil === 0 means "today")
+    // rather than just showing every post that was ever created.
     const isBirthdayToday = (employeeId: string) =>
         allBirthdaysSorted.some((b) => b.id === employeeId && b.daysUntil === 0);
     const isAnniversaryToday = (employeeId: string) =>
         allAnniversariesSorted.some((a) => a.id === employeeId && a.daysUntil === 0);
 
+    // Same date check, but also lets a post through if it was just
+    // created in this session — so the person posting it sees it appear
+    // right away instead of it silently vanishing until the actual date.
+    const isBirthdayVisible = (p: WishPost) =>
+        isBirthdayToday(p.employeeId) || justPostedIds.includes(p.id);
+    const isAnniversaryVisible = (p: WishPost) =>
+        isAnniversaryToday(p.employeeId) || justPostedIds.includes(p.id);
+
     const handleDeletePost = (id: string) => {
         if (!window.confirm("Delete this post?")) return;
         setWishPosts((prev) => prev.filter((p) => p.id !== id));
+        setJustPostedIds((prev) => prev.filter((pid) => pid !== id));
     };
 
     // "New Joinee" = joined in the last 30 days — most recent first.
@@ -555,8 +586,9 @@ export default function Home({ user }: { user: HomeUser }) {
                     <div>
                         <h2 style={styles.pageTitle}>
                             {displayName
-                                ? `${getGreeting()}, ${displayName}! 👋`
-                                : `${getGreeting()}! 👋`}
+                                ? `${getGreeting()}, ${displayName}! `
+                                : `${getGreeting()}! `}
+                            <span style={styles.emojiGlyph}>👋</span>
                         </h2>
                         <p style={styles.headerSubtext}>Here's what's happening today.</p>
                     </div>
@@ -590,154 +622,100 @@ export default function Home({ user }: { user: HomeUser }) {
                     ))}
                 </div>
 
-                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGrid}>
+                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGrid3}>
                     {/* ---------------- Holidays card ---------------- */}
-                    <div
-                        style={{
-                            ...styles.card,
-                            borderTop: `3px solid ${STAT_COLORS.holidays.icon}`,
-                            position: "relative",
-                            overflow: "hidden",
-                        }}
-                    >
-                        <GarlandLights />
-                        <div style={styles.cardHeaderRow}>
-                            <div style={styles.cardTitleWrap}>
-                                <div
-                                    style={{
-                                        ...styles.cardIconBadge,
-                                        background: STAT_COLORS.holidays.bg,
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-calendar-event"
-                                        style={{ color: STAT_COLORS.holidays.icon }}
-                                        aria-hidden="true"
-                                    />
-                                </div>
-                                <span style={styles.cardEyebrow}>Holidays</span>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                                {isSuperAdmin && (
-                                    <button
-                                        style={styles.manageLink}
-                                        onClick={() => setShowHolidaysModal(true)}
-                                    >
-                                        <i className="ti ti-settings" aria-hidden="true" /> Manage
-                                    </button>
-                                )}
-                                <button
-                                    style={styles.viewAllLink}
-                                    onClick={() => setShowHolidaysModal(true)}
-                                >
-                                    View All
-                                </button>
-                            </div>
-                        </div>
-
-                        {holidaysLoading ? (
-                            <div style={styles.cardEmpty}>Loading…</div>
-                        ) : holidaysError ? (
-                            <div style={styles.cardEmptyError}>{holidaysError}</div>
-                        ) : !currentHoliday ? (
-                            <div style={styles.cardEmpty}>
-                                <EmptyCalendarIllustration BRAND={BRAND} />
-                                <span>No holidays added yet.</span>
-                                {isSuperAdmin && (
-                                    <button
-                                        style={styles.smallAddBtn(BRAND)}
-                                        onClick={() => setShowHolidaysModal(true)}
-                                    >
-                                        + Add Holidays
-                                    </button>
-                                )}
-                            </div>
-                        ) : (
-                            <div style={styles.holidayBody}>
-                                <button
-                                    style={{
-                                        ...styles.arrowBtn,
-                                        ...(holidayIndex === 0 ? styles.arrowBtnDisabled : {}),
-                                    }}
-                                    disabled={holidayIndex === 0}
-                                    onClick={() => setHolidayIndex((i) => Math.max(0, i - 1))}
-                                    aria-label="Previous holiday"
-                                >
-                                    <i className="ti ti-chevron-left" aria-hidden="true" />
-                                </button>
-
-                                {/* Left-side icon — now the LARGE hero size (swapped with
-                                    the right side per request). Hidden on mobile — no room
-                                    next to the text column and the right-side icon. */}
-                                {!isMobile && (
-                                    <FestiveIllustration
-                                        BRAND={BRAND}
-                                        name={currentHoliday.name}
-                                        size={HOLIDAY_HERO_SIZE}
-                                    />
-                                )}
-
-                                <div style={styles.holidayTextCol}>
-                                    <div
-                                        style={{
-                                            ...styles.holidayName,
-                                            ...(currentHoliday.isPast ? { color: "#A9A79C" } : {}),
-                                        }}
-                                    >
-                                        {currentHoliday.name}
+                    <div style={styles.programCard}>
+                        <div style={styles.programImage(BRAND, null)}>
+                            <div style={styles.programImageScrim} />
+                            {!holidaysLoading && !holidaysError && currentHoliday && (
+                                <>
+                                    <div style={styles.programImageIllustrationWrap}>
+                                        <FestiveIllustration
+                                            BRAND={BRAND}
+                                            name={currentHoliday.name}
+                                            size={112}
+                                        />
                                     </div>
-                                    <div
+                                    <GarlandLights />
+                                    <span
                                         style={{
-                                            ...styles.holidayDate,
-                                            ...(currentHoliday.isPast ? { color: "#A9A79C" } : {}),
-                                        }}
-                                    >
-                                        {formatNiceDate(currentHoliday.nextOccurrence)}
-                                    </div>
-                                    <div
-                                        style={{
-                                            ...styles.holidayDaysBadge,
-                                            ...(currentHoliday.isPast
-                                                ? { background: "#EFEDE6", color: "#A9A79C" }
-                                                : {}),
+                                            ...styles.programBadge,
+                                            ...(currentHoliday.daysUntil === 0
+                                                ? styles.programBadgeToday(BRAND)
+                                                : styles.programBadgeMuted),
                                         }}
                                     >
                                         {currentHoliday.isPast
                                             ? "Past"
                                             : daysUntilLabel(currentHoliday.daysUntil)}
+                                    </span>
+                                    {yearHolidays.length > 1 && (
+                                        <>
+                                            <button
+                                                style={{
+                                                    ...styles.programArrowBtn,
+                                                    ...styles.programArrowBtnLeft,
+                                                    ...(holidayIndex === 0
+                                                        ? styles.programArrowBtnDisabled
+                                                        : {}),
+                                                }}
+                                                disabled={holidayIndex === 0}
+                                                onClick={() =>
+                                                    setHolidayIndex((i) => Math.max(0, i - 1))
+                                                }
+                                                aria-label="Previous holiday"
+                                            >
+                                                <i
+                                                    className="ti ti-chevron-left"
+                                                    aria-hidden="true"
+                                                />
+                                            </button>
+                                            <button
+                                                style={{
+                                                    ...styles.programArrowBtn,
+                                                    ...styles.programArrowBtnRight,
+                                                    ...(holidayIndex >= yearHolidays.length - 1
+                                                        ? styles.programArrowBtnDisabled
+                                                        : {}),
+                                                }}
+                                                disabled={holidayIndex >= yearHolidays.length - 1}
+                                                onClick={() =>
+                                                    setHolidayIndex((i) =>
+                                                        Math.min(yearHolidays.length - 1, i + 1)
+                                                    )
+                                                }
+                                                aria-label="Next holiday"
+                                            >
+                                                <i
+                                                    className="ti ti-chevron-right"
+                                                    aria-hidden="true"
+                                                />
+                                            </button>
+                                        </>
+                                    )}
+                                    <div style={styles.programImageOverlay}>
+                                        <div style={styles.programEyebrowWhite}>Holidays</div>
+                                        <div style={styles.programTitleWhite}>
+                                            {currentHoliday.name}
+                                        </div>
+                                        <div style={styles.programSubtitleWhite}>
+                                            {formatNiceDate(currentHoliday.nextOccurrence)}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                            {!holidaysLoading && !holidaysError && !currentHoliday && (
+                                <div style={styles.programImageOverlay}>
+                                    <div style={styles.programEyebrowWhite}>Holidays</div>
+                                    <div style={styles.programTitleWhite}>
+                                        No holidays added yet
                                     </div>
                                 </div>
-
-                                {/* Right-side icon — smaller than before per request, so the
-                                    Holidays card takes up less height. */}
-                                <FestiveIllustration
-                                    BRAND={BRAND}
-                                    name={currentHoliday.name}
-                                    size={HOLIDAY_RIGHT_ICON_SIZE}
-                                />
-
-                                <button
-                                    style={{
-                                        ...styles.arrowBtn,
-                                        ...(holidayIndex >= yearHolidays.length - 1
-                                            ? styles.arrowBtnDisabled
-                                            : {}),
-                                    }}
-                                    disabled={holidayIndex >= yearHolidays.length - 1}
-                                    onClick={() =>
-                                        setHolidayIndex((i) =>
-                                            Math.min(yearHolidays.length - 1, i + 1)
-                                        )
-                                    }
-                                    aria-label="Next holiday"
-                                >
-                                    <i className="ti ti-chevron-right" aria-hidden="true" />
-                                </button>
-                            </div>
-                        )}
+                            )}
+                        </div>
 
                         {!holidaysLoading && !holidaysError && yearHolidays.length > 1 && (
-                            <div style={styles.dotRow}>
+                            <div style={styles.programDotRow}>
                                 {yearHolidays.map((h, i) => (
                                     <button
                                         key={h.id}
@@ -751,35 +729,94 @@ export default function Home({ user }: { user: HomeUser }) {
                                 ))}
                             </div>
                         )}
+
+                        <div style={styles.programBody}>
+                            <div style={styles.programActionsRow}>
+                                {isSuperAdmin && (
+                                    <button
+                                        style={styles.manageLink}
+                                        onClick={() => setShowHolidaysModal(true)}
+                                    >
+                                        <i className="ti ti-settings" aria-hidden="true" /> Manage
+                                    </button>
+                                )}
+                            </div>
+
+                            {holidaysLoading ? (
+                                <div style={styles.cardEmpty}>Loading…</div>
+                            ) : holidaysError ? (
+                                <div style={styles.cardEmptyError}>{holidaysError}</div>
+                            ) : !currentHoliday ? (
+                                isSuperAdmin && (
+                                    <button
+                                        style={styles.smallAddBtn(BRAND)}
+                                        onClick={() => setShowHolidaysModal(true)}
+                                    >
+                                        + Add Holidays
+                                    </button>
+                                )
+                            ) : null}
+
+                            <button
+                                style={styles.programFooterLink(BRAND)}
+                                onClick={() => setShowHolidaysModal(true)}
+                            >
+                                View All <i className="ti ti-arrow-right" aria-hidden="true" />
+                            </button>
+                        </div>
                     </div>
 
                     {/* ---------------- Birthdays card ---------------- */}
-                    <div
-                        style={{
-                            ...styles.card,
-                            borderTop: `3px solid ${STAT_COLORS.birthdays.icon}`,
-                            position: "relative",
-                            overflow: "hidden",
-                        }}
-                    >
-                        <BirthdaysCardBg />
-                        <div style={styles.cardHeaderRow}>
-                            <div style={styles.cardTitleWrap}>
-                                <div
-                                    style={{
-                                        ...styles.cardIconBadge,
-                                        background: STAT_COLORS.birthdays.bg,
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-cake"
-                                        style={{ color: STAT_COLORS.birthdays.icon }}
-                                        aria-hidden="true"
-                                    />
+                    <div style={styles.programCard}>
+                        <div
+                            style={styles.programImage(
+                                BRAND,
+                                upcomingBirthdays[0]?.photoUrl || null
+                            )}
+                        >
+                            <div style={styles.programImageScrim} />
+                            {!employeesLoading && upcomingBirthdays.length > 0 && (
+                                <>
+                                    {!upcomingBirthdays[0].photoUrl && (
+                                        <div style={styles.programImageIllustrationWrap}>
+                                            <BirthdaysCardBg />
+                                        </div>
+                                    )}
+                                    <span
+                                        style={{
+                                            ...styles.programBadge,
+                                            ...(upcomingBirthdays[0].daysUntil === 0
+                                                ? styles.programBadgeToday(BRAND)
+                                                : styles.programBadgeMuted),
+                                        }}
+                                    >
+                                        {daysUntilLabel(upcomingBirthdays[0].daysUntil)}
+                                    </span>
+                                    <div style={styles.programImageOverlay}>
+                                        <div style={styles.programEyebrowWhite}>Birthdays</div>
+                                        <div style={styles.programTitleWhite}>
+                                            <span style={styles.emojiGlyph}>🎉</span>{" "}
+                                            {upcomingBirthdays[0].name}
+                                        </div>
+                                        <div style={styles.programSubtitleWhite}>
+                                            {upcomingBirthdays[0].department ||
+                                                formatNiceDate(upcomingBirthdays[0].nextOccurrence)}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                            {!employeesLoading && upcomingBirthdays.length === 0 && (
+                                <div style={styles.programImageOverlay}>
+                                    <div style={styles.programEyebrowWhite}>Birthdays</div>
+                                    <div style={styles.programTitleWhite}>
+                                        No birthdays this month
+                                    </div>
                                 </div>
-                                <span style={styles.cardEyebrow}>Birthdays</span>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            )}
+                        </div>
+
+                        <div style={styles.programBody}>
+                            <div style={styles.programActionsRow}>
                                 {isSuperAdmin && (
                                     <button
                                         style={styles.manageLink}
@@ -792,136 +829,166 @@ export default function Home({ user }: { user: HomeUser }) {
                                         <i className="ti ti-plus" aria-hidden="true" /> Post
                                     </button>
                                 )}
-                                <button
-                                    style={styles.viewAllLink}
-                                    onClick={() => setShowBirthdaysModal(true)}
-                                >
-                                    View All
-                                </button>
                             </div>
-                        </div>
 
-                        {isSuperAdmin &&
-                            wishPosts.filter(
-                                (p) => p.kind === "birthday" && isBirthdayToday(p.employeeId)
-                            ).length > 0 && (
-                                <div style={styles.wishPostList}>
-                                    {wishPosts
-                                        .filter(
-                                            (p) =>
-                                                p.kind === "birthday" &&
-                                                isBirthdayToday(p.employeeId)
-                                        )
-                                        .map((p) => (
-                                            <div key={p.id} style={styles.wishPostRowBirthday}>
-                                                {p.photo ? (
-                                                    <img
-                                                        src={p.photo}
-                                                        alt=""
-                                                        style={styles.wishPostPhotoLarge}
-                                                    />
-                                                ) : (
-                                                    <div style={styles.wishPostPhotoFallbackLarge}>
-                                                        <i
-                                                            className="ti ti-cake"
-                                                            aria-hidden="true"
+                            {isSuperAdmin &&
+                                wishPosts.filter(
+                                    (p) => p.kind === "birthday" && isBirthdayVisible(p)
+                                ).length > 0 && (
+                                    <div style={styles.wishPostList}>
+                                        {wishPosts
+                                            .filter(
+                                                (p) => p.kind === "birthday" && isBirthdayVisible(p)
+                                            )
+                                            .map((p) => (
+                                                <div key={p.id} style={styles.wishPostRowBirthday}>
+                                                    {p.photo ? (
+                                                        <img
+                                                            src={p.photo}
+                                                            alt=""
+                                                            style={styles.wishPostPhotoLarge}
                                                         />
+                                                    ) : (
+                                                        <div
+                                                            style={
+                                                                styles.wishPostPhotoFallbackLarge
+                                                            }
+                                                        >
+                                                            <i
+                                                                className="ti ti-cake"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={styles.wishPostHeading}>
+                                                            <span style={styles.emojiGlyph}>
+                                                                🎉
+                                                            </span>{" "}
+                                                            {p.employeeName || "Happy Birthday"}
+                                                        </div>
+                                                        <div style={styles.wishPostMessageLarge}>
+                                                            {p.message}
+                                                        </div>
+                                                        <div style={styles.wishPostMeta}>
+                                                            {formatPostedAt(p.postedAt)}
+                                                        </div>
                                                     </div>
-                                                )}
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={styles.wishPostHeading}>
-                                                        🎉 {p.employeeName || "Happy Birthday"}
-                                                    </div>
-                                                    <div style={styles.wishPostMessageLarge}>
-                                                        {p.message}
-                                                    </div>
-                                                    <div style={styles.wishPostMeta}>
-                                                        {formatPostedAt(p.postedAt)}
-                                                    </div>
+                                                    {isSuperAdmin && (
+                                                        <div style={styles.wishPostActions}>
+                                                            <button
+                                                                style={styles.wishPostActionBtn}
+                                                                aria-label="Edit post"
+                                                                onClick={() => {
+                                                                    setPostModalKind("birthday");
+                                                                    setEditingPost(p);
+                                                                    setShowPostModal(true);
+                                                                }}
+                                                            >
+                                                                <i
+                                                                    className="ti ti-pencil"
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </button>
+                                                            <button
+                                                                style={styles.wishPostActionBtn}
+                                                                aria-label="Delete post"
+                                                                onClick={() =>
+                                                                    handleDeletePost(p.id)
+                                                                }
+                                                            >
+                                                                <i
+                                                                    className="ti ti-trash"
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                {isSuperAdmin && (
-                                                    <div style={styles.wishPostActions}>
-                                                        <button
-                                                            style={styles.wishPostActionBtn}
-                                                            aria-label="Edit post"
-                                                            onClick={() => {
-                                                                setPostModalKind("birthday");
-                                                                setEditingPost(p);
-                                                                setShowPostModal(true);
-                                                            }}
-                                                        >
-                                                            <i
-                                                                className="ti ti-pencil"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </button>
-                                                        <button
-                                                            style={styles.wishPostActionBtn}
-                                                            aria-label="Delete post"
-                                                            onClick={() => handleDeletePost(p.id)}
-                                                        >
-                                                            <i
-                                                                className="ti ti-trash"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                </div>
-                            )}
+                                            ))}
+                                    </div>
+                                )}
 
-                        {employeesLoading ? (
-                            <div style={styles.cardEmpty}>Loading…</div>
-                        ) : upcomingBirthdays.length === 0 ? (
-                            <div style={styles.cardEmptyRow}>
-                                <BirthdayHeroIllustration />
-                                <div>
-                                    <div style={styles.cardEmptyRowTitle}>No birthdays</div>
-                                    <div style={styles.cardEmptyRowSubtitle}>
-                                        in the next month.
+                            {employeesLoading ? (
+                                <div style={styles.cardEmpty}>Loading…</div>
+                            ) : upcomingBirthdays.length > 1 ? (
+                                <div style={styles.birthdayList}>
+                                    {upcomingBirthdays.slice(1, 4).map((b) => (
+                                        <BirthdayRow
+                                            key={b.id}
+                                            b={b}
+                                            styles={styles}
+                                            BRAND={BRAND}
+                                        />
+                                    ))}
+                                </div>
+                            ) : null}
+
+                            <button
+                                style={styles.programFooterLink(BRAND)}
+                                onClick={() => setShowBirthdaysModal(true)}
+                            >
+                                View All <i className="ti ti-arrow-right" aria-hidden="true" />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* ---------------- Work Anniversaries card ---------------- */}
+                    <div style={styles.programCard}>
+                        <div
+                            style={styles.programImage(
+                                BRAND,
+                                upcomingAnniversaries[0]?.photoUrl || null
+                            )}
+                        >
+                            <div style={styles.programImageScrim} />
+                            {!employeesLoading && upcomingAnniversaries.length > 0 && (
+                                <>
+                                    {!upcomingAnniversaries[0].photoUrl && (
+                                        <div style={styles.programImageIllustrationWrap}>
+                                            <AnniversariesCardBg />
+                                        </div>
+                                    )}
+                                    <span
+                                        style={{
+                                            ...styles.programBadge,
+                                            ...(upcomingAnniversaries[0].daysUntil === 0
+                                                ? styles.programBadgeToday(BRAND)
+                                                : styles.programBadgeMuted),
+                                        }}
+                                    >
+                                        {daysUntilLabel(upcomingAnniversaries[0].daysUntil)}
+                                    </span>
+                                    <div style={styles.programImageOverlay}>
+                                        <div style={styles.programEyebrowWhite}>
+                                            Work Anniversaries
+                                        </div>
+                                        <div style={styles.programTitleWhite}>
+                                            <span style={styles.emojiGlyph}>🏆</span>{" "}
+                                            {upcomingAnniversaries[0].name}
+                                        </div>
+                                        <div style={styles.programSubtitleWhite}>
+                                            {upcomingAnniversaries[0].years}{" "}
+                                            {upcomingAnniversaries[0].years === 1
+                                                ? "year"
+                                                : "years"}{" "}
+                                            · {upcomingAnniversaries[0].department || ""}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                            {!employeesLoading && upcomingAnniversaries.length === 0 && (
+                                <div style={styles.programImageOverlay}>
+                                    <div style={styles.programEyebrowWhite}>Work Anniversaries</div>
+                                    <div style={styles.programTitleWhite}>
+                                        No anniversaries this month
                                     </div>
                                 </div>
-                            </div>
-                        ) : (
-                            <div style={styles.birthdayList}>
-                                {upcomingBirthdays.slice(0, 5).map((b) => (
-                                    <BirthdayRow key={b.id} b={b} styles={styles} BRAND={BRAND} />
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
+                            )}
+                        </div>
 
-                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGridEven}>
-                    {/* ---------------- Work Anniversaries card ---------------- */}
-                    <div
-                        style={{
-                            ...styles.card,
-                            borderTop: `3px solid ${STAT_COLORS.anniversaries.icon}`,
-                            position: "relative",
-                            overflow: "hidden",
-                        }}
-                    >
-                        <AnniversariesCardBg />
-                        <div style={styles.cardHeaderRow}>
-                            <div style={styles.cardTitleWrap}>
-                                <div
-                                    style={{
-                                        ...styles.cardIconBadge,
-                                        background: STAT_COLORS.anniversaries.bg,
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-award"
-                                        style={{ color: STAT_COLORS.anniversaries.icon }}
-                                        aria-hidden="true"
-                                    />
-                                </div>
-                                <span style={styles.cardEyebrow}>Work Anniversaries</span>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                        <div style={styles.programBody}>
+                            <div style={styles.programActionsRow}>
                                 {isSuperAdmin && (
                                     <button
                                         style={styles.manageLink}
@@ -934,109 +1001,112 @@ export default function Home({ user }: { user: HomeUser }) {
                                         <i className="ti ti-plus" aria-hidden="true" /> Post
                                     </button>
                                 )}
-                                <button
-                                    style={styles.viewAllLink}
-                                    onClick={() => setShowAnniversariesModal(true)}
-                                >
-                                    View All
-                                </button>
                             </div>
-                        </div>
 
-                        {isSuperAdmin &&
-                            wishPosts.filter(
-                                (p) => p.kind === "anniversary" && isAnniversaryToday(p.employeeId)
-                            ).length > 0 && (
-                                <div style={styles.wishPostList}>
-                                    {wishPosts
-                                        .filter(
-                                            (p) =>
-                                                p.kind === "anniversary" &&
-                                                isAnniversaryToday(p.employeeId)
-                                        )
-                                        .map((p) => (
-                                            <div key={p.id} style={styles.wishPostRowAnniversary}>
-                                                {p.photo ? (
-                                                    <img
-                                                        src={p.photo}
-                                                        alt=""
-                                                        style={styles.wishPostPhotoLarge}
-                                                    />
-                                                ) : (
-                                                    <div style={styles.wishPostPhotoFallbackAnniv}>
-                                                        <i
-                                                            className="ti ti-award"
-                                                            aria-hidden="true"
+                            {isSuperAdmin &&
+                                wishPosts.filter(
+                                    (p) => p.kind === "anniversary" && isAnniversaryVisible(p)
+                                ).length > 0 && (
+                                    <div style={styles.wishPostList}>
+                                        {wishPosts
+                                            .filter(
+                                                (p) =>
+                                                    p.kind === "anniversary" &&
+                                                    isAnniversaryVisible(p)
+                                            )
+                                            .map((p) => (
+                                                <div
+                                                    key={p.id}
+                                                    style={styles.wishPostRowAnniversary}
+                                                >
+                                                    {p.photo ? (
+                                                        <img
+                                                            src={p.photo}
+                                                            alt=""
+                                                            style={styles.wishPostPhotoLarge}
                                                         />
+                                                    ) : (
+                                                        <div
+                                                            style={
+                                                                styles.wishPostPhotoFallbackAnniv
+                                                            }
+                                                        >
+                                                            <i
+                                                                className="ti ti-award"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={styles.wishPostHeadingAnniv}>
+                                                            <span style={styles.emojiGlyph}>
+                                                                🏆
+                                                            </span>{" "}
+                                                            {p.employeeName || "Happy Anniversary"}
+                                                        </div>
+                                                        <div style={styles.wishPostMessageLarge}>
+                                                            {p.message}
+                                                        </div>
+                                                        <div style={styles.wishPostMeta}>
+                                                            {formatPostedAt(p.postedAt)}
+                                                        </div>
                                                     </div>
-                                                )}
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={styles.wishPostHeadingAnniv}>
-                                                        🏆 {p.employeeName || "Happy Anniversary"}
-                                                    </div>
-                                                    <div style={styles.wishPostMessageLarge}>
-                                                        {p.message}
-                                                    </div>
-                                                    <div style={styles.wishPostMeta}>
-                                                        {formatPostedAt(p.postedAt)}
-                                                    </div>
+                                                    {isSuperAdmin && (
+                                                        <div style={styles.wishPostActions}>
+                                                            <button
+                                                                style={styles.wishPostActionBtn}
+                                                                aria-label="Edit post"
+                                                                onClick={() => {
+                                                                    setPostModalKind("anniversary");
+                                                                    setEditingPost(p);
+                                                                    setShowPostModal(true);
+                                                                }}
+                                                            >
+                                                                <i
+                                                                    className="ti ti-pencil"
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </button>
+                                                            <button
+                                                                style={styles.wishPostActionBtn}
+                                                                aria-label="Delete post"
+                                                                onClick={() =>
+                                                                    handleDeletePost(p.id)
+                                                                }
+                                                            >
+                                                                <i
+                                                                    className="ti ti-trash"
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                {isSuperAdmin && (
-                                                    <div style={styles.wishPostActions}>
-                                                        <button
-                                                            style={styles.wishPostActionBtn}
-                                                            aria-label="Edit post"
-                                                            onClick={() => {
-                                                                setPostModalKind("anniversary");
-                                                                setEditingPost(p);
-                                                                setShowPostModal(true);
-                                                            }}
-                                                        >
-                                                            <i
-                                                                className="ti ti-pencil"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </button>
-                                                        <button
-                                                            style={styles.wishPostActionBtn}
-                                                            aria-label="Delete post"
-                                                            onClick={() => handleDeletePost(p.id)}
-                                                        >
-                                                            <i
-                                                                className="ti ti-trash"
-                                                                aria-hidden="true"
-                                                            />
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                </div>
-                            )}
+                                            ))}
+                                    </div>
+                                )}
 
-                        {employeesLoading ? (
-                            <div style={styles.cardEmpty}>Loading…</div>
-                        ) : upcomingAnniversaries.length === 0 ? (
-                            <div style={styles.cardEmptyRow}>
-                                <TrophyIllustration />
-                                <div>
-                                    <div style={styles.cardEmptyRowTitle}>
-                                        No work anniversaries
-                                    </div>
-                                    <div style={styles.cardEmptyRowSubtitle}>
-                                        in the next month.
-                                    </div>
+                            {employeesLoading ? (
+                                <div style={styles.cardEmpty}>Loading…</div>
+                            ) : upcomingAnniversaries.length > 1 ? (
+                                <div style={styles.birthdayList}>
+                                    {upcomingAnniversaries.slice(1, 4).map((a) => (
+                                        <AnniversaryRow key={a.id} a={a} styles={styles} />
+                                    ))}
                                 </div>
-                            </div>
-                        ) : (
-                            <div style={styles.birthdayList}>
-                                {upcomingAnniversaries.slice(0, 5).map((a) => (
-                                    <AnniversaryRow key={a.id} a={a} styles={styles} />
-                                ))}
-                            </div>
-                        )}
+                            ) : null}
+
+                            <button
+                                style={styles.programFooterLink(BRAND)}
+                                onClick={() => setShowAnniversariesModal(true)}
+                            >
+                                View All <i className="ti ti-arrow-right" aria-hidden="true" />
+                            </button>
+                        </div>
                     </div>
+                </div>
 
+                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGridSingle}>
                     {/* ---------------- New Joinees card ---------------- */}
                     <div
                         style={{
@@ -1148,6 +1218,12 @@ export default function Home({ user }: { user: HomeUser }) {
                                 ? prev.map((p) => (p.id === post.id ? post : p))
                                 : [post, ...prev];
                         });
+                        // Show it to the creator right now, even if the
+                        // actual birthday/anniversary date is still days
+                        // away — see isBirthdayVisible/isAnniversaryVisible.
+                        setJustPostedIds((prev) =>
+                            prev.includes(post.id) ? prev : [...prev, post.id]
+                        );
                         setShowPostModal(false);
                         setEditingPost(null);
                     }}
@@ -1474,18 +1550,89 @@ function FestiveIllustration({
             style={{ flexShrink: 0 }}
             aria-hidden="true"
         >
-            <circle cx="50" cy="50" r="46" fill={withAlpha(BRAND.lightBlue, 0.1)} />
+            <defs>
+                <radialGradient id="festiveBackdrop" cx="50%" cy="42%" r="60%">
+                    <stop offset="0%" stopColor="rgba(255,255,255,0.96)" />
+                    <stop offset="80%" stopColor="rgba(255,255,255,0.96)" />
+                    <stop offset="100%" stopColor="rgba(255,255,255,0.85)" />
+                </radialGradient>
+                <radialGradient id="diyaFlameGlow" cx="50%" cy="35%" r="65%">
+                    <stop offset="0%" stopColor="#FFF3C4" stopOpacity="0.95" />
+                    <stop offset="55%" stopColor="#FDBA3F" stopOpacity="0.35" />
+                    <stop offset="100%" stopColor="#FDBA3F" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="diyaFlame" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#FFF7D6" />
+                    <stop offset="45%" stopColor="#FCD34D" />
+                    <stop offset="100%" stopColor="#F97316" />
+                </linearGradient>
+                <linearGradient id="diyaBody" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#F0924A" />
+                    <stop offset="55%" stopColor="#D9662B" />
+                    <stop offset="100%" stopColor="#B04A1E" />
+                </linearGradient>
+                <linearGradient id="diyaRim" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#FDE2C6" />
+                    <stop offset="50%" stopColor="#F6B784" />
+                    <stop offset="100%" stopColor="#FDE2C6" />
+                </linearGradient>
+            </defs>
+
+            {/* Frosted-glass backdrop — sits behind every festival icon so
+                it reads as a deliberate badge against the card's blue
+                gradient, instead of the icon floating directly on it. */}
+            <circle cx="50" cy="50" r="46" fill="url(#festiveBackdrop)" />
+            <circle
+                cx="50"
+                cy="50"
+                r="45.5"
+                fill="none"
+                stroke="rgba(255,255,255,0.22)"
+                strokeWidth="1"
+            />
 
             {type === "diwali" && (
                 <g>
-                    <ellipse cx="50" cy="66" rx="20" ry="7" fill="#C2410C" />
-                    <path d="M32 62 Q50 74 68 62 Q50 68 32 62 Z" fill="#EA580C" />
-                    <path d="M50 34 Q58 46 50 56 Q42 46 50 34 Z" fill="#FACC15" />
-                    <path d="M50 40 Q54 47 50 53 Q46 47 50 40 Z" fill="#FB923C" />
-                    <circle cx="26" cy="40" r="2.5" fill={BRAND.lightBlue} />
-                    <circle cx="74" cy="42" r="2" fill={BRAND.blue} />
-                    <circle cx="66" cy="26" r="2.5" fill={BRAND.green} />
-                    <circle cx="34" cy="24" r="2" fill={BRAND.blue} />
+                    {/* soft ambient glow behind the flame, so the diya
+                        reads as genuinely lit rather than flat-colored */}
+                    <circle cx="50" cy="44" r="26" fill="url(#diyaFlameGlow)" />
+
+                    {/* lamp base + bowl, built from two overlapping
+                        gradient-shaded ellipses for a rounded, ceramic feel */}
+                    <ellipse cx="50" cy="68" rx="21" ry="4" fill="rgba(0,0,0,0.12)" />
+                    <path
+                        d="M28 60 Q50 76 72 60 Q68 68 50 70 Q32 68 28 60 Z"
+                        fill="url(#diyaBody)"
+                    />
+                    <ellipse cx="50" cy="60" rx="22" ry="7" fill="url(#diyaRim)" />
+                    <ellipse
+                        cx="50"
+                        cy="60"
+                        rx="22"
+                        ry="7"
+                        fill="none"
+                        stroke="#B04A1E"
+                        strokeWidth="0.75"
+                        opacity="0.4"
+                    />
+                    <ellipse cx="50" cy="59" rx="15" ry="4" fill="#7A3311" opacity="0.55" />
+
+                    {/* flame, layered outer/inner for depth + a bright core */}
+                    <path d="M50 30 Q60 44 50 58 Q40 44 50 30 Z" fill="url(#diyaFlame)" />
+                    <path d="M50 38 Q55 46 50 54 Q45 46 50 38 Z" fill="#FFF7D6" opacity="0.9" />
+
+                    {/* gold sparkle accents */}
+                    <path
+                        d="M22 34 l1.6 3.8 3.8 1.6 -3.8 1.6 -1.6 3.8 -1.6 -3.8 -3.8 -1.6 3.8 -1.6 Z"
+                        fill="#FBBF24"
+                    />
+                    <path
+                        d="M76 30 l1.2 2.8 2.8 1.2 -2.8 1.2 -1.2 2.8 -1.2 -2.8 -2.8 -1.2 2.8 -1.2 Z"
+                        fill="#FBBF24"
+                        opacity="0.85"
+                    />
+                    <circle cx="70" cy="52" r="2.2" fill="#FBBF24" opacity="0.8" />
+                    <circle cx="28" cy="52" r="1.8" fill="#FBBF24" opacity="0.7" />
                 </g>
             )}
 
@@ -2595,37 +2742,54 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         topBar: {
             height: "3px",
             width: "100%",
-            background: `linear-gradient(90deg, ${WARM.eyebrow}, #B45F3E, ${WARM.eyebrow})`,
+            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
         },
         contentBody: {
             display: "flex",
             flexDirection: "column",
-            gap: "10px",
-            padding: "14px 24px 16px",
+            gap: "14px",
+            padding: "40px 24px 16px",
         },
         contentBodyMobile: {
             display: "flex",
             flexDirection: "column",
-            gap: "14px",
-            padding: "14px 14px 22px",
+            gap: "18px",
+            padding: "38px 16px 24px",
         },
 
-        headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
-        headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
+        headerRow: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: 6,
+        },
+        headerRowMobile: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            marginBottom: 4,
+        },
 
+        // Applied directly to a <span> wrapping just the emoji character
+        // (rather than relying on inheritance from a parent's
+        // fontFamily), so a parent style/class further down the tree
+        // can never silently override it and blank the glyph out again.
+        emojiGlyph: {
+            fontFamily: EMOJI_SAFE_FONT,
+        },
         pageTitle: {
             margin: 0,
             fontFamily: SERIF_FONT,
-            fontSize: fontSize["6xl"],
+            fontSize: fontSize["3xl"],
             fontWeight: fontWeight.semibold,
             color: WARM.ink,
             letterSpacing: "-0.01em",
         },
         headerSubtext: {
-            margin: "6px 0 0",
+            margin: "4px 0 0",
             marginLeft: 0,
             textAlign: "left",
-            fontSize: fontSize.base,
+            fontSize: fontSize.sm,
             color: WARM.subtext,
         },
 
@@ -2635,7 +2799,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             gap: 6,
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
-            color: WARM.eyebrow,
+            color: BRAND.blue,
             background: "#fff",
             border: `1px solid ${WARM.pillBorder}`,
             padding: "8px 16px",
@@ -2647,9 +2811,17 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         statGrid: {
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-            gap: 16,
+            gap: 12,
+            marginTop: 6,
+            marginBottom: 10,
         },
-        statGridMobile: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
+        statGridMobile: {
+            display: "grid",
+            gridTemplateColumns: "1fr",
+            gap: 12,
+            marginTop: 4,
+            marginBottom: 8,
+        },
         statCard: {
             background: WARM.card,
             border: `1px solid ${WARM.border}`,
@@ -2657,12 +2829,12 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             padding: "10px 14px",
             display: "flex",
             alignItems: "center",
-            gap: 10,
+            gap: 12,
         },
         statIconWrap: {
-            width: 32,
-            height: 32,
-            minWidth: 32,
+            width: 30,
+            height: 30,
+            minWidth: 30,
             borderRadius: radius.md,
             display: "flex",
             alignItems: "center",
@@ -2670,19 +2842,19 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         statValue: {
             fontFamily: SERIF_FONT,
-            fontSize: fontSize["3xl"],
+            fontSize: fontSize["2xl"],
             fontWeight: fontWeight.semibold,
             color: WARM.ink,
             lineHeight: 1.1,
         },
         statLabel: {
-            fontSize: fontSize.sm,
+            fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             color: WARM.ink,
             marginTop: 2,
         },
         statSub: {
-            fontSize: fontSize.xs,
+            fontSize: fontSize.xxs,
             color: WARM.subtext,
             marginTop: 1,
             textTransform: "uppercase",
@@ -2695,7 +2867,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         cardsGrid: {
             display: "grid",
             gridTemplateColumns: "1.7fr 1fr",
-            gap: 10,
+            gap: 24,
             alignItems: "stretch",
         },
         // Second row (Work Anniversaries / New Joinees) — equal-width, unlike
@@ -2703,17 +2875,17 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         cardsGridEven: {
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
-            gap: 10,
+            gap: 24,
             alignItems: "stretch",
         },
-        cardsGridMobile: { display: "flex", flexDirection: "column", gap: 14 },
+        cardsGridMobile: { display: "flex", flexDirection: "column", gap: 16 },
 
         card: {
             background: WARM.card,
             border: `1px solid ${WARM.border}`,
             borderRadius: radius["2xl"],
-            padding: "14px 18px",
-            minHeight: 165,
+            padding: "12px 16px",
+            minHeight: 120,
             display: "flex",
             flexDirection: "column",
         },
@@ -2721,7 +2893,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 14,
+            marginBottom: 10,
         },
         cardTitleWrap: { display: "flex", alignItems: "center", gap: 10 },
         cardIconBadge: {
@@ -2733,10 +2905,179 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             justifyContent: "center",
             fontSize: fontSize.base,
         },
+        // ---- Photo-header cards (Holidays / Birthdays / Work Anniversaries) ----
+        // Same "photo banner + gradient text overlay + white body" pattern
+        // as the reference design, but using our own brand color + content
+        // (the next holiday, the soonest birthday/anniversary — or that
+        // person's photo when we have one) instead of stock photography.
+        cardsGrid3: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 14,
+            alignItems: "stretch",
+        },
+        cardsGridSingle: {
+            display: "grid",
+            gridTemplateColumns: "1fr",
+            gap: 14,
+        },
+        programCard: {
+            background: WARM.card,
+            border: `1px solid ${WARM.border}`,
+            borderRadius: radius["2xl"],
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+        },
+        programImage: (BRAND: any, photoUrl?: string | null) => ({
+            position: "relative",
+            width: "100%",
+            height: 168,
+            minHeight: 168,
+            background: photoUrl
+                ? `url(${photoUrl}) center/cover no-repeat`
+                : `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+        }),
+        // Uniform dark scrim laid over the photo/gradient so text and
+        // icons always sit on a readable surface, whether the card is
+        // showing an employee photo or the brand gradient/illustration.
+        // Kept as its own absolutely-positioned layer (rather than baked
+        // into the gradient) so it works identically for both cases.
+        programImageScrim: {
+            position: "absolute",
+            inset: 0,
+            background:
+                "linear-gradient(180deg, rgba(15,17,23,0.10) 0%, rgba(15,17,23,0.15) 45%, rgba(15,17,23,0.75) 100%)",
+            zIndex: 0,
+        },
+        programImageIllustrationWrap: {
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "center",
+            paddingTop: 18,
+            opacity: 0.95,
+        },
+        programBadge: {
+            position: "absolute",
+            top: 12,
+            left: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.bold,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            padding: "5px 12px",
+            borderRadius: radius.pill,
+            zIndex: 2,
+        },
+        programBadgeToday: (BRAND: any) => ({
+            background: BRAND.blue,
+            color: "#fff",
+        }),
+        programBadgeMuted: {
+            background: "rgba(255,255,255,0.94)",
+            color: "#17181C",
+        },
+        programArrowBtn: {
+            position: "absolute",
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: 28,
+            height: 28,
+            borderRadius: radius.circle,
+            border: "none",
+            background: "rgba(255,255,255,0.85)",
+            color: "#17181C",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            zIndex: 2,
+            fontSize: fontSize.sm,
+        },
+        programArrowBtnLeft: { left: 10 },
+        programArrowBtnRight: { right: 10 },
+        programArrowBtnDisabled: { opacity: 0.35, cursor: "default", pointerEvents: "none" },
+        programImageOverlay: {
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            padding: "26px 16px 14px",
+            background:
+                "linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.2) 65%, rgba(0,0,0,0))",
+            zIndex: 1,
+        },
+        programEyebrowWhite: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.bold,
+            color: "rgba(255,255,255,0.85)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+        },
+        programTitleWhite: {
+            fontSize: fontSize.lg,
+            fontWeight: fontWeight.bold,
+            color: "#fff",
+            marginTop: 3,
+            lineHeight: 1.2,
+            // Emoji-safe: this label sometimes renders "🎉 Name" /
+            // "🏆 Name" inline (see the Birthdays / Anniversaries cards).
+            fontFamily: EMOJI_SAFE_FONT,
+        },
+        programSubtitleWhite: {
+            fontSize: fontSize.xs,
+            color: "rgba(255,255,255,0.85)",
+            marginTop: 2,
+        },
+        programDotRow: {
+            display: "flex",
+            justifyContent: "center",
+            gap: 5,
+            padding: "8px 0 0",
+        },
+        programBody: {
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            padding: "10px 12px 12px",
+            gap: 8,
+        },
+        programActionsRow: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 14,
+        },
+        programFooterLink: (BRAND: any) => ({
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            marginTop: "auto",
+            paddingTop: 10,
+            border: "none",
+            background: "transparent",
+            color: BRAND.blue,
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.bold,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            cursor: "pointer",
+            alignSelf: "flex-start",
+        }),
+
         cardEyebrow: {
             fontSize: fontSize.xs,
             fontWeight: fontWeight.bold,
-            color: WARM.eyebrow,
+            color: BRAND.blue,
             textTransform: "uppercase",
             letterSpacing: "0.08em",
         },
@@ -2800,13 +3141,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#B45F3E",
+            color: "#b91c1c",
             fontSize: fontSize.base,
         },
-        emptyIcon: { fontSize: 30, color: "#D8D2C4" },
+        emptyIcon: { fontSize: 30, color: "#c7ccd6" },
         smallAddBtn: (BRAND: any) => ({
             border: "none",
-            background: WARM.eyebrow,
+            background: BRAND.blue,
             color: "#fff",
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
@@ -2822,25 +3163,25 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             justifyContent: "space-between",
             gap: 16,
-            background: "#FBF9F3",
+            background: "#f4f5fb",
             border: `1px solid ${WARM.border}`,
             borderRadius: radius.xl,
             padding: "10px 18px",
         }),
         tipIconWrap: (BRAND: any) => ({
-            width: 36,
-            height: 36,
-            minWidth: 36,
+            width: 32,
+            height: 32,
+            minWidth: 32,
             borderRadius: radius.circle,
-            background: WARM.eyebrow,
+            background: BRAND.blue,
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: fontSize.lg,
+            fontSize: fontSize.base,
         }),
-        tipTitle: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: WARM.ink },
-        tipSubtext: { fontSize: fontSize.sm, color: WARM.subtext, marginTop: 2 },
+        tipTitle: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: WARM.ink },
+        tipSubtext: { fontSize: fontSize.xs, color: WARM.subtext, marginTop: 2 },
 
         holidayBody: { flex: 1, display: "flex", alignItems: "center", gap: 10 },
         holidayTextCol: { flex: 1, minWidth: 0 },
@@ -2855,23 +3196,23 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             marginTop: 8,
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
-            color: "#B45F3E",
+            color: BRAND.blue,
         },
         holidayDaysBadge: {
             marginTop: 12,
             display: "inline-block",
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
-            color: WARM.eyebrow,
-            background: "#F3EEE1",
+            color: BRAND.blue,
+            background: withAlpha(BRAND.blue, 0.12),
             padding: "4px 12px",
             borderRadius: radius.pill,
         },
         holidayDaysBadgeSmall: {
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
-            color: WARM.eyebrow,
-            background: "#F3EEE1",
+            color: BRAND.blue,
+            background: withAlpha(BRAND.blue, 0.12),
             padding: "3px 9px",
             borderRadius: radius.pill,
             whiteSpace: "nowrap",
@@ -2902,7 +3243,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             padding: 0,
             cursor: "pointer",
         },
-        dotActive: { background: WARM.eyebrow, width: 16 },
+        dotActive: { background: BRAND.blue, width: 16 },
 
         // ---- Wish posts (shown inside the Birthdays / Anniversaries cards) ----
         wishPostList: {
@@ -2917,7 +3258,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "center",
             gap: 10,
-            background: "#FBF9F3",
+            background: "#f4f5fb",
             borderRadius: radius.md,
             padding: "8px 10px",
         },
@@ -3005,12 +3346,16 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontWeight: fontWeight.bold,
             color: STAT_COLORS.birthdays.icon,
             marginBottom: 2,
+            // Renders "🎉 Name" — needs the emoji-safe fallback stack.
+            fontFamily: EMOJI_SAFE_FONT,
         },
         wishPostHeadingAnniv: {
             fontSize: fontSize.base,
             fontWeight: fontWeight.bold,
             color: STAT_COLORS.anniversaries.icon,
             marginBottom: 2,
+            // Renders "🏆 Name" — needs the emoji-safe fallback stack.
+            fontFamily: EMOJI_SAFE_FONT,
         },
         wishPostMessage: {
             fontSize: fontSize.sm,
@@ -3025,6 +3370,9 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontSize: fontSize.sm,
             color: WARM.ink,
             lineHeight: 1.4,
+            // The auto-filled wish text (buildMessage) is full of emoji
+            // (🎂🎉🥳) — needs the emoji-safe fallback stack.
+            fontFamily: EMOJI_SAFE_FONT,
         },
         wishPostMeta: { fontSize: fontSize.xxs, color: WARM.subtext, marginTop: 4 },
         wishPostActions: {
@@ -3077,7 +3425,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             height: 24,
             borderRadius: radius.circle,
             border: "none",
-            background: "rgba(31,42,36,0.55)",
+            background: "rgba(0,0,0,0.55)",
             color: "#fff",
             display: "flex",
             alignItems: "center",
@@ -3099,7 +3447,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         birthdayList: {
             display: "flex",
             flexDirection: "column",
-            gap: 4,
+            gap: 2,
             flex: 1,
             justifyContent: "flex-start",
         },
@@ -3107,13 +3455,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "10px 0",
+            padding: "6px 0",
             borderBottom: `1px solid ${WARM.border}`,
         },
         birthdayAvatar: {
-            width: 36,
-            height: 36,
-            minWidth: 36,
+            width: 32,
+            height: 32,
+            minWidth: 32,
             borderRadius: radius.circle,
             background: STAT_COLORS.birthdays.bg,
             color: STAT_COLORS.birthdays.icon,
@@ -3124,14 +3472,14 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             justifyContent: "center",
         },
         birthdayAvatarImg: {
-            width: 36,
-            height: 36,
-            minWidth: 36,
+            width: 32,
+            height: 32,
+            minWidth: 32,
             borderRadius: radius.circle,
             objectFit: "cover",
         },
         birthdayName: {
-            fontSize: fontSize.base,
+            fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
             color: WARM.ink,
             overflow: "hidden",
@@ -3146,7 +3494,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         modalOverlay: {
             position: "fixed",
             inset: 0,
-            background: "rgba(31,42,36,0.45)",
+            background: "rgba(0,0,0,.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -3202,7 +3550,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             cursor: "pointer",
         },
         modalTabBtnActive: (BRAND: any) => ({
-            background: WARM.eyebrow,
+            background: BRAND.blue,
             color: "#fff",
             border: "1px solid transparent",
         }),
@@ -3262,7 +3610,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         rowDeleteBtn: {
             border: "none",
             background: "transparent",
-            color: "#B45F3E",
+            color: "#b91c1c",
             cursor: "pointer",
             fontSize: fontSize.base,
         },
@@ -3282,10 +3630,10 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontFamily: fontFamily.base,
         },
         modalHint: { fontSize: fontSize.sm, color: WARM.subtext, margin: 0 },
-        modalError: { fontSize: fontSize.sm, color: "#B45F3E" },
+        modalError: { fontSize: fontSize.sm, color: "#b91c1c" },
         modalPrimaryBtn: (BRAND: any) => ({
             border: "none",
-            background: WARM.eyebrow,
+            background: BRAND.blue,
             color: "#fff",
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
