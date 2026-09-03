@@ -81,6 +81,11 @@ const SERIF_FONT = "'Playfair Display', Georgia, 'Times New Roman', serif";
 // ILLUSTRATION_SIZE.
 const ILLUSTRATION_SIZE = 150;
 const HOLIDAY_HERO_SIZE = 210;
+// Right-side icon inside the Holidays card only — smaller than
+// ILLUSTRATION_SIZE (which the other 3 cards' illustrations still use)
+// so the Holidays card takes up less vertical room without shrinking
+// the birthday/anniversary/new-joiner illustrations.
+const HOLIDAY_RIGHT_ICON_SIZE = 130;
 // Trophy/WelcomeBadge/BirthdayHero are drawn in a 130x110 viewBox
 // (≈1.182:1) — this derives the matching height for ILLUSTRATION_SIZE
 // so they scale without distortion.
@@ -172,6 +177,22 @@ function daysAgoLabel(n: number) {
     return `Joined ${n} days ago`;
 }
 
+// Formats a stored ISO timestamp (wish posts) as a friendly relative
+// label — "Just now" right after posting, then minutes/hours/days once
+// the page has been refreshed since.
+function formatPostedAt(iso: string): string {
+    const then = new Date(iso).getTime();
+    if (isNaN(then)) return iso;
+    const diffMs = Date.now() - then;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "Just now";
+    if (diffMin < 60) return `${diffMin} min${diffMin === 1 ? "" : "s"} ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    return `${diffDay} day${diffDay === 1 ? "" : "s"} ago`;
+}
+
 function yearsLabel(n: number) {
     if (n <= 0) return "1st anniversary";
     const suffix = n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th";
@@ -240,8 +261,11 @@ interface NewJoinee {
 
 interface WishPost {
     id: string;
+    kind: "birthday" | "anniversary";
+    employeeId: string;
     photo: string | null;
     message: string;
+    employeeName: string;
     postedAt: string;
 }
 
@@ -282,7 +306,30 @@ export default function Home({ user }: { user: HomeUser }) {
     const [employeesLoading, setEmployeesLoading] = useState(true);
     const [showBirthdaysModal, setShowBirthdaysModal] = useState(false);
     const [showPostModal, setShowPostModal] = useState(false);
-    const [wishPosts, setWishPosts] = useState<WishPost[]>([]);
+    const [postModalKind, setPostModalKind] = useState<"birthday" | "anniversary">("birthday");
+    const [editingPost, setEditingPost] = useState<WishPost | null>(null);
+    const WISH_POSTS_STORAGE_KEY = "osoi_home_wish_posts";
+    const [wishPosts, setWishPosts] = useState<WishPost[]>(() => {
+        // Load previously posted wishes from localStorage so they survive
+        // a page refresh instead of vanishing (they're client-side only —
+        // no backend table exists for wish posts yet).
+        try {
+            const saved = localStorage.getItem(WISH_POSTS_STORAGE_KEY);
+            return saved ? (JSON.parse(saved) as WishPost[]) : [];
+        } catch {
+            return [];
+        }
+    });
+
+    // Persist wishPosts to localStorage whenever they change.
+    useEffect(() => {
+        try {
+            localStorage.setItem(WISH_POSTS_STORAGE_KEY, JSON.stringify(wishPosts));
+        } catch {
+            // Storage full or unavailable — silently ignore, posts just
+            // won't persist across refreshes in that case.
+        }
+    }, [wishPosts]);
     const [showAnniversariesModal, setShowAnniversariesModal] = useState(false);
     const [showNewJoineesModal, setShowNewJoineesModal] = useState(false);
 
@@ -417,6 +464,20 @@ export default function Home({ user }: { user: HomeUser }) {
         [allAnniversariesSorted]
     );
 
+    // A wish post can be created any time in advance, but it should only
+    // be visible on the actual day of the occasion — so check the live
+    // birthday/anniversary lists (daysUntil === 0 means "today") rather
+    // than just showing every post that was ever created.
+    const isBirthdayToday = (employeeId: string) =>
+        allBirthdaysSorted.some((b) => b.id === employeeId && b.daysUntil === 0);
+    const isAnniversaryToday = (employeeId: string) =>
+        allAnniversariesSorted.some((a) => a.id === employeeId && a.daysUntil === 0);
+
+    const handleDeletePost = (id: string) => {
+        if (!window.confirm("Delete this post?")) return;
+        setWishPosts((prev) => prev.filter((p) => p.id !== id));
+    };
+
     // "New Joinee" = joined in the last 30 days — most recent first.
     const newJoineesSorted: NewJoinee[] = useMemo(() => {
         return employees
@@ -483,16 +544,6 @@ export default function Home({ user }: { user: HomeUser }) {
             label: "New Joiners",
             sub: "This month",
             colors: STAT_COLORS.newJoinees,
-        },
-        {
-            // Placeholder — no announcements module exists yet, shown as "—"
-            // rather than a made-up number so the card isn't misleading.
-            key: "announcements",
-            icon: "ti ti-speakerphone",
-            value: "—",
-            label: "Announcements",
-            sub: "Today",
-            colors: STAT_COLORS.announcements,
         },
     ];
 
@@ -657,13 +708,12 @@ export default function Home({ user }: { user: HomeUser }) {
                                     </div>
                                 </div>
 
-                                {/* Right-side icon — now the smaller size (swapped with the
-                                    left side per request): left = large hero, right =
-                                    ILLUSTRATION_SIZE (same size used on the other 3 cards). */}
+                                {/* Right-side icon — smaller than before per request, so the
+                                    Holidays card takes up less height. */}
                                 <FestiveIllustration
                                     BRAND={BRAND}
                                     name={currentHoliday.name}
-                                    size={ILLUSTRATION_SIZE}
+                                    size={HOLIDAY_RIGHT_ICON_SIZE}
                                 />
 
                                 <button
@@ -730,12 +780,18 @@ export default function Home({ user }: { user: HomeUser }) {
                                 <span style={styles.cardEyebrow}>Birthdays</span>
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                                <button
-                                    style={styles.manageLink}
-                                    onClick={() => setShowPostModal(true)}
-                                >
-                                    <i className="ti ti-plus" aria-hidden="true" /> Post
-                                </button>
+                                {isSuperAdmin && (
+                                    <button
+                                        style={styles.manageLink}
+                                        onClick={() => {
+                                            setPostModalKind("birthday");
+                                            setEditingPost(null);
+                                            setShowPostModal(true);
+                                        }}
+                                    >
+                                        <i className="ti ti-plus" aria-hidden="true" /> Post
+                                    </button>
+                                )}
                                 <button
                                     style={styles.viewAllLink}
                                     onClick={() => setShowBirthdaysModal(true)}
@@ -745,29 +801,76 @@ export default function Home({ user }: { user: HomeUser }) {
                             </div>
                         </div>
 
-                        {wishPosts.length > 0 && (
-                            <div style={styles.wishPostList}>
-                                {wishPosts.map((p) => (
-                                    <div key={p.id} style={styles.wishPostRow}>
-                                        {p.photo ? (
-                                            <img
-                                                src={p.photo}
-                                                alt=""
-                                                style={styles.wishPostPhoto}
-                                            />
-                                        ) : (
-                                            <div style={styles.wishPostPhotoFallback}>
-                                                <i className="ti ti-cake" aria-hidden="true" />
+                        {isSuperAdmin &&
+                            wishPosts.filter(
+                                (p) => p.kind === "birthday" && isBirthdayToday(p.employeeId)
+                            ).length > 0 && (
+                                <div style={styles.wishPostList}>
+                                    {wishPosts
+                                        .filter(
+                                            (p) =>
+                                                p.kind === "birthday" &&
+                                                isBirthdayToday(p.employeeId)
+                                        )
+                                        .map((p) => (
+                                            <div key={p.id} style={styles.wishPostRowBirthday}>
+                                                {p.photo ? (
+                                                    <img
+                                                        src={p.photo}
+                                                        alt=""
+                                                        style={styles.wishPostPhotoLarge}
+                                                    />
+                                                ) : (
+                                                    <div style={styles.wishPostPhotoFallbackLarge}>
+                                                        <i
+                                                            className="ti ti-cake"
+                                                            aria-hidden="true"
+                                                        />
+                                                    </div>
+                                                )}
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={styles.wishPostHeading}>
+                                                        🎉 {p.employeeName || "Happy Birthday"}
+                                                    </div>
+                                                    <div style={styles.wishPostMessageLarge}>
+                                                        {p.message}
+                                                    </div>
+                                                    <div style={styles.wishPostMeta}>
+                                                        {formatPostedAt(p.postedAt)}
+                                                    </div>
+                                                </div>
+                                                {isSuperAdmin && (
+                                                    <div style={styles.wishPostActions}>
+                                                        <button
+                                                            style={styles.wishPostActionBtn}
+                                                            aria-label="Edit post"
+                                                            onClick={() => {
+                                                                setPostModalKind("birthday");
+                                                                setEditingPost(p);
+                                                                setShowPostModal(true);
+                                                            }}
+                                                        >
+                                                            <i
+                                                                className="ti ti-pencil"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </button>
+                                                        <button
+                                                            style={styles.wishPostActionBtn}
+                                                            aria-label="Delete post"
+                                                            onClick={() => handleDeletePost(p.id)}
+                                                        >
+                                                            <i
+                                                                className="ti ti-trash"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={styles.wishPostMessage}>{p.message}</div>
-                                            <div style={styles.wishPostMeta}>{p.postedAt}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                                        ))}
+                                </div>
+                            )}
 
                         {employeesLoading ? (
                             <div style={styles.cardEmpty}>Loading…</div>
@@ -818,13 +921,98 @@ export default function Home({ user }: { user: HomeUser }) {
                                 </div>
                                 <span style={styles.cardEyebrow}>Work Anniversaries</span>
                             </div>
-                            <button
-                                style={styles.viewAllLink}
-                                onClick={() => setShowAnniversariesModal(true)}
-                            >
-                                View All
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                {isSuperAdmin && (
+                                    <button
+                                        style={styles.manageLink}
+                                        onClick={() => {
+                                            setPostModalKind("anniversary");
+                                            setEditingPost(null);
+                                            setShowPostModal(true);
+                                        }}
+                                    >
+                                        <i className="ti ti-plus" aria-hidden="true" /> Post
+                                    </button>
+                                )}
+                                <button
+                                    style={styles.viewAllLink}
+                                    onClick={() => setShowAnniversariesModal(true)}
+                                >
+                                    View All
+                                </button>
+                            </div>
                         </div>
+
+                        {isSuperAdmin &&
+                            wishPosts.filter(
+                                (p) => p.kind === "anniversary" && isAnniversaryToday(p.employeeId)
+                            ).length > 0 && (
+                                <div style={styles.wishPostList}>
+                                    {wishPosts
+                                        .filter(
+                                            (p) =>
+                                                p.kind === "anniversary" &&
+                                                isAnniversaryToday(p.employeeId)
+                                        )
+                                        .map((p) => (
+                                            <div key={p.id} style={styles.wishPostRowAnniversary}>
+                                                {p.photo ? (
+                                                    <img
+                                                        src={p.photo}
+                                                        alt=""
+                                                        style={styles.wishPostPhotoLarge}
+                                                    />
+                                                ) : (
+                                                    <div style={styles.wishPostPhotoFallbackAnniv}>
+                                                        <i
+                                                            className="ti ti-award"
+                                                            aria-hidden="true"
+                                                        />
+                                                    </div>
+                                                )}
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={styles.wishPostHeadingAnniv}>
+                                                        🏆 {p.employeeName || "Happy Anniversary"}
+                                                    </div>
+                                                    <div style={styles.wishPostMessageLarge}>
+                                                        {p.message}
+                                                    </div>
+                                                    <div style={styles.wishPostMeta}>
+                                                        {formatPostedAt(p.postedAt)}
+                                                    </div>
+                                                </div>
+                                                {isSuperAdmin && (
+                                                    <div style={styles.wishPostActions}>
+                                                        <button
+                                                            style={styles.wishPostActionBtn}
+                                                            aria-label="Edit post"
+                                                            onClick={() => {
+                                                                setPostModalKind("anniversary");
+                                                                setEditingPost(p);
+                                                                setShowPostModal(true);
+                                                            }}
+                                                        >
+                                                            <i
+                                                                className="ti ti-pencil"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </button>
+                                                        <button
+                                                            style={styles.wishPostActionBtn}
+                                                            aria-label="Delete post"
+                                                            onClick={() => handleDeletePost(p.id)}
+                                                        >
+                                                            <i
+                                                                className="ti ti-trash"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                </div>
+                            )}
 
                         {employeesLoading ? (
                             <div style={styles.cardEmpty}>Loading…</div>
@@ -944,10 +1132,24 @@ export default function Home({ user }: { user: HomeUser }) {
 
             {showPostModal && (
                 <PostWishModal
-                    onClose={() => setShowPostModal(false)}
-                    onPost={(post) => {
-                        setWishPosts((prev) => [post, ...prev]);
+                    kind={postModalKind}
+                    people={
+                        postModalKind === "birthday" ? allBirthdaysSorted : allAnniversariesSorted
+                    }
+                    editingPost={editingPost}
+                    onClose={() => {
                         setShowPostModal(false);
+                        setEditingPost(null);
+                    }}
+                    onPost={(post) => {
+                        setWishPosts((prev) => {
+                            const exists = prev.some((p) => p.id === post.id);
+                            return exists
+                                ? prev.map((p) => (p.id === post.id ? post : p))
+                                : [post, ...prev];
+                        });
+                        setShowPostModal(false);
+                        setEditingPost(null);
                     }}
                     styles={styles}
                     BRAND={BRAND}
@@ -2175,28 +2377,70 @@ function NewJoineesModal({
     );
 }
 
-// Simple compose template — just a photo and a message, then Post.
-// Kept intentionally minimal per the requirement: no extra fields.
+// Compose template for Birthday / Anniversary wish posts. Lets the poster
+// pick a person from the relevant list — auto-filling their profile photo
+// (if one exists) and a ready-made message (birthday greeting, or an
+// anniversary message that mentions their actual years of service) which
+// can still be edited before posting.
 function PostWishModal({
+    kind,
+    people,
+    editingPost,
     onClose,
     onPost,
     styles,
     BRAND,
 }: {
+    kind: "birthday" | "anniversary";
+    people: (Birthday | Anniversary)[];
+    editingPost?: WishPost | null;
     onClose: () => void;
     onPost: (post: WishPost) => void;
     styles: any;
     BRAND: any;
 }) {
+    const isEditing = !!editingPost;
+    const [selectedId, setSelectedId] = useState(editingPost?.employeeId || "");
     const [photoFile, setPhotoFile] = useState<File | null>(null);
-    const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-    const [message, setMessage] = useState("");
+    const [photoPreview, setPhotoPreview] = useState<string | null>(editingPost?.photo || null);
+    const [message, setMessage] = useState(editingPost?.message || "");
     const [error, setError] = useState("");
+
+    const isAnniversary = kind === "anniversary";
+
+    const buildMessage = (name: string, years?: number) => {
+        if (isAnniversary) {
+            const y = years ?? 1;
+            return `Happy ${y} year${y === 1 ? "" : "s"} anniversary, ${name}! 🎉 Thank you for ${y} amazing year${
+                y === 1 ? "" : "s"
+            } with us — here's to many more. Have fun celebrating! 🥳`;
+        }
+        return `Happy Birthday, ${name}! 🎂🎉 Wishing you a fantastic day and an even better year ahead. Have fun!`;
+    };
+
+    const handlePersonSelect = (id: string) => {
+        setSelectedId(id);
+        const person = people.find((p) => p.id === id);
+        if (!person) return;
+        // Auto-fill photo from the employee's profile, if one exists.
+        if (person.photoUrl) {
+            setPhotoFile(null);
+            setPhotoPreview(person.photoUrl);
+        } else {
+            setPhotoFile(null);
+            setPhotoPreview(null);
+        }
+        const years = isAnniversary ? (person as Anniversary).years : undefined;
+        setMessage(buildMessage(person.name, years));
+        setError("");
+    };
 
     const handlePhotoChange = (file: File | null) => {
         setPhotoFile(file);
         if (!file) {
-            setPhotoPreview(null);
+            // Falls back to the selected person's profile photo, if any.
+            const person = people.find((p) => p.id === selectedId);
+            setPhotoPreview(person?.photoUrl || null);
             return;
         }
         const reader = new FileReader();
@@ -2205,15 +2449,23 @@ function PostWishModal({
     };
 
     const handleSubmit = () => {
-        if (!photoFile && !message.trim()) {
+        if (!selectedId) {
+            setError("Pick who this wish is for.");
+            return;
+        }
+        if (!photoFile && !photoPreview && !message.trim()) {
             setError("Add a photo or write a message first.");
             return;
         }
+        const person = people.find((p) => p.id === selectedId);
         onPost({
-            id: `${Date.now()}`,
+            id: editingPost?.id || `${Date.now()}`,
+            kind,
+            employeeId: selectedId,
             photo: photoPreview,
             message: message.trim(),
-            postedAt: "Just now",
+            employeeName: person?.name || editingPost?.employeeName || "",
+            postedAt: editingPost?.postedAt || new Date().toISOString(),
         });
     };
 
@@ -2221,13 +2473,45 @@ function PostWishModal({
         <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
-                    <h3 style={styles.modalTitle}>Post a Wish</h3>
+                    <h3 style={styles.modalTitle}>
+                        {isEditing
+                            ? isAnniversary
+                                ? "Edit Anniversary Wish"
+                                : "Edit Birthday Wish"
+                            : isAnniversary
+                              ? "Post an Anniversary Wish"
+                              : "Post a Birthday Wish"}
+                    </h3>
                     <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
                         <i className="ti ti-x" aria-hidden="true" />
                     </button>
                 </div>
                 <div style={styles.modalBody}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        <div>
+                            <label style={styles.modalLabel}>
+                                {isAnniversary
+                                    ? "Who's celebrating?"
+                                    : "Who's the birthday person?"}
+                            </label>
+                            <select
+                                style={styles.modalInput}
+                                value={selectedId}
+                                onChange={(e) => handlePersonSelect(e.target.value)}
+                            >
+                                <option value="">Select an employee…</option>
+                                {people.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name}
+                                        {isAnniversary
+                                            ? ` — ${(p as Anniversary).years} yr${
+                                                  (p as Anniversary).years === 1 ? "" : "s"
+                                              }`
+                                            : ""}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                         <div>
                             <label style={styles.modalLabel}>Photo</label>
                             {photoPreview ? (
@@ -2259,6 +2543,11 @@ function PostWishModal({
                                     />
                                 </label>
                             )}
+                            {!!selectedId &&
+                                !photoFile &&
+                                people.find((p) => p.id === selectedId)?.photoUrl && (
+                                    <p style={styles.modalHint}>Using their profile photo.</p>
+                                )}
                         </div>
                         <div>
                             <label style={styles.modalLabel}>Message</label>
@@ -2266,13 +2555,17 @@ function PostWishModal({
                                 style={styles.modalTextarea}
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
-                                placeholder="Write a birthday wish…"
+                                placeholder={
+                                    isAnniversary
+                                        ? "Write an anniversary wish…"
+                                        : "Write a birthday wish…"
+                                }
                                 rows={4}
                             />
                         </div>
                         {error && <div style={styles.modalError}>{error}</div>}
                         <button style={styles.modalPrimaryBtn(BRAND)} onClick={handleSubmit}>
-                            Post
+                            {isEditing ? "Save Changes" : "Post"}
                         </button>
                     </div>
                 </div>
@@ -2307,8 +2600,8 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         contentBody: {
             display: "flex",
             flexDirection: "column",
-            gap: "20px",
-            padding: "24px 28px 32px",
+            gap: "10px",
+            padding: "14px 24px 16px",
         },
         contentBodyMobile: {
             display: "flex",
@@ -2328,7 +2621,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             color: WARM.ink,
             letterSpacing: "-0.01em",
         },
-        headerSubtext: { margin: "6px 0 0", fontSize: fontSize.base, color: WARM.subtext },
+        headerSubtext: {
+            margin: "6px 0 0",
+            marginLeft: 0,
+            textAlign: "left",
+            fontSize: fontSize.base,
+            color: WARM.subtext,
+        },
 
         dateBadge: {
             display: "flex",
@@ -2355,15 +2654,15 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             background: WARM.card,
             border: `1px solid ${WARM.border}`,
             borderRadius: radius.xl,
-            padding: "16px 18px",
+            padding: "10px 14px",
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: 10,
         },
         statIconWrap: {
-            width: 42,
-            height: 42,
-            minWidth: 42,
+            width: 32,
+            height: 32,
+            minWidth: 32,
             borderRadius: radius.md,
             display: "flex",
             alignItems: "center",
@@ -2396,7 +2695,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         cardsGrid: {
             display: "grid",
             gridTemplateColumns: "1.7fr 1fr",
-            gap: 18,
+            gap: 10,
             alignItems: "stretch",
         },
         // Second row (Work Anniversaries / New Joinees) — equal-width, unlike
@@ -2404,7 +2703,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         cardsGridEven: {
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
-            gap: 18,
+            gap: 10,
             alignItems: "stretch",
         },
         cardsGridMobile: { display: "flex", flexDirection: "column", gap: 14 },
@@ -2413,8 +2712,8 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             background: WARM.card,
             border: `1px solid ${WARM.border}`,
             borderRadius: radius["2xl"],
-            padding: "22px 24px",
-            minHeight: 260,
+            padding: "14px 18px",
+            minHeight: 165,
             display: "flex",
             flexDirection: "column",
         },
@@ -2526,12 +2825,12 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             background: "#FBF9F3",
             border: `1px solid ${WARM.border}`,
             borderRadius: radius.xl,
-            padding: "16px 22px",
+            padding: "10px 18px",
         }),
         tipIconWrap: (BRAND: any) => ({
-            width: 44,
-            height: 44,
-            minWidth: 44,
+            width: 36,
+            height: 36,
+            minWidth: 36,
             borderRadius: radius.circle,
             background: WARM.eyebrow,
             color: "#fff",
@@ -2605,13 +2904,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         dotActive: { background: WARM.eyebrow, width: 16 },
 
-        // ---- Wish posts (shown inside the Birthdays card) ----
+        // ---- Wish posts (shown inside the Birthdays / Anniversaries cards) ----
         wishPostList: {
             display: "flex",
             flexDirection: "column",
             gap: 10,
-            marginBottom: 10,
-            maxHeight: 130,
+            marginBottom: 12,
+            maxHeight: 220,
             overflowY: "auto",
         },
         wishPostRow: {
@@ -2621,6 +2920,28 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             background: "#FBF9F3",
             borderRadius: radius.md,
             padding: "8px 10px",
+        },
+        // Larger, more festive card-style row used for the new auto-filled
+        // birthday/anniversary posts — bigger photo, a bold heading line,
+        // and a tinted background so it reads as a celebratory post rather
+        // than a plain list row.
+        wishPostRowBirthday: {
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            background: STAT_COLORS.birthdays.bg,
+            border: `1px solid ${withAlpha(STAT_COLORS.birthdays.icon, 0.25)}`,
+            borderRadius: radius.lg,
+            padding: "14px 16px",
+        },
+        wishPostRowAnniversary: {
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            background: STAT_COLORS.anniversaries.bg,
+            border: `1px solid ${withAlpha(STAT_COLORS.anniversaries.icon, 0.25)}`,
+            borderRadius: radius.lg,
+            padding: "14px 16px",
         },
         wishPostPhoto: {
             width: 40,
@@ -2641,6 +2962,56 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             justifyContent: "center",
             fontSize: fontSize.base,
         },
+        // Bigger circular photo/avatar for the new celebratory post rows.
+        wishPostPhotoLarge: {
+            width: 64,
+            height: 64,
+            minWidth: 64,
+            borderRadius: radius.circle,
+            objectFit: "cover",
+            border: "2px solid #fff",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+        },
+        wishPostPhotoFallbackLarge: {
+            width: 64,
+            height: 64,
+            minWidth: 64,
+            borderRadius: radius.circle,
+            background: "#fff",
+            color: STAT_COLORS.birthdays.icon,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: fontSize["2xl"],
+            border: "2px solid #fff",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+        },
+        wishPostPhotoFallbackAnniv: {
+            width: 64,
+            height: 64,
+            minWidth: 64,
+            borderRadius: radius.circle,
+            background: "#fff",
+            color: STAT_COLORS.anniversaries.icon,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: fontSize["2xl"],
+            border: "2px solid #fff",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+        },
+        wishPostHeading: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.bold,
+            color: STAT_COLORS.birthdays.icon,
+            marginBottom: 2,
+        },
+        wishPostHeadingAnniv: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.bold,
+            color: STAT_COLORS.anniversaries.icon,
+            marginBottom: 2,
+        },
         wishPostMessage: {
             fontSize: fontSize.sm,
             color: WARM.ink,
@@ -2650,7 +3021,32 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
         },
-        wishPostMeta: { fontSize: fontSize.xxs, color: WARM.subtext, marginTop: 2 },
+        wishPostMessageLarge: {
+            fontSize: fontSize.sm,
+            color: WARM.ink,
+            lineHeight: 1.4,
+        },
+        wishPostMeta: { fontSize: fontSize.xxs, color: WARM.subtext, marginTop: 4 },
+        wishPostActions: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            alignSelf: "flex-start",
+            flexShrink: 0,
+        },
+        wishPostActionBtn: {
+            width: 26,
+            height: 26,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "none",
+            borderRadius: radius.sm,
+            background: "rgba(255,255,255,0.7)",
+            color: WARM.subtext,
+            cursor: "pointer",
+            fontSize: fontSize.sm,
+        },
 
         // ---- Post-a-wish compose template ----
         postPhotoDrop: {
