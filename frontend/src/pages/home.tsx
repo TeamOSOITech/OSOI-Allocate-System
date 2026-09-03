@@ -33,23 +33,58 @@ function withAlpha(hex: string, alpha: number) {
 // reasoning as STATUS_AMBER in dashboard.tsx: these are semantic
 // categories (holidays/birthdays/announcements/tasks), not brand accents,
 // so they stay put regardless of which theme color is active.
+// Recolored to the warm, editorial (cream / olive / terracotta) palette
+// used across the Home page's holidays & birthdays layout.
 const STAT_COLORS = {
-    holidays: { icon: "#4F46E5", bg: "#EEF0FE" },
-    birthdays: { icon: "#059669", bg: "#E7FBF3" },
-    announcements: { icon: "#9333EA", bg: "#F5EBFE" },
+    holidays: { icon: "#8A6D3B", bg: "#F3EEE1" },
+    birthdays: { icon: "#B45F3E", bg: "#FBEAE2" },
+    anniversaries: { icon: "#9C6B3E", bg: "#F1E5D8" },
+    newJoinees: { icon: "#3F7A5C", bg: "#E2F0E8" },
+    announcements: { icon: "#5B7065", bg: "#EAF0EA" },
 };
 
 // Rotating badge palette for the "All Holidays" grid (month/day chips) —
 // cycled by list position so the grid reads as colorful, not by any
-// particular meaning per color.
+// particular meaning per color. Muted, earthy tones to match the warm
+// editorial palette.
 const HOLIDAY_BADGE_COLORS = [
-    { bg: "#DFF3F0", text: "#0F766E" },
-    { bg: "#FCE7F3", text: "#BE185D" },
-    { bg: "#F1E9DC", text: "#92702D" },
-    { bg: "#FEE2E2", text: "#B91C1C" },
-    { bg: "#DCEAFE", text: "#1D4ED8" },
-    { bg: "#FEF3C7", text: "#92600A" },
+    { bg: "#F3EEE1", text: "#8A6D3B" },
+    { bg: "#FBEAE2", text: "#B45F3E" },
+    { bg: "#EAF0EA", text: "#5B7065" },
+    { bg: "#F1E5D8", text: "#9C6B3E" },
+    { bg: "#EDEDE3", text: "#6B6650" },
+    { bg: "#F6E7D8", text: "#A8763F" },
 ];
+
+// Warm, editorial page palette (cream background, olive/tan accents,
+// serif headings) — the "featured program" / "action center" look.
+const WARM = {
+    bg: "#F7F5F0",
+    card: "#FFFFFF",
+    border: "#EAE3D4",
+    ink: "#1F2A24",
+    subtext: "#6B7566",
+    eyebrow: "#8A6D3B",
+    pillBorder: "#DCD3BE",
+};
+
+// Editorial serif for the warm Home-page headings — kept local to this
+// file (not in the shared theme.ts) since it's specific to this page's
+// look, not an app-wide token. Loaded via Google Fonts in index.html.
+const SERIF_FONT = "'Playfair Display', Georgia, 'Times New Roman', serif";
+
+// Shared illustration sizing — kept in one place so the four "hero"
+// graphics (holiday icon, birthday cake, trophy, welcome badge) can be
+// resized together and stay visually consistent. The Holidays card's
+// right-side icon is deliberately larger (its dedicated hero slot);
+// its left-side icon and the other three cards' illustrations share
+// ILLUSTRATION_SIZE.
+const ILLUSTRATION_SIZE = 150;
+const HOLIDAY_HERO_SIZE = 210;
+// Trophy/WelcomeBadge/BirthdayHero are drawn in a 130x110 viewBox
+// (≈1.182:1) — this derives the matching height for ILLUSTRATION_SIZE
+// so they scale without distortion.
+const ILLUSTRATION_HEIGHT = Math.round(ILLUSTRATION_SIZE * (110 / 130));
 
 function pad2(n: number) {
     return String(n).padStart(2, "0");
@@ -113,7 +148,34 @@ function nextOccurrenceInfo(dateStr: string) {
     if (next < today) next = new Date(today.getFullYear() + 1, month, day);
     const daysUntil = Math.round((next.getTime() - today.getTime()) / 86400000);
     const iso = `${next.getFullYear()}-${pad2(next.getMonth() + 1)}-${pad2(next.getDate())}`;
-    return { iso, daysUntil };
+    return { iso, daysUntil, years: next.getFullYear() - d.getFullYear() };
+}
+
+// Like nextOccurrenceInfo, but for events that have already happened
+// (joining date) rather than recurring future ones — returns how many
+// whole days have passed since the date's most recent month/day match,
+// used for the "New Joinees" list (Keka-style: show who joined recently).
+function daysSinceLastOccurrence(dateStr: string) {
+    const d = new Date(dateStr.length <= 10 ? `${dateStr}T00:00:00` : dateStr);
+    if (isNaN(d.getTime())) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const joined = new Date(d);
+    joined.setHours(0, 0, 0, 0);
+    const daysSince = Math.round((today.getTime() - joined.getTime()) / 86400000);
+    return { daysSince };
+}
+
+function daysAgoLabel(n: number) {
+    if (n === 0) return "Joined today";
+    if (n === 1) return "Joined yesterday";
+    return `Joined ${n} days ago`;
+}
+
+function yearsLabel(n: number) {
+    if (n <= 0) return "1st anniversary";
+    const suffix = n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th";
+    return `${n}${suffix} anniversary`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,12 +195,14 @@ interface Holiday {
     date: string;
     nextOccurrence: string;
     daysUntil: number;
+    isPast?: boolean;
 }
 
 interface Employee {
     id: string;
     name: string;
     dateOfBirth: string | null;
+    joiningDate?: string | null;
     department?: string | null;
     designation?: string | null;
     photoUrl?: string | null;
@@ -151,6 +215,27 @@ interface Birthday {
     photoUrl?: string | null;
     nextOccurrence: string;
     daysUntil: number;
+}
+
+interface Anniversary {
+    id: string;
+    name: string;
+    department?: string | null;
+    designation?: string | null;
+    photoUrl?: string | null;
+    nextOccurrence: string;
+    daysUntil: number;
+    years: number;
+}
+
+interface NewJoinee {
+    id: string;
+    name: string;
+    department?: string | null;
+    designation?: string | null;
+    photoUrl?: string | null;
+    joiningDate: string;
+    daysSince: number;
 }
 
 interface WishPost {
@@ -198,6 +283,8 @@ export default function Home({ user }: { user: HomeUser }) {
     const [showBirthdaysModal, setShowBirthdaysModal] = useState(false);
     const [showPostModal, setShowPostModal] = useState(false);
     const [wishPosts, setWishPosts] = useState<WishPost[]>([]);
+    const [showAnniversariesModal, setShowAnniversariesModal] = useState(false);
+    const [showNewJoineesModal, setShowNewJoineesModal] = useState(false);
 
     const fetchHolidays = async () => {
         setHolidaysLoading(true);
@@ -207,7 +294,6 @@ export default function Home({ user }: { user: HomeUser }) {
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
             setHolidays(json.data || []);
-            setHolidayIndex(0);
         } catch (err: any) {
             setHolidaysError(err?.message || "Failed to load holidays.");
         } finally {
@@ -234,6 +320,46 @@ export default function Home({ user }: { user: HomeUser }) {
         fetchHolidays();
         fetchEmployees();
     }, []);
+
+    const currentYear = new Date().getFullYear();
+
+    // Re-anchor every holiday's month/day to THIS calendar year only. The
+    // backend rolls an already-passed date into next year (so a recurring
+    // holiday keeps "coming up" every year for the modal's cross-year
+    // logic) — but the Home page carousel must stay strictly within
+    // Jan 1 – Dec 31 of the current year, with past dates flagged
+    // (rendered muted/disabled) rather than jumping into next year.
+    const yearHolidays: Holiday[] = useMemo(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return holidays
+            .map((h) => {
+                const [, mo, d] = h.date.split("-").map(Number);
+                const thisYearDate = new Date(currentYear, mo - 1, d);
+                const daysUntil = Math.round((thisYearDate.getTime() - today.getTime()) / 86400000);
+                return {
+                    ...h,
+                    nextOccurrence: `${currentYear}-${pad2(mo)}-${pad2(d)}`,
+                    daysUntil,
+                    isPast: thisYearDate < today,
+                } as Holiday;
+            })
+            .sort(
+                (a, b) =>
+                    new Date(`${a.nextOccurrence}T00:00:00`).getTime() -
+                    new Date(`${b.nextOccurrence}T00:00:00`).getTime()
+            );
+    }, [holidays, currentYear]);
+
+    // Land the carousel on the soonest upcoming (or today's) holiday by
+    // default, rather than always starting at Jan 1 — but browsing with
+    // the arrows/dots still only ever moves within yearHolidays (Jan→Dec
+    // of the current year), never past Dec 31.
+    useEffect(() => {
+        if (yearHolidays.length === 0) return;
+        const nextIdx = yearHolidays.findIndex((h) => !h.isPast);
+        setHolidayIndex(nextIdx === -1 ? 0 : nextIdx);
+    }, [holidays]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Every employee with a DOB, resolved to "next birthday" + sorted —
     // this is the full-year list (used by the "View All" modal).
@@ -263,16 +389,67 @@ export default function Home({ user }: { user: HomeUser }) {
         [allBirthdaysSorted]
     );
 
+    // Same pattern as birthdays, but off "Date of Joining" — years counted
+    // as (next occurrence year − joining year), Keka-style "Nth anniversary".
+    const allAnniversariesSorted: Anniversary[] = useMemo(() => {
+        return employees
+            .filter((e) => !!e.joiningDate)
+            .map((e) => {
+                const info = nextOccurrenceInfo(e.joiningDate as string);
+                if (!info || info.years <= 0) return null; // skip employees not yet at their 1st anniversary
+                return {
+                    id: e.id,
+                    name: e.name,
+                    department: e.department,
+                    designation: e.designation,
+                    photoUrl: e.photoUrl,
+                    nextOccurrence: info.iso,
+                    daysUntil: info.daysUntil,
+                    years: info.years,
+                } as Anniversary;
+            })
+            .filter((a): a is Anniversary => !!a)
+            .sort((a, b) => a.daysUntil - b.daysUntil);
+    }, [employees]);
+
+    const upcomingAnniversaries = useMemo(
+        () => allAnniversariesSorted.filter((a) => a.daysUntil <= 30),
+        [allAnniversariesSorted]
+    );
+
+    // "New Joinee" = joined in the last 30 days — most recent first.
+    const newJoineesSorted: NewJoinee[] = useMemo(() => {
+        return employees
+            .filter((e) => !!e.joiningDate)
+            .map((e) => {
+                const info = daysSinceLastOccurrence(e.joiningDate as string);
+                if (!info || info.daysSince < 0 || info.daysSince > 30) return null;
+                return {
+                    id: e.id,
+                    name: e.name,
+                    department: e.department,
+                    designation: e.designation,
+                    photoUrl: e.photoUrl,
+                    joiningDate: e.joiningDate as string,
+                    daysSince: info.daysSince,
+                } as NewJoinee;
+            })
+            .filter((j): j is NewJoinee => !!j)
+            .sort((a, b) => a.daysSince - b.daysSince);
+    }, [employees]);
+
     const todayNice = formatNiceDate(
         `${new Date().getFullYear()}-${pad2(new Date().getMonth() + 1)}-${pad2(new Date().getDate())}`
     );
 
-    const currentHoliday = holidays[holidayIndex] || null;
+    const currentHoliday = yearHolidays[holidayIndex] || null;
 
     // ---- Top stat cards ----
     // Counts reflect TODAY only (daysUntil === 0), not the upcoming window.
-    const holidaysTodayCount = holidays.filter((h) => h.daysUntil === 0).length;
+    const holidaysTodayCount = yearHolidays.filter((h) => h.daysUntil === 0).length;
     const birthdaysTodayCount = allBirthdaysSorted.filter((b) => b.daysUntil === 0).length;
+    const anniversariesTodayCount = allAnniversariesSorted.filter((a) => a.daysUntil === 0).length;
+    const newJoineesTodayCount = newJoineesSorted.filter((j) => j.daysSince === 0).length;
 
     const statCards = [
         {
@@ -290,6 +467,22 @@ export default function Home({ user }: { user: HomeUser }) {
             label: "Birthdays",
             sub: "Today",
             colors: STAT_COLORS.birthdays,
+        },
+        {
+            key: "anniversaries",
+            icon: "ti ti-award",
+            value: anniversariesTodayCount,
+            label: "Anniversaries",
+            sub: "Today",
+            colors: STAT_COLORS.anniversaries,
+        },
+        {
+            key: "newJoinees",
+            icon: "ti ti-user-plus",
+            value: newJoineesTodayCount,
+            label: "New Joiners",
+            sub: "This month",
+            colors: STAT_COLORS.newJoinees,
         },
         {
             // Placeholder — no announcements module exists yet, shown as "—"
@@ -352,8 +545,11 @@ export default function Home({ user }: { user: HomeUser }) {
                         style={{
                             ...styles.card,
                             borderTop: `3px solid ${STAT_COLORS.holidays.icon}`,
+                            position: "relative",
+                            overflow: "hidden",
                         }}
                     >
+                        <GarlandLights />
                         <div style={styles.cardHeaderRow}>
                             <div style={styles.cardTitleWrap}>
                                 <div
@@ -419,33 +615,90 @@ export default function Home({ user }: { user: HomeUser }) {
                                     <i className="ti ti-chevron-left" aria-hidden="true" />
                                 </button>
 
+                                {/* Left-side icon — now the LARGE hero size (swapped with
+                                    the right side per request). Hidden on mobile — no room
+                                    next to the text column and the right-side icon. */}
+                                {!isMobile && (
+                                    <FestiveIllustration
+                                        BRAND={BRAND}
+                                        name={currentHoliday.name}
+                                        size={HOLIDAY_HERO_SIZE}
+                                    />
+                                )}
+
                                 <div style={styles.holidayTextCol}>
-                                    <div style={styles.holidayName}>{currentHoliday.name}</div>
-                                    <div style={styles.holidayDate}>
+                                    <div
+                                        style={{
+                                            ...styles.holidayName,
+                                            ...(currentHoliday.isPast ? { color: "#A9A79C" } : {}),
+                                        }}
+                                    >
+                                        {currentHoliday.name}
+                                    </div>
+                                    <div
+                                        style={{
+                                            ...styles.holidayDate,
+                                            ...(currentHoliday.isPast ? { color: "#A9A79C" } : {}),
+                                        }}
+                                    >
                                         {formatNiceDate(currentHoliday.nextOccurrence)}
                                     </div>
-                                    <div style={styles.holidayDaysBadge}>
-                                        {daysUntilLabel(currentHoliday.daysUntil)}
+                                    <div
+                                        style={{
+                                            ...styles.holidayDaysBadge,
+                                            ...(currentHoliday.isPast
+                                                ? { background: "#EFEDE6", color: "#A9A79C" }
+                                                : {}),
+                                        }}
+                                    >
+                                        {currentHoliday.isPast
+                                            ? "Past"
+                                            : daysUntilLabel(currentHoliday.daysUntil)}
                                     </div>
                                 </div>
 
-                                <FestiveIllustration BRAND={BRAND} name={currentHoliday.name} />
+                                {/* Right-side icon — now the smaller size (swapped with the
+                                    left side per request): left = large hero, right =
+                                    ILLUSTRATION_SIZE (same size used on the other 3 cards). */}
+                                <FestiveIllustration
+                                    BRAND={BRAND}
+                                    name={currentHoliday.name}
+                                    size={ILLUSTRATION_SIZE}
+                                />
 
                                 <button
                                     style={{
                                         ...styles.arrowBtn,
-                                        ...(holidayIndex >= holidays.length - 1
+                                        ...(holidayIndex >= yearHolidays.length - 1
                                             ? styles.arrowBtnDisabled
                                             : {}),
                                     }}
-                                    disabled={holidayIndex >= holidays.length - 1}
+                                    disabled={holidayIndex >= yearHolidays.length - 1}
                                     onClick={() =>
-                                        setHolidayIndex((i) => Math.min(holidays.length - 1, i + 1))
+                                        setHolidayIndex((i) =>
+                                            Math.min(yearHolidays.length - 1, i + 1)
+                                        )
                                     }
                                     aria-label="Next holiday"
                                 >
                                     <i className="ti ti-chevron-right" aria-hidden="true" />
                                 </button>
+                            </div>
+                        )}
+
+                        {!holidaysLoading && !holidaysError && yearHolidays.length > 1 && (
+                            <div style={styles.dotRow}>
+                                {yearHolidays.map((h, i) => (
+                                    <button
+                                        key={h.id}
+                                        aria-label={`Go to holiday ${i + 1}`}
+                                        onClick={() => setHolidayIndex(i)}
+                                        style={{
+                                            ...styles.dot,
+                                            ...(i === holidayIndex ? styles.dotActive : {}),
+                                        }}
+                                    />
+                                ))}
                             </div>
                         )}
                     </div>
@@ -455,8 +708,11 @@ export default function Home({ user }: { user: HomeUser }) {
                         style={{
                             ...styles.card,
                             borderTop: `3px solid ${STAT_COLORS.birthdays.icon}`,
+                            position: "relative",
+                            overflow: "hidden",
                         }}
                     >
+                        <BirthdaysCardBg />
                         <div style={styles.cardHeaderRow}>
                             <div style={styles.cardTitleWrap}>
                                 <div
@@ -516,9 +772,14 @@ export default function Home({ user }: { user: HomeUser }) {
                         {employeesLoading ? (
                             <div style={styles.cardEmpty}>Loading…</div>
                         ) : upcomingBirthdays.length === 0 ? (
-                            <div style={styles.cardEmpty}>
-                                <BirthdayCakeIllustration BRAND={BRAND} />
-                                <span>No birthdays in the next month.</span>
+                            <div style={styles.cardEmptyRow}>
+                                <BirthdayHeroIllustration />
+                                <div>
+                                    <div style={styles.cardEmptyRowTitle}>No birthdays</div>
+                                    <div style={styles.cardEmptyRowSubtitle}>
+                                        in the next month.
+                                    </div>
+                                </div>
                             </div>
                         ) : (
                             <div style={styles.birthdayList}>
@@ -530,11 +791,125 @@ export default function Home({ user }: { user: HomeUser }) {
                     </div>
                 </div>
 
+                <div style={isMobile ? styles.cardsGridMobile : styles.cardsGridEven}>
+                    {/* ---------------- Work Anniversaries card ---------------- */}
+                    <div
+                        style={{
+                            ...styles.card,
+                            borderTop: `3px solid ${STAT_COLORS.anniversaries.icon}`,
+                            position: "relative",
+                            overflow: "hidden",
+                        }}
+                    >
+                        <AnniversariesCardBg />
+                        <div style={styles.cardHeaderRow}>
+                            <div style={styles.cardTitleWrap}>
+                                <div
+                                    style={{
+                                        ...styles.cardIconBadge,
+                                        background: STAT_COLORS.anniversaries.bg,
+                                    }}
+                                >
+                                    <i
+                                        className="ti ti-award"
+                                        style={{ color: STAT_COLORS.anniversaries.icon }}
+                                        aria-hidden="true"
+                                    />
+                                </div>
+                                <span style={styles.cardEyebrow}>Work Anniversaries</span>
+                            </div>
+                            <button
+                                style={styles.viewAllLink}
+                                onClick={() => setShowAnniversariesModal(true)}
+                            >
+                                View All
+                            </button>
+                        </div>
+
+                        {employeesLoading ? (
+                            <div style={styles.cardEmpty}>Loading…</div>
+                        ) : upcomingAnniversaries.length === 0 ? (
+                            <div style={styles.cardEmptyRow}>
+                                <TrophyIllustration />
+                                <div>
+                                    <div style={styles.cardEmptyRowTitle}>
+                                        No work anniversaries
+                                    </div>
+                                    <div style={styles.cardEmptyRowSubtitle}>
+                                        in the next month.
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={styles.birthdayList}>
+                                {upcomingAnniversaries.slice(0, 5).map((a) => (
+                                    <AnniversaryRow key={a.id} a={a} styles={styles} />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ---------------- New Joinees card ---------------- */}
+                    <div
+                        style={{
+                            ...styles.card,
+                            borderTop: `3px solid ${STAT_COLORS.newJoinees.icon}`,
+                            position: "relative",
+                            overflow: "hidden",
+                        }}
+                    >
+                        <NewJoinersCardBg />
+                        <div style={styles.cardHeaderRow}>
+                            <div style={styles.cardTitleWrap}>
+                                <div
+                                    style={{
+                                        ...styles.cardIconBadge,
+                                        background: STAT_COLORS.newJoinees.bg,
+                                    }}
+                                >
+                                    <i
+                                        className="ti ti-user-plus"
+                                        style={{ color: STAT_COLORS.newJoinees.icon }}
+                                        aria-hidden="true"
+                                    />
+                                </div>
+                                <span style={styles.cardEyebrow}>New Joiners</span>
+                            </div>
+                            <button
+                                style={styles.viewAllLink}
+                                onClick={() => setShowNewJoineesModal(true)}
+                            >
+                                View All
+                            </button>
+                        </div>
+
+                        {employeesLoading ? (
+                            <div style={styles.cardEmpty}>Loading…</div>
+                        ) : newJoineesSorted.length === 0 ? (
+                            <div style={styles.cardEmptyRow}>
+                                <WelcomeBadgeIllustration />
+                                <div>
+                                    <div style={styles.cardEmptyRowTitle}>No new joiners</div>
+                                    <div style={styles.cardEmptyRowSubtitle}>
+                                        in the last 30 days.
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={styles.birthdayList}>
+                                {newJoineesSorted.slice(0, 5).map((j) => (
+                                    <NewJoineeRow key={j.id} j={j} styles={styles} />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 {/* ---------------- Bottom tip banner ---------------- */}
                 <div style={styles.tipBanner(BRAND)}>
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                         <div style={styles.tipIconWrap(BRAND)}>
-                            <i className="ti ti-sparkles" aria-hidden="true" />
+                            <i className="ti ti-star" aria-hidden="true" />
                         </div>
                         <div>
                             <div style={styles.tipTitle}>Stay Organized, Stay Productive!</div>
@@ -578,6 +953,22 @@ export default function Home({ user }: { user: HomeUser }) {
                     BRAND={BRAND}
                 />
             )}
+
+            {showAnniversariesModal && (
+                <AnniversariesModal
+                    anniversaries={allAnniversariesSorted}
+                    onClose={() => setShowAnniversariesModal(false)}
+                    styles={styles}
+                />
+            )}
+
+            {showNewJoineesModal && (
+                <NewJoineesModal
+                    joinees={newJoineesSorted}
+                    onClose={() => setShowNewJoineesModal(false)}
+                    styles={styles}
+                />
+            )}
         </div>
     );
 }
@@ -585,6 +976,49 @@ export default function Home({ user }: { user: HomeUser }) {
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                      */
 /* ------------------------------------------------------------------ */
+
+// Rich, full-color cake + balloons illustration for the Birthdays card's
+// empty state — same visual weight/size as the Trophy and Welcome-Badge
+// illustrations, so all four cards feel equally "finished" instead of
+// this one looking like a plain placeholder.
+function BirthdayHeroIllustration() {
+    return (
+        <svg
+            width={ILLUSTRATION_SIZE}
+            height={ILLUSTRATION_HEIGHT}
+            viewBox="0 0 130 110"
+            aria-hidden="true"
+        >
+            <circle cx="65" cy="52" r="48" fill={STAT_COLORS.birthdays.bg} />
+            <ellipse cx="65" cy="100" rx="42" ry="6" fill="rgba(180,95,62,0.08)" />
+            {/* balloons */}
+            <ellipse cx="95" cy="30" rx="12" ry="15" fill="#F3B4A0" />
+            <path d="M95 45 L95 62" stroke="#E3947C" strokeWidth="1.4" />
+            <ellipse cx="113" cy="42" rx="9" ry="12" fill="#F6D9A0" />
+            <path d="M113 54 L110 68" stroke="#D9B673" strokeWidth="1.4" />
+            {/* confetti */}
+            <circle cx="34" cy="24" r="2" fill="#B45F3E" />
+            <circle cx="20" cy="46" r="1.8" fill="#8A6D3B" />
+            <circle cx="108" cy="20" r="1.6" fill="#5B7065" />
+            <circle cx="44" cy="16" r="1.4" fill="#B45F3E" />
+            {/* cake */}
+            <rect x="35" y="76" width="60" height="24" rx="5" fill="#B45F3E" />
+            <rect x="35" y="76" width="60" height="8" rx="4" fill="#F3EEE1" />
+            <rect x="42" y="58" width="46" height="20" rx="5" fill="#E27B57" />
+            <rect x="42" y="58" width="46" height="7" rx="3.5" fill="#F3EEE1" />
+            <circle cx="50" cy="90" r="3" fill="#F3EEE1" />
+            <circle cx="65" cy="90" r="3" fill="#F2C563" />
+            <circle cx="80" cy="90" r="3" fill="#F3EEE1" />
+            {/* candles */}
+            <rect x="48" y="42" width="4" height="16" rx="1.5" fill="#7FB3D5" />
+            <rect x="63" y="36" width="4" height="22" rx="1.5" fill="#F2C563" />
+            <rect x="78" y="42" width="4" height="16" rx="1.5" fill="#7FB3D5" />
+            <path d="M50 42 Q54 36 50 30 Q46 36 50 42 Z" fill="#F2C563" />
+            <path d="M65 36 Q69 30 65 24 Q61 30 65 36 Z" fill="#F2C563" />
+            <path d="M80 42 Q84 36 80 30 Q76 36 80 42 Z" fill="#F2C563" />
+        </svg>
+    );
+}
 
 function BirthdayRow({ b, styles, BRAND }: { b: Birthday; styles: any; BRAND: any }) {
     return (
@@ -611,6 +1045,173 @@ function BirthdayRow({ b, styles, BRAND }: { b: Birthday; styles: any; BRAND: an
                 <div style={styles.birthdayDaysTag}>{daysUntilLabel(b.daysUntil)}</div>
             </div>
         </div>
+    );
+}
+
+function AnniversaryRow({ a, styles }: { a: Anniversary; styles: any }) {
+    return (
+        <div style={styles.birthdayRow}>
+            {a.photoUrl ? (
+                <img src={a.photoUrl} alt={a.name} style={styles.birthdayAvatarImg} />
+            ) : (
+                <div style={styles.birthdayAvatar}>{initials(a.name)}</div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.birthdayName}>{a.name}</div>
+                {a.department && <div style={styles.birthdayDept}>{a.department}</div>}
+            </div>
+            <div style={styles.birthdayDateCol}>
+                <div style={styles.holidayDaysBadgeSmall}>{yearsLabel(a.years)}</div>
+                <div style={styles.birthdayDaysTag}>{daysUntilLabel(a.daysUntil)}</div>
+            </div>
+        </div>
+    );
+}
+
+function NewJoineeRow({ j, styles }: { j: NewJoinee; styles: any }) {
+    return (
+        <div style={styles.birthdayRow}>
+            {j.photoUrl ? (
+                <img src={j.photoUrl} alt={j.name} style={styles.birthdayAvatarImg} />
+            ) : (
+                <div style={styles.birthdayAvatar}>{initials(j.name)}</div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.birthdayName}>{j.name}</div>
+                {(j.designation || j.department) && (
+                    <div style={styles.birthdayDept}>
+                        {[j.designation, j.department].filter(Boolean).join(" · ")}
+                    </div>
+                )}
+            </div>
+            <div style={styles.birthdayDateCol}>
+                <div style={styles.holidayDaysBadgeSmall}>{formatShortDate(j.joiningDate)}</div>
+                <div style={styles.birthdayDaysTag}>{daysAgoLabel(j.daysSince)}</div>
+            </div>
+        </div>
+    );
+}
+
+// Soft decorative background scene for the Birthdays card — a small
+// cake with balloons and confetti dots, anchored bottom-right and kept
+// low-contrast so the actual birthday rows on top stay readable.
+function BirthdaysCardBg() {
+    return (
+        <svg
+            width="220"
+            height="140"
+            viewBox="0 0 220 140"
+            style={{
+                position: "absolute",
+                right: -10,
+                bottom: -10,
+                pointerEvents: "none",
+                opacity: 0.9,
+            }}
+            aria-hidden="true"
+        >
+            <path d="M60 140 Q110 100 220 120 L220 140 Z" fill="#FBEAE2" opacity="0.6" />
+            {/* balloons */}
+            <ellipse cx="168" cy="46" rx="13" ry="16" fill="#F3B4A0" opacity="0.85" />
+            <path d="M168 62 L168 78" stroke="#E3947C" strokeWidth="1.2" />
+            <ellipse cx="192" cy="62" rx="10" ry="13" fill="#F6D9A0" opacity="0.85" />
+            <path d="M192 75 L192 88" stroke="#D9B673" strokeWidth="1.2" />
+            {/* confetti */}
+            <circle cx="140" cy="30" r="2" fill="#B45F3E" opacity="0.6" />
+            <circle cx="205" cy="40" r="1.6" fill="#8A6D3B" opacity="0.6" />
+            <circle cx="150" cy="70" r="1.8" fill="#5B7065" opacity="0.5" />
+            <circle cx="120" cy="50" r="1.4" fill="#B45F3E" opacity="0.5" />
+            {/* cake */}
+            <rect x="90" y="96" width="52" height="22" rx="4" fill="#B45F3E" />
+            <rect x="90" y="96" width="52" height="7" rx="3.5" fill="#F3EEE1" />
+            <rect x="96" y="82" width="40" height="16" rx="4" fill="#E27B57" />
+            <rect x="96" y="82" width="40" height="6" rx="3" fill="#F3EEE1" />
+            <rect x="112" y="70" width="4" height="12" fill="#F2C563" />
+            <path d="M112 66 Q114 62 116 66 Q114 70 112 66 Z" fill="#E0B25A" />
+        </svg>
+    );
+}
+
+// Soft decorative wave + laurel-sparkle background for the Work
+// Anniversaries card, matching the warm/olive palette.
+function AnniversariesCardBg() {
+    return (
+        <svg
+            width="220"
+            height="140"
+            viewBox="0 0 220 140"
+            style={{
+                position: "absolute",
+                right: -10,
+                bottom: -10,
+                pointerEvents: "none",
+                opacity: 0.9,
+            }}
+            aria-hidden="true"
+        >
+            <path d="M40 140 Q110 95 220 118 L220 140 Z" fill="#F1E5D8" opacity="0.6" />
+            <path d="M90 140 Q140 112 220 128 L220 140 Z" fill="#F3EEE1" opacity="0.7" />
+            <circle cx="176" cy="46" r="2.2" fill="#C99A3F" opacity="0.6" />
+            <circle cx="196" cy="66" r="1.6" fill="#9C6B3E" opacity="0.5" />
+            <circle cx="150" cy="60" r="1.4" fill="#C99A3F" opacity="0.5" />
+            <path d="M188 40 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 Z" fill="#C99A3F" opacity="0.7" />
+        </svg>
+    );
+}
+
+// Soft decorative wave + leaf background for the New Joiners card,
+// matching the sage-green palette.
+function NewJoinersCardBg() {
+    return (
+        <svg
+            width="220"
+            height="140"
+            viewBox="0 0 220 140"
+            style={{
+                position: "absolute",
+                right: -10,
+                bottom: -10,
+                pointerEvents: "none",
+                opacity: 0.9,
+            }}
+            aria-hidden="true"
+        >
+            <path d="M40 140 Q110 95 220 118 L220 140 Z" fill="#E2F0E8" opacity="0.6" />
+            <path d="M90 140 Q140 112 220 128 L220 140 Z" fill="#EDF5EE" opacity="0.7" />
+            <path d="M176 60 Q166 48 176 36 Q186 48 176 60 Z" fill="#9DBF8E" opacity="0.7" />
+            <path d="M196 70 Q188 60 196 50 Q204 60 196 70 Z" fill="#B7D3A2" opacity="0.7" />
+        </svg>
+    );
+}
+
+// Decorative festive-lights garland strip across the top of the Holidays
+// card — small colored bulbs hanging off a wire, alternating colors,
+// tiling seamlessly across any card width via viewBox + preserveAspectRatio.
+function GarlandLights() {
+    const colors = ["#B45F3E", "#8A6D3B", "#5B7065", "#C99A3F", "#B45F3E", "#5B7065"];
+    const bulbs = Array.from({ length: 14 }, (_, i) => i);
+    return (
+        <svg
+            width="100%"
+            height="28"
+            viewBox="0 0 560 28"
+            preserveAspectRatio="none"
+            style={{ display: "block", margin: "-22px -24px 14px -24px", flexShrink: 0 }}
+            aria-hidden="true"
+        >
+            <path
+                d="M0 2 Q20 16 40 2 T80 2 T120 2 T160 2 T200 2 T240 2 T280 2 T320 2 T360 2 T400 2 T440 2 T480 2 T520 2 T560 2"
+                fill="none"
+                stroke="#DCD3BE"
+                strokeWidth="1.5"
+            />
+            {bulbs.map((i) => (
+                <g key={i} transform={`translate(${20 + i * 40}, 12)`}>
+                    <line x1="0" y1="-10" x2="0" y2="0" stroke="#DCD3BE" strokeWidth="1.2" />
+                    <circle cx="0" cy="4" r="4.5" fill={colors[i % colors.length]} />
+                </g>
+            ))}
+        </svg>
     );
 }
 
@@ -655,16 +1256,18 @@ function detectHolidayType(
 function FestiveIllustration({
     BRAND,
     name,
+    size = 96,
 }: {
     BRAND: { blue: string; lightBlue: string; green: string };
     name?: string;
+    size?: number;
 }) {
     const type = detectHolidayType(name || "");
 
     return (
         <svg
-            width="96"
-            height="96"
+            width={size}
+            height={size}
             viewBox="0 0 100 100"
             style={{ flexShrink: 0 }}
             aria-hidden="true"
@@ -699,19 +1302,41 @@ function FestiveIllustration({
 
             {type === "christmas" && (
                 <g>
+                    {/* falling snow */}
+                    <circle cx="20" cy="18" r="1.6" fill="#DCEFFA" />
+                    <circle cx="80" cy="22" r="1.3" fill="#DCEFFA" />
+                    <circle cx="14" cy="46" r="1.4" fill="#DCEFFA" />
+                    <circle cx="86" cy="52" r="1.6" fill="#DCEFFA" />
+                    <circle cx="30" cy="12" r="1.1" fill="#DCEFFA" />
+                    {/* gift boxes at the tree's base */}
+                    <rect x="30" y="78" width="14" height="12" rx="1.5" fill="#B45F3E" />
+                    <rect x="30" y="82" width="14" height="3" fill="#F2C563" />
+                    <rect x="36" y="78" width="2.5" height="12" fill="#F2C563" />
+                    <rect x="58" y="80" width="12" height="10" rx="1.5" fill="#5B7065" />
+                    <rect x="58" y="83.5" width="12" height="2.5" fill="#F2C563" />
+                    <rect x="63" y="80" width="2" height="10" fill="#F2C563" />
+                    {/* tree, built from 3 stacked tiers */}
                     <path
-                        d="M50 26 L60 44 L54 44 L64 58 L57 58 L68 74 L32 74 L43 58 L36 58 L46 44 L40 44 Z"
-                        fill={BRAND.green}
+                        d="M50 22 L60 38 L54 38 L62 50 L55 50 L64 64 L36 64 L45 50 L38 50 L46 38 L40 38 Z"
+                        fill="#4C7A5C"
                     />
-                    <rect x="46" y="74" width="8" height="8" rx="1.5" fill="#92400E" />
                     <path
-                        d="M50 20 L52.5 25.5 L58 26 L54 30 L55 35.5 L50 32.5 L45 35.5 L46 30 L42 26 L47.5 25.5 Z"
-                        fill="#FACC15"
+                        d="M50 22 L60 38 L54 38 L62 50 L55 50 L64 64 L50 64 Z"
+                        fill="#5F8F6C"
+                        opacity="0.55"
                     />
-                    <circle cx="44" cy="54" r="2" fill="#EF4444" />
-                    <circle cx="57" cy="50" r="2" fill={BRAND.lightBlue} />
-                    <circle cx="47" cy="66" r="2" fill="#EF4444" />
-                    <circle cx="58" cy="68" r="2" fill="#FACC15" />
+                    <rect x="46" y="64" width="8" height="10" rx="1.5" fill="#92400E" />
+                    {/* star topper */}
+                    <path
+                        d="M50 14 L52.3 19.3 L58 19.8 L53.8 23.6 L55 29.2 L50 26.2 L45 29.2 L46.2 23.6 L42 19.8 L47.7 19.3 Z"
+                        fill="#F2C563"
+                    />
+                    {/* ornaments */}
+                    <circle cx="44" cy="46" r="2.2" fill="#D9534F" />
+                    <circle cx="57" cy="43" r="2" fill="#7FB3D5" />
+                    <circle cx="47" cy="57" r="2.2" fill="#F2C563" />
+                    <circle cx="59" cy="58" r="2" fill="#D9534F" />
+                    <circle cx="41" cy="60" r="1.8" fill="#7FB3D5" />
                 </g>
             )}
 
@@ -889,47 +1514,6 @@ function FestiveIllustration({
     );
 }
 
-// Friendly birthday-cake illustration for the empty Birthdays state,
-// rendered in the active theme's colors — same visual family as the
-// other empty-state graphics on this page.
-function BirthdayCakeIllustration({
-    BRAND,
-}: {
-    BRAND: { blue: string; lightBlue: string; green: string };
-}) {
-    return (
-        <svg width="120" height="110" viewBox="0 0 120 110" aria-hidden="true">
-            <ellipse cx="60" cy="98" rx="38" ry="6" fill={withAlpha(BRAND.blue, 0.06)} />
-            {/* candles */}
-            <rect x="40" y="30" width="4" height="16" rx="1.5" fill={BRAND.lightBlue} />
-            <rect x="58" y="24" width="4" height="22" rx="1.5" fill={BRAND.blue} />
-            <rect x="76" y="30" width="4" height="16" rx="1.5" fill={BRAND.lightBlue} />
-            <path d="M42 30 Q46 24 42 18 Q38 24 42 30 Z" fill="#FACC15" />
-            <path d="M60 24 Q64 18 60 12 Q56 18 60 24 Z" fill="#FACC15" />
-            <path d="M78 30 Q82 24 78 18 Q74 24 78 30 Z" fill="#FACC15" />
-            {/* top tier */}
-            <rect
-                x="34"
-                y="46"
-                width="52"
-                height="18"
-                rx="4"
-                fill={withAlpha(BRAND.lightBlue, 0.35)}
-            />
-            <path
-                d="M34 50 Q40 44 46 50 Q52 44 58 50 Q64 44 70 50 Q76 44 82 50 L86 50 L86 64 L34 64 Z"
-                fill="#fff"
-            />
-            {/* bottom tier */}
-            <rect x="22" y="64" width="76" height="26" rx="5" fill={BRAND.blue} />
-            <rect x="22" y="64" width="76" height="8" rx="4" fill={withAlpha(BRAND.blue, 0.55)} />
-            <circle cx="40" cy="80" r="3" fill={BRAND.green} />
-            <circle cx="60" cy="80" r="3" fill="#fff" />
-            <circle cx="80" cy="80" r="3" fill={BRAND.green} />
-        </svg>
-    );
-}
-
 // Friendly "nothing here yet" calendar illustration for the empty
 // Holidays state (a tear-off wall calendar with a couple of clouds),
 // rendered in the active theme's colors.
@@ -1004,6 +1588,137 @@ function TipIllustration({ BRAND }: { BRAND: { blue: string; lightBlue: string; 
                 fill="none"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+// Gold trophy + laurel wreath for the empty "Work Anniversaries" state —
+// matches the warm/editorial palette rather than BRAND, since it's a
+// celebratory, fixed-tone illustration (like the birthday cake).
+function TrophyIllustration() {
+    return (
+        <svg
+            width={ILLUSTRATION_SIZE}
+            height={ILLUSTRATION_HEIGHT}
+            viewBox="0 0 130 110"
+            aria-hidden="true"
+        >
+            <circle cx="65" cy="52" r="48" fill={STAT_COLORS.anniversaries.bg} />
+            <ellipse cx="65" cy="98" rx="40" ry="6" fill="rgba(154,120,64,0.08)" />
+            {/* laurel wreath */}
+            <path
+                d="M40 70 Q20 55 30 30 Q34 45 44 55"
+                fill="none"
+                stroke="#B7C79A"
+                strokeWidth="5"
+                strokeLinecap="round"
+            />
+            <path
+                d="M90 70 Q110 55 100 30 Q96 45 86 55"
+                fill="none"
+                stroke="#B7C79A"
+                strokeWidth="5"
+                strokeLinecap="round"
+            />
+            {[0, 1, 2].map((i) => (
+                <ellipse
+                    key={`l-${i}`}
+                    cx={33 + i * 4}
+                    cy={40 + i * 10}
+                    rx="6"
+                    ry="3.5"
+                    fill="#B7C79A"
+                    transform={`rotate(${-40 + i * 10} ${33 + i * 4} ${40 + i * 10})`}
+                />
+            ))}
+            {[0, 1, 2].map((i) => (
+                <ellipse
+                    key={`r-${i}`}
+                    cx={97 - i * 4}
+                    cy={40 + i * 10}
+                    rx="6"
+                    ry="3.5"
+                    fill="#B7C79A"
+                    transform={`rotate(${40 - i * 10} ${97 - i * 4} ${40 + i * 10})`}
+                />
+            ))}
+            {/* trophy cup */}
+            <rect x="52" y="78" width="26" height="6" rx="2" fill="#C99A3F" />
+            <rect x="60" y="68" width="10" height="12" fill="#E0B25A" />
+            <path d="M42 34 h46 v10 q0 20 -23 24 q-23 -4 -23 -24 Z" fill="#F2C563" />
+            <path
+                d="M42 34 h46 v10 q0 20 -23 24 q-23 -4 -23 -24 Z"
+                fill="none"
+                stroke="#C99A3F"
+                strokeWidth="2"
+            />
+            <path
+                d="M42 36 q-12 0 -12 12 q0 10 12 12"
+                fill="none"
+                stroke="#E0B25A"
+                strokeWidth="4"
+            />
+            <path
+                d="M88 36 q12 0 12 12 q0 10 -12 12"
+                fill="none"
+                stroke="#E0B25A"
+                strokeWidth="4"
+            />
+            <circle cx="65" cy="24" r="5" fill="#F6D98A" />
+            <path d="M60 24 h10 M65 19 v10" stroke="#C99A3F" strokeWidth="1.5" />
+        </svg>
+    );
+}
+
+// ID-badge-with-plant "Welcome" illustration for the empty "New Joiners"
+// state — same flat, pastel treatment as the other empty-state graphics.
+function WelcomeBadgeIllustration() {
+    return (
+        <svg
+            width={ILLUSTRATION_SIZE}
+            height={ILLUSTRATION_HEIGHT}
+            viewBox="0 0 130 110"
+            aria-hidden="true"
+        >
+            <ellipse cx="65" cy="100" rx="42" ry="6" fill="rgba(63,122,92,0.08)" />
+            {/* plant */}
+            <path d="M30 100 V80" stroke="#7FA383" strokeWidth="4" strokeLinecap="round" />
+            <path d="M30 82 Q18 78 16 64 Q30 66 33 80 Z" fill="#9DBF8E" />
+            <path d="M30 88 Q42 84 44 70 Q30 72 27 86 Z" fill="#B7D3A2" />
+            {/* badge lanyard */}
+            <rect x="60" y="16" width="10" height="18" rx="3" fill="#7FA383" />
+            <rect
+                x="45"
+                y="32"
+                width="40"
+                height="56"
+                rx="8"
+                fill="#FFFFFF"
+                stroke="#DCD3BE"
+                strokeWidth="2"
+            />
+            <rect x="45" y="32" width="40" height="14" rx="8" fill="#3F7A5C" />
+            <circle cx="65" cy="62" r="10" fill="#E2F0E8" />
+            <circle cx="65" cy="58" r="4" fill="#3F7A5C" />
+            <path d="M57 70 q8 -8 16 0" fill="#3F7A5C" />
+            <rect x="55" y="78" width="20" height="4" rx="2" fill="#DCD3BE" />
+            <text
+                x="65"
+                y="42"
+                textAnchor="middle"
+                fontSize="6"
+                fontWeight="700"
+                fill="#fff"
+                fontFamily="sans-serif"
+            >
+                WELCOME
+            </text>
+            {/* sparkles */}
+            <path d="M100 30 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 Z" fill="#C99A3F" />
+            <path
+                d="M100 66 l1.5 3.5 3.5 1.5 -3.5 1.5 -1.5 3.5 -1.5 -3.5 -3.5 -1.5 3.5 -1.5 Z"
+                fill="#7FA383"
             />
         </svg>
     );
@@ -1141,6 +1856,8 @@ function HolidaysModal({
 
     // Only the current calendar year — no cross-year browsing.
     const currentYear = new Date().getFullYear();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     // Use the holiday's stored date (not the rolled-forward nextOccurrence)
     // so already-passed holidays this year still show, and chronological
     // order runs Jan -> Dec instead of "soonest first" (which would push
@@ -1195,15 +1912,22 @@ function HolidaysModal({
                                 <div style={styles.holidayGrid}>
                                     {sorted.map((h, i) => {
                                         const d = new Date(`${h.date}T00:00:00`);
+                                        const isPast = d < today;
                                         const palette =
                                             HOLIDAY_BADGE_COLORS[i % HOLIDAY_BADGE_COLORS.length];
                                         return (
-                                            <div key={h.id} style={styles.holidayGridItem}>
+                                            <div
+                                                key={h.id}
+                                                style={{
+                                                    ...styles.holidayGridItem,
+                                                    ...(isPast ? styles.holidayGridItemPast : {}),
+                                                }}
+                                            >
                                                 <div
                                                     style={{
                                                         ...styles.holidayBadge,
-                                                        background: palette.bg,
-                                                        color: palette.text,
+                                                        background: isPast ? "#EFEDE6" : palette.bg,
+                                                        color: isPast ? "#A9A79C" : palette.text,
                                                     }}
                                                 >
                                                     <div style={styles.holidayBadgeMonth}>
@@ -1218,13 +1942,19 @@ function HolidaysModal({
                                                     </div>
                                                 </div>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={styles.modalListRowName}>
+                                                    <div
+                                                        style={{
+                                                            ...styles.modalListRowName,
+                                                            ...(isPast ? { color: "#A9A79C" } : {}),
+                                                        }}
+                                                    >
                                                         {h.name}
                                                     </div>
                                                     <div style={styles.modalListRowDate}>
                                                         {d.toLocaleDateString("en-US", {
                                                             weekday: "long",
                                                         })}
+                                                        {isPast && " · Past"}
                                                     </div>
                                                 </div>
                                                 {isSuperAdmin && (
@@ -1377,6 +2107,74 @@ function BirthdaysModal({
     );
 }
 
+function AnniversariesModal({
+    anniversaries,
+    onClose,
+    styles,
+}: {
+    anniversaries: Anniversary[];
+    onClose: () => void;
+    styles: any;
+}) {
+    return (
+        <div style={styles.modalOverlay} onClick={onClose}>
+            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                    <h3 style={styles.modalTitle}>Work Anniversaries</h3>
+                    <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
+                        <i className="ti ti-x" aria-hidden="true" />
+                    </button>
+                </div>
+                <div style={styles.modalBody}>
+                    {anniversaries.length === 0 ? (
+                        <div style={styles.cardEmpty}>No employee joining dates on file yet.</div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {anniversaries.map((a) => (
+                                <AnniversaryRow key={a.id} a={a} styles={styles} />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function NewJoineesModal({
+    joinees,
+    onClose,
+    styles,
+}: {
+    joinees: NewJoinee[];
+    onClose: () => void;
+    styles: any;
+}) {
+    return (
+        <div style={styles.modalOverlay} onClick={onClose}>
+            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                    <h3 style={styles.modalTitle}>New Joiners</h3>
+                    <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close">
+                        <i className="ti ti-x" aria-hidden="true" />
+                    </button>
+                </div>
+                <div style={styles.modalBody}>
+                    {joinees.length === 0 ? (
+                        <div style={styles.cardEmpty}>No one has joined in the last 30 days.</div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {joinees.map((j) => (
+                                <NewJoineeRow key={j.id} j={j} styles={styles} />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // Simple compose template — just a photo and a message, then Post.
 // Kept intentionally minimal per the requirement: no extra fields.
 function PostWishModal({
@@ -1492,25 +2290,25 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         root: {
             width: "100%",
             minHeight: "100%",
-            background: "#f4f5fb",
+            background: WARM.bg,
             fontFamily: fontFamily.base,
         },
         rootMobile: {
             width: "100%",
             minHeight: "100%",
-            background: "#f0f0f5",
+            background: WARM.bg,
             fontFamily: fontFamily.base,
         },
         topBar: {
-            height: "4px",
+            height: "3px",
             width: "100%",
-            background: `linear-gradient(90deg, ${BRAND.blue}, ${BRAND.lightBlue}, ${BRAND.green})`,
+            background: `linear-gradient(90deg, ${WARM.eyebrow}, #B45F3E, ${WARM.eyebrow})`,
         },
         contentBody: {
             display: "flex",
             flexDirection: "column",
-            gap: "18px",
-            padding: "20px 24px 28px",
+            gap: "20px",
+            padding: "24px 28px 32px",
         },
         contentBodyMobile: {
             display: "flex",
@@ -1524,11 +2322,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
 
         pageTitle: {
             margin: 0,
-            fontSize: fontSize["5xl"],
-            fontWeight: fontWeight.bold,
-            color: "#17181C",
+            fontFamily: SERIF_FONT,
+            fontSize: fontSize["6xl"],
+            fontWeight: fontWeight.semibold,
+            color: WARM.ink,
+            letterSpacing: "-0.01em",
         },
-        headerSubtext: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
+        headerSubtext: { margin: "6px 0 0", fontSize: fontSize.base, color: WARM.subtext },
 
         dateBadge: {
             display: "flex",
@@ -1536,22 +2336,26 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             gap: 6,
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
-            color: "#fff",
-            background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-            padding: "8px 14px",
-            borderRadius: radius.md,
+            color: WARM.eyebrow,
+            background: "#fff",
+            border: `1px solid ${WARM.pillBorder}`,
+            padding: "8px 16px",
+            borderRadius: radius.pill,
             whiteSpace: "nowrap",
-            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
         },
 
         // ---- Top stat cards (Holidays / Birthdays / Announcements) ----
-        statGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 },
+        statGrid: {
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+            gap: 16,
+        },
         statGridMobile: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
         statCard: {
-            background: "#fff",
-            borderRadius: radius.lg,
+            background: WARM.card,
+            border: `1px solid ${WARM.border}`,
+            borderRadius: radius.xl,
             padding: "16px 18px",
-            boxShadow: "0 4px 16px rgba(0,0,0,.04)",
             display: "flex",
             alignItems: "center",
             gap: 12,
@@ -1566,27 +2370,50 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             justifyContent: "center",
         },
         statValue: {
+            fontFamily: SERIF_FONT,
             fontSize: fontSize["3xl"],
-            fontWeight: fontWeight.bold,
-            color: "#17181C",
+            fontWeight: fontWeight.semibold,
+            color: WARM.ink,
             lineHeight: 1.1,
         },
         statLabel: {
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
-            color: "#3b4a63",
+            color: WARM.ink,
             marginTop: 2,
         },
-        statSub: { fontSize: fontSize.xs, color: "#9aa5b6", marginTop: 1 },
+        statSub: {
+            fontSize: fontSize.xs,
+            color: WARM.subtext,
+            marginTop: 1,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+        },
 
-        cardsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 },
+        // Featured card (left, wide) + side panel (right) — mirrors the
+        // "Featured program" / "Needs your attention" layout: one large
+        // editorial card plus a slim action list beside it.
+        cardsGrid: {
+            display: "grid",
+            gridTemplateColumns: "1.7fr 1fr",
+            gap: 18,
+            alignItems: "stretch",
+        },
+        // Second row (Work Anniversaries / New Joinees) — equal-width, unlike
+        // the featured/side-panel split above, since both are peer lists.
+        cardsGridEven: {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 18,
+            alignItems: "stretch",
+        },
         cardsGridMobile: { display: "flex", flexDirection: "column", gap: 14 },
 
         card: {
-            background: "#fff",
-            borderRadius: radius.lg,
-            padding: "18px 20px",
-            boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+            background: WARM.card,
+            border: `1px solid ${WARM.border}`,
+            borderRadius: radius["2xl"],
+            padding: "22px 24px",
             minHeight: 260,
             display: "flex",
             flexDirection: "column",
@@ -1595,7 +2422,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 10,
+            marginBottom: 14,
         },
         cardTitleWrap: { display: "flex", alignItems: "center", gap: 10 },
         cardIconBadge: {
@@ -1608,18 +2435,21 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontSize: fontSize.base,
         },
         cardEyebrow: {
-            fontSize: fontSize.base,
-            fontWeight: fontWeight.semibold,
-            color: "#17181C",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.bold,
+            color: WARM.eyebrow,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
         },
         viewAllLink: {
-            border: "none",
-            background: "transparent",
-            color: BRAND.blue,
+            border: `1px solid ${WARM.pillBorder}`,
+            background: "#fff",
+            color: WARM.ink,
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
             cursor: "pointer",
-            padding: 0,
+            padding: "6px 14px",
+            borderRadius: radius.pill,
         },
         manageLink: {
             display: "flex",
@@ -1627,7 +2457,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             gap: 4,
             border: "none",
             background: "transparent",
-            color: "#7d90a6",
+            color: WARM.subtext,
             fontSize: fontSize.sm,
             fontWeight: fontWeight.regular,
             cursor: "pointer",
@@ -1641,28 +2471,48 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             justifyContent: "center",
             gap: 10,
-            color: "#9aa5b6",
+            color: WARM.subtext,
             fontSize: fontSize.base,
             padding: "18px 0",
             textAlign: "center",
+        },
+        // Row-style empty state (illustration left, text right) — used by
+        // the Work Anniversaries / New Joiners cards to match the
+        // reference layout, instead of the centered-stack style above.
+        cardEmptyRow: {
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 22,
+            padding: "10px 4px",
+        },
+        cardEmptyRowTitle: {
+            fontSize: fontSize.lg,
+            fontWeight: fontWeight.bold,
+            color: WARM.ink,
+        },
+        cardEmptyRowSubtitle: {
+            fontSize: fontSize.sm,
+            color: WARM.subtext,
+            marginTop: 4,
         },
         cardEmptyError: {
             flex: 1,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#b91c1c",
+            color: "#B45F3E",
             fontSize: fontSize.base,
         },
-        emptyIcon: { fontSize: 30, color: "#c7cedb" },
+        emptyIcon: { fontSize: 30, color: "#D8D2C4" },
         smallAddBtn: (BRAND: any) => ({
             border: "none",
-            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            background: WARM.eyebrow,
             color: "#fff",
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
             padding: "9px 20px",
-            borderRadius: radius.md,
+            borderRadius: radius.pill,
             cursor: "pointer",
             marginTop: 2,
         }),
@@ -1673,9 +2523,9 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             justifyContent: "space-between",
             gap: 16,
-            background: `linear-gradient(90deg, ${withAlpha(BRAND.blue, 0.05)}, ${withAlpha(BRAND.lightBlue, 0.08)})`,
-            border: `1px solid ${withAlpha(BRAND.blue, 0.1)}`,
-            borderRadius: radius.lg,
+            background: "#FBF9F3",
+            border: `1px solid ${WARM.border}`,
+            borderRadius: radius.xl,
             padding: "16px 22px",
         }),
         tipIconWrap: (BRAND: any) => ({
@@ -1683,57 +2533,58 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             height: 44,
             minWidth: 44,
             borderRadius: radius.circle,
-            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            background: WARM.eyebrow,
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             fontSize: fontSize.lg,
         }),
-        tipTitle: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: "#17181C" },
-        tipSubtext: { fontSize: fontSize.sm, color: "#7d90a6", marginTop: 2 },
+        tipTitle: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: WARM.ink },
+        tipSubtext: { fontSize: fontSize.sm, color: WARM.subtext, marginTop: 2 },
 
         holidayBody: { flex: 1, display: "flex", alignItems: "center", gap: 10 },
         holidayTextCol: { flex: 1, minWidth: 0 },
         holidayName: {
-            fontSize: fontSize["4xl"],
-            fontWeight: fontWeight.bold,
-            color: BRAND.blue,
+            fontFamily: SERIF_FONT,
+            fontSize: fontSize["6xl"],
+            fontWeight: fontWeight.semibold,
+            color: WARM.ink,
             lineHeight: 1.15,
         },
         holidayDate: {
-            marginTop: 6,
+            marginTop: 8,
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
-            color: "#F97316",
+            color: "#B45F3E",
         },
         holidayDaysBadge: {
-            marginTop: 10,
+            marginTop: 12,
             display: "inline-block",
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
-            color: BRAND.blue,
-            background: withAlpha(BRAND.blue, 0.1),
-            padding: "4px 10px",
+            color: WARM.eyebrow,
+            background: "#F3EEE1",
+            padding: "4px 12px",
             borderRadius: radius.pill,
         },
         holidayDaysBadgeSmall: {
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
-            color: BRAND.blue,
-            background: withAlpha(BRAND.blue, 0.1),
+            color: WARM.eyebrow,
+            background: "#F3EEE1",
             padding: "3px 9px",
             borderRadius: radius.pill,
             whiteSpace: "nowrap",
         },
         arrowBtn: {
             flexShrink: 0,
-            width: 30,
-            height: 30,
+            width: 32,
+            height: 32,
             borderRadius: radius.circle,
-            border: "1px solid #eef0f3",
+            border: `1px solid ${WARM.pillBorder}`,
             background: "#fff",
-            color: "#7d90a6",
+            color: WARM.ink,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1741,6 +2592,18 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             fontSize: fontSize.lg,
         },
         arrowBtnDisabled: { opacity: 0.35, cursor: "default" },
+
+        dotRow: { display: "flex", justifyContent: "center", gap: 6, marginTop: 14 },
+        dot: {
+            width: 7,
+            height: 7,
+            borderRadius: radius.circle,
+            border: "none",
+            background: WARM.pillBorder,
+            padding: 0,
+            cursor: "pointer",
+        },
+        dotActive: { background: WARM.eyebrow, width: 16 },
 
         // ---- Wish posts (shown inside the Birthdays card) ----
         wishPostList: {
@@ -1755,7 +2618,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "center",
             gap: 10,
-            background: "#f7f8fc",
+            background: "#FBF9F3",
             borderRadius: radius.md,
             padding: "8px 10px",
         },
@@ -1780,14 +2643,14 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         wishPostMessage: {
             fontSize: fontSize.sm,
-            color: "#16233a",
+            color: WARM.ink,
             overflow: "hidden",
             textOverflow: "ellipsis",
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
         },
-        wishPostMeta: { fontSize: fontSize.xxs, color: "#9aa5b6", marginTop: 2 },
+        wishPostMeta: { fontSize: fontSize.xxs, color: WARM.subtext, marginTop: 2 },
 
         // ---- Post-a-wish compose template ----
         postPhotoDrop: {
@@ -1796,10 +2659,10 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             justifyContent: "center",
             gap: 6,
-            border: "1px dashed #cfd7e6",
+            border: `1px dashed ${WARM.pillBorder}`,
             borderRadius: radius.md,
             padding: "22px 10px",
-            color: "#7d90a6",
+            color: WARM.subtext,
             fontSize: fontSize.sm,
             cursor: "pointer",
         },
@@ -1818,7 +2681,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             height: 24,
             borderRadius: radius.circle,
             border: "none",
-            background: "rgba(17,20,30,0.55)",
+            background: "rgba(31,42,36,0.55)",
             color: "#fff",
             display: "flex",
             alignItems: "center",
@@ -1830,27 +2693,34 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             boxSizing: "border-box",
             padding: "9px 12px",
             borderRadius: radius.sm,
-            border: "1px solid #e4e9f2",
+            border: `1px solid ${WARM.border}`,
             fontSize: fontSize.base,
             fontFamily: fontFamily.base,
             resize: "vertical",
         },
 
+        // ---- "Needs your attention"-style birthday list (side panel) ----
         birthdayList: {
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: 4,
             flex: 1,
-            justifyContent: "center",
+            justifyContent: "flex-start",
         },
-        birthdayRow: { display: "flex", alignItems: "center", gap: 10 },
+        birthdayRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 0",
+            borderBottom: `1px solid ${WARM.border}`,
+        },
         birthdayAvatar: {
             width: 36,
             height: 36,
             minWidth: 36,
             borderRadius: radius.circle,
-            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
-            color: "#fff",
+            background: STAT_COLORS.birthdays.bg,
+            color: STAT_COLORS.birthdays.icon,
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             display: "flex",
@@ -1867,20 +2737,20 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         birthdayName: {
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
-            color: "#16233a",
+            color: WARM.ink,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
         },
-        birthdayDept: { fontSize: fontSize.xs, color: "#9aa5b6" },
+        birthdayDept: { fontSize: fontSize.xs, color: WARM.subtext },
         birthdayDateCol: { textAlign: "right", flexShrink: 0 },
-        birthdayDaysTag: { fontSize: fontSize.xxs, color: "#9aa5b6", marginTop: 2 },
+        birthdayDaysTag: { fontSize: fontSize.xxs, color: WARM.subtext, marginTop: 2 },
 
         /* ---- Modal ---- */
         modalOverlay: {
             position: "fixed",
             inset: 0,
-            background: "rgba(17,20,30,0.45)",
+            background: "rgba(31,42,36,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1889,7 +2759,7 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         modalCard: {
             background: "#fff",
-            borderRadius: radius.lg,
+            borderRadius: radius.xl,
             width: "100%",
             maxWidth: 460,
             maxHeight: "80vh",
@@ -1902,40 +2772,41 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             justifyContent: "space-between",
             alignItems: "center",
             padding: "16px 20px",
-            borderBottom: "1px solid #f1f2f4",
+            borderBottom: `1px solid ${WARM.border}`,
         },
         modalTitle: {
             margin: 0,
+            fontFamily: SERIF_FONT,
             fontSize: fontSize.xl,
-            fontWeight: fontWeight.bold,
-            color: "#17181C",
+            fontWeight: fontWeight.semibold,
+            color: WARM.ink,
         },
         modalYearTag: {
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
-            color: "#9aa5b6",
+            color: WARM.subtext,
         },
         modalCloseBtn: {
             border: "none",
             background: "transparent",
-            color: "#7d90a6",
+            color: WARM.subtext,
             cursor: "pointer",
             fontSize: fontSize.lg,
             display: "flex",
         },
         modalTabRow: { display: "flex", gap: 8, padding: "12px 20px 0" },
         modalTabBtn: {
-            border: "1px solid #e4e9f2",
+            border: `1px solid ${WARM.pillBorder}`,
             background: "#fff",
-            color: "#3b4a63",
+            color: WARM.ink,
             fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             padding: "6px 12px",
-            borderRadius: radius.md,
+            borderRadius: radius.pill,
             cursor: "pointer",
         },
         modalTabBtnActive: (BRAND: any) => ({
-            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            background: WARM.eyebrow,
             color: "#fff",
             border: "1px solid transparent",
         }),
@@ -1949,6 +2820,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             display: "flex",
             alignItems: "center",
             gap: 12,
+        },
+        // Past-dated holidays (already gone by this calendar year) render
+        // muted/grayscale, Keka-style, instead of disappearing from the
+        // Jan→Dec list.
+        holidayGridItemPast: {
+            opacity: 0.55,
+            filter: "grayscale(0.4)",
         },
         holidayBadge: {
             width: 52,
@@ -1977,41 +2855,46 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             padding: "10px 12px",
             borderRadius: radius.md,
-            border: "1px solid #f1f2f4",
+            border: `1px solid ${WARM.border}`,
         },
         modalListRowName: {
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
-            color: "#16233a",
+            color: WARM.ink,
         },
-        modalListRowDate: { fontSize: fontSize.xs, color: "#9aa5b6", marginTop: 2 },
+        modalListRowDate: { fontSize: fontSize.xs, color: WARM.subtext, marginTop: 2 },
         rowDeleteBtn: {
             border: "none",
             background: "transparent",
-            color: "#b91c1c",
+            color: "#B45F3E",
             cursor: "pointer",
             fontSize: fontSize.base,
         },
-        modalLabel: { display: "block", fontSize: fontSize.xs, color: "#7d90a6", marginBottom: 4 },
+        modalLabel: {
+            display: "block",
+            fontSize: fontSize.xs,
+            color: WARM.subtext,
+            marginBottom: 4,
+        },
         modalInput: {
             width: "100%",
             boxSizing: "border-box",
             padding: "9px 12px",
             borderRadius: radius.sm,
-            border: "1px solid #e4e9f2",
+            border: `1px solid ${WARM.border}`,
             fontSize: fontSize.base,
             fontFamily: fontFamily.base,
         },
-        modalHint: { fontSize: fontSize.sm, color: "#7d90a6", margin: 0 },
-        modalError: { fontSize: fontSize.sm, color: "#b91c1c" },
+        modalHint: { fontSize: fontSize.sm, color: WARM.subtext, margin: 0 },
+        modalError: { fontSize: fontSize.sm, color: "#B45F3E" },
         modalPrimaryBtn: (BRAND: any) => ({
             border: "none",
-            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+            background: WARM.eyebrow,
             color: "#fff",
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
             padding: "10px 16px",
-            borderRadius: radius.md,
+            borderRadius: radius.pill,
             cursor: "pointer",
         }),
         modalSecondaryBtn: (BRAND: any) => ({
@@ -2019,13 +2902,13 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
             alignItems: "center",
             justifyContent: "center",
             gap: 6,
-            border: `1px solid ${withAlpha(BRAND.blue, 0.3)}`,
+            border: `1px solid ${WARM.pillBorder}`,
             background: "#fff",
-            color: BRAND.blue,
+            color: WARM.ink,
             fontSize: fontSize.sm,
             fontWeight: fontWeight.semibold,
             padding: "9px 14px",
-            borderRadius: radius.md,
+            borderRadius: radius.pill,
             cursor: "pointer",
         }),
         bulkResultRow: { fontSize: fontSize.xs, display: "flex", alignItems: "center", gap: 6 },
