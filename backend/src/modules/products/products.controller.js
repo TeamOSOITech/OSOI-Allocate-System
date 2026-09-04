@@ -62,6 +62,30 @@ async function attachPendingApprovals(products, organizationId) {
   return [...placeholders, ...withBadges];
 }
 
+// NEW: Vertical Head only sees the service(s) their OWN team is linked
+// to (product_master's `teams` array) — same "own team, not the whole
+// org" scope Vertical Head holds everywhere else. Looks up their own
+// Team once from user_master; a service is "theirs" if their team name
+// appears (case-insensitively) in that service's `teams` list. Every
+// other role is unaffected — full catalog as before.
+async function scopeProductsForVerticalHead(products, req) {
+  if (req.user.role !== "VERTICAL_HEAD") return products;
+
+  const { data: self } = await supabase
+    .from("user_master")
+    .select('"Worked In Teams"')
+    .eq("Auth User Id", req.user.userId)
+    .eq("organization_id", req.user.organizationId)
+    .maybeSingle();
+
+  const ownTeam = (self?.["Worked In Teams"] || "").trim().toLowerCase();
+  if (!ownTeam) return [];
+
+  return products.filter((p) =>
+    (p.teams || []).some((t) => (t || "").trim().toLowerCase() === ownTeam),
+  );
+}
+
 const getAllProducts = async (req, res) => {
   try {
     const products = await productService.getAllProducts(
@@ -71,7 +95,8 @@ const getAllProducts = async (req, res) => {
       products,
       req.user.organizationId,
     );
-    return res.status(200).json({ success: true, data: withPending });
+    const scoped = await scopeProductsForVerticalHead(withPending, req);
+    return res.status(200).json({ success: true, data: scoped });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

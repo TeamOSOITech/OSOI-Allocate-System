@@ -25,6 +25,7 @@ const {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  selfAllocateServiceCases,
   updateServiceCaseQc,
   updateServiceCaseAudit,
 } = require("./servicecases.controller");
@@ -104,6 +105,12 @@ router.post(
 // caller. Literal path "/bulk-submit" registered before "/:id/submit"
 // so it can never be shadowed.
 router.post("/bulk-submit", bulkSubmitServiceCases);
+// NEW: Profile page "Self Allocate" flow — same no-special-permission
+// rule as /bulk-submit above; the controller only ever touches cases
+// that are still PENDING/unassigned and always claims them for the
+// caller, never anyone else. Literal path registered before
+// "/:id/submit" so it can never be shadowed.
+router.post("/self-allocate", selfAllocateServiceCases);
 router.patch("/:id/submit", submitServiceCase);
 // NEW: Quality Scores (QC) page — Pass/Fail + marks. Fixes the page
 // calling a route that never existed before (was returning Express's

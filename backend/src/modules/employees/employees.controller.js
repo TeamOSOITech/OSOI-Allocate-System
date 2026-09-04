@@ -16,7 +16,25 @@ async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
 
   try {
-    const employees = await employeesService.fetchAllEmployees(orgId);
+    let employees = await employeesService.fetchAllEmployees(orgId);
+
+    // NEW: Vertical Head only ever sees their OWN team's employees —
+    // matches the "own team, not the whole org" scope Vertical Head
+    // already holds everywhere else (materialisation.view.team,
+    // tasks.allocate.team) and is what powers the Employee/Team pickers
+    // on Today's Allocation (see manualallocation.tsx). Self is always
+    // kept in the list even if their own Team field happens to be
+    // blank/mismatched, so a Vertical Head never loses sight of their
+    // own row. Every other role is unaffected — full org list as before.
+    if (req.user.role === "VERTICAL_HEAD") {
+      const self = employees.find((e) => e.id === req.user.userId);
+      const ownTeam = (self?.team || "").trim().toLowerCase();
+      employees = employees.filter((e) => {
+        if (e.id === req.user.userId) return true;
+        return ownTeam && (e.team || "").trim().toLowerCase() === ownTeam;
+      });
+    }
+
     res.json(employees);
   } catch (error) {
     console.error("Failed to fetch user_master:", error);

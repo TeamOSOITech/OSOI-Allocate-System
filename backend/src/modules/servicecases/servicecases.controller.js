@@ -2328,6 +2328,92 @@ async function bulkSubmitServiceCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/service-cases/self-allocate
+// Body: { caseIds: string[] }
+//
+// NEW: Profile page's "Self Allocate" flow — an employee picks a
+// service they're aligned to (checked client-side, see
+// GET /api/products + team match in profile.tsx) then ticks one or
+// more still-PENDING cases on it and takes them for themselves. This
+// is the endpoint the frontend already calls; it was missing here,
+// which is why Self Allocate always failed.
+//
+// Same safety model as POST /api/allocations/self:
+//   1. assigned_employee_id/allocated_by are always req.user.userId —
+//      never taken from the request body — so this can never be used
+//      to allocate a case to anyone else.
+//   2. Each case is only actually claimed if it is STILL pending and
+//      unassigned at the moment of the update (organization_id +
+//      allocation_status=PENDING + assigned_employee_id is null are
+//      all part of the .eq()/.is() filter) — a case someone else grabs
+//      a moment earlier is silently skipped rather than stolen out
+//      from under them.
+// No special permission beyond being logged in — identical rule to
+// bulk-submit above; the query filters are what keep this scoped.
+// ------------------------------------------------------------
+async function selfAllocateServiceCases(req, res) {
+  try {
+    const caseIds = Array.isArray(req.body.caseIds)
+      ? req.body.caseIds.map((id) => (id || "").toString()).filter(Boolean)
+      : [];
+
+    if (caseIds.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Select at least one case first." });
+    }
+
+    const now = new Date().toISOString();
+    let allocatedCount = 0;
+    const allocatedCases = [];
+
+    // One update per case (each only succeeds if still PENDING +
+    // unassigned) so a case someone else just took a second ago is
+    // quietly skipped instead of erroring the whole batch out.
+    await Promise.all(
+      caseIds.map(async (id) => {
+        const { data, error } = await supabase
+          .from("service_cases")
+          .update({
+            assigned_employee_id: req.user.userId,
+            allocation_status: "ALLOCATED",
+            allocated_at: now,
+            allocated_by: req.user.userId,
+          })
+          .eq("id", id)
+          .eq("organization_id", req.user.organizationId)
+          .eq("allocation_status", "PENDING")
+          .is("assigned_employee_id", null)
+          .select("id, case_number")
+          .maybeSingle();
+        if (error) throw error;
+        if (data) {
+          allocatedCount++;
+          allocatedCases.push(data);
+        }
+      }),
+    );
+
+    if (allocatedCount === 0) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Those case(s) are no longer pending — someone else may have already taken them.",
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `You've allocated ${allocatedCount} case(s) to yourself.`,
+      data: { allocatedCount, cases: allocatedCases },
+    });
+  } catch (err) {
+    console.error("selfAllocateServiceCases error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   listServiceCases,
   createServiceCases,
@@ -2343,6 +2429,7 @@ module.exports = {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   bulkSubmitServiceCases,
+  selfAllocateServiceCases,
   updateServiceCaseQc,
   updateServiceCaseAudit,
 };
