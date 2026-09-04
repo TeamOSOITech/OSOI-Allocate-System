@@ -340,8 +340,18 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                     requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
                                 >
                                     <AppLayout onLogout={handleLogout}>
-                                        {user?.role === "TEAM_MEMBER" ||
-                                        user?.role === "VERTICAL_HEAD" ? (
+                                        {/* CHANGED: Vertical Head now gets the ManualAllocation
+                                        grid (same as Process Lead/Ops Manager/Audit Manager/
+                                        Super Admin) instead of the self-allocate-only view —
+                                        Vertical Head can allocate to their OWN team's cases on
+                                        their OWN team's service(s), enforced server-side in
+                                        servicecases.controller.js's checkVerticalHeadCaseScope
+                                        and in products/employees list endpoints (backend scopes
+                                        the Service/Employee pickers down to their team). Team
+                                        Member is the only role left on the self-allocate-only
+                                        view — they can still pick up their OWN pending work,
+                                        but can never allocate to anyone else. */}
+                                        {user?.role === "TEAM_MEMBER" ? (
                                             <SelfAllocation />
                                         ) : (
                                             <ManualAllocation />

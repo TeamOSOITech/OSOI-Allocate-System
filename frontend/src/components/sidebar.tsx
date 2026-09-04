@@ -88,13 +88,13 @@ const menuItems: MenuItem[] = [
         label: "Today's Allocation",
         icon: "ti ti-hand-stop",
         path: "/today's-allocation",
-        // FIX: this was SUPER_ADMIN_ONLY, but the actual route in App.jsx
-        // already allowed ADMIN_AND_VERTICAL_HEAD_ROLES — so Ops Manager/
-        // Process Lead/Vertical Head could open the page directly by URL
-        // but never saw the sidebar link. Also now includes TEAM_MEMBER:
-        // the route shows them the redesigned self-allocation view (see
-        // App.jsx), not the admin-tier bulk grid.
-        roles: SUPER_ADMIN_ONLY,
+        // FIX: this was still SUPER_ADMIN_ONLY even though the actual
+        // route in App.jsx allows ADMIN_AND_VERTICAL_HEAD_ROLES +
+        // TEAM_MEMBER — so everyone else could open the page directly by
+        // URL but never saw the sidebar link. Now matches the route:
+        // Vertical Head gets the (team-scoped) allocation grid, Team
+        // Member gets the self-allocate-only view — see App.jsx.
+        roles: EVERYONE,
     },
     {
         label: "Production Reports",
