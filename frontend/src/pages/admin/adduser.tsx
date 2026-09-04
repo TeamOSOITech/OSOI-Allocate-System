@@ -1480,7 +1480,7 @@ function getStyles(BRAND: {
         pageTitle: {
             margin: 0,
             fontSize: fontSize["5xl"],
-            fontWeight: fontWeight.bold,
+            fontWeight: fontWeight.semibold,
             color: "#17181C",
         },
 

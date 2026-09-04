@@ -595,7 +595,7 @@ const styles: Record<string, CSSProperties> = {
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
+        fontWeight: fontWeight.semibold,
         color: "#17181C",
         textAlign: "left",
     },

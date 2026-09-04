@@ -2617,17 +2617,15 @@ function getStyles(BRAND: { blue: string; lightBlue: string; green: string }): R
         },
         pageTitle: {
             margin: 0,
-            fontFamily: SERIF_FONT,
-            fontSize: fontSize["3xl"],
+            fontSize: fontSize["5xl"],
             fontWeight: fontWeight.semibold,
             color: WARM.ink,
-            letterSpacing: "-0.01em",
         },
         headerSubtext: {
             margin: "4px 0 0",
             marginLeft: 0,
             textAlign: "left",
-            fontSize: fontSize.sm,
+            fontSize: fontSize.base,
             color: WARM.subtext,
         },
 
