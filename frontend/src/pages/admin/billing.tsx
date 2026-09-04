@@ -42,6 +42,19 @@ const BRAND = {
 };
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
+// Small injected stylesheet so cards/rows get real :hover states (inline
+// style objects can't express :hover on their own) — same pattern as
+// profile.tsx's getHoverCss.
+const HOVER_CSS = `
+.bl-kpi { transition: transform .18s ease, box-shadow .18s ease; }
+.bl-kpi:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(var(--brand-blue-rgb, 32,66,151), 0.14); }
+.bl-card { transition: box-shadow .18s ease, transform .18s ease; }
+.bl-card:hover { box-shadow: 0 14px 34px rgba(17,24,39,0.09); transform: translateY(-1px); }
+.bl-row { transition: background .15s ease; border-radius: 10px; }
+.bl-row:hover { background: #F7F9FF; }
+.bl-search:focus-within { box-shadow: 0 0 0 3px rgba(var(--brand-blue-rgb, 32,66,151), 0.12); }
+`;
+
 type ClientProduct = {
     id: number;
     product_name: string;
@@ -136,6 +149,7 @@ export default function Billing() {
 
     return (
         <div style={styles.root}>
+            <style>{HOVER_CSS}</style>
             <div style={styles.topBar} />
             <div
                 style={{
@@ -160,9 +174,10 @@ export default function Billing() {
 
                 {/* ---- KPI cards ---- */}
                 <div style={styles.kpiRow}>
-                    <div style={styles.kpiCard}>
+                    <div className="bl-kpi" style={styles.kpiCard}>
+                        <div style={{ ...styles.kpiAccent, background: "#3B82F6" }} />
                         <div
-                            style={{ ...styles.kpiIconCircle, background: "rgba(59,130,246,0.1)" }}
+                            style={{ ...styles.kpiIconSquare, background: "rgba(59,130,246,0.1)" }}
                         >
                             <i className="ti ti-building-store" style={{ color: "#3B82F6" }} />
                         </div>
@@ -171,9 +186,10 @@ export default function Billing() {
                             <div style={styles.kpiLabel}>Total Clients</div>
                         </div>
                     </div>
-                    <div style={styles.kpiCard}>
+                    <div className="bl-kpi" style={styles.kpiCard}>
+                        <div style={{ ...styles.kpiAccent, background: BRAND.green }} />
                         <div
-                            style={{ ...styles.kpiIconCircle, background: "rgba(46,187,168,0.12)" }}
+                            style={{ ...styles.kpiIconSquare, background: "rgba(46,187,168,0.12)" }}
                         >
                             <i className="ti ti-receipt-2" style={{ color: BRAND.green }} />
                         </div>
@@ -184,9 +200,10 @@ export default function Billing() {
                             <div style={styles.kpiLabel}>Priced Services</div>
                         </div>
                     </div>
-                    <div style={styles.kpiCard}>
+                    <div className="bl-kpi" style={styles.kpiCard}>
+                        <div style={{ ...styles.kpiAccent, background: BRAND.amber }} />
                         <div
-                            style={{ ...styles.kpiIconCircle, background: "rgba(245,158,11,0.1)" }}
+                            style={{ ...styles.kpiIconSquare, background: "rgba(245,158,11,0.1)" }}
                         >
                             <i className="ti ti-alert-triangle" style={{ color: BRAND.amber }} />
                         </div>
@@ -198,10 +215,11 @@ export default function Billing() {
                         </div>
                     </div>
                     {Object.entries(kpis.currencyTotals).map(([cur, total]) => (
-                        <div style={styles.kpiCard} key={cur}>
+                        <div className="bl-kpi" style={styles.kpiCard} key={cur}>
+                            <div style={{ ...styles.kpiAccent, background: "#8B5CF6" }} />
                             <div
                                 style={{
-                                    ...styles.kpiIconCircle,
+                                    ...styles.kpiIconSquare,
                                     background: "rgba(139,92,246,0.1)",
                                 }}
                             >
@@ -216,7 +234,7 @@ export default function Billing() {
                 </div>
 
                 {/* ---- Search ---- */}
-                <div style={styles.searchBar}>
+                <div className="bl-search" style={styles.searchBar}>
                     <i className="ti ti-search" style={styles.searchIcon} />
                     <input
                         type="text"
@@ -225,6 +243,16 @@ export default function Billing() {
                         onChange={(e) => setSearch(e.target.value)}
                         style={styles.searchInput}
                     />
+                    {search && (
+                        <button
+                            type="button"
+                            aria-label="Clear search"
+                            onClick={() => setSearch("")}
+                            style={styles.searchClearBtn}
+                        >
+                            <i className="ti ti-x" />
+                        </button>
+                    )}
                 </div>
 
                 {error && <p style={styles.errorText}>{error}</p>}
@@ -257,90 +285,116 @@ export default function Billing() {
                 {!loading &&
                     filteredClients.map((client) => {
                         const products = client.products || [];
+                        const isActive = client.status === "Active";
+                        const initials = (client.name || "?")
+                            .split(" ")
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((w) => w[0]?.toUpperCase())
+                            .join("");
                         return (
-                            <div key={client.id} style={styles.clientCard}>
-                                <div style={styles.clientCardHeader}>
-                                    <div style={styles.clientCardHeaderLeft}>
-                                        <div style={styles.clientAvatar}>
-                                            <i className="ti ti-building-store" />
-                                        </div>
-                                        <div>
-                                            <div style={styles.clientName}>{client.name}</div>
-                                            <div style={styles.clientSub}>
-                                                {client.country || "—"} · {client.subclients || 0}{" "}
-                                                subclient
-                                                {client.subclients === 1 ? "" : "s"}
+                            <div key={client.id} className="bl-card" style={styles.clientCard}>
+                                <div
+                                    style={{
+                                        ...styles.clientAccentBar,
+                                        background: isActive ? GRADIENT : BRAND.grey,
+                                    }}
+                                />
+                                <div style={styles.clientCardBody}>
+                                    <div style={styles.clientCardHeader}>
+                                        <div style={styles.clientCardHeaderLeft}>
+                                            <div style={styles.clientAvatar}>{initials || "—"}</div>
+                                            <div>
+                                                <div style={styles.clientName}>{client.name}</div>
+                                                <div style={styles.clientSub}>
+                                                    <i
+                                                        className="ti ti-map-pin"
+                                                        style={{ fontSize: fontSize.sm }}
+                                                    />
+                                                    {client.country || "—"}
+                                                    <span style={styles.clientSubDot}>·</span>
+                                                    {client.subclients || 0} subclient
+                                                    {client.subclients === 1 ? "" : "s"}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                    <span
-                                        style={{
-                                            ...styles.statusPill,
-                                            background:
-                                                client.status === "Active"
+                                        <span
+                                            style={{
+                                                ...styles.statusPill,
+                                                background: isActive
                                                     ? "rgba(46,187,168,0.12)"
                                                     : "rgba(220,38,38,0.08)",
-                                            color:
-                                                client.status === "Active"
-                                                    ? BRAND.green
-                                                    : BRAND.red,
-                                        }}
-                                    >
-                                        <i
-                                            className={`ti ${client.status === "Active" ? "ti-circle-check" : "ti-circle-x"}`}
-                                        />
-                                        {client.status}
-                                    </span>
-                                </div>
-
-                                <div style={styles.cardDivider} />
-
-                                {products.length === 0 ? (
-                                    <p style={styles.noServicesText}>
-                                        No services linked to this client yet.
-                                    </p>
-                                ) : (
-                                    <div style={styles.serviceTable}>
-                                        <div style={styles.serviceTableHeadRow}>
-                                            <span style={styles.serviceTableHeadCell}>Service</span>
+                                                color: isActive ? BRAND.green : BRAND.red,
+                                            }}
+                                        >
                                             <span
                                                 style={{
-                                                    ...styles.serviceTableHeadCell,
-                                                    textAlign: "right",
+                                                    ...styles.statusDot,
+                                                    background: isActive ? BRAND.green : BRAND.red,
                                                 }}
-                                            >
-                                                Price
-                                            </span>
-                                        </div>
-                                        {products.map((p) => (
-                                            <div key={p.id} style={styles.serviceTableRow}>
-                                                <span style={styles.serviceNameCell}>
-                                                    <i
-                                                        className="ti ti-cube"
-                                                        style={{
-                                                            color: "#14B8A6",
-                                                            fontSize: fontSize.md,
-                                                        }}
-                                                    />
-                                                    {p.product_name}
+                                            />
+                                            {client.status}
+                                        </span>
+                                    </div>
+
+                                    <div style={styles.cardDivider} />
+
+                                    {products.length === 0 ? (
+                                        <p style={styles.noServicesText}>
+                                            No services linked to this client yet.
+                                        </p>
+                                    ) : (
+                                        <div style={styles.serviceTable}>
+                                            <div style={styles.serviceTableHeadRow}>
+                                                <span style={styles.serviceTableHeadCell}>
+                                                    Service
                                                 </span>
-                                                <span
-                                                    style={{
-                                                        ...styles.servicePriceCell,
-                                                        color:
-                                                            p.amount === null ||
-                                                            p.amount === undefined ||
-                                                            p.amount === ""
-                                                                ? BRAND.grey
-                                                                : "#17181C",
-                                                    }}
-                                                >
-                                                    {formatMoney(p.amount, p.currency)}
+                                                <span style={styles.serviceTableHeadCell}>
+                                                    Price
                                                 </span>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+                                            {products.map((p) => {
+                                                const hasPrice = !(
+                                                    p.amount === null ||
+                                                    p.amount === undefined ||
+                                                    p.amount === ""
+                                                );
+                                                return (
+                                                    <div
+                                                        key={p.id}
+                                                        className="bl-row"
+                                                        style={styles.serviceTableRow}
+                                                    >
+                                                        <span style={styles.serviceNameCell}>
+                                                            <span style={styles.serviceIconChip}>
+                                                                <i
+                                                                    className="ti ti-cube"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />
+                                                            </span>
+                                                            {p.product_name}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                ...styles.servicePricePill,
+                                                                background: hasPrice
+                                                                    ? "rgba(46,187,168,0.1)"
+                                                                    : "#F3F4F6",
+                                                                color: hasPrice
+                                                                    ? BRAND.green
+                                                                    : BRAND.grey,
+                                                            }}
+                                                        >
+                                                            {formatMoney(p.amount, p.currency)}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         );
                     })}
@@ -380,7 +434,7 @@ const styles: Record<string, CSSProperties> = {
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
+        fontWeight: fontWeight.semibold,
         color: "#17181C",
         textAlign: "left",
     },
@@ -394,6 +448,7 @@ const styles: Record<string, CSSProperties> = {
 
     kpiRow: { display: "flex", gap: 14, flexWrap: "wrap" },
     kpiCard: {
+        position: "relative",
         display: "flex",
         alignItems: "center",
         gap: 12,
@@ -404,11 +459,19 @@ const styles: Record<string, CSSProperties> = {
         flex: "1 1 200px",
         minWidth: 200,
         boxSizing: "border-box",
+        overflow: "hidden",
     },
-    kpiIconCircle: {
+    kpiAccent: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 3,
+    },
+    kpiIconSquare: {
         width: 42,
         height: 42,
-        borderRadius: "50%",
+        borderRadius: radius.sm,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -423,9 +486,9 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 10,
         background: "#fff",
-        borderRadius: radius.md,
+        borderRadius: radius.pill,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: "11px 16px",
+        padding: "11px 18px",
         maxWidth: 420,
     },
     searchIcon: { color: "#9ca3af", fontSize: fontSize.xl, flexShrink: 0 },
@@ -436,6 +499,20 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         color: "#17181C",
         width: "100%",
+    },
+    searchClearBtn: {
+        border: "none",
+        background: "#F3F4F6",
+        color: "#9ca3af",
+        width: 22,
+        height: 22,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        cursor: "pointer",
+        fontSize: fontSize.sm,
     },
 
     errorText: {
@@ -481,14 +558,17 @@ const styles: Record<string, CSSProperties> = {
     clientCard: {
         background: "#fff",
         borderRadius: radius.lg,
-        borderLeft: `4px solid ${BRAND.blue}`,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
+        width: "100%",
+        boxSizing: "border-box",
+        overflow: "hidden",
+    },
+    clientAccentBar: { height: 4, width: "100%" },
+    clientCardBody: {
         padding: "18px 22px",
         display: "flex",
         flexDirection: "column",
         gap: 14,
-        width: "100%",
-        boxSizing: "border-box",
     },
     clientCardHeader: {
         display: "flex",
@@ -499,19 +579,28 @@ const styles: Record<string, CSSProperties> = {
     },
     clientCardHeaderLeft: { display: "flex", alignItems: "center", gap: 12 },
     clientAvatar: {
-        width: 40,
-        height: 40,
-        borderRadius: radius.md,
+        width: 42,
+        height: 42,
+        borderRadius: radius.pill,
         background: GRADIENT,
         color: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: fontSize["2xl"],
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
         flexShrink: 0,
     },
     clientName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },
-    clientSub: { fontSize: fontSize.sm, color: "#767F92", marginTop: 2 },
+    clientSub: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: fontSize.sm,
+        color: "#767F92",
+        marginTop: 2,
+    },
+    clientSubDot: { margin: "0 2px", color: "#d1d5db" },
     statusPill: {
         display: "inline-flex",
         alignItems: "center",
@@ -523,6 +612,7 @@ const styles: Record<string, CSSProperties> = {
         height: "fit-content",
         whiteSpace: "nowrap",
     },
+    statusDot: { width: 6, height: 6, borderRadius: "50%", flexShrink: 0 },
     cardDivider: { height: 1, background: "#f1f1f1", width: "100%" },
 
     noServicesText: { margin: 0, fontSize: fontSize.sm, color: "#9ca3af", fontStyle: "italic" },
@@ -531,7 +621,7 @@ const styles: Record<string, CSSProperties> = {
     serviceTableHeadRow: {
         display: "flex",
         justifyContent: "space-between",
-        padding: "0 4px 8px",
+        padding: "0 8px 8px",
         borderBottom: "1px solid #f1f1f1",
     },
     serviceTableHeadCell: {
@@ -545,16 +635,32 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        padding: "10px 4px",
-        borderBottom: "1px solid #f7f7fb",
+        padding: "8px",
     },
     serviceNameCell: {
         display: "flex",
         alignItems: "center",
-        gap: 8,
+        gap: 10,
         fontSize: fontSize.base,
         fontWeight: fontWeight.medium,
         color: "#17181C",
     },
-    servicePriceCell: { fontSize: fontSize.base, fontWeight: fontWeight.semibold },
+    serviceIconChip: {
+        width: 26,
+        height: 26,
+        borderRadius: radius.sm,
+        background: "rgba(20,184,166,0.1)",
+        color: "#14B8A6",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+    },
+    servicePricePill: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        padding: "4px 12px",
+        borderRadius: radius.pill,
+        whiteSpace: "nowrap",
+    },
 };
