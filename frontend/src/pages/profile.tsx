@@ -174,6 +174,29 @@ function isBatchDone(b: BatchRow) {
     );
 }
 
+// ---- Self Allocation modal — "Self Allocate" button on this page. A
+// service only shows up here if the LOGGED-IN EMPLOYEE'S OWN TEAM is one
+// of the teams tagged on that service (service_master.teams — see
+// products.service.js). That's the only alignment concept this app has
+// (there's no separate per-employee service link, just per-employee
+// team + per-service teams[]), so "service jisse woh khud/uski team
+// align hai" collapses to exactly this one check.
+type ServiceOption = {
+    id: string;
+    product_name: string;
+    teams?: string[] | null;
+};
+
+type SelfAllocCase = {
+    id: string;
+    caseNumber: string;
+    productId: string;
+    productName: string | null;
+    clientName?: string | null;
+    subclientName?: string | null;
+    workDate: string;
+};
+
 function batchPendingQty(b: BatchRow) {
     const already = b.submitted_qty ?? 0;
     return Math.max(b.allocated_qty - already, 0);
@@ -355,6 +378,21 @@ export default function Profile({ onLogout }: ProfileProps) {
     // hundreds of pending cases and the employee wants to find a
     // specific one instead of scrolling.
     const [bulkSearch, setBulkSearch] = useState("");
+
+    // ---- Self Allocation modal (pick a service you're aligned to →
+    // pick up remaining/pending cases on it, for yourself) ----
+    const [showSelfAllocModal, setShowSelfAllocModal] = useState(false);
+    const [selfAllocServices, setSelfAllocServices] = useState<ServiceOption[]>([]);
+    const [selfAllocServicesLoading, setSelfAllocServicesLoading] = useState(false);
+    const [selfAllocServicesError, setSelfAllocServicesError] = useState<string | null>(null);
+    const [selfAllocServiceId, setSelfAllocServiceId] = useState<string>("");
+    const [selfAllocCases, setSelfAllocCases] = useState<SelfAllocCase[]>([]);
+    const [selfAllocCasesLoading, setSelfAllocCasesLoading] = useState(false);
+    const [selfAllocCasesError, setSelfAllocCasesError] = useState<string | null>(null);
+    const [selfAllocSelectedIds, setSelfAllocSelectedIds] = useState<Set<string>>(new Set());
+    const [selfAllocSubmitting, setSelfAllocSubmitting] = useState(false);
+    const [selfAllocSuccessCount, setSelfAllocSuccessCount] = useState<number | null>(null);
+    const [selfAllocToast, setSelfAllocToast] = useState("");
 
     const cachedUser = (() => {
         try {
@@ -623,6 +661,153 @@ export default function Profile({ onLogout }: ProfileProps) {
         setBulkQueryById({});
         setBulkSearch("");
         setBulkError(null);
+    };
+
+    // ---- Self Allocation ----
+    // The employee's own team, straight off /api/employees/:id. Backend
+    // key is "team" (employees.service.js mapRow) — read that first,
+    // falling back to workedInTeams in case that ever gets aligned too.
+    const myTeamRaw = ((employee as any)?.team ?? employee?.workedInTeams ?? "").toString().trim();
+    const myTeamLower = myTeamRaw.toLowerCase();
+
+    const openSelfAllocModal = async () => {
+        setShowSelfAllocModal(true);
+        setSelfAllocServiceId("");
+        setSelfAllocCases([]);
+        setSelfAllocCasesError(null);
+        setSelfAllocSelectedIds(new Set());
+        setSelfAllocSuccessCount(null);
+        setSelfAllocServicesError(null);
+        setSelfAllocServicesLoading(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/products`);
+            const json = await safeJson(res);
+            if (!res.ok || json.success === false) {
+                throw new Error(json.message || "Failed to load services");
+            }
+            const all: ServiceOption[] = (Array.isArray(json) ? json : json.data || []).map(
+                (p: any) => ({
+                    id: String(p.id),
+                    product_name: p.product_name,
+                    teams: p.teams || [],
+                })
+            );
+            // Only services this employee's team is aligned to — that's
+            // the whole alignment model this app has (no separate
+            // per-employee link, just per-team).
+            const aligned = myTeamLower
+                ? all.filter((s) =>
+                      (s.teams || []).some(
+                          (t) => (t || "").toString().trim().toLowerCase() === myTeamLower
+                      )
+                  )
+                : [];
+            setSelfAllocServices(aligned);
+        } catch (err: any) {
+            setSelfAllocServicesError(err?.message || "Failed to load services");
+            setSelfAllocServices([]);
+        } finally {
+            setSelfAllocServicesLoading(false);
+        }
+    };
+
+    const closeSelfAllocModal = () => {
+        setShowSelfAllocModal(false);
+        setSelfAllocServiceId("");
+        setSelfAllocCases([]);
+        setSelfAllocSelectedIds(new Set());
+        setSelfAllocCasesError(null);
+        setSelfAllocSuccessCount(null);
+    };
+
+    // Loads every still-PENDING case on the picked service — today's,
+    // plus any earlier-dated one that never got taken (same "today +
+    // backlog" widening the Cases tab itself uses) — so this is
+    // genuinely "whatever's still remaining", not just today's.
+    const loadSelfAllocCases = async (serviceId: string) => {
+        setSelfAllocServiceId(serviceId);
+        setSelfAllocCases([]);
+        setSelfAllocSelectedIds(new Set());
+        setSelfAllocCasesError(null);
+        if (!serviceId) return;
+        setSelfAllocCasesLoading(true);
+        try {
+            const params = new URLSearchParams({
+                productId: serviceId,
+                allocationStatus: "PENDING",
+                workDate: todayStr(),
+                includeBacklog: "true",
+                pageSize: "500",
+            });
+            const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to load remaining cases");
+            }
+            setSelfAllocCases(json.data || []);
+        } catch (err: any) {
+            setSelfAllocCasesError(err?.message || "Failed to load remaining cases");
+        } finally {
+            setSelfAllocCasesLoading(false);
+        }
+    };
+
+    const showSelfAllocToast = (msg: string) => {
+        setSelfAllocToast(msg);
+        setTimeout(() => setSelfAllocToast(""), 3000);
+    };
+
+    const toggleSelfAllocCase = (id: string) => {
+        setSelfAllocSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelfAllocSelectAll = () => {
+        setSelfAllocSelectedIds((prev) =>
+            prev.size === selfAllocCases.length
+                ? new Set()
+                : new Set(selfAllocCases.map((c) => c.id))
+        );
+    };
+
+    // Submits the checked cases in one go. Once allocated, a case moves
+    // to the employee's own "Today's Allocation" table on this same
+    // page — there's deliberately no un-allocate/delete action offered
+    // here, or anywhere else on this page, for the employee themselves;
+    // only a manager can clear an allocation (Cases tab's own "Clear").
+    const submitSelfAllocation = async () => {
+        const caseIds = Array.from(selfAllocSelectedIds);
+        if (caseIds.length === 0) {
+            showSelfAllocToast("Select at least one case first.");
+            return;
+        }
+        setSelfAllocSubmitting(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/self-allocate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ caseIds }),
+            });
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to allocate");
+            }
+            // Switch the modal to a success screen instead of just a
+            // toast — the employee gets a clear confirmation, and
+            // closing it drops them straight back onto the Profile page
+            // (this page's own "Today's Allocation" table, freshly
+            // reloaded below) where they submit their work.
+            setSelfAllocSuccessCount(json.data?.allocatedCount ?? caseIds.length);
+            loadAll();
+        } catch (err: any) {
+            showSelfAllocToast(err?.message || "Failed to allocate");
+        } finally {
+            setSelfAllocSubmitting(false);
+        }
     };
 
     const setBulkType = (id: string, value: "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY") => {
@@ -988,6 +1173,14 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </button>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                        type="button"
+                        className="pf-btn pf-btn-outline"
+                        style={styles.exportBtn}
+                        onClick={openSelfAllocModal}
+                    >
+                        <BoxIcon /> Self Allocate
+                    </button>
                     <button
                         type="button"
                         className="pf-btn pf-btn-solid"
@@ -1452,6 +1645,254 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </div>
                 </div>
             )}
+
+            {showSelfAllocModal && (
+                <div style={styles.bulkOverlay} onClick={closeSelfAllocModal}>
+                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                        {selfAllocSuccessCount !== null ? (
+                            // ---- Success screen — shown right after a successful
+                            // allocate, in place of the picker. Closing this drops
+                            // the employee straight back onto the Profile page
+                            // (already refreshed) where they submit their work.
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    textAlign: "center",
+                                    gap: 10,
+                                    padding: "28px 10px 10px",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: 56,
+                                        height: 56,
+                                        borderRadius: "50%",
+                                        background: withAlpha(BRAND.green, 0.12),
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        color: BRAND.green,
+                                    }}
+                                >
+                                    <CheckIcon />
+                                </div>
+                                <h3 style={styles.bulkModalTitle}>Allocated!</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    {selfAllocSuccessCount} case
+                                    {selfAllocSuccessCount === 1 ? "" : "s"} allocated to yourself.
+                                    You'll find {selfAllocSuccessCount === 1 ? "it" : "them"} in
+                                    Today's Allocation below, ready to submit.
+                                </p>
+                                <button
+                                    type="button"
+                                    className="pf-btn pf-btn-solid"
+                                    style={{
+                                        ...styles.submitBtn,
+                                        width: "auto",
+                                        padding: "10px 28px",
+                                    }}
+                                    onClick={closeSelfAllocModal}
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={styles.bulkModalHeader}>
+                                    <div>
+                                        <h3 style={styles.bulkModalTitle}>Self Allocate</h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            Pick a service, tick the cases you want, then hit
+                                            Allocate. Only services your team (
+                                            {myTeamRaw || "no team set"}) is aligned to show up
+                                            here.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={closeSelfAllocModal}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <div style={{ marginBottom: 14 }}>
+                                    <label style={styles.smallLabel}>Service</label>
+                                    {selfAllocServicesLoading ? (
+                                        <p style={styles.smallMuted}>Loading services…</p>
+                                    ) : selfAllocServicesError ? (
+                                        <p style={styles.rowError}>{selfAllocServicesError}</p>
+                                    ) : !myTeamRaw ? (
+                                        <p style={styles.smallMuted}>
+                                            You don't have a team set on your profile, so no service
+                                            can be matched to you. Ask your manager to set your
+                                            team.
+                                        </p>
+                                    ) : selfAllocServices.length === 0 ? (
+                                        <p style={styles.smallMuted}>
+                                            No services are aligned to your team ({myTeamRaw}) yet.
+                                        </p>
+                                    ) : (
+                                        <select
+                                            style={{ ...styles.textInput, width: "100%" }}
+                                            value={selfAllocServiceId}
+                                            onChange={(e) => loadSelfAllocCases(e.target.value)}
+                                        >
+                                            <option value="">Select a service…</option>
+                                            {selfAllocServices.map((s) => (
+                                                <option key={s.id} value={s.id}>
+                                                    {s.product_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+
+                                {selfAllocServiceId && (
+                                    <div style={styles.bulkTableWrap}>
+                                        {selfAllocCasesLoading ? (
+                                            <p style={styles.smallMuted}>
+                                                Loading remaining cases…
+                                            </p>
+                                        ) : selfAllocCasesError ? (
+                                            <p style={styles.rowError}>{selfAllocCasesError}</p>
+                                        ) : selfAllocCases.length === 0 ? (
+                                            <p style={styles.smallMuted}>
+                                                No pending cases left on this service.
+                                            </p>
+                                        ) : (
+                                            <table style={styles.bulkTable}>
+                                                <colgroup>
+                                                    <col style={{ width: "10%" }} />
+                                                    <col style={{ width: "30%" }} />
+                                                    <col style={{ width: "30%" }} />
+                                                    <col style={{ width: "30%" }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th style={styles.th}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={
+                                                                    selfAllocCases.length > 0 &&
+                                                                    selfAllocSelectedIds.size ===
+                                                                        selfAllocCases.length
+                                                                }
+                                                                onChange={toggleSelfAllocSelectAll}
+                                                                aria-label="Select all"
+                                                            />
+                                                        </th>
+                                                        <th style={styles.th}>Case No.</th>
+                                                        <th style={styles.th}>
+                                                            Client / Subclient
+                                                        </th>
+                                                        <th style={styles.th}>Date</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {selfAllocCases.map((c) => (
+                                                        <tr
+                                                            key={c.id}
+                                                            style={{
+                                                                ...styles.tr,
+                                                                cursor: "pointer",
+                                                            }}
+                                                            onClick={() =>
+                                                                toggleSelfAllocCase(c.id)
+                                                            }
+                                                        >
+                                                            <td
+                                                                style={styles.td}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selfAllocSelectedIds.has(
+                                                                        c.id
+                                                                    )}
+                                                                    onChange={() =>
+                                                                        toggleSelfAllocCase(c.id)
+                                                                    }
+                                                                />
+                                                            </td>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    fontWeight: fontWeight.bold,
+                                                                }}
+                                                            >
+                                                                {c.caseNumber}
+                                                            </td>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    whiteSpace: "normal",
+                                                                }}
+                                                            >
+                                                                {[c.clientName, c.subclientName]
+                                                                    .filter(Boolean)
+                                                                    .join(" / ") || "-"}
+                                                            </td>
+                                                            <td style={styles.td}>{c.workDate}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                )}
+
+                                <div style={styles.bulkModalFooter}>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.bulkCancelBtn}
+                                        onClick={closeSelfAllocModal}
+                                        disabled={selfAllocSubmitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-solid"
+                                        style={{
+                                            ...styles.submitBtn,
+                                            width: "auto",
+                                            flex: 1,
+                                            opacity:
+                                                selfAllocSubmitting ||
+                                                selfAllocSelectedIds.size === 0
+                                                    ? 0.6
+                                                    : 1,
+                                            cursor:
+                                                selfAllocSubmitting ||
+                                                selfAllocSelectedIds.size === 0
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                        onClick={submitSelfAllocation}
+                                        disabled={
+                                            selfAllocSubmitting || selfAllocSelectedIds.size === 0
+                                        }
+                                    >
+                                        {selfAllocSubmitting
+                                            ? "Allocating…"
+                                            : selfAllocSelectedIds.size > 0
+                                              ? `Allocate (${selfAllocSelectedIds.size})`
+                                              : "Allocate"}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {selfAllocToast && <div style={styles.toast}>{selfAllocToast}</div>}
         </div>
     );
 }
@@ -1873,6 +2314,20 @@ function getStyles(
             boxShadow: CARD_SHADOW,
         },
         filterField: { display: "flex", flexDirection: "column", gap: 4, minWidth: 150 },
+        toast: {
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#17181C",
+            color: "#fff",
+            padding: "10px 18px",
+            borderRadius: radius.md,
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            boxShadow: "0 10px 30px rgba(0,0,0,.25)",
+            zIndex: 70,
+        },
         smallLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#3D4459" },
         // Matches Add User's `styles.input` recipe exactly.
         textInput: {
