@@ -1944,7 +1944,7 @@ const styles: Record<string, CSSProperties> = {
     },
     title: {
         fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
+        fontWeight: fontWeight.semibold,
         color: "#17181C",
         margin: 0,
         textAlign: "left",

@@ -77,6 +77,14 @@ type ServiceCaseRow = {
     allocationStatus: "PENDING" | "ALLOCATED";
     quantity: number | null;
     amount: number | null;
+    // NEW: post-allocation submission — set once the assigned employee
+    // marks the case done (Completed / Done by Team / Query). Same
+    // fields the History page and Today's Allocation → History tab
+    // already read from GET /api/service-cases.
+    submissionStatus: "PENDING" | "SUBMITTED";
+    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "QUERY" | null;
+    queryText: string | null;
+    submittedAt: string | null;
 };
 
 function todayStr() {
@@ -102,8 +110,23 @@ export default function ProductionReport() {
     const [toDate, setToDate] = useState(todayStr());
     const [employeeId, setEmployeeId] = useState("");
     const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">("");
+    // NEW: post-allocation submission filter — independent of
+    // allocation status above (a case can be Allocated but still not
+    // yet submitted). Only PENDING/SUBMITTED is filterable server-side
+    // (see submission_status on service_cases); the exact outcome
+    // (Completed/Done by Team/Query) shows as its own column instead of
+    // a filter option, since narrowing further would break the
+    // page-based pagination below.
+    const [submissionFilter, setSubmissionFilter] = useState<"" | "PENDING" | "SUBMITTED">("");
     const [clientName, setClientName] = useState("");
     const [clientNameInput, setClientNameInput] = useState(""); // debounced input
+    // NEW: universal search — one box that searches Case #, Service,
+    // Client, Subclient, Date, and even "pending"/"allocated" by
+    // keyword, all at once. Backed by the same `search` query param the
+    // Case Register box already uses (see listServiceCases's
+    // searchOrParts), so no backend change is needed here either.
+    const [searchInput, setSearchInput] = useState(""); // debounced input
+    const [searchQuery, setSearchQuery] = useState("");
 
     const [rows, setRows] = useState<ServiceCaseRow[]>([]);
     const [totalCount, setTotalCount] = useState<number | null>(null);
@@ -123,6 +146,14 @@ export default function ProductionReport() {
         const t = setTimeout(() => setClientName(clientNameInput.trim()), 400);
         return () => clearTimeout(t);
     }, [clientNameInput]);
+
+    // NEW: debounce the universal search box the same way — typing
+    // still auto-searches after a short pause; the Search button (and
+    // Enter key) below just applies it immediately without waiting.
+    useEffect(() => {
+        const t = setTimeout(() => setSearchQuery(searchInput.trim()), 400);
+        return () => clearTimeout(t);
+    }, [searchInput]);
 
     const fetchProducts = useCallback(async () => {
         try {
@@ -156,14 +187,33 @@ export default function ProductionReport() {
             params.set("page", String(forExport ? exportPage : page));
             params.set("pageSize", String(forExport ? EXPORT_PAGE_SIZE : PAGE_SIZE));
             if (productId) params.set("productId", productId);
-            if (fromDate) params.set("fromDate", fromDate);
-            if (toDate) params.set("toDate", toDate);
+            // FIX: the backend's date-range filter reads workDateFrom/
+            // workDateTo (see servicecases.controller.js), not fromDate/
+            // toDate — this report's From/To pickers were silently
+            // doing nothing server-side until now.
+            if (fromDate) params.set("workDateFrom", fromDate);
+            if (toDate) params.set("workDateTo", toDate);
             if (employeeId) params.set("employeeId", employeeId);
             if (statusFilter) params.set("allocationStatus", statusFilter);
             if (clientName) params.set("clientName", clientName);
+            // NEW: universal search — Case #, Service, Client, Subclient,
+            // Date, and status keywords, all in one box.
+            if (searchQuery) params.set("search", searchQuery);
+            // NEW: submission filter (Not Submitted / Submitted).
+            if (submissionFilter) params.set("submissionStatus", submissionFilter);
             return params;
         },
-        [page, productId, fromDate, toDate, employeeId, statusFilter, clientName]
+        [
+            page,
+            productId,
+            fromDate,
+            toDate,
+            employeeId,
+            statusFilter,
+            clientName,
+            searchQuery,
+            submissionFilter,
+        ]
     );
 
     const fetchReport = useCallback(async () => {
@@ -189,7 +239,16 @@ export default function ProductionReport() {
 
     useEffect(() => {
         setPage(1);
-    }, [productId, fromDate, toDate, employeeId, statusFilter, clientName]);
+    }, [
+        productId,
+        fromDate,
+        toDate,
+        employeeId,
+        statusFilter,
+        clientName,
+        searchQuery,
+        submissionFilter,
+    ]);
 
     // Pull every matching row across all pages for export, not just what's
     // currently on screen.
@@ -227,6 +286,17 @@ export default function ProductionReport() {
                 Employee: r.assignedEmployeeName || "Unallocated",
                 "Allocated By": r.allocatedByName || "",
                 Status: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
+                // NEW: post-allocation submission outcome + any query
+                // text raised, next to the existing allocation Status.
+                Submission:
+                    r.submissionType === "COMPLETED"
+                        ? "Completed"
+                        : r.submissionType === "DONE_BY_TEAM"
+                          ? "Done by Team"
+                          : r.submissionType === "QUERY"
+                            ? "Query"
+                            : "Not Submitted",
+                Query: r.submissionType === "QUERY" ? r.queryText || "" : "",
             }));
 
             const ws = XLSX.utils.json_to_sheet(sheetData);
@@ -238,6 +308,8 @@ export default function ProductionReport() {
                 { wch: 18 }, // Employee
                 { wch: 18 }, // Allocated By
                 { wch: 12 }, // Status
+                { wch: 14 }, // Submission
+                { wch: 28 }, // Query
             ];
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Production Report");
@@ -258,8 +330,11 @@ export default function ProductionReport() {
         setToDate(todayStr());
         setEmployeeId("");
         setStatusFilter("");
+        setSubmissionFilter("");
         setClientNameInput("");
         setClientName("");
+        setSearchInput("");
+        setSearchQuery("");
     };
 
     // On the 2-column mobile filter grid, select/input's fixed minWidth
@@ -301,6 +376,51 @@ export default function ProductionReport() {
                     >
                         <i className="ti ti-file-spreadsheet" />
                         {exporting ? "Exporting…" : "Export Excel"}
+                    </button>
+                </div>
+
+                {/* NEW: universal search — one box that searches Case #,
+                    Service, Client, Subclient, Date, and status keywords
+                    together, instead of only the Client text filter
+                    below. Typing auto-searches after a short pause; the
+                    Search button (or Enter) applies it immediately. */}
+                <div
+                    style={
+                        isMobile
+                            ? { ...styles.searchBar, flexDirection: "column" }
+                            : styles.searchBar
+                    }
+                >
+                    <div style={styles.searchInputWrap}>
+                        <i className="ti ti-search" style={styles.searchIcon} />
+                        <input
+                            type="text"
+                            placeholder="Search case #, service, client, subclient, date…"
+                            style={styles.searchInput}
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") setSearchQuery(searchInput.trim());
+                            }}
+                        />
+                        {searchInput && (
+                            <button
+                                type="button"
+                                style={styles.searchClearBtn}
+                                onClick={() => setSearchInput("")}
+                                aria-label="Clear search"
+                            >
+                                <i className="ti ti-x" />
+                            </button>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        style={{ ...styles.searchBtn, ...(isMobile ? { width: "100%" } : {}) }}
+                        onClick={() => setSearchQuery(searchInput.trim())}
+                    >
+                        <i className="ti ti-search" />
+                        Search
                     </button>
                 </div>
 
@@ -378,6 +498,21 @@ export default function ProductionReport() {
                             <option value="ALLOCATED">Allocated</option>
                         </select>
                     </div>
+                    {/* NEW: post-allocation submission filter — separate
+                        from allocation Status above (a case can be
+                        Allocated but still not yet submitted). */}
+                    <div style={isMobile ? { minWidth: 0 } : undefined}>
+                        <label style={styles.label}>Submission</label>
+                        <select
+                            style={filterFieldStyle}
+                            value={submissionFilter}
+                            onChange={(e) => setSubmissionFilter(e.target.value as any)}
+                        >
+                            <option value="">All</option>
+                            <option value="PENDING">Not Submitted</option>
+                            <option value="SUBMITTED">Submitted</option>
+                        </select>
+                    </div>
                     <div style={isMobile ? { gridColumn: "1 / -1" } : { flex: 1, minWidth: 180 }}>
                         <label style={styles.label}>Client</label>
                         <input
@@ -414,14 +549,26 @@ export default function ProductionReport() {
                             it landed on) so both are visible in the report. */}
                         <span style={styles.colAllocatedBy}>Allocated By</span>
                         <span style={styles.colStatus}>Status</span>
+                        {/* NEW: post-allocation submission outcome + any query
+                            text raised, so the report shows the full lifecycle
+                            (allocated → submitted → completed/done by team/query),
+                            not just allocation status. */}
+                        <span style={styles.colStatus}>Submission</span>
+                        <span style={styles.colQuery}>Query</span>
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading report…</div>
                     ) : rows.length === 0 ? (
                         <div style={styles.emptyNote}>No cases found for this filter.</div>
                     ) : (
-                        rows.map((r) => (
-                            <div key={r.id} style={styles.tableRow}>
+                        rows.map((r, idx) => (
+                            <div
+                                key={r.id}
+                                style={{
+                                    ...styles.tableRow,
+                                    background: idx % 2 === 0 ? "#fff" : "#fafbff",
+                                }}
+                            >
                                 <span style={styles.colCase}>{r.caseNumber}</span>
                                 <span style={styles.colClient}>{r.clientName || "—"}</span>
                                 <span style={styles.colService}>{r.productName || "—"}</span>
@@ -451,6 +598,42 @@ export default function ProductionReport() {
                                             ? "Allocated"
                                             : "Pending"}
                                     </span>
+                                </span>
+                                {/* NEW: Submission outcome pill — Completed / Done by
+                                    Team / Query / Not Submitted. */}
+                                <span style={styles.colStatus}>
+                                    <span
+                                        style={{
+                                            ...styles.statusPill,
+                                            background:
+                                                r.submissionType === "COMPLETED"
+                                                    ? "rgba(var(--brand-green-rgb),0.12)"
+                                                    : r.submissionType === "DONE_BY_TEAM"
+                                                      ? "rgba(var(--brand-blue-rgb),0.12)"
+                                                      : r.submissionType === "QUERY"
+                                                        ? "rgba(220,38,38,0.12)"
+                                                        : "rgba(156,163,175,0.15)",
+                                            color:
+                                                r.submissionType === "COMPLETED"
+                                                    ? BRAND.green
+                                                    : r.submissionType === "DONE_BY_TEAM"
+                                                      ? BRAND.blue
+                                                      : r.submissionType === "QUERY"
+                                                        ? BRAND.red
+                                                        : BRAND.grey,
+                                        }}
+                                    >
+                                        {r.submissionType === "COMPLETED"
+                                            ? "Completed"
+                                            : r.submissionType === "DONE_BY_TEAM"
+                                              ? "Done by Team"
+                                              : r.submissionType === "QUERY"
+                                                ? "Query"
+                                                : "Not Submitted"}
+                                    </span>
+                                </span>
+                                <span style={styles.colQuery}>
+                                    {r.submissionType === "QUERY" ? r.queryText || "—" : "—"}
                                 </span>
                             </div>
                         ))
@@ -494,7 +677,7 @@ export default function ProductionReport() {
     );
 }
 
-const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px";
+const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px 130px 1.3fr";
 
 const styles: Record<string, CSSProperties> = {
     root: { display: "flex", flexDirection: "column" },
@@ -538,6 +721,69 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
+        whiteSpace: "nowrap",
+    },
+    // NEW: universal search bar — sits above the filter card.
+    searchBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "10px 14px",
+        boxShadow: "0 4px 16px rgba(var(--brand-blue-rgb),.06)",
+        border: "1px solid #dfeaf5",
+    },
+    searchInputWrap: {
+        position: "relative",
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+    },
+    searchIcon: {
+        position: "absolute",
+        left: 12,
+        fontSize: fontSize.md,
+        color: "#9CA3AF",
+        pointerEvents: "none",
+    },
+    searchInput: {
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "10px 36px 10px 36px",
+        borderRadius: radius.md,
+        border: "1px solid #dbe6f0",
+        fontSize: fontSize.sm,
+        background: "#f7fafc",
+    },
+    searchClearBtn: {
+        position: "absolute",
+        right: 8,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 22,
+        height: 22,
+        borderRadius: radius.circle,
+        border: "none",
+        background: "#e5e9f0",
+        color: "#374151",
+        cursor: "pointer",
+        fontSize: fontSize.xs,
+    },
+    searchBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: "10px 20px",
+        borderRadius: radius.md,
+        border: "none",
+        background: GRADIENT,
+        color: "#fff",
+        fontWeight: fontWeight.semibold,
+        fontSize: fontSize.sm,
+        cursor: "pointer",
         whiteSpace: "nowrap",
     },
     filterBar: {
@@ -607,7 +853,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
-        minWidth: 900,
+        minWidth: 1150,
     },
     tableRow: {
         display: "grid",
@@ -618,7 +864,7 @@ const styles: Record<string, CSSProperties> = {
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
-        minWidth: 900,
+        minWidth: 1150,
     },
     totalsRow: {
         display: "flex",
@@ -629,7 +875,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#FAFBFF",
         fontSize: fontSize.sm,
         color: "#374151",
-        minWidth: 900,
+        minWidth: 1150,
     },
     colCase: {
         overflow: "hidden",
@@ -644,6 +890,14 @@ const styles: Record<string, CSSProperties> = {
     // Employee (who it landed on).
     colAllocatedBy: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     colStatus: {},
+    // NEW: "Query" column — wider, wraps instead of truncating since
+    // query text can run a full sentence.
+    colQuery: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        color: "#374151",
+    },
     statusPill: {
         display: "inline-flex",
         padding: "3px 10px",
