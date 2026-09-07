@@ -1769,7 +1769,7 @@ function getStyles(BRAND: {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            background: `linear-gradient(135deg, ${BRAND.green}, #0e9f6e)`,
+            background: `linear-gradient(135deg, ${BRAND.blue}, #142a63)`,
             color: "#fff",
             border: "none",
             borderRadius: radius["2xl"],
@@ -1777,7 +1777,7 @@ function getStyles(BRAND: {
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
             cursor: "pointer",
-            boxShadow: `0 6px 16px ${withAlpha(BRAND.green, 0.35)}`,
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.35)}`,
         },
         bulkBtn: {
             display: "flex",
@@ -2247,7 +2247,7 @@ function getStyles(BRAND: {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: `linear-gradient(135deg, ${BRAND.green}, #0e9f6e)`,
+            background: `linear-gradient(135deg, ${BRAND.blue}, #142a63)`,
             color: "#fff",
             border: "none",
             borderRadius: radius.circle,
@@ -2255,7 +2255,7 @@ function getStyles(BRAND: {
             height: 30,
             cursor: "pointer",
             flexShrink: 0,
-            boxShadow: `0 4px 12px ${withAlpha(BRAND.green, 0.35)}`,
+            boxShadow: `0 4px 12px ${withAlpha(BRAND.blue, 0.35)}`,
         },
     };
 }

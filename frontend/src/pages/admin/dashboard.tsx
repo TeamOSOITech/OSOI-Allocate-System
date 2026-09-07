@@ -459,6 +459,65 @@ export default function Dashboard({ user }: DashboardProps) {
     const [batchHistory, setBatchHistory] = useState<DailyWorkBatch[]>([]);
     const [batchHistoryLoading, setBatchHistoryLoading] = useState(true);
 
+    // NEW: KPI cards below now read case-based counts (from service_cases,
+    // via the same /api/service-cases endpoint Today's Allocation's Cases
+    // tab uses) instead of the old daily_work-batch allocatedQty/pendingQty.
+    // The old quantity-based "Allocate & Save" flow that used to write to
+    // the `allocations` table is disabled now (manualallocation.tsx's
+    // Allocate tab embeds the case-based Cases table instead), so nothing
+    // writes to `allocations` anymore — the old numbers would always show
+    // 0 allocated / everything pending, regardless of real allocations.
+    // Two lightweight pageSize=1 calls (one unfiltered, one
+    // allocationStatus=ALLOCATED) just read back `pagination.total` for an
+    // exact org-wide count across every service, same trick used on the
+    // Today's Allocation page (but without a productId filter there).
+    const [caseTotalCount, setCaseTotalCount] = useState(0);
+    const [caseAllocatedCount, setCaseAllocatedCount] = useState(0);
+    const [caseCountsLoading, setCaseCountsLoading] = useState(true);
+    const caseRemainingCount = caseTotalCount - caseAllocatedCount;
+
+    const fetchCaseCounts = async (silent = false) => {
+        if (!silent) setCaseCountsLoading(true);
+        try {
+            const baseParams = new URLSearchParams();
+            baseParams.set("page", "1");
+            baseParams.set("pageSize", "1");
+            baseParams.set("workDate", todayStr());
+            // Carries forward any still-PENDING case from an earlier date
+            // instead of undercounting "Remaining" — same flag the Cases
+            // tab sends.
+            baseParams.set("includeBacklog", "true");
+
+            const allocatedParams = new URLSearchParams(baseParams);
+            allocatedParams.set("allocationStatus", "ALLOCATED");
+
+            const [totalRes, allocatedRes] = await Promise.all([
+                authFetch(`${API_BASE}/api/service-cases?${baseParams.toString()}`),
+                authFetch(`${API_BASE}/api/service-cases?${allocatedParams.toString()}`),
+            ]);
+            const [totalJson, allocatedJson] = await Promise.all([
+                totalRes.json(),
+                allocatedRes.json(),
+            ]);
+            setCaseTotalCount(
+                totalRes.ok && totalJson.success ? (totalJson.pagination?.total ?? 0) : 0
+            );
+            setCaseAllocatedCount(
+                allocatedRes.ok && allocatedJson.success
+                    ? (allocatedJson.pagination?.total ?? 0)
+                    : 0
+            );
+        } catch (err) {
+            console.error("Failed to fetch today's case counts:", err);
+            if (!silent) {
+                setCaseTotalCount(0);
+                setCaseAllocatedCount(0);
+            }
+        } finally {
+            if (!silent) setCaseCountsLoading(false);
+        }
+    };
+
     const fetchEmployeeCount = async () => {
         try {
             const res = await authFetch(`${API_BASE}/api/employees`);
@@ -472,20 +531,27 @@ export default function Dashboard({ user }: DashboardProps) {
         }
     };
 
-    const fetchTodayBatches = async () => {
-        setLoading(true);
-        setError("");
-        setErrorDismissed(false);
+    const fetchTodayBatches = async (silent = false) => {
+        if (!silent) {
+            setLoading(true);
+            setError("");
+            setErrorDismissed(false);
+        }
         try {
             const res = await authFetch(`${API_BASE}/api/daily-work?date=${todayStr()}`);
             const json = await res.json();
             if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
             setBatches(json.data || []);
+            if (silent) setError("");
         } catch (err: any) {
             console.error("Failed to fetch today's daily work:", err);
-            setError(err?.message || "Failed to load today's daily work.");
+            // A silent background refresh failing (e.g. a dropped connection
+            // during the 30s auto-refresh) shouldn't yank away data that's
+            // already on screen and replace it with an error state — only
+            // a foreground load shows the error.
+            if (!silent) setError(err?.message || "Failed to load today's daily work.");
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
@@ -493,8 +559,8 @@ export default function Dashboard({ user }: DashboardProps) {
     // dailywork.controller.js: `date` is optional, filter is skipped
     // when absent). Grouped client-side by month/year in
     // `productionByPeriod` below.
-    const fetchBatchHistory = async () => {
-        setBatchHistoryLoading(true);
+    const fetchBatchHistory = async (silent = false) => {
+        if (!silent) setBatchHistoryLoading(true);
         try {
             const res = await authFetch(`${API_BASE}/api/daily-work`);
             const json = await res.json();
@@ -503,7 +569,7 @@ export default function Dashboard({ user }: DashboardProps) {
         } catch (err) {
             console.error("Failed to fetch daily work history:", err);
         } finally {
-            setBatchHistoryLoading(false);
+            if (!silent) setBatchHistoryLoading(false);
         }
     };
 
@@ -511,7 +577,27 @@ export default function Dashboard({ user }: DashboardProps) {
         fetchEmployeeCount();
         fetchTodayBatches();
         fetchBatchHistory();
+        fetchCaseCounts();
     }, []);
+
+    // NEW: auto-refresh every 30s so the dashboard reflects allocations/
+    // daily work logged by anyone else without needing a manual page
+    // reload. Runs "silent" (see the `silent` param above) so the
+    // KPI cards/chart/table don't flash back to their loading state on
+    // every refresh — they just update in place once the new data
+    // arrives. Quality view's summary is included too, but only while
+    // that view is actually the one on screen.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchEmployeeCount();
+            fetchTodayBatches(true);
+            fetchBatchHistory(true);
+            fetchCaseCounts(true);
+            if (viewMode === "quality") fetchQcSummary(true);
+        }, 30000);
+        return () => clearInterval(interval);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [viewMode]);
 
     // Sum of totalQty for a given month ("YYYY-MM") or year ("YYYY") key,
     // from the full batch history above.
@@ -541,6 +627,24 @@ export default function Dashboard({ user }: DashboardProps) {
     const [qcLoading, setQcLoading] = useState(false);
     const [qcError, setQcError] = useState("");
 
+    const fetchQcSummary = async (silent = false) => {
+        if (!silent) {
+            setQcLoading(true);
+            setQcError("");
+        }
+        try {
+            const res = await authFetch(`${API_BASE}/api/qc-audit/summary`);
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
+            setQcSummary(json.data);
+            if (silent) setQcError("");
+        } catch (err: any) {
+            if (!silent) setQcError(err?.message || "Failed to load quality summary.");
+        } finally {
+            if (!silent) setQcLoading(false);
+        }
+    };
+
     useEffect(() => {
         if (viewMode !== "quality") return;
         let cancelled = false;
@@ -564,19 +668,6 @@ export default function Dashboard({ user }: DashboardProps) {
         };
     }, [viewMode]);
 
-    const totalQtyToday = useMemo(
-        () => batches.reduce((sum, b) => sum + (b.totalQty || 0), 0),
-        [batches]
-    );
-    const allocatedQtyToday = useMemo(
-        () => batches.reduce((sum, b) => sum + (b.allocatedQty || 0), 0),
-        [batches]
-    );
-    const pendingQtyToday = useMemo(
-        () => batches.reduce((sum, b) => sum + (b.pendingQty || 0), 0),
-        [batches]
-    );
-
     const pendingBatches = useMemo(() => batches.filter((b) => (b.pendingQty || 0) > 0), [batches]);
 
     const chartData = useMemo(
@@ -599,25 +690,25 @@ export default function Dashboard({ user }: DashboardProps) {
             tip: "Total employees in your organization",
         },
         {
-            label: "Today's Total Qty",
-            value: totalQtyToday,
+            label: "Today's Total Cases",
+            value: caseTotalCount,
             icon: "ti ti-package",
             gradient: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.green})`,
-            tip: "Sum of total_qty across today's daily work batches",
+            tip: "Total service cases for today (including any still-pending backlog)",
         },
         {
-            label: "Today's Allocated Qty",
-            value: allocatedQtyToday,
+            label: "Today's Allocated",
+            value: caseAllocatedCount,
             icon: "ti ti-circle-check",
             gradient: `linear-gradient(135deg, ${BRAND.green}, ${BRAND.lightBlue})`,
-            tip: "Quantity already split across present employees today",
+            tip: "Cases already allocated to an employee today",
         },
         {
-            label: "Today's Pending Qty",
-            value: pendingQtyToday,
+            label: "Today's Remaining",
+            value: caseRemainingCount,
             icon: "ti ti-hourglass",
             gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
-            tip: "Quantity still waiting to be allocated today",
+            tip: "Cases still waiting to be allocated today",
         },
     ];
 
@@ -741,7 +832,7 @@ export default function Dashboard({ user }: DashboardProps) {
                                         />
                                     </div>
                                     <div style={styles.kpiValue}>
-                                        {loading && kpi.label !== "Total Employees"
+                                        {kpi.label !== "Total Employees" && caseCountsLoading
                                             ? "…"
                                             : kpi.value}
                                     </div>

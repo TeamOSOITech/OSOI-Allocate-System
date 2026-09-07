@@ -13,7 +13,7 @@
 // in manualallocation.tsx — nothing here touches daily_work batches or
 // the existing `allocations` table.
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
@@ -281,6 +281,16 @@ export default function TodaysAllocationCases({
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
+    // PERF FIX: when nothing's selected yet, the effect below auto-picks
+    // the first service the moment `products` loads (see further down).
+    // That counts as `productId` "changing", which used to also trigger
+    // the refetch effect right after it — firing Products/Employees a
+    // second time on every single first load, back-to-back with the
+    // mount fetch above. This ref lets the auto-select mark that one
+    // specific change as "already fresh, don't refetch" so it only fires
+    // for an actual user-driven service switch.
+    const autoSelectedRef = useRef(false);
+
     // FIX: re-fetch Products (with their Teams) and Employees whenever
     // the person switches the Service dropdown — not just once when this
     // tab first mounts. Without this, linking a Team to a service on the
@@ -288,6 +298,10 @@ export default function TodaysAllocationCases({
     // full page reload or a manual "Refresh" click, even after picking
     // that exact service again.
     useEffect(() => {
+        if (autoSelectedRef.current) {
+            autoSelectedRef.current = false;
+            return;
+        }
         if (!productId) return;
         fetchProducts();
         fetchEmployees();
@@ -295,7 +309,10 @@ export default function TodaysAllocationCases({
     }, [productId]);
 
     useEffect(() => {
-        if (!productId && products.length > 0) onChangeProductId(products[0].id);
+        if (!productId && products.length > 0) {
+            autoSelectedRef.current = true;
+            onChangeProductId(products[0].id);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [products]);
 
