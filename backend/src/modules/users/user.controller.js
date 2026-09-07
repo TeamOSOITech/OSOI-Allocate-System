@@ -181,9 +181,22 @@ async function bulkAddUser(req, res) {
     // add before touching anything, then stop handing out slots once
     // it's used up (still runs duplicate/validation checks on the rest
     // so the response reports why each row was skipped).
-    const [limit, currentCount] = await Promise.all([
+    //
+    // PERFORMANCE FIX: existing-email and reporting-manager checks used
+    // to run fresh (a full Supabase Auth user-list scan, and 2 DB
+    // queries respectively) INSIDE the loop below, once per row — a
+    // 50-row upload meant 50x the work. Both are now fetched ONCE here
+    // and checked in-memory per row instead.
+    const [
+      limit,
+      currentCount,
+      existingAuthEmails,
+      reportingManagerCandidates,
+    ] = await Promise.all([
       userService.getOrgUserLimit(req.user.organizationId),
       userService.getOrgUserCount(req.user.organizationId),
+      userService.fetchAllAuthEmails(),
+      userService.fetchOrgReportingManagerCandidates(req.user.organizationId),
     ]);
     let remainingSlots = Math.max(limit - currentCount, 0);
 
@@ -260,10 +273,13 @@ async function bulkAddUser(req, res) {
 
       // NEW: reporting manager, if provided, must be a real user OR a
       // manually-added entry, in the same organization.
+      //
+      // PERFORMANCE FIX: checked against the sets fetched once above,
+      // instead of running 2 fresh DB queries for every row.
       if (rawUser.reportingManager) {
-        const rmCheck = await userService.validateReportingManager(
+        const rmCheck = userService.validateReportingManagerAgainst(
           rawUser.reportingManager,
-          req.user.organizationId,
+          reportingManagerCandidates,
         );
         if (!rmCheck.valid) {
           results.push({ email, success: false, message: rmCheck.message });
@@ -292,8 +308,13 @@ async function bulkAddUser(req, res) {
       }
 
       try {
-        // Duplicate check against existing DB/auth users — email only
-        const alreadyExists = await userService.emailExists(email);
+        // Duplicate check against existing DB/auth users — email only.
+        //
+        // PERFORMANCE FIX: this used to call emailExists(email), which
+        // pages through EVERY Supabase Auth user on EVERY row — the
+        // main cause of bulk uploads being slow. Now just an in-memory
+        // Set lookup against the snapshot fetched once above.
+        const alreadyExists = existingAuthEmails.has(email);
         if (alreadyExists) {
           results.push({
             email,

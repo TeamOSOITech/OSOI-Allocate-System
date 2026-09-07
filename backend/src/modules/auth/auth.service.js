@@ -33,32 +33,51 @@ const login = async (email, password) => {
 
   console.log(`Found ${candidates.length} account(s) for this email`);
 
-  let authData = null;
-  let matchedUser = null;
+  // PERFORMANCE FIX: this used to try each candidate's password ONE AT A
+  // TIME in a for-loop — every attempt is a network round trip to
+  // Supabase Auth, so a real/contact email with several role-accounts
+  // (e.g. someone who is both a TEAM_MEMBER and a VERTICAL_HEAD account)
+  // made login noticeably slower the more accounts existed for that
+  // email, in the worst case (wrong password / last candidate matches)
+  // waiting on N sequential round trips before responding.
+  //
+  // Fired in parallel instead — same total number of Supabase calls,
+  // but they now all happen concurrently, so login takes roughly the
+  // time of ONE round trip regardless of how many candidates there are.
+  // Safe to parallelize: each call only reads its own returned `data`/
+  // `error`, and never relies on supabaseAuthClient's shared internal
+  // session state afterwards (see supabaseAuthClient.js for why that
+  // client is isolated from the service-role query client in the first
+  // place) — that same isolation is what makes it safe to be the target
+  // of several concurrent auth calls here.
+  const attempts = await Promise.all(
+    candidates.map(async (candidate) => {
+      const loginEmail = candidate["Login Email"];
+      const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
+        email: loginEmail,
+        password,
+      });
 
-  for (const candidate of candidates) {
-    const loginEmail = candidate["Login Email"];
+      // FIX: this used to log unconditionally, including when error was
+      // null (i.e. sign-in succeeded) — the literal text "Supabase
+      // Error:" then got flagged/highlighted as an error line by log
+      // viewers, making a perfectly successful login look like a
+      // failure. Now only logs when there's an actual error to report.
+      if (error) {
+        console.log(`Sign-in attempt failed for ${loginEmail}:`, error.message);
+      }
 
-    const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
-      email: loginEmail,
-      password,
-    });
+      return { candidate, data, error };
+    }),
+  );
 
-    // FIX: this used to log unconditionally, including when error was
-    // null (i.e. sign-in succeeded) — the literal text "Supabase Error:"
-    // then got flagged/highlighted as an error line by log viewers,
-    // making a perfectly successful login look like a failure. Now only
-    // logs when there's an actual error to report.
-    if (error) {
-      console.log(`Sign-in attempt failed for ${loginEmail}:`, error.message);
-    }
-
-    if (!error && data?.session) {
-      authData = data;
-      matchedUser = candidate;
-      break;
-    }
-  }
+  // Pick the first match IN THE SAME ORDER `candidates` came back in —
+  // keeps behavior identical to the old sequential loop (which also
+  // stopped at the first match in that order) even though the network
+  // calls themselves no longer run in that order.
+  const matched = attempts.find((a) => !a.error && a.data?.session);
+  const authData = matched?.data ?? null;
+  const matchedUser = matched?.candidate ?? null;
 
   if (!authData || !matchedUser) {
     console.error("NO MATCHING ROLE ACCOUNT FOR PASSWORD");

@@ -252,9 +252,15 @@ async function getSummary(req, res) {
           if (r.error) throw r.error;
           return r.count || 0;
         }),
-      countWhere("qc_status", "PENDING"),
-      countWhere("qc_status", "PASSED"),
-      countWhere("qc_status", "FAILED"),
+      // BUG FIX: this was counting qc_status = "PENDING"/"PASSED"/"FAILED",
+      // but assignQc()/recordQcResult() below actually write
+      // "QC_PENDING"/"QC_PASS"/"QC_FAIL" to this column — the mismatched
+      // strings meant these three counts NEVER matched any row, so the
+      // dashboard's Quality panel always showed 0 (or stale-looking)
+      // numbers for QC Pending/Pass/Fail regardless of the real data.
+      countWhere("qc_status", "QC_PENDING"),
+      countWhere("qc_status", "QC_PASS"),
+      countWhere("qc_status", "QC_FAIL"),
       countWhere("audit_status", "AUDIT_PENDING"),
       countWhere("audit_status", "AUDIT_PASS"),
       countWhere("audit_status", "AUDIT_FAIL"),

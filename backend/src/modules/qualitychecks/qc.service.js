@@ -62,6 +62,42 @@ async function getProductNameMap(productIds) {
 }
 
 // ------------------------------------------------------------
+// SECURITY: tenant-ownership checks — used by createQcCheck() before
+// inserting, so a caller can't record a QC check against an
+// employee_id/product_id belonging to a DIFFERENT organization just by
+// passing an arbitrary id in the request body (the id itself carries no
+// organization info, so the DB constraint alone doesn't stop this —
+// it has to be checked explicitly here).
+// ------------------------------------------------------------
+async function employeeBelongsToOrg(employeeId, orgId) {
+  const { data, error } = await supabase
+    .from("user_master")
+    .select('"Auth User Id"')
+    .eq('"Auth User Id"', employeeId)
+    .eq("organization_id", orgId)
+    .limit(1);
+  if (error) {
+    console.error("Failed to verify employee org ownership for QC:", error);
+    return false;
+  }
+  return Boolean(data && data.length > 0);
+}
+
+async function productBelongsToOrg(productId, orgId) {
+  const { data, error } = await supabase
+    .from("service_master")
+    .select("id")
+    .eq("id", productId)
+    .eq("organization_id", orgId)
+    .limit(1);
+  if (error) {
+    console.error("Failed to verify product org ownership for QC:", error);
+    return false;
+  }
+  return Boolean(data && data.length > 0);
+}
+
+// ------------------------------------------------------------
 // Recent QC checks for an organization, newest first. Optional
 // employeeId/productId filters.
 // ------------------------------------------------------------
@@ -95,6 +131,8 @@ async function insertQcCheck(payload) {
 module.exports = {
   getEmployeeNameMap,
   getProductNameMap,
+  employeeBelongsToOrg,
+  productBelongsToOrg,
   fetchQcChecks,
   insertQcCheck,
 };

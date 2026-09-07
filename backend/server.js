@@ -181,6 +181,10 @@ app.use(
   loadRoute("options", "./src/modules/options/options.routes"),
 );
 app.use(
+  "/api/role-labels",
+  loadRoute("roleLabels", "./src/modules/roleLabels/roleLabels.routes"),
+);
+app.use(
   "/api/employees",
   loadRoute("employees", "./src/modules/employees/employees.routes"),
 );
@@ -252,6 +256,64 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     message: "Server is running 🚀",
   });
+});
+
+// ========================
+// 🧭 404 — unmatched routes
+// ========================
+// MONITORING/RELIABILITY FIX: there was no catch-all here before, so a
+// request to a mistyped or removed endpoint fell through to Express's
+// default HTML 404 page — unhelpful for an API, and inconsistent with
+// every other error response in this app (which are all JSON).
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: "Route not found" });
+});
+
+// ========================
+// 🛑 GLOBAL ERROR HANDLER
+// ========================
+// MONITORING/RELIABILITY FIX: this app had no final Express error
+// middleware. Every route handler here does catch its own errors (try/
+// catch + res.status(500)), but that's a per-route convention, not a
+// guarantee — anything that slips through (a bug in a handler, a
+// middleware that calls next(err), a thrown error in code added later
+// without a try/catch) would previously either hang the request with no
+// response, or let Express fall back to its default HTML error page
+// (which can also leak the stack trace to the client outside
+// production). This is the safety net: log it server-side with enough
+// detail to debug, and always send back a plain JSON 500 instead.
+// Must be defined with all 4 params (err, req, res, next) — that's how
+// Express recognizes it as an error handler.
+app.use((err, req, res, next) => {
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({
+    success: false,
+    message: "Something went wrong on our end. Please try again.",
+  });
+});
+
+// ========================
+// 🚨 PROCESS-LEVEL SAFETY NET
+// ========================
+// MONITORING FIX: previously an uncaught exception or unhandled promise
+// rejection anywhere outside a request (a background job, a stray
+// `.then()` without `.catch()`, etc.) would either crash the process
+// with just Node's default stack trace, or — for unhandledRejection —
+// be silently swallowed depending on the Node version, with no record
+// of what happened. These at least guarantee it's logged clearly before
+// anything else happens. (If you add a real error-tracking service like
+// Sentry later, this is the place to report to it too.)
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+  // Deliberately not calling process.exit() here — killing the process
+  // on every uncaught error would turn one bad request into a full
+  // outage for every other in-flight request. Better to log it and keep
+  // serving; if it becomes a real problem, add a process manager
+  // (pm2/systemd) that restarts on repeated crashes.
 });
 
 // ========================

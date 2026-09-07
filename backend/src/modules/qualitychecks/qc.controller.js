@@ -101,6 +101,30 @@ async function createQcCheck(req, res) {
       });
     }
 
+    // SECURITY: employeeId/productId come straight from the request
+    // body, and an id alone doesn't prove it belongs to the caller's
+    // organization — without this check, any authenticated user could
+    // record a QC entry against another organization's employee/product
+    // by simply guessing/passing its id. Confirm both belong to the
+    // caller's own org before writing anything.
+    const [employeeOk, productOk] = await Promise.all([
+      qcService.employeeBelongsToOrg(employeeId, req.user.organizationId),
+      qcService.productBelongsToOrg(productId, req.user.organizationId),
+    ]);
+
+    if (!employeeOk) {
+      return res.status(403).json({
+        success: false,
+        message: "employeeId does not belong to your organization",
+      });
+    }
+    if (!productOk) {
+      return res.status(403).json({
+        success: false,
+        message: "productId does not belong to your organization",
+      });
+    }
+
     const data = await qcService.insertQcCheck({
       organization_id: req.user.organizationId,
       employee_id: employeeId,

@@ -235,6 +235,106 @@ async function emailExists(email) {
 }
 
 /**
+ * PERFORMANCE FIX (bulk upload was extremely slow): emailExists() above
+ * pages through EVERY Supabase Auth user (1000 per page) just to check
+ * ONE email. bulkAddUser() in user.controller.js used to call
+ * emailExists() separately FOR EACH ROW of the uploaded file — so a
+ * 50-row file on a platform with a few thousand auth users meant
+ * re-scanning the entire user list 50 times over.
+ *
+ * Fix: page through the list ONCE here, return every email as a Set,
+ * and have bulkAddUser() call this a single time before its loop, then
+ * do an O(1) `.has()` check per row instead of a fresh network scan.
+ */
+async function fetchAllAuthEmails() {
+  const perPage = 1000;
+  let page = 1;
+  const emails = new Set();
+
+  while (true) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+    if (error) throw error;
+
+    for (const u of data.users) {
+      emails.add(normalizeEmail(u.email));
+    }
+
+    if (data.users.length < perPage) break; // last page reached
+    page += 1;
+  }
+
+  return emails;
+}
+
+/**
+ * PERFORMANCE FIX: same N+1 problem as emailExists() above, but for
+ * reporting-manager validation — validateReportingManager() runs 2 DB
+ * queries per call, and bulkAddUser() used to call it once per row.
+ *
+ * Fetches every valid reporting-manager candidate for the organization
+ * (real users from user_master + manually-added names from
+ * reporting_managers) in 2 queries TOTAL, not 2 queries per row.
+ * validateReportingManagerAgainst() below then checks a row's value
+ * against these in-memory sets — no DB call per row at all.
+ */
+async function fetchOrgReportingManagerCandidates(organizationId) {
+  const [userRes, customRes] = await Promise.all([
+    supabaseAdmin
+      .from("user_master")
+      .select("Email")
+      .eq("organization_id", organizationId),
+    supabaseAdmin
+      .from("reporting_managers")
+      .select("name")
+      .eq("organization_id", organizationId),
+  ]);
+
+  if (userRes.error) {
+    console.error(
+      "fetchOrgReportingManagerCandidates: user_master lookup failed:",
+      userRes.error,
+    );
+  }
+  if (customRes.error) {
+    console.error(
+      "fetchOrgReportingManagerCandidates: reporting_managers lookup failed:",
+      customRes.error,
+    );
+  }
+
+  const emailSet = new Set(
+    (userRes.data || []).map((r) => normalizeEmail(r.Email)).filter(Boolean),
+  );
+  const nameSet = new Set(
+    (customRes.data || []).map((r) => normalizeEmail(r.name)).filter(Boolean),
+  );
+
+  return { emailSet, nameSet };
+}
+
+// Sync counterpart of validateReportingManager() — checks a value
+// against the pre-fetched candidate sets instead of hitting the DB.
+// Same matching rules: real user email first, then the manually-added
+// reporting_managers list (case-insensitive, since that's how the "+"
+// control on Add User stores whatever was typed).
+function validateReportingManagerAgainst(email, { emailSet, nameSet }) {
+  if (!email) return { valid: true }; // optional field
+
+  const normalized = normalizeEmail(email);
+  if (emailSet.has(normalized) || nameSet.has(normalized)) {
+    return { valid: true };
+  }
+
+  return {
+    valid: false,
+    message: `Reporting manager "${email}" was not found in your organization.`,
+  };
+}
+
+/**
  * Creates the Supabase auth user with the placeholder password, then mints
  * a recovery link via Supabase Admin. The link is returned to the caller —
  * NOTHING IS EMAILED. The admin UI is expected to display this link so it
@@ -396,6 +496,9 @@ module.exports = {
   getOrgUserLimit,
   getOrgUserCount,
   emailExists,
+  fetchAllAuthEmails,
+  fetchOrgReportingManagerCandidates,
+  validateReportingManagerAgainst,
   createUserAndGenerateResetLink,
   generateFallbackPassword,
 };
