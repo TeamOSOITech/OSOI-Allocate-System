@@ -1456,7 +1456,7 @@ const Products = () => {
 
             {/* View Details modal */}
             {viewDetails && (
-                <div style={styles.overlay} onClick={() => setViewDetails(null)}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>{viewDetails.product_name}</h3>
@@ -1549,7 +1549,7 @@ const Products = () => {
 
             {/* Add modal */}
             {showAddModal && (
-                <div style={styles.overlay} onClick={closeAddModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Add Service</h3>
@@ -1588,7 +1588,7 @@ const Products = () => {
 
             {/* Edit modal */}
             {editTarget && (
-                <div style={styles.overlay} onClick={closeEditModal}>
+                <div style={styles.overlay}>
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Edit Service</h3>
@@ -1627,7 +1627,7 @@ const Products = () => {
 
             {/* Delete confirmation modal */}
             {deleteTarget && (
-                <div style={styles.overlay} onClick={closeDeleteConfirm}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Delete {deleteTarget.name}?</h3>
@@ -1688,7 +1688,7 @@ const Products = () => {
                 delete modal above, but for however many services are
                 currently checked. */}
             {showBulkDeleteConfirm && (
-                <div style={styles.overlay} onClick={closeBulkDeleteConfirm}>
+                <div style={styles.overlay}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>
@@ -1756,7 +1756,7 @@ const Products = () => {
                 results/errors rendered inline below once a file is
                 submitted. */}
             {showBulkModal && (
-                <div style={styles.overlay} onClick={closeBulkModal}>
+                <div style={styles.overlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
                             <h3 style={styles.bulkModalTitle}>Bulk Add Services</h3>

@@ -600,7 +600,7 @@ export default function TodaysAllocationHistory() {
                 arm/confirm toggle, since this action is destructive and
                 irreversible. */}
             {confirmTarget && (
-                <div style={styles.overlay} onClick={() => setConfirmTarget(null)}>
+                <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.modalHeader}>
                             <h2 style={styles.modalTitle}>

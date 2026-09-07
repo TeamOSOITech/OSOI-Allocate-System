@@ -964,7 +964,7 @@ export default function TodaysAllocationCases({
             {/* Confirmation popup for "Clear" — same overlay/modal pattern
                 as the History tab's delete confirmation. */}
             {clearConfirmOpen && (
-                <div style={styles.overlay} onClick={() => setClearConfirmOpen(false)}>
+                <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.modalHeader}>
                             <h2 style={styles.modalTitle}>Clear allocations?</h2>
@@ -1010,7 +1010,7 @@ export default function TodaysAllocationCases({
                 really written to the server, so this is the only place
                 a "success" popup is shown. */}
             {successPopup && (
-                <div style={styles.overlay} onClick={() => setSuccessPopup(null)}>
+                <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.modalHeader}>
                             <h2 style={styles.modalTitle}>Allocated successfully</h2>

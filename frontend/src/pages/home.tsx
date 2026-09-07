@@ -2145,7 +2145,7 @@ function HolidaysModal({
         );
 
     return (
-        <div style={styles.modalOverlay} onClick={onClose}>
+        <div style={styles.modalOverlay}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -2358,7 +2358,7 @@ function BirthdaysModal({
     BRAND: any;
 }) {
     return (
-        <div style={styles.modalOverlay} onClick={onClose}>
+        <div style={styles.modalOverlay}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>Birthdays</h3>
@@ -2392,7 +2392,7 @@ function AnniversariesModal({
     styles: any;
 }) {
     return (
-        <div style={styles.modalOverlay} onClick={onClose}>
+        <div style={styles.modalOverlay}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>Work Anniversaries</h3>
@@ -2426,7 +2426,7 @@ function NewJoineesModal({
     styles: any;
 }) {
     return (
-        <div style={styles.modalOverlay} onClick={onClose}>
+        <div style={styles.modalOverlay}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>New Joinees</h3>

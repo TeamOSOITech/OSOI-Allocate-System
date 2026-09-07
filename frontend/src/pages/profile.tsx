@@ -1490,7 +1490,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
             {/* ---- Bulk Submit modal ---- */}
             {showBulkModal && (
-                <div style={styles.bulkOverlay} onClick={closeBulkModal}>
+                <div style={styles.bulkOverlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.bulkModalHeader}>
                             <div>
@@ -1674,7 +1674,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             )}
 
             {showSelfAllocModal && (
-                <div style={styles.bulkOverlay} onClick={closeSelfAllocModal}>
+                <div style={styles.bulkOverlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         {selfAllocSuccessCount !== null ? (
                             // ---- Success screen — shown right after a successful

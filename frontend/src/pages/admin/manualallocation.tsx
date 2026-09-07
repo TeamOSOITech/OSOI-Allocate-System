@@ -1816,7 +1816,7 @@ export default function ManualAllocation() {
 
                         {/* ---- centered success popup after Allocate & Save ---- */}
                         {saveSuccess && (
-                            <div style={styles.overlay} onClick={() => setSaveSuccess(null)}>
+                            <div style={styles.overlay}>
                                 <div
                                     style={styles.successModal}
                                     onClick={(e) => e.stopPropagation()}

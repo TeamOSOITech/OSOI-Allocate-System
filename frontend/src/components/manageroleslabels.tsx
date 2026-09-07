@@ -246,7 +246,6 @@ export default function ManageRoleLabelsButton() {
                         alignItems: "center",
                         justifyContent: "center",
                     }}
-                    onClick={closeModal}
                 >
                     <div
                         onClick={(e) => e.stopPropagation()}

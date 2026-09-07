@@ -1531,10 +1531,7 @@ const Landing = () => {
 
             {/* ---------- Checkout email modal (Basic / Professional) ---------- */}
             {checkoutPlan && (
-                <div
-                    className="lp-checkout-overlay"
-                    onClick={() => !checkoutLoading && setCheckoutPlan(null)}
-                >
+                <div className="lp-checkout-overlay">
                     <div className="lp-checkout-modal" onClick={(e) => e.stopPropagation()}>
                         <button
                             className="lp-checkout-close"
@@ -1597,10 +1594,7 @@ const Landing = () => {
 
             {/* ---------- "Sign up your organization" popup ---------- */}
             {orgSignupOpen && (
-                <div
-                    className="lp-checkout-overlay"
-                    onClick={() => !orgSignupLoading && closeOrgSignup()}
-                >
+                <div className="lp-checkout-overlay">
                     <div className="lp-checkout-modal" onClick={(e) => e.stopPropagation()}>
                         <button
                             className="lp-checkout-close"
