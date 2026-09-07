@@ -43,7 +43,7 @@ const menuItems: MenuItem[] = [
         // already includes OPS_MANAGER — this link was narrower than the
         // actual route (SUPER_ADMIN_ONLY), so Ops Manager could reach the
         // page directly by URL but never saw the sidebar link.
-        roles: [...SUPER_ADMIN_ONLY, "OPS_MANAGER"],
+        roles: [...SUPER_ADMIN_ONLY],
     },
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was
@@ -79,7 +79,7 @@ const menuItems: MenuItem[] = [
         label: "Daily Work",
         icon: "ti ti-clipboard-plus",
         path: "/daily-work",
-        roles: SUPER_ADMIN_ONLY,
+        roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER", "VERTICAL_HEAD"],
     },
     // REMOVED: standalone Attendance nav link — leave-marking now lives
     // inline inside Manual/Smart Allocation instead of a separate page.
@@ -94,13 +94,13 @@ const menuItems: MenuItem[] = [
         // URL but never saw the sidebar link. Now matches the route:
         // Vertical Head gets the (team-scoped) allocation grid, Team
         // Member gets the self-allocate-only view — see App.jsx.
-        roles: EVERYONE,
+        roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER", "VERTICAL_HEAD"],
     },
     {
         label: "Production Reports",
         icon: "ti ti-file-analytics",
         path: "/production-reports",
-        roles: SUPER_ADMIN_ONLY,
+        roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"],
     },
     {
         label: "History",
