@@ -13,6 +13,7 @@ import {
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
+import { useRoleLabels } from "../../context/roleLabelsContext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -417,6 +418,7 @@ function ComparePanel({
 export default function Dashboard({ user }: DashboardProps) {
     const isMobile = useIsMobile();
     const { colors: themeColors } = useTheme();
+    const { getRoleLabel } = useRoleLabels();
     const BRAND = {
         blue: themeColors.blue,
         lightBlue: themeColors.lightBlue,
@@ -662,7 +664,7 @@ export default function Dashboard({ user }: DashboardProps) {
                         summary={qcSummary}
                         loading={qcLoading}
                         error={qcError}
-                        userName={user?.name || user?.role}
+                        userName={user?.name || getRoleLabel(user?.role)}
                     />
                 ) : (
                     <>
@@ -672,8 +674,9 @@ export default function Dashboard({ user }: DashboardProps) {
                             <div>
                                 <h2 style={styles.pageTitle}>Dashboard</h2>
                                 <p style={styles.headerSubtext}>
-                                    Welcome, <strong>{user?.name || user?.role}</strong> — here's
-                                    today's snapshot.
+                                    Welcome,{" "}
+                                    <strong>{user?.name || getRoleLabel(user?.role)}</strong> —
+                                    here's today's snapshot.
                                 </p>
                             </div>
                             <div style={styles.dateBadge}>

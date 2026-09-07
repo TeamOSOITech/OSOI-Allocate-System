@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { authFetch } from "../../utils/authFetch";
+import { useRoleLabels } from "../../context/roleLabelsContext";
 import { getCurrentUser } from "../../utils/auth";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
@@ -298,6 +299,21 @@ export default function AddUser() {
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState("");
 
+    // "Add Team" popup — lets an admin register a new Team / Department /
+    // Role (designation) WITHOUT going through the full Add User form.
+    // None of the 3 fields is individually required — at least one filled
+    // field is enough to save (each filled field is persisted to its own
+    // existing options table, same tables the "+" controls below write to).
+    const [showAddTeamModal, setShowAddTeamModal] = useState(false);
+    const [addTeamForm, setAddTeamForm] = useState({
+        team: "",
+        department: "",
+        designation: "",
+        reportingManager: "",
+    });
+    const [addTeamSaving, setAddTeamSaving] = useState(false);
+    const [addTeamError, setAddTeamError] = useState("");
+
     // Dropdown option lists for the fields that support "add new" inline.
     // Seeded with sensible defaults; anything added via the + control gets
     // appended here so it shows up immediately in the dropdown.
@@ -342,18 +358,18 @@ export default function AddUser() {
         };
         fetchOptions();
     }, []);
-    // NOTE: Roles are tied to permission gating elsewhere (App.jsx role
-    // lists, backend src/config/permissions.js). Adding a role name here
-    // that doesn't exist in those places will let it be selected, but that
-    // user won't actually get any matching permissions. Keeping this
-    // addable because it was requested — worth revisiting.
+    // NOTE: labels come from getRoleLabel() (org-specific custom names —
+    // see src/context/roleLabelsContext.tsx), while `value` stays the
+    // fixed system role code. Renaming a role here is display-only and
+    // never affects permissions — see backend/src/config/permissions.js.
+    const { getRoleLabel } = useRoleLabels();
     const ALL_ROLE_OPTIONS: { value: string; label: string }[] = [
-        { value: "TEAM_MEMBER", label: "Team Member" },
-        { value: "VERTICAL_HEAD", label: "Vertical Head" },
-        { value: "PROCESS_LEAD", label: "Process Lead" },
-        { value: "OPS_MANAGER", label: "Ops Manager" },
-        { value: "AUDIT_MANAGER", label: "Audit Manager" },
-        { value: "SUPER_ADMIN", label: "Super Admin" },
+        { value: "TEAM_MEMBER", label: getRoleLabel("TEAM_MEMBER") },
+        { value: "VERTICAL_HEAD", label: getRoleLabel("VERTICAL_HEAD") },
+        { value: "PROCESS_LEAD", label: getRoleLabel("PROCESS_LEAD") },
+        { value: "OPS_MANAGER", label: getRoleLabel("OPS_MANAGER") },
+        { value: "AUDIT_MANAGER", label: getRoleLabel("AUDIT_MANAGER") },
+        { value: "SUPER_ADMIN", label: getRoleLabel("SUPER_ADMIN") },
     ];
 
     // FIX: this list used to show ALL six roles to every logged-in user
@@ -384,8 +400,16 @@ export default function AddUser() {
     const currentUser = getCurrentUser();
     const assignableForCurrentUser = ASSIGNABLE_ROLES_BY_CREATOR[currentUser?.role || ""] ?? [];
 
-    const [roleOptions, setRoleOptions] = useState<{ value: string; label: string }[]>(
-        ALL_ROLE_OPTIONS.filter((r) => assignableForCurrentUser.includes(r.value))
+    // FIX: was a `useState` seeded once at mount, so if the org's custom
+    // role labels (getRoleLabel) hadn't finished loading yet at that
+    // instant, this list froze on the DEFAULT English labels forever —
+    // a custom name set via "Manage Roles" on Home would never actually
+    // show up here. useMemo recomputes whenever getRoleLabel's underlying
+    // labels change, so it always reflects the latest names.
+    const roleOptions = useMemo(
+        () => ALL_ROLE_OPTIONS.filter((r) => assignableForCurrentUser.includes(r.value)),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [getRoleLabel, currentUser?.role]
     );
 
     // Reporting Manager dropdown = every current Process Lead, fetched
@@ -432,6 +456,108 @@ export default function AddUser() {
             // for other sessions/users until this endpoint exists/succeeds.
             console.error(`Failed to persist new "${field}" option:`, err);
         }
+    };
+
+    // "Add Team" popup save handler. Unlike saveCustomOption() above (which
+    // swallows errors — fine for the inline "+" controls, where the field
+    // still works locally even if persisting silently fails), this popup's
+    // ENTIRE job is persisting these values, so failures here need to
+    // actually surface to the admin instead of failing silently.
+    //
+    // Each of the 4 fields is independent and optional. "Designation" is a
+    // free-text value (e.g. "QA Lead"), saved to the same `designations`
+    // table the "Role" dropdown further down this form reads from — NOT
+    // the fixed system role (TEAM_MEMBER / VERTICAL_HEAD / etc.), which
+    // can't be created this way. "Reporting Manager" takes an EMAIL only —
+    // that's what validateReportingManagerAgainst() (user.service.js) and
+    // the Reporting Manager "+" control further down this form both match
+    // against, so a name here wouldn't ever actually match anything.
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    const handleAddTeamSave = async () => {
+        const team = addTeamForm.team.trim();
+        const department = addTeamForm.department.trim();
+        const designation = addTeamForm.designation.trim();
+        const reportingManager = addTeamForm.reportingManager.trim();
+
+        if (!team && !department && !designation && !reportingManager) {
+            setAddTeamError("Fill in at least one field to save.");
+            return;
+        }
+        if (reportingManager && !EMAIL_RE.test(reportingManager)) {
+            setAddTeamError("Reporting Manager must be a valid email address.");
+            return;
+        }
+
+        setAddTeamError("");
+        setAddTeamSaving(true);
+
+        const jobs: { label: string; field: string; value: string }[] = [];
+        if (team) jobs.push({ label: "Team", field: "teams", value: team });
+        if (department) jobs.push({ label: "Department", field: "department", value: department });
+        if (designation)
+            jobs.push({ label: "Designation", field: "designation", value: designation });
+        if (reportingManager)
+            jobs.push({
+                label: "Reporting Manager",
+                field: "reportingManager",
+                value: reportingManager,
+            });
+
+        const failed: string[] = [];
+
+        for (const job of jobs) {
+            try {
+                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/options`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ field: job.field, value: job.value }),
+                });
+                if (!res.ok) throw new Error(`Request failed (${res.status})`);
+
+                // Reflect immediately in this page's dropdowns, same as the
+                // inline "+" controls do, so it's selectable right away
+                // without a page reload.
+                if (job.field === "teams") {
+                    setTeamsOptions((prev) =>
+                        prev.includes(job.value) ? prev : [...prev, job.value]
+                    );
+                } else if (job.field === "department") {
+                    setDepartmentOptions((prev) =>
+                        prev.includes(job.value) ? prev : [...prev, job.value]
+                    );
+                } else if (job.field === "designation") {
+                    setDesignationOptions((prev) =>
+                        prev.includes(job.value) ? prev : [...prev, job.value]
+                    );
+                }
+                // NOTE: no local reporting-manager options list to update
+                // here — that dropdown is populated from real Process Lead
+                // employee records (see the comment further down this
+                // file), plus whatever's in the reporting_managers table,
+                // which this just saved to; it'll show up next time that
+                // list is fetched.
+            } catch (err) {
+                console.error(`Failed to save "${job.label}":`, err);
+                failed.push(job.label);
+            }
+        }
+
+        setAddTeamSaving(false);
+
+        if (failed.length > 0) {
+            setAddTeamError(
+                `Couldn't save: ${failed.join(", ")}. ${
+                    failed.length < jobs.length ? "The rest were saved." : "Please try again."
+                }`
+            );
+            return;
+        }
+
+        // Everything that was filled in saved successfully.
+        setAddTeamForm({ team: "", department: "", designation: "", reportingManager: "" });
+        setShowAddTeamModal(false);
+        alert("Saved! The new value(s) are now available in the dropdowns below.");
     };
 
     // FIX: previously picked purely random characters from a pool that
@@ -738,6 +864,22 @@ export default function AddUser() {
                         <div style={styles.mobileHeaderBtnGroup}>
                             <span className="au-tooltip-wrap">
                                 <button
+                                    style={styles.addTeamBtnMobile}
+                                    onClick={() => setShowAddTeamModal(true)}
+                                    type="button"
+                                    aria-label="Add Team"
+                                >
+                                    <i
+                                        className="ti ti-users-plus"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
+                                </button>
+                                <span className="au-tooltip-bubble">
+                                    Register a new Team, Department or Role without creating a user
+                                </span>
+                            </span>
+                            <span className="au-tooltip-wrap">
+                                <button
                                     style={styles.templateBtnMobile}
                                     onClick={downloadTemplate}
                                     type="button"
@@ -779,6 +921,23 @@ export default function AddUser() {
                                     </p>
                                 </div>
                                 <div style={styles.headerButtonGroup}>
+                                    <span className="au-tooltip-wrap">
+                                        <button
+                                            style={styles.addTeamBtn}
+                                            onClick={() => setShowAddTeamModal(true)}
+                                            type="button"
+                                        >
+                                            <i
+                                                className="ti ti-users-plus"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            Add Team
+                                        </button>
+                                        <span className="au-tooltip-bubble">
+                                            Register a new Team, Department or Role without creating
+                                            a user
+                                        </span>
+                                    </span>
                                     <span className="au-tooltip-wrap">
                                         <button
                                             style={styles.templateBtn}
@@ -988,19 +1147,13 @@ export default function AddUser() {
                                                 </option>
                                             ))}
                                         </select>
-                                        <InlineAddOption
-                                            styles={styles}
-                                            placeholder="e.g. QA_LEAD"
-                                            onAdd={async (val) => {
-                                                setRoleOptions((prev) =>
-                                                    prev.some((r) => r.value === val)
-                                                        ? prev
-                                                        : [...prev, { value: val, label: val }]
-                                                );
-                                                setFormData((prev) => ({ ...prev, role: val }));
-                                                await saveCustomOption("role", val);
-                                            }}
-                                        />
+                                        {/* FIX: removed the "+" here — it let anyone type an
+                                            arbitrary, non-functional "role" (e.g. "QA_LEAD")
+                                            that had no matching permissions AND wasn't even
+                                            persisted server-side (POST /api/options has no
+                                            "role" table). Renaming an EXISTING role is now the
+                                            supported way to do this — see the "Manage Roles"
+                                            button on the Home page (Super Admin only). */}
                                     </div>
                                     <div>
                                         {/* Heading updated: "Reporting Manager" ->
@@ -1361,6 +1514,107 @@ export default function AddUser() {
                     </div>
                 )}
 
+                {showAddTeamModal && (
+                    <div style={styles.overlay}>
+                        <div style={styles.addTeamModal} onClick={(e) => e.stopPropagation()}>
+                            <div style={styles.bulkModalHeader}>
+                                <h3 style={styles.bulkModalTitle}>Add Team</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Register a new Team, Department, Designation or Reporting
+                                    Manager — fill in at least one, the rest are optional.
+                                </p>
+                                <button
+                                    style={styles.closeBtn}
+                                    onClick={() => {
+                                        setShowAddTeamModal(false);
+                                        setAddTeamError("");
+                                    }}
+                                    type="button"
+                                    aria-label="Close"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div style={styles.addTeamBody}>
+                                <div>
+                                    <label style={styles.addTeamLabel}>Team</label>
+                                    <input
+                                        style={styles.input}
+                                        value={addTeamForm.team}
+                                        onChange={(e) =>
+                                            setAddTeamForm((prev) => ({
+                                                ...prev,
+                                                team: e.target.value,
+                                            }))
+                                        }
+                                        placeholder="e.g. Support"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.addTeamLabel}>Department</label>
+                                    <input
+                                        style={styles.input}
+                                        value={addTeamForm.department}
+                                        onChange={(e) =>
+                                            setAddTeamForm((prev) => ({
+                                                ...prev,
+                                                department: e.target.value,
+                                            }))
+                                        }
+                                        placeholder="e.g. Finance"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.addTeamLabel}>Designation</label>
+                                    <input
+                                        style={styles.input}
+                                        value={addTeamForm.designation}
+                                        onChange={(e) =>
+                                            setAddTeamForm((prev) => ({
+                                                ...prev,
+                                                designation: e.target.value,
+                                            }))
+                                        }
+                                        placeholder="e.g. QA Lead"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={styles.addTeamLabel}>Reporting Manager</label>
+                                    <input
+                                        type="email"
+                                        style={styles.input}
+                                        value={addTeamForm.reportingManager}
+                                        onChange={(e) =>
+                                            setAddTeamForm((prev) => ({
+                                                ...prev,
+                                                reportingManager: e.target.value,
+                                            }))
+                                        }
+                                        placeholder="e.g. manager@company.com"
+                                    />
+                                </div>
+
+                                {addTeamError && <p style={styles.error}>{addTeamError}</p>}
+
+                                <button
+                                    type="button"
+                                    onClick={handleAddTeamSave}
+                                    disabled={addTeamSaving}
+                                    style={{
+                                        ...styles.bulkUploadBtn,
+                                        opacity: addTeamSaving ? 0.7 : 1,
+                                        cursor: addTeamSaving ? "not-allowed" : "pointer",
+                                        width: "100%",
+                                    }}
+                                >
+                                    {addTeamSaving ? "Saving…" : "Save"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* FIX: was onRequestSubmit={handleRegister} — now goes through
                 the guarded wrapper above instead of calling the real
                 registration handler directly. */}
@@ -1510,6 +1764,20 @@ function getStyles(BRAND: {
             fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
             cursor: "pointer",
+        },
+        addTeamBtn: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: `linear-gradient(135deg, ${BRAND.green}, #0e9f6e)`,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius["2xl"],
+            padding: "11px 20px",
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.green, 0.35)}`,
         },
         bulkBtn: {
             display: "flex",
@@ -1771,6 +2039,28 @@ function getStyles(BRAND: {
             overflowY: "auto",
             boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
         },
+        addTeamModal: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            width: 420,
+            maxWidth: "92vw",
+            maxHeight: "88vh",
+            overflowY: "auto",
+            boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+        },
+        addTeamBody: {
+            padding: "20px 28px 28px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+        },
+        addTeamLabel: {
+            display: "block",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            color: "#4B5563",
+            marginBottom: 6,
+        },
         bulkModalHeader: {
             position: "relative",
             textAlign: "center",
@@ -1952,6 +2242,20 @@ function getStyles(BRAND: {
             height: 30,
             cursor: "pointer",
             flexShrink: 0,
+        },
+        addTeamBtnMobile: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: `linear-gradient(135deg, ${BRAND.green}, #0e9f6e)`,
+            color: "#fff",
+            border: "none",
+            borderRadius: radius.circle,
+            width: 30,
+            height: 30,
+            cursor: "pointer",
+            flexShrink: 0,
+            boxShadow: `0 4px 12px ${withAlpha(BRAND.green, 0.35)}`,
         },
     };
 }

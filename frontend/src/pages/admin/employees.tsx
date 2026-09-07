@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { authFetch } from "../../utils/authFetch";
+import { useRoleLabels } from "../../context/roleLabelsContext";
 //import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
@@ -59,10 +60,12 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
     { value: "TEAM_MEMBER", label: "Team Member" },
 ];
 
-function formatRoleLabel(roleCode?: string | null) {
-    if (!roleCode) return "—";
-    return ROLE_OPTIONS.find((r) => r.value === roleCode)?.label || roleCode;
-}
+// Role label resolution now goes through useRoleLabels() (see the
+// component below) instead of this static list, so an org's custom
+// role name (set via "Manage Roles" on Home, Super Admin only) is
+// reflected here too. ROLE_OPTIONS itself is still used for the
+// dropdown's VALUE list (which roles exist) — just not for the label
+// text anymore.
 
 // Each entry pairs an avatar tint with a matching accent used for the card's
 // top border, so the two read as one deliberate color per person rather than
@@ -163,6 +166,12 @@ const GLOBAL_CSS = `
 export default function Employees() {
     const isMobile = useIsMobile();
     //const [sidebarOpen, setSidebarOpen] = useState(false);
+
+    // Custom org-specific role display names — see
+    // src/context/roleLabelsContext.tsx. `formatRoleLabel` name kept so
+    // the two existing call sites below don't need to change.
+    const { getRoleLabel } = useRoleLabels();
+    const formatRoleLabel = getRoleLabel;
 
     // ---- Role gating ----
     // Only roles holding the "employees.manage" permission can see and use
@@ -1493,7 +1502,7 @@ export default function Employees() {
                                             <option value="">Select role</option>
                                             {ROLE_OPTIONS.map((r) => (
                                                 <option key={r.value} value={r.value}>
-                                                    {r.label}
+                                                    {getRoleLabel(r.value)}
                                                 </option>
                                             ))}
                                         </select>

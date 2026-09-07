@@ -3,6 +3,7 @@ import type { CSSProperties, ChangeEvent } from "react";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
+import { useRoleLabels } from "../context/roleLabelsContext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -313,6 +314,7 @@ const InfoIcon = () => (
 export default function Profile({ onLogout }: ProfileProps) {
     const isMobile = useIsMobile();
     const { colors: themeColors } = useTheme();
+    const { getRoleLabel } = useRoleLabels();
     // amber/red are fixed status colors (not part of the theme palette),
     // appended onto the active blue/lightBlue/green from useTheme().
     const BRAND = {
@@ -1053,14 +1055,26 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <InfoIconRow
                             icon={<ShieldIcon />}
                             label="Role"
-                            value={(role || "-").toString().toUpperCase()}
+                            value={role && role !== "-" ? getRoleLabel(role) : "-"}
                             styles={styles}
                         />
                         <div style={styles.contactRow}>
                             <span style={styles.contactIcon}>
                                 <MailIcon />
                             </span>
-                            <span style={styles.contactValue}>{email}</span>
+                            {/* FIX (#6 — clickable email): was plain text,
+                                now opens the user's mail client. Falls back
+                                to plain text if there's no email on file. */}
+                            {email && email !== "-" ? (
+                                <a
+                                    href={`mailto:${email}`}
+                                    style={{ ...styles.contactValue, textDecoration: "none" }}
+                                >
+                                    {email}
+                                </a>
+                            ) : (
+                                <span style={styles.contactValue}>{email}</span>
+                            )}
                         </div>
                         {editingProfile ? (
                             <div style={styles.editField}>
@@ -1079,7 +1093,20 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <span style={styles.contactIcon}>
                                     <PhoneIcon />
                                 </span>
-                                <span style={styles.contactValue}>{phone}</span>
+                                {/* FIX (#17 — clickable phone number): was
+                                    plain text, now dials/opens the user's
+                                    phone/calling app on tap. Strips spaces
+                                    so tel: links work on all devices. */}
+                                {phone && phone !== "-" ? (
+                                    <a
+                                        href={`tel:${phone.replace(/\s+/g, "")}`}
+                                        style={{ ...styles.contactValue, textDecoration: "none" }}
+                                    >
+                                        {phone}
+                                    </a>
+                                ) : (
+                                    <span style={styles.contactValue}>{phone}</span>
+                                )}
                             </div>
                         )}
                     </div>

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import Header from "./components/header";
 import Sidebar from "./components/sidebar";
 import { ThemeProvider } from "./context/themecontext";
+import { RoleLabelsProvider } from "./context/roleLabelsContext";
 import { authFetch } from "./utils/authFetch";
 
 // FIX (loading time): every page below was imported eagerly, so a user
@@ -45,6 +46,8 @@ const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 const History = lazy(() => import("./pages/admin/history"));
 const Billing = lazy(() => import("./pages/admin/billing"));
+// FIX (#16 — 404 page): catch-all for any unmatched route.
+const NotFound = lazy(() => import("./pages/notfound"));
 //import VoiceAssistant from "./components/voiceAssistant";
 
 // Backend base URL, same source every other page uses for API calls.
@@ -222,7 +225,12 @@ const AppLayout = ({ children, onLogout }) => {
                         overflowX: "hidden",
                     }}
                 >
-                    {children}
+                    {/* Only mounted for authenticated pages (AppLayout is
+                        never rendered on /login, /register, the public
+                        landing page, etc.), so it's safe for this to fetch
+                        immediately — no risk of firing an authenticated
+                        request before there's a session. */}
+                    <RoleLabelsProvider>{children}</RoleLabelsProvider>
                 </main>
             </div>
         </div>
@@ -477,6 +485,11 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         <Route path="/register" element={<Register />} />
 
                         <Route path="/" element={<Landing />} />
+
+                        {/* FIX (#16): must be LAST — react-router matches
+                            top to bottom, and "*" would otherwise swallow
+                            every route defined after it. */}
+                        <Route path="*" element={<NotFound />} />
                     </Routes>
                 </Suspense>
             </BrowserRouter>

@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
+import ManageRoleLabelsButton from "../components/manageroleslabels";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -674,9 +675,15 @@ export default function Home({ user }: { user: HomeUser }) {
                         </h2>
                         <p style={styles.headerSubtext}>Here's what's happening today.</p>
                     </div>
-                    <div style={styles.dateBadge}>
-                        <i className="ti ti-calendar-event" aria-hidden="true" />
-                        {todayNice}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={styles.dateBadge}>
+                            <i className="ti ti-calendar-event" aria-hidden="true" />
+                            {todayNice}
+                        </div>
+                        {/* Super Admin only — lets them rename any assignable
+                            role for this org (e.g. "Team Member" -> "Employee")
+                            without touching what that role can actually do. */}
+                        {isSuperAdmin && <ManageRoleLabelsButton />}
                     </div>
                 </div>
 
