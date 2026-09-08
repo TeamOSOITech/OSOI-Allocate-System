@@ -1,8 +1,8 @@
 // src/modules/roleLabels/roleLabels.routes.js
 //
-// Lets a Super Admin give the app's 5 assignable system roles a custom
-// DISPLAY NAME for their own organization only — e.g. renaming
-// "Team Member" to "Employee". This is purely a label swap: the
+// Lets a Super Admin (or Ops Manager) give the app's 5 assignable system
+// roles a custom DISPLAY NAME for their own organization only — e.g.
+// renaming "Team Member" to "Employee". This is purely a label swap: the
 // underlying role value stored on user_master (TEAM_MEMBER, etc.) never
 // changes, so every permission check in src/config/permissions.js /
 // middlewares/rbac.js keeps working exactly as before. Only what the
@@ -105,10 +105,10 @@ router.get("/", async (req, res) => {
 
 // ---------- POST /api/role-labels ----------
 // Body: { role: "TEAM_MEMBER", label: "Employee" }
-// Super Admin only. An empty/whitespace-only label RESETS that role back
-// to its default (deletes the override row) — lets an admin undo a
-// custom label without a separate "reset" endpoint.
-router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
+// Super Admin or Ops Manager. An empty/whitespace-only label RESETS that
+// role back to its default (deletes the override row) — lets an admin
+// undo a custom label without a separate "reset" endpoint.
+router.post("/", authorize("SUPER_ADMIN", "OPS_MANAGER"), async (req, res) => {
   try {
     const orgId = req.user.organizationId;
     const { role, label } = req.body || {};
