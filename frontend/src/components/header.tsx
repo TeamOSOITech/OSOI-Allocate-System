@@ -51,7 +51,9 @@ export default function Header({
     onLogout,
     notificationCount = 0,
 }: HeaderProps) {
-    const { isMobile, isSmallMobile } = useBreakpoint();
+    // NOTE: isSmallMobile no longer used here — it only gated the bell
+    // icon's small-screen variant, which was removed below.
+    const { isMobile } = useBreakpoint();
     const { colors: BRAND, themeName, setThemeName } = useTheme();
     const navigate = useNavigate();
     const displayName = userName || "Administrator";
@@ -128,45 +130,12 @@ export default function Header({
 
             {/* RIGHT */}
             <div style={isMobile ? styles.rightMobile : styles.right}>
-                {!isSmallMobile && (
-                    <>
-                        <button
-                            style={styles.iconBtn}
-                            onClick={onHelp}
-                            aria-label="Help"
-                            title="Help"
-                        >
-                            <i className="ti ti-question-mark" />
-                        </button>
-                        <button
-                            style={styles.iconBtn}
-                            onClick={onNotificationsClick}
-                            aria-label="Notifications"
-                            title="Notifications"
-                        >
-                            <i className="ti ti-bell" />
-                            {notificationCount > 0 && (
-                                <span style={styles.notifBadge}>
-                                    {notificationCount > 9 ? "9+" : notificationCount}
-                                </span>
-                            )}
-                        </button>
-                    </>
-                )}
-
-                {isSmallMobile && (
-                    <button
-                        style={styles.iconBtnSmall}
-                        onClick={onNotificationsClick}
-                        aria-label="Notifications"
-                        title="Notifications"
-                    >
-                        <i className="ti ti-bell" style={{ fontSize: fontSize.lg }} />
-                        {notificationCount > 0 && (
-                            <span style={styles.notifDot} aria-hidden="true" />
-                        )}
-                    </button>
-                )}
+                {/* REMOVED: Help (?) and Notifications (bell) icon buttons
+                    per request — neither had a working page/panel behind
+                    it yet, so they were removed from the header entirely
+                    (desktop + small-mobile variants). onHelp/
+                    onNotificationsClick/notificationCount props are left
+                    in place in case they're wired up again later. */}
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>
