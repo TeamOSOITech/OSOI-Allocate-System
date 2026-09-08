@@ -242,6 +242,11 @@ interface HomeUser {
     firstName?: string;
     lastName?: string;
     email?: string;
+    // NEW: needed to namespace the wish-posts localStorage key per
+    // organization (see WISH_POSTS_STORAGE_KEY below) — already present
+    // on the logged-in user object (see auth.service.js), just wasn't
+    // typed/used here yet.
+    organizationId?: string | null;
 }
 
 interface Holiday {
@@ -325,6 +330,12 @@ export default function Home({ user }: { user: HomeUser }) {
     };
     const styles = getStyles(BRAND);
     const isSuperAdmin = user?.role === "SUPER_ADMIN";
+    // NEW: Ops Manager can now also post/edit/delete birthday & work
+    // anniversary wishes — kept as its own flag rather than folding into
+    // isSuperAdmin so every OTHER isSuperAdmin-gated action on this page
+    // (Holidays/New Joinees management, Manage Role Labels' broader
+    // reach, etc.) stays exactly as it was unless asked for separately.
+    const canPostWishes = user?.role === "SUPER_ADMIN" || user?.role === "OPS_MANAGER";
     // NEW: Ops Manager can now also use the "Manage Role Labels" button
     // (backend's POST /api/role-labels now allows OPS_MANAGER too) — kept
     // as its own flag rather than folding into isSuperAdmin so every
@@ -355,7 +366,14 @@ export default function Home({ user }: { user: HomeUser }) {
         kind: "birthday" | "anniversary";
         editingPost: WishPost | null;
     }>({ kind: "birthday", editingPost: null });
-    const WISH_POSTS_STORAGE_KEY = "osoi_home_wish_posts";
+    // FIX: this key wasn't scoped at all, so every organization logged
+    // into the same browser shared the exact same localStorage bucket —
+    // Org A's wish posts showed up for Org B, and vice versa. Namespacing
+    // by organizationId keeps each org's posts to itself. (Posts are
+    // still client-side/localStorage only — not shared with a colleague
+    // on a different device — that would need a real backend table; this
+    // just stops the cross-organization leak.)
+    const WISH_POSTS_STORAGE_KEY = `osoi_home_wish_posts_${user?.organizationId || "unknown"}`;
     const [wishPosts, setWishPosts] = useState<WishPost[]>(() => {
         // Load previously posted wishes from localStorage so they survive
         // a page refresh instead of vanishing (they're client-side only —
@@ -376,7 +394,8 @@ export default function Home({ user }: { user: HomeUser }) {
             // Storage full or unavailable — silently ignore, posts just
             // won't persist across refreshes in that case.
         }
-    }, [wishPosts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wishPosts, WISH_POSTS_STORAGE_KEY]);
     const [showAnniversariesModal, setShowAnniversariesModal] = useState(false);
     const [showNewJoineesModal, setShowNewJoineesModal] = useState(false);
 
@@ -931,7 +950,7 @@ export default function Home({ user }: { user: HomeUser }) {
 
                         <div style={styles.programBody}>
                             <div style={styles.programActionsRow}>
-                                {isSuperAdmin && (
+                                {canPostWishes && (
                                     <button
                                         style={styles.manageLink}
                                         onClick={() => triggerPostFilePicker("birthday")}
@@ -1021,7 +1040,7 @@ export default function Home({ user }: { user: HomeUser }) {
 
                         <div style={styles.programBody}>
                             <div style={styles.programActionsRow}>
-                                {isSuperAdmin && (
+                                {canPostWishes && (
                                     <button
                                         style={styles.manageLink}
                                         onClick={() => triggerPostFilePicker("anniversary")}
@@ -1132,7 +1151,7 @@ export default function Home({ user }: { user: HomeUser }) {
                     {visibleWishPosts.length > 0 && (
                         <PostsPanel
                             posts={visibleWishPosts}
-                            isSuperAdmin={isSuperAdmin}
+                            isSuperAdmin={canPostWishes}
                             onEdit={triggerPostFilePicker}
                             onDelete={handleDeletePost}
                             styles={styles}

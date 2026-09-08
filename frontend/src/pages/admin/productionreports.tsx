@@ -877,21 +877,58 @@ const styles: Record<string, CSSProperties> = {
         color: "#374151",
         minWidth: 1150,
     },
+    // NEW: subtle vertical divider between columns so values in
+    // adjacent columns (Case #, Client, Service...) are visually
+    // separated instead of all running together, especially important
+    // now that there are more columns after Status/Submission.
     colCase: {
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
     },
-    colClient: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-    colService: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-    colDate: { whiteSpace: "nowrap" },
-    colEmployee: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    colClient: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
+    colService: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
+    colDate: {
+        whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
+    colEmployee: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
     // NEW: "Allocated By" column — who ran the allocation, next to
     // Employee (who it landed on).
-    colAllocatedBy: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-    colStatus: {},
+    colAllocatedBy: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
+    colStatus: {
+        borderRight: "1px solid #eef1f6",
+        paddingRight: 12,
+    },
     // NEW: "Query" column — wider, wraps instead of truncating since
-    // query text can run a full sentence.
+    // query text can run a full sentence. Last column, so no divider.
     colQuery: {
         overflow: "hidden",
         textOverflow: "ellipsis",
