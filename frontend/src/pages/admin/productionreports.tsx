@@ -343,6 +343,43 @@ export default function ProductionReport() {
     // card's edge. Drop it to 0 on mobile so fields shrink to fit.
     const filterFieldStyle = isMobile ? { ...styles.select, minWidth: 0 } : styles.select;
 
+    // Shared between the desktop table row and the mobile stacked card
+    // below, so the two views never drift out of sync on labels/colors.
+    const allocationPillProps = (r: ServiceCaseRow) => ({
+        background:
+            r.allocationStatus === "ALLOCATED"
+                ? "rgba(var(--brand-green-rgb),0.12)"
+                : "rgba(156,163,175,0.15)",
+        color: r.allocationStatus === "ALLOCATED" ? BRAND.green : BRAND.grey,
+        label: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
+    });
+    const submissionPillProps = (r: ServiceCaseRow) => ({
+        background:
+            r.submissionType === "COMPLETED"
+                ? "rgba(var(--brand-green-rgb),0.12)"
+                : r.submissionType === "DONE_BY_TEAM"
+                  ? "rgba(var(--brand-blue-rgb),0.12)"
+                  : r.submissionType === "QUERY"
+                    ? "rgba(220,38,38,0.12)"
+                    : "rgba(156,163,175,0.15)",
+        color:
+            r.submissionType === "COMPLETED"
+                ? BRAND.green
+                : r.submissionType === "DONE_BY_TEAM"
+                  ? BRAND.blue
+                  : r.submissionType === "QUERY"
+                    ? BRAND.red
+                    : BRAND.grey,
+        label:
+            r.submissionType === "COMPLETED"
+                ? "Completed"
+                : r.submissionType === "DONE_BY_TEAM"
+                  ? "Done by Team"
+                  : r.submissionType === "QUERY"
+                    ? "Query"
+                    : "Not Submitted",
+    });
+
     return (
         <div style={styles.root}>
             <div style={styles.topBar} />
@@ -539,104 +576,182 @@ export default function ProductionReport() {
                 {error && <p style={styles.errorText}>{error}</p>}
 
                 <div style={styles.tableCard}>
-                    <div style={styles.tableHeadRow}>
-                        <span style={styles.colCase}>Case #</span>
-                        <span style={styles.colClient}>Client</span>
-                        <span style={styles.colService}>Service</span>
-                        <span style={styles.colDate}>Date</span>
-                        <span style={styles.colEmployee}>Employee</span>
-                        {/* NEW: who ran the allocation — added next to Employee (who
-                            it landed on) so both are visible in the report. */}
-                        <span style={styles.colAllocatedBy}>Allocated By</span>
-                        <span style={styles.colStatus}>Status</span>
-                        {/* NEW: post-allocation submission outcome + any query
-                            text raised, so the report shows the full lifecycle
-                            (allocated → submitted → completed/done by team/query),
-                            not just allocation status. */}
-                        <span style={styles.colStatus}>Submission</span>
-                        <span style={styles.colQuery}>Query</span>
-                    </div>
-                    {loading ? (
-                        <div style={styles.emptyNote}>Loading report…</div>
-                    ) : rows.length === 0 ? (
-                        <div style={styles.emptyNote}>No cases found for this filter.</div>
-                    ) : (
-                        rows.map((r, idx) => (
-                            <div
-                                key={r.id}
-                                style={{
-                                    ...styles.tableRow,
-                                    background: idx % 2 === 0 ? "#fff" : "#fafbff",
-                                }}
-                            >
-                                <span style={styles.colCase}>{r.caseNumber}</span>
-                                <span style={styles.colClient}>{r.clientName || "—"}</span>
-                                <span style={styles.colService}>{r.productName || "—"}</span>
-                                <span style={styles.colDate}>{r.workDate}</span>
-                                <span style={styles.colEmployee}>
-                                    {r.assignedEmployeeName || "Unallocated"}
-                                </span>
-                                {/* NEW: "Allocated By" — who performed the allocate action. */}
-                                <span style={styles.colAllocatedBy}>
-                                    {r.allocatedByName || "—"}
-                                </span>
-                                <span style={styles.colStatus}>
-                                    <span
-                                        style={{
-                                            ...styles.statusPill,
-                                            background:
-                                                r.allocationStatus === "ALLOCATED"
-                                                    ? "rgba(var(--brand-green-rgb),0.12)"
-                                                    : "rgba(156,163,175,0.15)",
-                                            color:
-                                                r.allocationStatus === "ALLOCATED"
-                                                    ? BRAND.green
-                                                    : BRAND.grey,
-                                        }}
-                                    >
-                                        {r.allocationStatus === "ALLOCATED"
-                                            ? "Allocated"
-                                            : "Pending"}
-                                    </span>
-                                </span>
-                                {/* NEW: Submission outcome pill — Completed / Done by
-                                    Team / Query / Not Submitted. */}
-                                <span style={styles.colStatus}>
-                                    <span
-                                        style={{
-                                            ...styles.statusPill,
-                                            background:
-                                                r.submissionType === "COMPLETED"
-                                                    ? "rgba(var(--brand-green-rgb),0.12)"
-                                                    : r.submissionType === "DONE_BY_TEAM"
-                                                      ? "rgba(var(--brand-blue-rgb),0.12)"
-                                                      : r.submissionType === "QUERY"
-                                                        ? "rgba(220,38,38,0.12)"
-                                                        : "rgba(156,163,175,0.15)",
-                                            color:
-                                                r.submissionType === "COMPLETED"
-                                                    ? BRAND.green
-                                                    : r.submissionType === "DONE_BY_TEAM"
-                                                      ? BRAND.blue
-                                                      : r.submissionType === "QUERY"
-                                                        ? BRAND.red
-                                                        : BRAND.grey,
-                                        }}
-                                    >
-                                        {r.submissionType === "COMPLETED"
-                                            ? "Completed"
-                                            : r.submissionType === "DONE_BY_TEAM"
-                                              ? "Done by Team"
-                                              : r.submissionType === "QUERY"
-                                                ? "Query"
-                                                : "Not Submitted"}
-                                    </span>
-                                </span>
-                                <span style={styles.colQuery}>
-                                    {r.submissionType === "QUERY" ? r.queryText || "—" : "—"}
-                                </span>
+                    {!isMobile ? (
+                        <>
+                            <div style={styles.tableHeadRow}>
+                                <span style={styles.colCase}>Case #</span>
+                                <span style={styles.colClient}>Client</span>
+                                <span style={styles.colService}>Service</span>
+                                <span style={styles.colDate}>Date</span>
+                                <span style={styles.colEmployee}>Employee</span>
+                                {/* NEW: who ran the allocation — added next to Employee (who
+                                    it landed on) so both are visible in the report. */}
+                                <span style={styles.colAllocatedBy}>Allocated By</span>
+                                <span style={styles.colStatus}>Status</span>
+                                {/* NEW: post-allocation submission outcome + any query
+                                    text raised, so the report shows the full lifecycle
+                                    (allocated → submitted → completed/done by team/query),
+                                    not just allocation status. */}
+                                <span style={styles.colStatus}>Submission</span>
+                                <span style={styles.colQuery}>Query</span>
                             </div>
-                        ))
+                            {loading ? (
+                                <div style={styles.emptyNote}>Loading report…</div>
+                            ) : rows.length === 0 ? (
+                                <div style={styles.emptyNote}>No cases found for this filter.</div>
+                            ) : (
+                                rows.map((r, idx) => {
+                                    const allocPill = allocationPillProps(r);
+                                    const subPill = submissionPillProps(r);
+                                    return (
+                                        <div
+                                            key={r.id}
+                                            style={{
+                                                ...styles.tableRow,
+                                                background: idx % 2 === 0 ? "#fff" : "#fafbff",
+                                            }}
+                                        >
+                                            <span style={styles.colCase}>{r.caseNumber}</span>
+                                            <span style={styles.colClient}>
+                                                {r.clientName || "—"}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {r.productName || "—"}
+                                            </span>
+                                            <span style={styles.colDate}>{r.workDate}</span>
+                                            <span style={styles.colEmployee}>
+                                                {r.assignedEmployeeName || "Unallocated"}
+                                            </span>
+                                            {/* NEW: "Allocated By" — who performed the allocate action. */}
+                                            <span style={styles.colAllocatedBy}>
+                                                {r.allocatedByName || "—"}
+                                            </span>
+                                            <span style={styles.colStatus}>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background: allocPill.background,
+                                                        color: allocPill.color,
+                                                    }}
+                                                >
+                                                    {allocPill.label}
+                                                </span>
+                                            </span>
+                                            {/* NEW: Submission outcome pill — Completed / Done by
+                                                Team / Query / Not Submitted. */}
+                                            <span style={styles.colStatus}>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background: subPill.background,
+                                                        color: subPill.color,
+                                                    }}
+                                                >
+                                                    {subPill.label}
+                                                </span>
+                                            </span>
+                                            <span style={styles.colQuery}>
+                                                {r.submissionType === "QUERY"
+                                                    ? r.queryText || "—"
+                                                    : "—"}
+                                            </span>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </>
+                    ) : (
+                        // NEW: mobile view — the fixed 9-column grid (with
+                        // minWidth: 1150 + horizontal scroll) was unusable on a
+                        // phone-width screen, so each case renders as its own
+                        // stacked label:value card instead, same pattern as the
+                        // Employees page's mobile cards.
+                        <div style={styles.mobileCardList}>
+                            {loading ? (
+                                <div style={styles.emptyNote}>Loading report…</div>
+                            ) : rows.length === 0 ? (
+                                <div style={styles.emptyNote}>No cases found for this filter.</div>
+                            ) : (
+                                rows.map((r) => {
+                                    const allocPill = allocationPillProps(r);
+                                    const subPill = submissionPillProps(r);
+                                    return (
+                                        <div key={r.id} style={styles.mobileCard}>
+                                            <div style={styles.mobileCardHeader}>
+                                                <span style={styles.mobileCardCase}>
+                                                    {r.caseNumber}
+                                                </span>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background: allocPill.background,
+                                                        color: allocPill.color,
+                                                    }}
+                                                >
+                                                    {allocPill.label}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>Client</span>
+                                                <span style={styles.mobileCardValue}>
+                                                    {r.clientName || "—"}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>Service</span>
+                                                <span style={styles.mobileCardValue}>
+                                                    {r.productName || "—"}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>Date</span>
+                                                <span style={styles.mobileCardValue}>
+                                                    {r.workDate}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>Employee</span>
+                                                <span style={styles.mobileCardValue}>
+                                                    {r.assignedEmployeeName || "Unallocated"}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>
+                                                    Allocated By
+                                                </span>
+                                                <span style={styles.mobileCardValue}>
+                                                    {r.allocatedByName || "—"}
+                                                </span>
+                                            </div>
+                                            <div style={styles.mobileCardRow}>
+                                                <span style={styles.mobileCardLabel}>
+                                                    Submission
+                                                </span>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background: subPill.background,
+                                                        color: subPill.color,
+                                                    }}
+                                                >
+                                                    {subPill.label}
+                                                </span>
+                                            </div>
+                                            {r.submissionType === "QUERY" && (
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Query
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.queryText || "—"}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
                     )}
                     {!loading && rows.length > 0 && (
                         <div style={styles.totalsRow}>
@@ -941,6 +1056,58 @@ const styles: Record<string, CSSProperties> = {
         borderRadius: radius.pill,
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
+    },
+    // NEW: mobile card list — replaces the fixed-width grid table below
+    // the tablet/phone breakpoint, where a 9-column grid was unusable
+    // without heavy horizontal scrolling.
+    mobileCardList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        padding: 12,
+    },
+    mobileCard: {
+        border: "1px solid #eef1f6",
+        borderRadius: radius.md,
+        padding: "12px 14px",
+        background: "#fff",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+    },
+    mobileCardHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingBottom: 8,
+        borderBottom: "1px solid #f1f1f1",
+    },
+    mobileCardCase: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+    },
+    mobileCardRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    mobileCardLabel: {
+        fontSize: fontSize.xs,
+        color: "#9CA3AF",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        flexShrink: 0,
+    },
+    mobileCardValue: {
+        fontSize: fontSize.sm,
+        color: "#17181C",
+        textAlign: "right",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        marginLeft: 12,
     },
     emptyNote: {
         padding: "28px 20px",

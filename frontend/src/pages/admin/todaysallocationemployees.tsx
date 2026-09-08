@@ -711,7 +711,16 @@ const styles: Record<string, CSSProperties> = {
         flexShrink: 0,
     },
     empName: { fontSize: fontSize.base, color: "#1a1a2e", fontWeight: fontWeight.medium },
-    empCode: { fontSize: fontSize.xs, color: "#9ca3af", marginTop: 1 },
+    // FIX: explicit left-align — a bare block div is left-aligned by
+    // default, but making it explicit here removes any doubt/inherited
+    // override and guarantees the employee code never renders centered.
+    empCode: {
+        fontSize: fontSize.xs,
+        color: "#9ca3af",
+        marginTop: 1,
+        textAlign: "left",
+        display: "block",
+    },
     // NEW: External Members multi-select + row tag.
     externalTag: { fontSize: fontSize.xs, fontWeight: fontWeight.regular, color: BRAND.amber },
     externalPanel: {
