@@ -698,7 +698,15 @@ export default function Employees() {
                             <div>
                                 <h2 style={styles.pageTitle}>
                                     Employees{" "}
-                                    <span style={styles.pageTitleCount}>({employees.length})</span>
+                                    {/* FIX: was employees.length — always the full org
+                                        count, so it stayed the same when switching
+                                        Organisation -> My Team even though the list
+                                        below correctly narrowed down. Now matches
+                                        whatever's actually showing (scope + search +
+                                        department), same as the "X of Y" line below. */}
+                                    <span style={styles.pageTitleCount}>
+                                        ({filteredEmployees.length})
+                                    </span>
                                 </h2>
                                 <p style={styles.headerSubtext}>
                                     {scope === "myteam" && myTeam

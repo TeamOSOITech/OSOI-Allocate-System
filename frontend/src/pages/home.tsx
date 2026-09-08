@@ -325,6 +325,13 @@ export default function Home({ user }: { user: HomeUser }) {
     };
     const styles = getStyles(BRAND);
     const isSuperAdmin = user?.role === "SUPER_ADMIN";
+    // NEW: Ops Manager can now also use the "Manage Role Labels" button
+    // (backend's POST /api/role-labels now allows OPS_MANAGER too) — kept
+    // as its own flag rather than folding into isSuperAdmin so every
+    // OTHER isSuperAdmin-gated action on this page (Holidays/Birthdays/
+    // Anniversaries/New Joinees management) stays Super-Admin-only
+    // unless asked for separately.
+    const canManageRoleLabels = user?.role === "SUPER_ADMIN" || user?.role === "OPS_MANAGER";
 
     const displayName = user?.firstName
         ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
@@ -683,7 +690,7 @@ export default function Home({ user }: { user: HomeUser }) {
                         {/* Super Admin only — lets them rename any assignable
                             role for this org (e.g. "Team Member" -> "Employee")
                             without touching what that role can actually do. */}
-                        {isSuperAdmin && <ManageRoleLabelsButton />}
+                        {canManageRoleLabels && <ManageRoleLabelsButton />}
                     </div>
                 </div>
 
@@ -836,14 +843,32 @@ export default function Home({ user }: { user: HomeUser }) {
                             ) : holidaysError ? (
                                 <div style={styles.cardEmptyError}>{holidaysError}</div>
                             ) : !currentHoliday ? (
-                                isSuperAdmin && (
-                                    <button
-                                        style={styles.smallAddBtn(BRAND)}
-                                        onClick={() => setShowHolidaysModal(true)}
-                                    >
-                                        + Add Holidays
-                                    </button>
-                                )
+                                // FIX: was just a left-aligned "+ Add
+                                // Holidays" button (or nothing at all for
+                                // non-admins) sitting at the top of the
+                                // card, leaving the rest of the stretched
+                                // height (matched to Birthdays/Work
+                                // Anniversaries) as plain blank white
+                                // space. Centering an icon + message here
+                                // — same `cardEmpty` pattern already used
+                                // for the Loading/Error states above —
+                                // fills that space properly instead.
+                                <div style={styles.cardEmpty}>
+                                    <i
+                                        className="ti ti-calendar-off"
+                                        style={styles.emptyIcon}
+                                        aria-hidden="true"
+                                    />
+                                    <span>No holidays added yet</span>
+                                    {isSuperAdmin && (
+                                        <button
+                                            style={styles.smallAddBtn(BRAND)}
+                                            onClick={() => setShowHolidaysModal(true)}
+                                        >
+                                            + Add Holidays
+                                        </button>
+                                    )}
+                                </div>
                             ) : null}
 
                             <button
@@ -1010,7 +1035,11 @@ export default function Home({ user }: { user: HomeUser }) {
                                 <div style={styles.cardEmpty}>Loading…</div>
                             ) : upcomingAnniversaries.length > 1 ? (
                                 <div style={styles.birthdayList}>
-                                    {upcomingAnniversaries.slice(1, 4).map((a) => (
+                                    {/* FIX: was slice(1, 4) — showed up to 3 more rows
+                                        below the photo header, which is why this card
+                                        could end up taller/busier than Birthdays. Capped
+                                        to just 1, matching the Birthdays card. */}
+                                    {upcomingAnniversaries.slice(1, 2).map((a) => (
                                         <AnniversaryRow key={a.id} a={a} styles={styles} />
                                     ))}
                                 </div>
@@ -2145,7 +2174,7 @@ function HolidaysModal({
         );
 
     return (
-        <div style={styles.modalOverlay}>
+        <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -2358,7 +2387,7 @@ function BirthdaysModal({
     BRAND: any;
 }) {
     return (
-        <div style={styles.modalOverlay}>
+        <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>Birthdays</h3>
@@ -2392,7 +2421,7 @@ function AnniversariesModal({
     styles: any;
 }) {
     return (
-        <div style={styles.modalOverlay}>
+        <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>Work Anniversaries</h3>
@@ -2426,7 +2455,7 @@ function NewJoineesModal({
     styles: any;
 }) {
     return (
-        <div style={styles.modalOverlay}>
+        <div style={styles.modalOverlay} onClick={onClose}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
                 <div style={styles.modalHeader}>
                     <h3 style={styles.modalTitle}>New Joinees</h3>
