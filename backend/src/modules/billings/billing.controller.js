@@ -345,12 +345,10 @@ const verifyUpgradePaymentHandler = async (req, res) => {
     const normalizedPlan = String(plan || "").toLowerCase();
 
     if (!orderId || !paymentId || !signature || !PLAN_CONFIG[normalizedPlan]) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Missing or invalid required fields",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Missing or invalid required fields",
+      });
     }
 
     const isValid = verifyPaymentSignature({ orderId, paymentId, signature });
@@ -395,6 +393,71 @@ const verifyUpgradePaymentHandler = async (req, res) => {
   }
 };
 
+// POST /api/billing/upgrade/mock
+// body: { plan: "basic" | "professional", cardNumber }
+// DEMO/DUMMY PAYMENT PATH for an already-logged-in org — same idea as
+// mockCheckoutHandler above, but skips straight to moving THIS org onto
+// the new plan instead of minting a new-account signup token. Never
+// talks to Razorpay, never charges anything, and the card number is
+// only checked for shape and never stored. Guarded the same way as
+// mockCheckoutHandler so it can't be reachable in production by accident.
+const mockUpgradeHandler = async (req, res) => {
+  try {
+    const mockCheckoutBlocked =
+      process.env.NODE_ENV === "production" &&
+      process.env.ALLOW_MOCK_CHECKOUT !== "true";
+
+    if (mockCheckoutBlocked) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Mock checkout is disabled in production. Use /upgrade/create-order + /upgrade/verify-payment (real Razorpay flow) instead.",
+      });
+    }
+
+    const { plan, cardNumber } = req.body;
+    const normalizedPlan = String(plan || "").toLowerCase();
+
+    if (!PLAN_CONFIG[normalizedPlan]) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid plan selected" });
+    }
+
+    const digitsOnly = String(cardNumber || "").replace(/\s+/g, "");
+    if (!/^\d{13,19}$/.test(digitsOnly)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Enter a valid card number" });
+    }
+
+    const planRow = await getPlanByName(supabase, normalizedPlan);
+    if (!planRow) {
+      return res.status(500).json({
+        success: false,
+        message: "Couldn't find that plan. Please contact support.",
+      });
+    }
+
+    const subscription = await upgradeOrgSubscription(
+      supabase,
+      req.user.organizationId,
+      planRow,
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        plan: normalizedPlan,
+        status: subscription.status,
+        currentPeriodEnd: subscription.current_period_end,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getPlansHandler,
   createOrderHandler,
@@ -405,4 +468,5 @@ module.exports = {
   getMySubscriptionHandler,
   createUpgradeOrderHandler,
   verifyUpgradePaymentHandler,
+  mockUpgradeHandler,
 };

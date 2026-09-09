@@ -12,6 +12,7 @@ const {
   getMySubscriptionHandler,
   createUpgradeOrderHandler,
   verifyUpgradePaymentHandler,
+  mockUpgradeHandler,
 } = require("./billing.controller");
 
 router.get("/plans", getPlansHandler);
@@ -34,6 +35,10 @@ router.post(
   authenticate,
   verifyUpgradePaymentHandler,
 );
+// Dummy/demo card path for the in-app Subscription page — see
+// mockUpgradeHandler for details. Used instead of create-order +
+// Razorpay Checkout + verify-payment when no live Razorpay keys are set.
+router.post("/upgrade/mock", authenticate, mockUpgradeHandler);
 
 // IMPORTANT: Razorpay's webhook signature is computed over the RAW
 // request body. If your app.js already does `app.use(express.json())`
