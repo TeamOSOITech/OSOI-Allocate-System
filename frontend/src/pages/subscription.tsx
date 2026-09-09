@@ -1,38 +1,27 @@
 // src/pages/subscription.tsx
 //
 // In-app "Upgrade Plan" page — reached via the Sidebar's Upgrade link.
-// Unlike the pre-signup checkout on the public Landing page (which uses
-// the dummy-card /api/billing/mock-checkout path because there's no
-// account yet to attach a real charge to), this page is for an ALREADY
-// LOGGED-IN organization and drives REAL Razorpay Checkout:
 //
-//   1. GET  /api/billing/subscription        -> what plan are we on now
-//   2. GET  /api/billing/plans                -> live prices for Basic/Professional
-//   3. POST /api/billing/upgrade/create-order -> real Razorpay order for the org
-//   4. Razorpay Checkout.js widget opens, user pays with a real card/UPI
-//   5. POST /api/billing/upgrade/verify-payment -> signature is verified
-//      server-side and, if valid, THIS organization's existing
-//      subscription row is updated to the new plan (never a new
-//      account/tenant — that's the whole difference from the landing
-//      page flow).
+// DEMO/DUMMY PAYMENT PATH: this project has no live Razorpay keys
+// configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET), so instead of
+// opening real Razorpay Checkout, clicking "Upgrade" opens an in-app
+// card modal (dummy card fields, prefilled with a standard test-card
+// number) and submits straight to POST /api/billing/upgrade/mock,
+// which never talks to Razorpay and never charges anything — it just
+// moves THIS organization onto the new plan directly. See
+// billing.controller.js's mockUpgradeHandler for the backend side.
 //
-// Requires RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET to be set in the
-// backend's environment — see billing.service.js. If they're missing,
-// step 3 above fails with a clear error message instead of silently
-// falling back to a mock/dummy payment.
+// To go live with real payments later: swap handleConfirmUpgrade to
+// call POST /api/billing/upgrade/create-order, open real Razorpay
+// Checkout with the returned order, and verify via
+// POST /api/billing/upgrade/verify-payment instead — see
+// createUpgradeOrderHandler / verifyUpgradePaymentHandler on the backend.
 
 import { useEffect, useState, useCallback } from "react";
 import { authFetch } from "../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
-const RAZORPAY_SCRIPT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
-
-declare global {
-    interface Window {
-        Razorpay?: any;
-    }
-}
 
 const BRAND = {
     blue: "#204297",
@@ -41,25 +30,32 @@ const BRAND = {
     red: "#DC2626",
 };
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
+const CARD_GRADIENT = `linear-gradient(135deg, #2B2F77 0%, ${BRAND.blue} 45%, ${BRAND.lightBlue} 100%)`;
 
 // Static display info for the two ends of the ladder that never go
-// through Razorpay — Free is the default (nothing to buy), Enterprise
+// through checkout — Free is the default (nothing to buy), Enterprise
 // is a sales conversation. Basic/Professional prices come from the API
 // (PLAN_CONFIG on the backend) so this page never drifts out of sync
 // with what actually gets charged.
 const PLAN_ORDER = ["free", "basic", "professional", "enterprise"];
-const STATIC_PLANS: Record<string, { label: string; features: string[]; priceDisplay?: string }> = {
+const STATIC_PLANS: Record<
+    string,
+    { label: string; features: string[]; priceDisplay?: string; icon: string }
+> = {
     free: {
         label: "Free",
         priceDisplay: "₹0",
+        icon: "ti-user",
         features: ["Up to 5 Users", "Basic Allocation", "Project Tracking", "Standard Reports"],
     },
     basic: {
         label: "Basic",
+        icon: "ti-rocket",
         features: ["Up to 25 Users", "Advanced Allocation", "Team Management", "Custom Reports"],
     },
     professional: {
         label: "Professional",
+        icon: "ti-crown",
         features: [
             "Up to 100 Users",
             "AI-powered Suggestions",
@@ -70,30 +66,18 @@ const STATIC_PLANS: Record<string, { label: string; features: string[]; priceDis
     enterprise: {
         label: "Enterprise",
         priceDisplay: "Custom Pricing",
+        icon: "ti-building-skyscraper",
         features: ["Unlimited Users", "Custom Features", "Dedicated Support", "SLA & Onboarding"],
     },
 };
 
-function loadRazorpayScript(): Promise<boolean> {
-    return new Promise((resolve) => {
-        if (window.Razorpay) {
-            resolve(true);
-            return;
-        }
-        const existing = document.querySelector(`script[src="${RAZORPAY_SCRIPT_SRC}"]`);
-        if (existing) {
-            existing.addEventListener("load", () => resolve(true));
-            existing.addEventListener("error", () => resolve(false));
-            return;
-        }
-        const script = document.createElement("script");
-        script.src = RAZORPAY_SCRIPT_SRC;
-        script.async = true;
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-    });
-}
+// Bottom trust strip — small reassurance points under the plan grid.
+const TRUST_POINTS: { icon: string; label: string }[] = [
+    { icon: "ti-shield-lock", label: "Secure payments" },
+    { icon: "ti-refresh", label: "Cancel anytime" },
+    { icon: "ti-bolt", label: "Instant activation" },
+    { icon: "ti-headset", label: "24/7 support" },
+];
 
 function formatDate(iso: string | null): string {
     if (!iso) return "—";
@@ -108,6 +92,18 @@ function formatDate(iso: string | null): string {
     }
 }
 
+// ---- dummy-card input helpers (display formatting only, nothing here
+// is validated as a real card or sent anywhere but our own mock endpoint) ----
+function formatCardNumber(raw: string): string {
+    const digits = raw.replace(/\D/g, "").slice(0, 19);
+    return digits.replace(/(.{4})/g, "$1 ").trim();
+}
+function formatExpiry(raw: string): string {
+    const digits = raw.replace(/\D/g, "").slice(0, 4);
+    if (digits.length <= 2) return digits;
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+}
+
 export default function Subscription() {
     const [currentPlan, setCurrentPlan] = useState<string>("free");
     const [currentPeriodEnd, setCurrentPeriodEnd] = useState<string | null>(null);
@@ -116,10 +112,16 @@ export default function Subscription() {
     );
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-    const [processingPlan, setProcessingPlan] = useState<string | null>(null);
     const [successMsg, setSuccessMsg] = useState("");
 
-    const user = JSON.parse(localStorage.getItem("user") || "null");
+    // ---------- dummy-card checkout modal ----------
+    const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
+    const [cardName, setCardName] = useState("");
+    const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
+    const [cardExpiry, setCardExpiry] = useState("12/29");
+    const [cardCvv, setCardCvv] = useState("123");
+    const [checkoutError, setCheckoutError] = useState("");
+    const [checkoutLoading, setCheckoutLoading] = useState(false);
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -151,100 +153,87 @@ export default function Subscription() {
         loadData();
     }, [loadData]);
 
-    const handleUpgrade = async (planKey: string) => {
+    // Clicking "Upgrade" just opens the dummy-card modal for that plan —
+    // no network call yet, nothing is charged until "Pay & Upgrade".
+    const handleUpgrade = (planKey: string) => {
         setError("");
         setSuccessMsg("");
-        setProcessingPlan(planKey);
-        try {
-            const scriptOk = await loadRazorpayScript();
-            if (!scriptOk || !window.Razorpay) {
-                throw new Error(
-                    "Couldn't load the Razorpay checkout script. Check your connection and try again."
-                );
-            }
+        setCheckoutError("");
+        setCardName("");
+        setCheckoutPlan(planKey);
+    };
 
-            const orderRes = await authFetch(`${API_BASE}/api/billing/upgrade/create-order`, {
+    const closeCheckout = () => {
+        if (checkoutLoading) return;
+        setCheckoutPlan(null);
+        setCheckoutError("");
+    };
+
+    const handleConfirmUpgrade = async () => {
+        if (!checkoutPlan) return;
+        if (!cardName.trim()) {
+            setCheckoutError("Enter the name on the card.");
+            return;
+        }
+        if (!/^\d{4}\s?\d{4}\s?\d{4}\s?\d{1,4}$/.test(cardNumber.trim())) {
+            setCheckoutError("Enter a valid card number.");
+            return;
+        }
+        if (!/^\d{2}\/\d{2}$/.test(cardExpiry.trim())) {
+            setCheckoutError("Enter the expiry as MM/YY.");
+            return;
+        }
+        if (!/^\d{3,4}$/.test(cardCvv.trim())) {
+            setCheckoutError("Enter a valid CVV.");
+            return;
+        }
+
+        setCheckoutError("");
+        setCheckoutLoading(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/billing/upgrade/mock`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ plan: planKey }),
+                body: JSON.stringify({ plan: checkoutPlan, cardNumber }),
             });
-            const orderJson = await orderRes.json();
-            if (!orderRes.ok || !orderJson.success) {
-                throw new Error(orderJson?.message || "Could not start checkout.");
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data?.message || "Payment failed. Please try again.");
             }
-            const { orderId, amount, currency, keyId } = orderJson.data;
-
-            if (!keyId) {
-                throw new Error(
-                    "Razorpay isn't configured on the server yet (missing RAZORPAY_KEY_ID). Ask an admin to add the Razorpay keys in the backend environment."
-                );
-            }
-
-            const razorpay = new window.Razorpay({
-                key: keyId,
-                amount,
-                currency,
-                order_id: orderId,
-                name: "OSOI Allocate",
-                description: `Upgrade to ${STATIC_PLANS[planKey]?.label || planKey} plan`,
-                prefill: { email: user?.email || "" },
-                theme: { color: "#204297" },
-                handler: async (response: any) => {
-                    try {
-                        const verifyRes = await authFetch(
-                            `${API_BASE}/api/billing/upgrade/verify-payment`,
-                            {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                    razorpay_order_id: response.razorpay_order_id,
-                                    razorpay_payment_id: response.razorpay_payment_id,
-                                    razorpay_signature: response.razorpay_signature,
-                                    plan: planKey,
-                                }),
-                            }
-                        );
-                        const verifyJson = await verifyRes.json();
-                        if (!verifyRes.ok || !verifyJson.success) {
-                            throw new Error(verifyJson?.message || "Payment verification failed.");
-                        }
-                        setCurrentPlan(verifyJson.data.plan);
-                        setCurrentPeriodEnd(verifyJson.data.currentPeriodEnd);
-                        setSuccessMsg(
-                            `You're now on the ${STATIC_PLANS[planKey]?.label || planKey} plan.`
-                        );
-                    } catch (err: any) {
-                        setError(err?.message || "Payment verification failed.");
-                    } finally {
-                        setProcessingPlan(null);
-                    }
-                },
-                modal: {
-                    // User closed the Razorpay widget without paying —
-                    // not an error, just stop showing the spinner.
-                    ondismiss: () => setProcessingPlan(null),
-                },
-            });
-
-            razorpay.on("payment.failed", (resp: any) => {
-                setError(resp?.error?.description || "Payment failed. Please try again.");
-                setProcessingPlan(null);
-            });
-
-            razorpay.open();
+            setCurrentPlan(data.data.plan);
+            setCurrentPeriodEnd(data.data.currentPeriodEnd);
+            setSuccessMsg(
+                `You're now on the ${STATIC_PLANS[checkoutPlan]?.label || checkoutPlan} plan.`
+            );
+            setCheckoutPlan(null);
         } catch (err: any) {
-            setError(err?.message || "Something went wrong. Please try again.");
-            setProcessingPlan(null);
+            setCheckoutError(err?.message || "Something went wrong. Please try again.");
+        } finally {
+            setCheckoutLoading(false);
         }
     };
 
     const currentIndex = PLAN_ORDER.indexOf(currentPlan);
+    const checkoutInfo = checkoutPlan ? STATIC_PLANS[checkoutPlan] : null;
+    const checkoutPriceInfo = checkoutPlan ? planPrices[checkoutPlan] : null;
+    const checkoutPriceDisplay =
+        checkoutInfo?.priceDisplay ||
+        (checkoutPriceInfo ? `₹${(checkoutPriceInfo.amount / 100).toLocaleString()}` : "—");
+
+    const currentInfo = STATIC_PLANS[currentPlan];
 
     return (
         <div style={styles.root}>
+            {/* decorative background blobs — purely visual, sit behind everything */}
+            <div style={styles.blobTopLeft} />
+            <div style={styles.blobBottomRight} />
+
             <div style={styles.contentBody}>
-                <div>
-                    <h2 style={styles.pageTitle}>Subscription</h2>
+                <div style={styles.headerBlock}>
+                    <h2 style={styles.pageTitle}>
+                        <span style={styles.titleDash}>—</span> Subscription{" "}
+                        <span style={styles.titleDash}>—</span>
+                    </h2>
                     <p style={styles.headerSubtext}>
                         Manage your organization's plan and payment. Upgrading takes effect
                         immediately.
@@ -256,15 +245,22 @@ export default function Subscription() {
                 ) : (
                     <>
                         <div style={styles.currentCard}>
-                            <div>
-                                <div style={styles.currentLabel}>Current Plan</div>
-                                <div style={styles.currentPlanName}>
-                                    {STATIC_PLANS[currentPlan]?.label || currentPlan}
+                            <div style={styles.currentCardLeft}>
+                                <div style={styles.currentIconBox}>
+                                    <i className={`ti ${currentInfo?.icon || "ti-user"}`} />
+                                </div>
+                                <div>
+                                    <div style={styles.currentLabel}>Current Plan</div>
+                                    <div style={styles.currentPlanName}>
+                                        {currentInfo?.label || currentPlan}
+                                    </div>
                                 </div>
                             </div>
                             {currentPeriodEnd && (
                                 <div style={styles.renewalBlock}>
-                                    <div style={styles.currentLabel}>Renews / Expires</div>
+                                    <div style={styles.currentLabel}>
+                                        <i className="ti ti-calendar-event" /> Renews / Expires
+                                    </div>
                                     <div style={styles.renewalDate}>
                                         {formatDate(currentPeriodEnd)}
                                     </div>
@@ -273,7 +269,12 @@ export default function Subscription() {
                         </div>
 
                         {error && <p style={styles.errorText}>{error}</p>}
-                        {successMsg && <p style={styles.successText}>{successMsg}</p>}
+                        {successMsg && (
+                            <div style={styles.successPill}>
+                                <i className="ti ti-circle-check-filled" />
+                                {successMsg}
+                            </div>
+                        )}
 
                         <div style={styles.plansGrid}>
                             {PLAN_ORDER.map((planKey, idx) => {
@@ -289,7 +290,6 @@ export default function Subscription() {
                                     (planKey === "basic" || planKey === "professional") &&
                                     idx > currentIndex;
                                 const isEnterprise = planKey === "enterprise";
-                                const isBusy = processingPlan === planKey;
 
                                 return (
                                     <div
@@ -300,8 +300,18 @@ export default function Subscription() {
                                         }}
                                     >
                                         {isCurrent && (
-                                            <div style={styles.currentBadge}>Current Plan</div>
+                                            <div style={styles.currentBadge}>
+                                                <i className="ti ti-check" /> Current Plan
+                                            </div>
                                         )}
+                                        <div
+                                            style={{
+                                                ...styles.planIconBox,
+                                                ...(isCurrent ? styles.planIconBoxCurrent : {}),
+                                            }}
+                                        >
+                                            <i className={`ti ${info.icon}`} />
+                                        </div>
                                         <div style={styles.planName}>{info.label}</div>
                                         <div style={styles.planPrice}>
                                             {priceDisplay}
@@ -312,12 +322,13 @@ export default function Subscription() {
                                                 </span>
                                             )}
                                         </div>
+                                        <div style={styles.planDivider} />
                                         <ul style={styles.featureList}>
                                             {info.features.map((f) => (
                                                 <li key={f} style={styles.featureItem}>
                                                     <i
                                                         className="ti ti-check"
-                                                        style={{ color: BRAND.green }}
+                                                        style={{ color: BRAND.lightBlue }}
                                                     />
                                                     {f}
                                                 </li>
@@ -325,7 +336,7 @@ export default function Subscription() {
                                         </ul>
 
                                         {isCurrent ? (
-                                            <button style={styles.btnDisabled} disabled>
+                                            <button style={styles.btnCurrentActive} disabled>
                                                 Current Plan
                                             </button>
                                         ) : isEnterprise ? (
@@ -338,10 +349,9 @@ export default function Subscription() {
                                         ) : isUpgradable ? (
                                             <button
                                                 style={styles.btnPrimary}
-                                                disabled={!!processingPlan}
                                                 onClick={() => handleUpgrade(planKey)}
                                             >
-                                                {isBusy ? "Processing…" : "Upgrade"}
+                                                Upgrade
                                             </button>
                                         ) : (
                                             <button style={styles.btnDisabled} disabled>
@@ -352,41 +362,230 @@ export default function Subscription() {
                                 );
                             })}
                         </div>
+
+                        {/* Relatable trust footer */}
+                        <div style={styles.trustFooter}>
+                            {TRUST_POINTS.map((point) => (
+                                <div key={point.label} style={styles.trustItem}>
+                                    <i className={`ti ${point.icon}`} style={styles.trustIcon} />
+                                    <span>{point.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <p style={styles.footnote}>
+                            Prices are per user / month, billed monthly. You can upgrade, downgrade,
+                            or cancel your plan at any time — changes take effect immediately.
+                        </p>
                     </>
                 )}
             </div>
+
+            {checkoutPlan && checkoutInfo && (
+                <div style={styles.modalOverlay} onClick={closeCheckout}>
+                    <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+                        <button
+                            style={styles.modalClose}
+                            onClick={closeCheckout}
+                            aria-label="Close"
+                            disabled={checkoutLoading}
+                        >
+                            <i className="ti ti-x" />
+                        </button>
+
+                        <div style={styles.modalHeader}>
+                            <div style={styles.modalEyebrow}>Upgrade to</div>
+                            <div style={styles.modalPlanName}>{checkoutInfo.label}</div>
+                            <div style={styles.modalPlanPrice}>
+                                {checkoutPriceDisplay}
+                                <span style={styles.planPricePeriod}> / user / month</span>
+                            </div>
+                        </div>
+
+                        {/* Live card preview */}
+                        <div style={styles.cardPreview}>
+                            <div style={styles.cardPreviewTopRow}>
+                                <i className="ti ti-credit-card" style={styles.cardPreviewIcon} />
+                                <span style={styles.cardPreviewBrand}>OSOI Pay</span>
+                            </div>
+                            <div style={styles.cardPreviewNumber}>
+                                {cardNumber || "•••• •••• •••• ••••"}
+                            </div>
+                            <div style={styles.cardPreviewBottomRow}>
+                                <div>
+                                    <div style={styles.cardPreviewLabel}>Card Holder</div>
+                                    <div style={styles.cardPreviewValue}>
+                                        {cardName.trim() || "YOUR NAME"}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={styles.cardPreviewLabel}>Expires</div>
+                                    <div style={styles.cardPreviewValue}>
+                                        {cardExpiry || "MM/YY"}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={styles.formGroup}>
+                            <label style={styles.formLabel}>Name on Card</label>
+                            <input
+                                style={styles.formInput}
+                                type="text"
+                                placeholder="e.g. Aamir Khan"
+                                value={cardName}
+                                onChange={(e) => setCardName(e.target.value)}
+                                disabled={checkoutLoading}
+                            />
+                        </div>
+
+                        <div style={styles.formGroup}>
+                            <label style={styles.formLabel}>Card Number</label>
+                            <input
+                                style={styles.formInput}
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="0000 0000 0000 0000"
+                                value={cardNumber}
+                                onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
+                                disabled={checkoutLoading}
+                            />
+                        </div>
+
+                        <div style={styles.formRow}>
+                            <div style={{ ...styles.formGroup, flex: 1 }}>
+                                <label style={styles.formLabel}>Expiry (MM/YY)</label>
+                                <input
+                                    style={styles.formInput}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="MM/YY"
+                                    value={cardExpiry}
+                                    onChange={(e) => setCardExpiry(formatExpiry(e.target.value))}
+                                    disabled={checkoutLoading}
+                                />
+                            </div>
+                            <div style={{ ...styles.formGroup, flex: 1 }}>
+                                <label style={styles.formLabel}>CVV</label>
+                                <input
+                                    style={styles.formInput}
+                                    type="password"
+                                    inputMode="numeric"
+                                    placeholder="123"
+                                    maxLength={4}
+                                    value={cardCvv}
+                                    onChange={(e) =>
+                                        setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4))
+                                    }
+                                    disabled={checkoutLoading}
+                                />
+                            </div>
+                        </div>
+
+                        <p style={styles.modalDisclaimer}>
+                            <i className="ti ti-lock" /> This is a test payment screen — no real
+                            card is charged. Any 16-digit number works.
+                        </p>
+
+                        {checkoutError && <p style={styles.errorText}>{checkoutError}</p>}
+
+                        <div style={styles.modalActions}>
+                            <button
+                                style={{ ...styles.btnSecondary, flex: 1 }}
+                                onClick={closeCheckout}
+                                disabled={checkoutLoading}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                style={{
+                                    ...styles.btnPrimary,
+                                    flex: 1.4,
+                                    ...(checkoutLoading ? styles.btnPrimaryBusy : {}),
+                                }}
+                                onClick={handleConfirmUpgrade}
+                                disabled={checkoutLoading}
+                            >
+                                {checkoutLoading
+                                    ? "Processing…"
+                                    : `Pay ${checkoutPriceDisplay} & Upgrade`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-    root: { width: "100%", minHeight: "100%" },
+    root: {
+        width: "100%",
+        minHeight: "100%",
+        position: "relative",
+        overflow: "hidden",
+        background: "linear-gradient(180deg, #F7F8FC 0%, #F1F2FA 100%)",
+    },
+    blobTopLeft: {
+        position: "absolute",
+        top: -120,
+        left: -120,
+        width: 320,
+        height: 320,
+        borderRadius: "50%",
+        background: `radial-gradient(circle, ${BRAND.lightBlue}22 0%, transparent 70%)`,
+        pointerEvents: "none",
+    },
+    blobBottomRight: {
+        position: "absolute",
+        bottom: -140,
+        right: -140,
+        width: 380,
+        height: 380,
+        borderRadius: "50%",
+        background: `radial-gradient(circle, ${BRAND.blue}1f 0%, transparent 70%)`,
+        pointerEvents: "none",
+    },
     contentBody: {
+        position: "relative",
         display: "flex",
         flexDirection: "column",
-        gap: 20,
-        padding: "20px 24px",
+        gap: 22,
+        padding: "28px 24px 40px",
         maxWidth: 1080,
+        margin: "0 auto",
     },
+    headerBlock: { textAlign: "center" },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
         fontWeight: fontWeight.bold,
         color: "#17181C",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
     },
+    titleDash: { color: BRAND.lightBlue, fontWeight: fontWeight.regular },
     headerSubtext: { margin: "6px 0 0", fontSize: fontSize.base, color: "#767F92" },
-    mutedText: { fontSize: fontSize.base, color: "#767F92" },
+    mutedText: { fontSize: fontSize.base, color: "#767F92", textAlign: "center" },
     errorText: {
         color: BRAND.red,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
         margin: 0,
     },
-    successText: {
-        color: BRAND.green,
+    successPill: {
+        alignSelf: "center",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#E9FBF6",
+        color: "#0F9D77",
+        border: "1px solid #BFF0DF",
+        borderRadius: radius.pill,
+        padding: "8px 18px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
-        margin: 0,
     },
 
     currentCard: {
@@ -395,10 +594,25 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         flexWrap: "wrap",
         gap: 12,
-        background: "#fff",
-        borderRadius: radius.lg,
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: "18px 22px",
+        background: "rgba(255,255,255,0.85)",
+        backdropFilter: "blur(6px)",
+        borderRadius: radius.xl,
+        boxShadow: "0 10px 28px rgba(32, 66, 151, 0.08)",
+        border: "1px solid rgba(255,255,255,0.6)",
+        padding: "18px 24px",
+    },
+    currentCardLeft: { display: "flex", alignItems: "center", gap: 14 },
+    currentIconBox: {
+        width: 46,
+        height: 46,
+        borderRadius: radius.md,
+        background: `${BRAND.lightBlue}1a`,
+        color: BRAND.blue,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 22,
+        flexShrink: 0,
     },
     currentLabel: {
         fontSize: fontSize.xs,
@@ -406,6 +620,10 @@ const styles: Record<string, React.CSSProperties> = {
         fontWeight: fontWeight.medium,
         textTransform: "uppercase",
         letterSpacing: "0.03em",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        justifyContent: "flex-end",
     },
     currentPlanName: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, color: "#17181C" },
     renewalBlock: { textAlign: "right" },
@@ -414,41 +632,63 @@ const styles: Record<string, React.CSSProperties> = {
     plansGrid: {
         display: "grid",
         gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        gap: 16,
+        gap: 18,
     },
     planCard: {
         background: "#fff",
-        borderRadius: radius.lg,
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: "20px",
+        borderRadius: radius.xl,
+        boxShadow: "0 8px 24px rgba(32, 66, 151, 0.06)",
+        padding: "22px",
         display: "flex",
         flexDirection: "column",
         gap: 12,
         position: "relative",
         border: "2px solid transparent",
+        transition: "box-shadow 0.2s ease, transform 0.2s ease",
     },
-    planCardCurrent: { border: `2px solid ${BRAND.blue}` },
+    planCardCurrent: {
+        border: `2px solid ${BRAND.blue}`,
+        boxShadow: "0 14px 32px rgba(32, 66, 151, 0.18)",
+        transform: "translateY(-2px)",
+    },
     currentBadge: {
         position: "absolute",
-        top: -10,
-        right: 16,
+        top: -14,
+        right: 18,
         background: GRADIENT,
         color: "#fff",
         fontSize: fontSize.xxs,
         fontWeight: fontWeight.semibold,
-        padding: "4px 10px",
+        padding: "5px 14px",
         borderRadius: radius.pill,
+        boxShadow: "0 6px 14px rgba(32, 66, 151, 0.35)",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
     },
+    planIconBox: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
+        background: "#F1F2FA",
+        color: BRAND.blue,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 20,
+    },
+    planIconBoxCurrent: { background: `${BRAND.lightBlue}22`, color: BRAND.blue },
     planName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },
     planPrice: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, color: BRAND.blue },
     planPricePeriod: { fontSize: fontSize.xs, fontWeight: fontWeight.regular, color: "#9ca3af" },
+    planDivider: { height: 1, background: "#EEF0F6", margin: "2px 0" },
     featureList: {
         listStyle: "none",
         margin: 0,
         padding: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 10,
         flex: 1,
     },
     featureItem: {
@@ -467,6 +707,19 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
+        boxShadow: "0 8px 18px rgba(32, 66, 151, 0.25)",
+    },
+    btnPrimaryBusy: { opacity: 0.75, cursor: "wait" },
+    btnCurrentActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.pill,
+        padding: "10px 16px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        cursor: "default",
+        boxShadow: "0 8px 18px rgba(32, 66, 151, 0.25)",
     },
     btnSecondary: {
         display: "inline-block",
@@ -491,4 +744,155 @@ const styles: Record<string, React.CSSProperties> = {
         fontWeight: fontWeight.semibold,
         cursor: "not-allowed",
     },
+
+    // ---- relatable trust footer, sits under the plan grid ----
+    trustFooter: {
+        display: "flex",
+        flexWrap: "wrap",
+        justifyContent: "center",
+        gap: "10px 32px",
+        borderTop: "1px solid #E5E7EF",
+        paddingTop: 22,
+        marginTop: 6,
+    },
+    trustItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: "#5B6478",
+    },
+    trustIcon: { color: BRAND.lightBlue, fontSize: 16 },
+    footnote: {
+        textAlign: "center",
+        fontSize: fontSize.xs,
+        color: "#9ca3af",
+        margin: 0,
+        maxWidth: 560,
+        alignSelf: "center",
+        lineHeight: 1.5,
+    },
+
+    // ---- payment modal ----
+    modalOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(17, 20, 33, 0.55)",
+        backdropFilter: "blur(3px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 16,
+    },
+    modalCard: {
+        position: "relative",
+        background: "#fff",
+        borderRadius: radius.xl,
+        boxShadow: "0 24px 60px rgba(16, 24, 64, 0.25)",
+        padding: "28px",
+        width: "100%",
+        maxWidth: 420,
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        maxHeight: "92vh",
+        overflowY: "auto",
+    },
+    modalClose: {
+        position: "absolute",
+        top: 14,
+        right: 14,
+        background: "#F3F4F6",
+        border: "none",
+        borderRadius: radius.circle,
+        width: 30,
+        height: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        color: "#6B7280",
+        fontSize: fontSize.md,
+    },
+    modalHeader: { textAlign: "center", marginBottom: 4 },
+    modalEyebrow: {
+        fontSize: fontSize.xs,
+        color: "#9ca3af",
+        fontWeight: fontWeight.medium,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+    },
+    modalPlanName: {
+        fontSize: fontSize["4xl"],
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+        marginTop: 2,
+    },
+    modalPlanPrice: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, color: BRAND.blue },
+
+    cardPreview: {
+        background: CARD_GRADIENT,
+        borderRadius: radius.lg,
+        padding: "18px 20px",
+        color: "#fff",
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        boxShadow: "0 12px 24px rgba(32, 66, 151, 0.3)",
+    },
+    cardPreviewTopRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    cardPreviewIcon: { fontSize: 24, opacity: 0.9 },
+    cardPreviewBrand: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        letterSpacing: "0.06em",
+        opacity: 0.9,
+    },
+    cardPreviewNumber: {
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.medium,
+        letterSpacing: "0.08em",
+        fontFamily: "ui-monospace, Consolas, monospace",
+    },
+    cardPreviewBottomRow: { display: "flex", justifyContent: "space-between", gap: 12 },
+    cardPreviewLabel: {
+        fontSize: fontSize.xxs,
+        opacity: 0.75,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+    },
+    cardPreviewValue: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        marginTop: 2,
+        textTransform: "uppercase",
+    },
+
+    formGroup: { display: "flex", flexDirection: "column", gap: 6 },
+    formRow: { display: "flex", gap: 12 },
+    formLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#4B5563" },
+    formInput: {
+        border: "1.5px solid #E5E7EB",
+        borderRadius: radius.sm,
+        padding: "10px 12px",
+        fontSize: fontSize.base,
+        color: "#17181C",
+        outline: "none",
+        fontFamily: "inherit",
+    },
+    modalDisclaimer: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.xs,
+        color: "#9ca3af",
+        margin: 0,
+    },
+    modalActions: { display: "flex", gap: 10, marginTop: 4 },
 };
