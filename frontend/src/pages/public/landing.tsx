@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { useNavigate } from "react-router-dom";
+import { authFetch } from "../../utils/authFetch";
+import { getCurrentUser } from "../../utils/auth";
 
 // Public marketing/landing page — this is now what "/" shows before
 // login, per the reference design. The "Existing User? Login Here"
@@ -116,6 +118,17 @@ const Landing = () => {
     const [cardExpiry, setCardExpiry] = useState("12/29");
     const [cardCvv, setCardCvv] = useState("123");
 
+    // NEW: "Upgrade" flow — for someone who's ALREADY logged in (this
+    // landing page still opens for a logged-in visitor, e.g. via a
+    // direct link to "/"), an existing organization can upgrade its OWN
+    // plan right from this same modal instead of going through the
+    // brand-new-organization signup path below. currentUser is only
+    // read once on mount (a login/logout always does a full page nav in
+    // this app, so it can't go stale mid-session).
+    const [currentUser] = useState(() => getCurrentUser());
+    const [upgradeMode, setUpgradeMode] = useState(false);
+    const [upgradeSuccessMsg, setUpgradeSuccessMsg] = useState("");
+
     // ---------- "Sign up your organization" popup (org name + email only) ----------
     const [orgSignupOpen, setOrgSignupOpen] = useState(false);
     const [orgName, setOrgName] = useState("");
@@ -189,7 +202,50 @@ const Landing = () => {
         if (!plan) return;
         setCheckoutError("");
         setCheckoutEmail("");
+        setUpgradeMode(false);
+        setUpgradeSuccessMsg("");
         setCheckoutPlan({ key: planName.toLowerCase(), name: planName, price: plan.price });
+    };
+
+    // NEW: "Upgrade" (shown only when currentUser is set — see the modal
+    // JSX below) — switches the SAME modal into upgrade mode: no email
+    // needed (we already know who's asking, via the session cookie),
+    // and on submit this hits the authenticated /api/billing/upgrade
+    // endpoint instead of /api/billing/mock-checkout, which updates
+    // THIS org's existing subscriptions row directly rather than
+    // minting a new-organization signup token.
+    const handleStartUpgrade = () => {
+        setCheckoutError("");
+        setUpgradeSuccessMsg("");
+        setUpgradeMode(true);
+    };
+
+    const handleConfirmUpgrade = async () => {
+        if (!checkoutPlan) return;
+        if (!/^\d{4}\s?\d{4}\s?\d{4}\s?\d{4}$/.test(cardNumber.trim())) {
+            setCheckoutError("Enter a valid 16-digit card number.");
+            return;
+        }
+        setCheckoutError("");
+        setCheckoutLoading(true);
+        try {
+            const res = await authFetch(`${API_URL}/api/billing/upgrade`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ plan: checkoutPlan.key, cardNumber }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || "Upgrade failed. Please try again.");
+            }
+            setUpgradeSuccessMsg(
+                data.message || `Your plan has been upgraded to ${checkoutPlan.name}.`
+            );
+        } catch (err: any) {
+            setCheckoutError(err.message || "Something went wrong.");
+        } finally {
+            setCheckoutLoading(false);
+        }
     };
 
     // Demo/dummy payment — this project has no live Razorpay keys
@@ -1565,61 +1621,150 @@ const Landing = () => {
             {checkoutPlan && (
                 <div className="lp-checkout-overlay">
                     <div className="lp-checkout-modal" onClick={(e) => e.stopPropagation()}>
-                        <button
-                            className="lp-checkout-close"
-                            onClick={() => setCheckoutPlan(null)}
-                            aria-label="Close"
-                            disabled={checkoutLoading}
+                        {/* NEW: header row — "Upgrade" sits to the LEFT of the
+                            existing close/Cancel (X) button, only shown to an
+                            already-logged-in user (currentUser), and only once
+                            (hidden once upgradeMode is already on, or after a
+                            successful upgrade — nothing left to switch to). */}
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "flex-end",
+                                gap: 10,
+                            }}
                         >
-                            <i className="ti ti-x" />
-                        </button>
-                        <h3 className="lp-login-title">{checkoutPlan.name} Plan</h3>
-                        <p className="lp-login-subtitle">
-                            {checkoutPlan.price} / user / month — this is a demo checkout, no real
-                            card is charged.
-                        </p>
-                        {checkoutError && <div className="lp-login-error">{checkoutError}</div>}
-                        <input
-                            type="email"
-                            placeholder="Enter your email"
-                            value={checkoutEmail}
-                            onChange={(e) => setCheckoutEmail(e.target.value)}
-                            className="lp-login-input"
-                            style={{ marginBottom: 10 }}
-                        />
-                        <input
-                            type="text"
-                            placeholder="Card number"
-                            value={cardNumber}
-                            onChange={(e) => setCardNumber(e.target.value)}
-                            className="lp-login-input"
-                            style={{ marginBottom: 10 }}
-                        />
-                        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                            <input
-                                type="text"
-                                placeholder="MM/YY"
-                                value={cardExpiry}
-                                onChange={(e) => setCardExpiry(e.target.value)}
-                                className="lp-login-input"
-                                style={{ marginBottom: 0 }}
-                            />
-                            <input
-                                type="text"
-                                placeholder="CVV"
-                                value={cardCvv}
-                                onChange={(e) => setCardCvv(e.target.value)}
-                                className="lp-login-input"
-                                style={{ marginBottom: 0 }}
-                            />
+                            {currentUser && !upgradeMode && !upgradeSuccessMsg && (
+                                <button
+                                    type="button"
+                                    className="lp-login-submit"
+                                    style={{
+                                        width: "auto",
+                                        padding: "6px 16px",
+                                        fontSize: fontSize.sm,
+                                    }}
+                                    onClick={handleStartUpgrade}
+                                    disabled={checkoutLoading}
+                                >
+                                    Upgrade
+                                </button>
+                            )}
+                            <button
+                                className="lp-checkout-close"
+                                onClick={() => setCheckoutPlan(null)}
+                                aria-label="Close"
+                                disabled={checkoutLoading}
+                            >
+                                <i className="ti ti-x" />
+                            </button>
                         </div>
-                        <button
-                            className="lp-login-submit"
-                            onClick={handleConfirmCheckout}
-                            disabled={checkoutLoading}
-                        >
-                            {checkoutLoading ? "Processing payment…" : "Pay & Continue"}
-                        </button>
+
+                        <h3 className="lp-login-title">{checkoutPlan.name} Plan</h3>
+
+                        {upgradeSuccessMsg ? (
+                            <>
+                                <p className="lp-login-subtitle">{upgradeSuccessMsg}</p>
+                                <button
+                                    className="lp-login-submit"
+                                    style={{ width: "100%", boxSizing: "border-box" }}
+                                    onClick={() => setCheckoutPlan(null)}
+                                >
+                                    Done
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <p className="lp-login-subtitle">
+                                    {upgradeMode ? (
+                                        <>
+                                            {checkoutPlan.price} / user / month — this upgrades your
+                                            EXISTING organization's plan ({currentUser?.email}). No
+                                            new account is created. Demo checkout, no real card is
+                                            charged.
+                                        </>
+                                    ) : (
+                                        <>
+                                            {checkoutPlan.price} / user / month — this is a demo
+                                            checkout, no real card is charged.
+                                        </>
+                                    )}
+                                </p>
+                                {checkoutError && (
+                                    <div className="lp-login-error">{checkoutError}</div>
+                                )}
+                                {/* Email is only needed for a brand-new organization
+                                    signup — an upgrade already knows who's asking via
+                                    the logged-in session, so this is skipped entirely
+                                    in upgradeMode. */}
+                                {!upgradeMode && (
+                                    <input
+                                        type="email"
+                                        placeholder="Enter your email"
+                                        value={checkoutEmail}
+                                        onChange={(e) => setCheckoutEmail(e.target.value)}
+                                        className="lp-login-input"
+                                        style={{ marginBottom: 10 }}
+                                    />
+                                )}
+                                <input
+                                    type="text"
+                                    placeholder="Card number"
+                                    value={cardNumber}
+                                    onChange={(e) => setCardNumber(e.target.value)}
+                                    className="lp-login-input"
+                                    style={{ marginBottom: 10 }}
+                                />
+                                <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                                    <input
+                                        type="text"
+                                        placeholder="MM/YY"
+                                        value={cardExpiry}
+                                        onChange={(e) => setCardExpiry(e.target.value)}
+                                        className="lp-login-input"
+                                        style={{ marginBottom: 0 }}
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="CVV"
+                                        value={cardCvv}
+                                        onChange={(e) => setCardCvv(e.target.value)}
+                                        className="lp-login-input"
+                                        style={{ marginBottom: 0 }}
+                                    />
+                                </div>
+                                <button
+                                    className="lp-login-submit"
+                                    onClick={
+                                        upgradeMode ? handleConfirmUpgrade : handleConfirmCheckout
+                                    }
+                                    disabled={checkoutLoading}
+                                >
+                                    {checkoutLoading
+                                        ? "Processing payment…"
+                                        : upgradeMode
+                                          ? "Upgrade & Pay"
+                                          : "Pay & Continue"}
+                                </button>
+                                {upgradeMode && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setUpgradeMode(false)}
+                                        disabled={checkoutLoading}
+                                        style={{
+                                            width: "100%",
+                                            marginTop: 10,
+                                            background: "transparent",
+                                            border: "none",
+                                            color: "var(--lp-text-muted, #767F92)",
+                                            fontSize: fontSize.sm,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Back to new signup checkout
+                                    </button>
+                                )}
+                            </>
+                        )}
                     </div>
                 </div>
             )}

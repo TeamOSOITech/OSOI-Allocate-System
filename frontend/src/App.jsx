@@ -46,6 +46,10 @@ const Profile = lazy(() => import("./pages/profile"));
 const ProductionReports = lazy(() => import("./pages/admin/productionreports"));
 const History = lazy(() => import("./pages/admin/history"));
 const Billing = lazy(() => import("./pages/admin/billing"));
+// NEW: in-app "Upgrade Plan" page (real Razorpay Checkout, for an
+// already-logged-in organization) — linked from the Sidebar's Upgrade
+// entry, sits right above Sign off.
+const Subscription = lazy(() => import("./pages/subscription"));
 // FIX (#16 — 404 page): catch-all for any unmatched route.
 const NotFound = lazy(() => import("./pages/notfound"));
 //import VoiceAssistant from "./components/voiceAssistant";
@@ -425,6 +429,22 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                     <AppLayout onLogout={handleLogout}>
                                         <Billing />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Subscription — org-level plan upgrade via real
+                        Razorpay Checkout. Same gating as Billing (SUPER_ADMIN
+                        only) since this changes what the whole organization
+                        is charged, not just something personal. Linked from
+                        the Sidebar's "Upgrade" entry, just above Sign off. */}
+                        <Route
+                            path="/subscription"
+                            element={
+                                <PrivateRoute requiredRole="SUPER_ADMIN">
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Subscription />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

@@ -146,6 +146,7 @@ const pathToLabel: Record<string, string> = {
     "/billing": "Billing",
     "/quality-scores": "QC & Audit",
     "/profile": "Profile",
+    "/subscription": "Upgrade",
 };
 
 // ---- Brand palette ----
@@ -160,6 +161,9 @@ const COLORS = {
     green: "var(--brand-green)", // accent / status
     blueTint: "#EAF0FB", // light tint, kept fixed — decorative only, not a brand color
 };
+// Used only by the small "Upgrade" pill in the bottom-left corner (next
+// to the plant illustration) when that link is the active route.
+const GRADIENT_PILL = `linear-gradient(135deg, ${COLORS.lightBlue}, ${COLORS.blue})`;
 
 const SIDEBAR_WIDTH = 176;
 // Slightly wider on mobile so it's comfortable to tap as a drawer.
@@ -455,31 +459,88 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     Sign off
                 </div>
 
-                {/* Decorative plant illustration */}
-                <svg
-                    width="130"
-                    height="120"
-                    viewBox="0 0 100 90"
+                {/* Bottom row: the plant illustration sits alignSelf:flex-end
+                    (right side), which leaves empty space to its LEFT —
+                    that's where the Upgrade pill goes now (org-level
+                    Razorpay upgrade page, SUPER_ADMIN only), instead of a
+                    full-width row up in the nav list. Row layout so both
+                    sit on the same baseline; Upgrade only renders (and only
+                    takes up space) for SUPER_ADMIN, so a non-admin still
+                    just sees the plant alone, unchanged from before. */}
+                <div
                     style={{
-                        marginTop: "4px",
-                        marginBottom: "14px",
-                        alignSelf: "flex-end",
-                        opacity: 0.95,
-                        pointerEvents: "none",
+                        display: "flex",
+                        alignItems: "flex-end",
+                        justifyContent: "space-between",
+                        width: "100%",
                         flexShrink: 0,
                     }}
                 >
-                    <ellipse cx="50" cy="82" rx="38" ry="6" fill={COLORS.blueTint} />
-                    <rect x="30" y="55" width="40" height="30" rx="6" fill={COLORS.lightBlue} />
-                    <path
-                        d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z"
-                        fill={COLORS.green}
-                    />
-                    <path
-                        d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z"
-                        fill={COLORS.blue}
-                    />
-                </svg>
+                    {role === "SUPER_ADMIN" ? (
+                        <div
+                            onClick={() => {
+                                setIsOpen(false);
+                                navigate("/subscription");
+                            }}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                background:
+                                    activeLabel === "Upgrade"
+                                        ? GRADIENT_PILL
+                                        : hoveredLabel === "Upgrade"
+                                          ? COLORS.blueTint
+                                          : "transparent",
+                                border: `1.5px solid ${activeLabel === "Upgrade" ? "transparent" : COLORS.lightBlue}`,
+                                color: activeLabel === "Upgrade" ? "#fff" : COLORS.blue,
+                                borderRadius: radius.pill,
+                                padding: "7px 12px",
+                                fontSize: fontSize.sm,
+                                fontWeight: fontWeight.semibold,
+                                cursor: "pointer",
+                                marginBottom: "30px",
+                                whiteSpace: "nowrap",
+                            }}
+                            onMouseEnter={() => setHoveredLabel("Upgrade")}
+                            onMouseLeave={() => setHoveredLabel(null)}
+                        >
+                            <i
+                                className="ti ti-rocket"
+                                style={{ fontSize: fontSize.base, color: "inherit" }}
+                                aria-hidden="true"
+                            />
+                            Upgrade
+                        </div>
+                    ) : (
+                        <span />
+                    )}
+
+                    {/* Decorative plant illustration */}
+                    <svg
+                        width="130"
+                        height="120"
+                        viewBox="0 0 100 90"
+                        style={{
+                            marginTop: "4px",
+                            marginBottom: "14px",
+                            opacity: 0.95,
+                            pointerEvents: "none",
+                            flexShrink: 0,
+                        }}
+                    >
+                        <ellipse cx="50" cy="82" rx="38" ry="6" fill={COLORS.blueTint} />
+                        <rect x="30" y="55" width="40" height="30" rx="6" fill={COLORS.lightBlue} />
+                        <path
+                            d="M50 55 C 30 40, 30 15, 50 5 C 70 15, 70 40, 50 55 Z"
+                            fill={COLORS.green}
+                        />
+                        <path
+                            d="M50 55 C 38 45, 38 25, 50 15 C 62 25, 62 45, 50 55 Z"
+                            fill={COLORS.blue}
+                        />
+                    </svg>
+                </div>
             </aside>
         </>
     );
