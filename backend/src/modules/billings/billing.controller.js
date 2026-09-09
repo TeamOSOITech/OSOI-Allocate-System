@@ -8,6 +8,9 @@ const {
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
+  getPlanByName,
+  getActiveSubscription,
+  upgradeOrgSubscription,
   PLAN_CONFIG,
 } = require("./billing.service");
 
@@ -252,6 +255,146 @@ const getSignupStatusHandler = async (req, res) => {
   }
 };
 
+// ===========================================================================
+// IN-APP UPGRADE FLOW — for an already logged-in organization changing its
+// OWN plan (Basic <-> Professional), as opposed to everything above this
+// line, which is the pre-signup "pay first, then create an account" path.
+// All three handlers below sit behind `authenticate` (see billing.routes.js)
+// — organizationId always comes from req.user, never from the request body,
+// so nobody can upgrade/inspect a tenant that isn't their own.
+// ===========================================================================
+
+// GET /api/billing/subscription
+// Powers the in-app Subscription page: what plan is this organization on
+// right now, and until when.
+const getMySubscriptionHandler = async (req, res) => {
+  try {
+    const organizationId = req.user.organizationId;
+    const subscription = await getActiveSubscription(supabase, organizationId);
+
+    if (!subscription) {
+      return res.json({
+        success: true,
+        data: { plan: "free", status: "active", currentPeriodEnd: null },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        plan: (subscription.plans?.name || "free").toLowerCase(),
+        status: subscription.status,
+        currentPeriodEnd: subscription.current_period_end,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// POST /api/billing/upgrade/create-order
+// body: { plan: "basic" | "professional" }
+// Real Razorpay order (no mock path here — this is the flow that's meant
+// to actually charge a card) for an existing, logged-in organization.
+const createUpgradeOrderHandler = async (req, res) => {
+  try {
+    const { plan } = req.body;
+    const normalizedPlan = String(plan || "").toLowerCase();
+
+    if (!PLAN_CONFIG[normalizedPlan]) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid plan selected" });
+    }
+
+    const order = await createOrder(normalizedPlan, {
+      organization_id: String(req.user.organizationId),
+      upgrade: "true",
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        plan: normalizedPlan,
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+// POST /api/billing/upgrade/verify-payment
+// body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan }
+// Called by the frontend from Razorpay Checkout's own success handler.
+// Verifies the signature the exact same way the pre-signup flow does,
+// then — instead of minting a new-account signup token — moves the
+// CALLER'S OWN organization onto the new plan directly.
+const verifyUpgradePaymentHandler = async (req, res) => {
+  try {
+    const {
+      razorpay_order_id: orderId,
+      razorpay_payment_id: paymentId,
+      razorpay_signature: signature,
+      plan,
+    } = req.body;
+
+    const normalizedPlan = String(plan || "").toLowerCase();
+
+    if (!orderId || !paymentId || !signature || !PLAN_CONFIG[normalizedPlan]) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Missing or invalid required fields",
+        });
+    }
+
+    const isValid = verifyPaymentSignature({ orderId, paymentId, signature });
+    if (!isValid) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Payment verification failed" });
+    }
+
+    const planRow = await getPlanByName(supabase, normalizedPlan);
+    if (!planRow) {
+      // Payment succeeded on Razorpay's side but we can't find a matching
+      // `plans` row to move the org onto — surface this loudly rather
+      // than silently leaving the org on its old plan after being charged.
+      console.error(
+        `Upgrade verify-payment: no plans row found for "${normalizedPlan}" (org ${req.user.organizationId}, payment ${paymentId}) — subscription NOT updated.`,
+      );
+      return res.status(500).json({
+        success: false,
+        message:
+          "Payment succeeded but we couldn't update your plan. Please contact support with this payment ID: " +
+          paymentId,
+      });
+    }
+
+    const subscription = await upgradeOrgSubscription(
+      supabase,
+      req.user.organizationId,
+      planRow,
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        plan: normalizedPlan,
+        status: subscription.status,
+        currentPeriodEnd: subscription.current_period_end,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getPlansHandler,
   createOrderHandler,
@@ -259,4 +402,7 @@ module.exports = {
   verifyPaymentHandler,
   webhookHandler,
   getSignupStatusHandler,
+  getMySubscriptionHandler,
+  createUpgradeOrderHandler,
+  verifyUpgradePaymentHandler,
 };

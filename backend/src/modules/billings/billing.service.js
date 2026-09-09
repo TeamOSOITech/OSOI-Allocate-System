@@ -43,13 +43,13 @@ const PLAN_CONFIG = {
 // "free" is the default for organizations with no active subscriptions
 // row at all (the no-payment /register-organization signup path).
 const PLAN_USER_LIMITS = {
-  free: 100,
+  free: 5,
   basic: 25,
   professional: 100,
   enterprise: Infinity,
 };
 
-const createOrder = async (planKey) => {
+const createOrder = async (planKey, extraNotes = {}) => {
   const plan = PLAN_CONFIG[planKey];
   if (!plan) {
     throw new Error("Invalid plan selected");
@@ -59,10 +59,97 @@ const createOrder = async (planKey) => {
     amount: plan.amount,
     currency: "INR",
     receipt: `receipt_${planKey}_${Date.now()}`,
-    notes: { plan: planKey },
+    // extraNotes lets callers (e.g. the in-app upgrade flow) stamp the
+    // organization_id onto the order too, alongside the plan — purely
+    // for traceability in the Razorpay dashboard; verify-payment never
+    // trusts these notes for anything security-relevant.
+    notes: { plan: planKey, ...extraNotes },
   });
 
   return order;
+};
+
+// supabase client passed in by the caller (billing.controller.js already
+// has one) so this file doesn't need its own connection just for this.
+//
+// Looks up the plans row by name (case-insensitively — PLAN_CONFIG keys
+// are lowercase, the `plans` table's `name` column may not be).
+const getPlanByName = async (supabase, planKey) => {
+  const { data, error } = await supabase
+    .from("plans")
+    .select("id, name, price_per_user")
+    .ilike("name", planKey)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+};
+
+// The organization's current ACTIVE subscription row (if any), most
+// recent period first — same query shape as user.service.js's
+// getOrgUserLimit, just also returning the row's id/dates so the caller
+// can decide update-vs-insert.
+const getActiveSubscription = async (supabase, organizationId) => {
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select(
+      "id, plan_id, status, current_period_start, current_period_end, plans ( name )",
+    )
+    .eq("organization_id", organizationId)
+    .eq("status", "active")
+    .order("current_period_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+};
+
+// Moves an organization onto a new plan: updates its existing active
+// subscription row in place if one exists (so upgrading doesn't leave
+// a trail of duplicate "active" rows for the same org), otherwise
+// inserts a fresh one — covers orgs that started on the free plan
+// (registerOrganization.controller.js's path never creates a
+// subscriptions row at all) and are upgrading for the first time.
+const upgradeOrgSubscription = async (supabase, organizationId, plan) => {
+  const periodStart = new Date();
+  const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+  const existing = await getActiveSubscription(supabase, organizationId);
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .update({
+        plan_id: plan.id,
+        status: "active",
+        price_per_user_snapshot: plan.price_per_user,
+        current_period_start: periodStart.toISOString(),
+        current_period_end: periodEnd.toISOString(),
+      })
+      .eq("id", existing.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .insert({
+      organization_id: organizationId,
+      plan_id: plan.id,
+      status: "active",
+      price_per_user_snapshot: plan.price_per_user,
+      current_period_start: periodStart.toISOString(),
+      current_period_end: periodEnd.toISOString(),
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 };
 
 // Verifies the signature Razorpay Checkout returns to the browser after
@@ -95,4 +182,7 @@ module.exports = {
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
+  getPlanByName,
+  getActiveSubscription,
+  upgradeOrgSubscription,
 };

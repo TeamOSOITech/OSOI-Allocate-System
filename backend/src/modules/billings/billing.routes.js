@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { authenticate } = require("../../middlewares/auth");
 
 const {
   getPlansHandler,
@@ -8,6 +9,9 @@ const {
   verifyPaymentHandler,
   webhookHandler,
   getSignupStatusHandler,
+  getMySubscriptionHandler,
+  createUpgradeOrderHandler,
+  verifyUpgradePaymentHandler,
 } = require("./billing.controller");
 
 router.get("/plans", getPlansHandler);
@@ -17,6 +21,19 @@ router.post("/create-order", createOrderHandler);
 router.post("/mock-checkout", mockCheckoutHandler);
 router.post("/verify-payment", verifyPaymentHandler);
 router.get("/signup-status", getSignupStatusHandler);
+
+// ---- In-app upgrade (already logged in, changing your OWN org's plan) ----
+// All three sit behind `authenticate` — organizationId is always read off
+// req.user server-side, never trusted from the client. Not CSRF-exempt
+// (unlike the pre-signup routes above): a logged-in session already has a
+// csrfToken by this point, so the normal double-submit check applies.
+router.get("/subscription", authenticate, getMySubscriptionHandler);
+router.post("/upgrade/create-order", authenticate, createUpgradeOrderHandler);
+router.post(
+  "/upgrade/verify-payment",
+  authenticate,
+  verifyUpgradePaymentHandler,
+);
 
 // IMPORTANT: Razorpay's webhook signature is computed over the RAW
 // request body. If your app.js already does `app.use(express.json())`
