@@ -1133,21 +1133,21 @@ const Landing = () => {
                         Plans &amp; Pricing
                     </a>
                     <a
-                        href="#login"
+                        href="#about"
                         className="lp-nav-link"
                         onClick={(e) => {
                             e.preventDefault();
-                            scrollTo("login");
+                            scrollTo("about");
                         }}
                     >
                         About Us
                     </a>
                     <a
-                        href="#login"
+                        href="#contact"
                         className="lp-nav-link"
                         onClick={(e) => {
                             e.preventDefault();
-                            scrollTo("login");
+                            scrollTo("contact");
                         }}
                     >
                         Contact
@@ -1204,19 +1204,19 @@ const Landing = () => {
                     Plans &amp; Pricing
                 </a>
                 <a
-                    href="#login"
+                    href="#about"
                     onClick={(e) => {
                         e.preventDefault();
-                        scrollTo("login");
+                        scrollTo("about");
                     }}
                 >
                     About Us
                 </a>
                 <a
-                    href="#login"
+                    href="#contact"
                     onClick={(e) => {
                         e.preventDefault();
-                        scrollTo("login");
+                        scrollTo("contact");
                     }}
                 >
                     Contact
@@ -1419,6 +1419,30 @@ const Landing = () => {
                 </div>
             </section>
 
+            {/* ---------- About Us ---------- */}
+            <section id="about" className="lp-section">
+                <h2 className="lp-section-title">About Us</h2>
+                <p className="lp-section-subtitle">
+                    Workforce Allocation is built by OSOI to take the guesswork out of assigning
+                    field cases to the right people. What started as a way to stop teams fighting
+                    over a shared spreadsheet has grown into a full allocation platform used by 30+
+                    teams to route work, track QC, and keep everyone's workload visible in real
+                    time.
+                </p>
+            </section>
+
+            {/* ---------- Contact ---------- */}
+            <section id="contact" className="lp-section">
+                <h2 className="lp-section-title">Contact</h2>
+                <p className="lp-section-subtitle">
+                    Have a question about plans, onboarding, or anything else? Reach out and we'll
+                    get back to you.
+                </p>
+                <p style={{ textAlign: "center" }}>
+                    <a href="mailto:contact@osoitech.com">contact@osoitech.com</a>
+                </p>
+            </section>
+
             {/* ---------- Existing user login ---------- */}
             <section id="login" className="lp-login-section">
                 <div className="lp-login-illustration">
@@ -1510,7 +1534,15 @@ const Landing = () => {
                 <div className="lp-footer-links">
                     <a href="#">Privacy Policy</a>
                     <a href="#">Terms of Use</a>
-                    <a href="#">Contact Us</a>
+                    <a
+                        href="#contact"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            scrollTo("contact");
+                        }}
+                    >
+                        Contact Us
+                    </a>
                 </div>
                 {SOCIAL_LINKS.length > 0 && (
                     <div className="lp-footer-social">

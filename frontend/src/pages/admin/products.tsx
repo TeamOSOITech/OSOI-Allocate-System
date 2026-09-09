@@ -212,7 +212,7 @@ const Products = () => {
     // for /api/products — hide the buttons for anyone who'd just get a
     // 403 from clicking them (Phase 5: hide create actions from every
     // role except the ones actually allowed).
-    let currentUser: { role?: string } | null = null;
+    let currentUser: { id?: string; role?: string } | null = null;
     try {
         const userStr = localStorage.getItem("user");
         currentUser = userStr ? JSON.parse(userStr) : null;
@@ -222,6 +222,7 @@ const Products = () => {
     const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
         (currentUser?.role || "").toUpperCase()
     );
+    const myId = currentUser?.id || "";
 
     const isMobile = useIsMobile();
 
@@ -231,6 +232,16 @@ const Products = () => {
 
     const [search, setSearch] = useState("");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+    // NEW: "My Team" (default) narrows the list to services aligned to
+    // this employee's own team (service_master.teams multi-select vs.
+    // the employee's Team field, same alignment rule used on the Self
+    // Allocation page). "Organisation" widens it back to every service —
+    // same All / My-Team split, applied here to services instead of
+    // employees/cases.
+    const [myTeam, setMyTeam] = useState("");
+    const [myTeamLoading, setMyTeamLoading] = useState(true);
+    const [scope, setScope] = useState<"team" | "org">("team");
 
     const [viewDetails, setViewDetails] = useState<Product | null>(null);
 
@@ -319,9 +330,32 @@ const Products = () => {
         }
     };
 
+    // NEW: this employee's own Team, straight off /api/employees/:id —
+    // same source as the Self Allocation page. Non-critical: if it fails
+    // or the employee has no team set, "My Team" scope just comes up
+    // empty (with a message) instead of blocking the page.
+    const fetchMyTeam = async () => {
+        if (!myId) {
+            setMyTeamLoading(false);
+            return;
+        }
+        setMyTeamLoading(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/employees/${myId}`);
+            if (!res.ok) return;
+            const emp = await res.json();
+            setMyTeam(((emp as any)?.team ?? (emp as any)?.workedInTeams ?? "").toString().trim());
+        } catch {
+            // silent — non-critical
+        } finally {
+            setMyTeamLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchProducts();
         fetchTeams();
+        fetchMyTeam();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -345,13 +379,29 @@ const Products = () => {
         return () => document.removeEventListener("click", handleClickOutside);
     }, [teamDropdownOpen]);
 
+    const myTeamLower = myTeam.toLowerCase();
     const filteredProducts = useMemo(
         () =>
-            products.filter((p) =>
-                (p.product_name || "").toLowerCase().includes(search.trim().toLowerCase())
-            ),
-        [products, search]
+            products
+                .filter((p) =>
+                    (p.product_name || "").toLowerCase().includes(search.trim().toLowerCase())
+                )
+                .filter((p) => {
+                    if (scope !== "team") return true;
+                    if (!myTeamLower) return false;
+                    return (p.teams || []).some(
+                        (t) => (t || "").toString().trim().toLowerCase() === myTeamLower
+                    );
+                }),
+        [products, search, scope, myTeamLower]
     );
+
+    // Switching scope changes which services are even in the list, so
+    // bulk-select selections from the old scope shouldn't carry over.
+    const changeScope = (next: "team" | "org") => {
+        setScope(next);
+        setSelectedIds(new Set());
+    };
 
     // ---- Add handlers ----
 
@@ -1000,7 +1050,9 @@ const Products = () => {
                     {!isMobile && (
                         <div style={styles.headerRow}>
                             <p style={styles.headerSubtext}>
-                                View, add, edit or remove Services from the system.
+                                {scope === "team"
+                                    ? `Showing services aligned to your team${myTeam ? ` (${myTeam})` : ""}.`
+                                    : "Showing every service across the organisation."}
                             </p>
 
                             <div style={styles.headerActions}>
@@ -1092,6 +1144,34 @@ const Products = () => {
                             {error}
                         </div>
                     )}
+
+                    {/* NEW: My Team / Organisation scope toggle — defaults to "My
+                        Team" (services aligned to this employee's own team);
+                        switching to "Organisation" widens the list to every
+                        service, same All/My-Team split used on the Today's
+                        Allocation -> Employees tab, applied here to services. */}
+                    <div style={styles.viewToggle}>
+                        <button
+                            type="button"
+                            onClick={() => changeScope("team")}
+                            style={{
+                                ...styles.scopeToggleBtn,
+                                ...(scope === "team" ? styles.viewToggleBtnActive : {}),
+                            }}
+                        >
+                            My Team
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => changeScope("org")}
+                            style={{
+                                ...styles.scopeToggleBtn,
+                                ...(scope === "org" ? styles.viewToggleBtnActive : {}),
+                            }}
+                        >
+                            Organisation
+                        </button>
+                    </div>
 
                     {/* Filters */}
                     <div style={isMobile ? styles.filterRowMobile : styles.filterRow}>
@@ -1214,7 +1294,13 @@ const Products = () => {
                                     className="ti ti-package"
                                     style={{ fontSize: fontSize["7xl"], color: "#9fd6e6" }}
                                 />
-                                <p style={styles.emptyText}>No services match your filters.</p>
+                                <p style={styles.emptyText}>
+                                    {scope === "team" && !myTeamLoading
+                                        ? myTeam
+                                            ? `No services are aligned to your team (${myTeam}) yet. Switch to Organisation to see all services.`
+                                            : "You don't have a team set on your profile. Switch to Organisation to see all services."
+                                        : "No services match your filters."}
+                                </p>
                             </div>
                         ) : viewMode === "list" ? (
                             <div style={styles.tableWrap}>
@@ -2121,6 +2207,25 @@ const styles: Record<string, CSSProperties> = {
     viewToggleBtnActive: {
         background: "#e7ecf8",
         color: "var(--brand-blue)",
+    },
+
+    // NEW: My Team / Organisation scope toggle — text buttons inside the
+    // same pill wrapper (styles.viewToggle) as the grid/list view toggle,
+    // just wider than the icon-only buttons to fit a label.
+    scopeToggleBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: 32,
+        padding: "0 12px",
+        border: "none",
+        background: "transparent",
+        borderRadius: radius.sm,
+        color: "#7c8aa3",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
     },
 
     // NEW: "Select" toggle button — switches bulk-select mode on/off so the

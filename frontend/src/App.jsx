@@ -73,7 +73,7 @@ const NORMAL_USER_ALLOWED_PATHS = [
     "/profile",
     // Role-based access Phase 2: Normal User can now also reach Services,
     // Clients Preview, and Employee Preview.
-    "/products",
+    "/services",
     "/clients",
     "/employees",
     // NEW: Team Member can now reach Today's Allocation — but only ever
@@ -386,9 +386,11 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Products — replaces the old Task Progress sidebar link */}
+                        {/* Services (renamed from "Products" — the sidebar link,
+                            page contents, and API were already called
+                            "Services"; only the URL still said /products) */}
                         <Route
-                            path="/products"
+                            path="/services"
                             element={
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
@@ -397,6 +399,10 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 </PrivateRoute>
                             }
                         />
+
+                        {/* Old URL — keeps existing bookmarks/links working by
+                            bouncing straight to the new /services path. */}
+                        <Route path="/products" element={<Navigate to="/services" replace />} />
 
                         <Route
                             path="/admin/add-user"

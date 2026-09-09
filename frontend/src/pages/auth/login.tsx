@@ -98,7 +98,7 @@ const Login = () => {
                 case "OPS_MANAGER":
                 case "AUDIT_MANAGER":
                 case "PROCESS_LEAD":
-                    window.location.href = "/products";
+                    window.location.href = "/services";
                     break;
 
                 case "VERTICAL_HEAD":

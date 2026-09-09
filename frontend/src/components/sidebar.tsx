@@ -58,7 +58,7 @@ const menuItems: MenuItem[] = [
     {
         label: "Services",
         icon: "ti ti-package",
-        path: "/products",
+        path: "/services",
         // Role-based access Phase 2: Normal User now sees this again,
         // alongside admin-tier + Vertical Head.
         roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
@@ -135,7 +135,7 @@ const menuItems: MenuItem[] = [
 const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
     "/report": "Home",
-    "/products": "Services",
+    "/services": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
     "/today's-allocation": "Today's Allocation",
