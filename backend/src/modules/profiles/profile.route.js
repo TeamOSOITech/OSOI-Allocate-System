@@ -3,9 +3,29 @@ const multer = require("multer");
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
 
+// SECURITY FIX: this only checked `limits.fileSize` — there was no
+// restriction on file TYPE at all, and the route handler below only
+// checked `req.file.mimetype.startsWith("image/")`, which is just the
+// client-supplied Content-Type header on the multipart field: fully
+// attacker-controlled and trivial to spoof. Critically, "image/svg+xml"
+// also starts with "image/" and would have passed — SVG files can
+// contain embedded <script> tags, so a ".svg" upload accepted as a
+// "profile photo" and stored in a PUBLIC bucket is a stored-XSS vector
+// the moment anyone opens that file's URL directly. Locking this down
+// to an actual raster-image extension whitelist (same fileFilter
+// pattern already used for the Cases bulk-upload route) closes that off
+// — SVG is deliberately excluded.
+const ALLOWED_PHOTO_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB — matches the frontend's own check
+  fileFilter: (req, file, cb) => {
+    const ext = file.originalname
+      .slice(file.originalname.lastIndexOf("."))
+      .toLowerCase();
+    if (ALLOWED_PHOTO_EXTENSIONS.includes(ext)) return cb(null, true);
+    cb(new Error("Only .jpg, .jpeg, .png, .gif, .webp files are allowed"));
+  },
 });
 
 // Storage bucket for profile photos. Must be a PUBLIC bucket named
@@ -169,24 +189,43 @@ router.patch(
           .status(400)
           .json({ success: false, message: "No photo file uploaded" });
       }
+      // Secondary defense-in-depth check — fileFilter above already
+      // restricts by extension, but also reject if the declared
+      // mimetype isn't image/* at all (catches obviously wrong content
+      // even though this header alone isn't trustworthy).
       if (!req.file.mimetype.startsWith("image/")) {
         return res
           .status(400)
           .json({ success: false, message: "File must be an image" });
       }
 
-      const ext = (
-        req.file.originalname.split(".").pop() || "jpg"
-      ).toLowerCase();
-      // Scoped under organizationId/userId so no cross-tenant filename
-      // collisions, and one photo per user (fixed name, upsert:true) so
-      // re-uploading just replaces the old one instead of piling up.
+      const ext = ALLOWED_PHOTO_EXTENSIONS.includes(
+        `.${(req.file.originalname.split(".").pop() || "").toLowerCase()}`,
+      )
+        ? req.file.originalname.split(".").pop().toLowerCase()
+        : "jpg"; // fileFilter already guarantees this branch is never hit
+      // Path is scoped under organizationId/userId so no cross-tenant
+      // filename collisions, and one photo per user (fixed name,
+      // upsert:true) so re-uploading just replaces the old one instead
+      // of piling up.
       const path = `${req.user.organizationId}/${req.user.userId}.${ext}`;
+
+      // Content-Type is looked up from the whitelisted extension rather
+      // than trusting req.file.mimetype (client-supplied, spoofable) —
+      // belt-and-suspenders so nothing attacker-controlled reaches
+      // Storage's stored content-type.
+      const contentTypeByExt = {
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        gif: "image/gif",
+        webp: "image/webp",
+      };
 
       const { error: uploadError } = await supabase.storage
         .from(AVATAR_BUCKET)
         .upload(path, req.file.buffer, {
-          contentType: req.file.mimetype,
+          contentType: contentTypeByExt[ext] || "image/jpeg",
           upsert: true,
         });
 

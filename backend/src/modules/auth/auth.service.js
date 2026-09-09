@@ -162,12 +162,27 @@ const forgotPassword = async (email) => {
   // Deliberately NOT awaited here — the function returns to the caller
   // immediately below, and this loop keeps running after the response
   // has already gone out.
-  (async () => {
-    for (const row of rows) {
+  //
+  // FIX: was a sequential `for...of` with `await` inside — if the same
+  // real email had more than one role-account (a genuinely common case:
+  // e.g. one person who's both a Team Member and later added as a
+  // Vertical Head), each account's link-generation + email send waited
+  // for the previous one to fully finish, including mailer.js's own
+  // retries (up to 2 attempts x 15s timeout each). With 2+ accounts that
+  // easily adds 10-30+ seconds of pure serial waiting before the LAST
+  // email even starts sending. Promise.allSettled runs them all
+  // concurrently instead — total time is now whichever one is slowest,
+  // not the sum of all of them. (Timestamped logs added too, so a slow
+  // report can actually be traced to Supabase's generateLink vs Brevo's
+  // send vs something upstream, instead of guessing.)
+  const startedAt = Date.now();
+  Promise.allSettled(
+    rows.map(async (row) => {
       const loginEmail = row["Login Email"];
-      if (!loginEmail) continue;
+      if (!loginEmail) return;
 
       try {
+        const linkStart = Date.now();
         const { data: linkData, error: linkError } =
           await supabase.auth.admin.generateLink({
             type: "recovery",
@@ -176,12 +191,16 @@ const forgotPassword = async (email) => {
               redirectTo: `${getPrimaryFrontendUrl()}/reset-password`,
             },
           });
+        console.log(
+          `[forgotPassword] generateLink for ${loginEmail} took ${Date.now() - linkStart}ms`,
+        );
 
         if (linkError) throw linkError;
 
         const actionLink = linkData?.properties?.action_link;
         if (!actionLink) throw new Error("No action_link returned.");
 
+        const mailStart = Date.now();
         await sendMail({
           to: email, // send to the real/contact email, not the internal Login Email
           subject: "Password reset request",
@@ -192,13 +211,18 @@ const forgotPassword = async (email) => {
             buttonText: "Reset Password",
           }),
         });
+        console.log(
+          `[forgotPassword] sendMail for role ${row["Role"]} -> ${email} took ${Date.now() - mailStart}ms`,
+        );
 
-        console.log(`Reset email sent for role ${row["Role"]} -> ${email}`);
+        console.log(
+          `Reset email sent for role ${row["Role"]} -> ${email} (total ${Date.now() - startedAt}ms since request)`,
+        );
       } catch (err) {
         console.error(`RESET LINK/EMAIL FAILED for ${loginEmail}:`, err);
       }
-    }
-  })();
+    }),
+  );
 
   return { message: "If an account exists, a reset link has been sent." };
 };
