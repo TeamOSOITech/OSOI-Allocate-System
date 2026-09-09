@@ -1196,16 +1196,35 @@ export default function ManualAllocation() {
                                     </p>
                                 )}
 
-                                {productSelected && !loading && !selectedBatch && (
-                                    <p style={styles.allNote}>
-                                        <AlertTriangle size={12} color={BRAND.amber} /> No Daily
-                                        Work has been logged for{" "}
-                                        {products.find((p) => String(p.id) === String(productId))
-                                            ?.product_name || "this service"}{" "}
-                                        on {date}. Log today's quantity on the Daily Work page first
-                                        — until then this table has no batch to allocate against.
-                                    </p>
-                                )}
+                                {/* FIX: this used to fire off `!selectedBatch` alone —
+                                    i.e. the moment no Daily Work batch existed for
+                                    TODAY, regardless of whether the Cases table below
+                                    actually had anything to show. But the Cases table
+                                    (TodaysAllocationCases) already carries forward any
+                                    still-PENDING case from an earlier date via
+                                    includeBacklog — so a day with no fresh Daily Work
+                                    entry yet can still have real, allocatable backlog
+                                    cases sitting right below this message. Showing "no
+                                    batch to allocate against" in that situation was
+                                    flatly wrong and read like an empty/not-found state
+                                    even though pending work was still on screen. Now
+                                    gated on caseTotalCount too (same backlog-aware count
+                                    the KPI cards above use) so this only appears when
+                                    there is truly nothing — old or new — to allocate. */}
+                                {productSelected &&
+                                    !loading &&
+                                    !selectedBatch &&
+                                    caseTotalCount === 0 && (
+                                        <p style={styles.allNote}>
+                                            <AlertTriangle size={12} color={BRAND.amber} /> No cases
+                                            — today's or pending from an earlier date — for{" "}
+                                            {products.find(
+                                                (p) => String(p.id) === String(productId)
+                                            )?.product_name || "this service"}{" "}
+                                            yet. Log today's quantity on the Daily Work page to
+                                            create cases for it.
+                                        </p>
+                                    )}
                             </div>
                         )}
 
