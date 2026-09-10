@@ -1187,14 +1187,23 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid transparent",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
     },
+    // FIX: was missing flex:1 — root only stretched to its own content
+    // height (minHeight:100% alone doesn't fill a flex-column parent's
+    // remaining space), so on a short page like this one the leftover
+    // gap below the content showed the OS/browser's dark <html>
+    // background (see index.css's `prefers-color-scheme: dark` rule)
+    // instead of this page's own background — matches billing.tsx /
+    // productionreports.tsx / subscription.tsx.
     root: {
         width: "100%",
+        flex: 1,
         minHeight: "100%",
         background: "#f4f5fb",
         fontFamily: fontFamily.base,
     },
     rootMobile: {
         width: "100%",
+        flex: 1,
         minHeight: "100%",
         background: "#f0f0f5",
         fontFamily: fontFamily.base,

@@ -399,6 +399,13 @@ export default function ManageRoleLabelsButton() {
                                             fontSize: fontSize.base,
                                             marginBottom: 12,
                                             background: "#fff",
+                                            // FIX: no explicit color was set, so in
+                                            // dark mode (see index.css's
+                                            // `color-scheme: light dark`) the browser
+                                            // applied its native dark-mode text color
+                                            // to this <select> — white text on the
+                                            // white background above, invisible.
+                                            color: "#17181C",
                                         }}
                                     >
                                         {optionsForThisRow.map((role) => (
@@ -435,6 +442,15 @@ export default function ManageRoleLabelsButton() {
                                             fontSize: fontSize.base,
                                             marginBottom: isCustomized ? 8 : 0,
                                             boxSizing: "border-box",
+                                            // FIX: neither background nor color was
+                                            // set here at all, so in dark mode (see
+                                            // index.css's `color-scheme: light dark`)
+                                            // the browser rendered this with its
+                                            // native dark-mode input colors — a dark
+                                            // box with barely-visible text sitting
+                                            // inside this white modal card.
+                                            background: "#fff",
+                                            color: "#17181C",
                                         }}
                                     />
 

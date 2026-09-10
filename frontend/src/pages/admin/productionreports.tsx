@@ -795,7 +795,18 @@ export default function ProductionReport() {
 const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px 130px 1.3fr";
 
 const styles: Record<string, CSSProperties> = {
-    root: { display: "flex", flexDirection: "column" },
+    // Explicit opaque light background so the page never shows the OS/
+    // browser's dark <html> background (see index.css's
+    // `prefers-color-scheme: dark` rule) bleeding through in the gaps
+    // around the white cards — matches billing.tsx / employees.tsx.
+    root: {
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        flex: 1,
+        minHeight: "100%",
+        background: "#eff4fa",
+    },
     topBar: {
         height: 4,
         background: GRADIENT,

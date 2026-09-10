@@ -687,7 +687,16 @@ function KpiCard({
 }
 
 const styles: Record<string, CSSProperties> = {
-    root: { width: "100%", minHeight: "100%", background: "#f4f5fb", fontFamily: fontFamily.base },
+    // FIX: missing flex:1 — same gap-shows-dark-background bug as
+    // dailywork.tsx / subscription.tsx (see those for the full
+    // explanation).
+    root: {
+        width: "100%",
+        flex: 1,
+        minHeight: "100%",
+        background: "#f4f5fb",
+        fontFamily: fontFamily.base,
+    },
     rootMobile: {
         width: "100%",
         minHeight: "100%",
