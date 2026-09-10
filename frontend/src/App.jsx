@@ -315,7 +315,9 @@ function App() {
                         <Route
                             path="/clients"
                             element={
-                                <PrivateRoute requiredRole={[...ADMIN_TIER_ROLES, "TEAM_MEMBER"]}>
+                                <PrivateRoute
+                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
+                                >
                                     <AppLayout onLogout={handleLogout}>
                                         <Clients user={user} onLogout={handleLogout} />
                                     </AppLayout>
