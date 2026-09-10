@@ -1786,6 +1786,12 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             border: "1px solid #ececf5",
             fontSize: fontSize.base,
             background: "#fafafa",
+            // FIX: explicit text color so fields never go invisible on a
+            // dark OS/browser theme (browser was filling in its own
+            // dark-mode default light text color on top of this light
+            // background — see index.css's color-scheme fix for the
+            // root cause). Set explicitly here too as a safety net.
+            color: "#17181C",
             boxSizing: "border-box",
             textAlign: "left",
         },
