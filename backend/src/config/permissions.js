@@ -93,6 +93,12 @@ const ROLE_PERMISSIONS = {
 
   [ROLES.OPS_MANAGER]: [
     "materialisation.view.own",
+    // NEW: Ops Manager can log/create cases (Daily Work "Log Cases" —
+    // manual entry, auto-generate, and upload-case-numbers) same as
+    // Process Lead and Super Admin. Org-scoped (not .team) since Ops
+    // Manager operates across the whole org, matching Process Lead's
+    // scope elsewhere in this file.
+    "tasks.allocate.org",
     "tasks.reassign_user",
     "teams.reassign",
     "verticals.add", // requires Super Admin approval
@@ -120,6 +126,10 @@ const ROLE_PERMISSIONS = {
 
   [ROLES.AUDIT_MANAGER]: [
     "materialisation.view.own",
+    // NEW: Audit/Quality Manager can also log/create cases (Daily Work
+    // "Log Cases"), same as Ops Manager, Process Lead and Super Admin.
+    // Org-scoped, parallel to Ops Manager.
+    "tasks.allocate.org",
     "qc.oversee",
     "qc_permission.approve", // one of the 3 possible approvers
     "qc.assignments.modify",
