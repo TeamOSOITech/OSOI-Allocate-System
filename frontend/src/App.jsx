@@ -84,6 +84,11 @@ const NORMAL_USER_ALLOWED_PATHS = [
     // sees the self-allocation view (see the route below), never the
     // admin-tier bulk allocation grid.
     "/today's-allocation",
+    // NEW: Subscription page opened up to everyone (view-only for
+    // anyone who isn't Super Admin/Ops Manager — see subscription.tsx),
+    // so Team Member needs to be allow-listed here too or this route's
+    // own TEAM_MEMBER check above would still bounce them to /report.
+    "/subscription",
 ];
 const NORMAL_USER_HOME = "/report";
 
@@ -227,6 +232,23 @@ const AppLayout = ({ children, onLogout }) => {
                         height: "100%",
                         overflowY: "auto", // ONLY this scrolls
                         overflowX: "hidden",
+                        // FIX: no background was ever set here, so it fell
+                        // back to index.css's `--bg` variable — white in
+                        // light mode, but #16171d (near-black) whenever the
+                        // OS/browser theme is dark (see `color-scheme: light
+                        // dark` + the `prefers-color-scheme: dark` rule in
+                        // index.css). Individual pages set their OWN light
+                        // background on their outermost div, but that div
+                        // only ever grows to fit ITS content — any gap below
+                        // a short page (e.g. Daily Work's "Upload Case
+                        // Numbers" tab, whose form is shorter than the
+                        // viewport) exposed THIS element's background
+                        // instead, showing up as a black bar/footer. Every
+                        // page shares this one <main>, so fixing the
+                        // background here once covers all of them, instead
+                        // of needing the same fix repeated on every page's
+                        // own wrapper.
+                        background: "#eef1f8",
                     }}
                 >
                     {/* Only mounted for authenticated pages (AppLayout is
@@ -434,15 +456,17 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Subscription — org-level plan upgrade via real
-                        Razorpay Checkout. Same gating as Billing (SUPER_ADMIN
-                        only) since this changes what the whole organization
-                        is charged, not just something personal. Linked from
-                        the Sidebar's "Upgrade" entry, just above Sign off. */}
+                        {/* NEW: Subscription — org-level plan page (upgrade via
+                        real Razorpay Checkout). Now open to every logged-in
+                        role, not just SUPER_ADMIN — everyone can see the
+                        current plan/pricing, but the page itself only lets
+                        Super Admin or Ops Manager actually change it (see
+                        subscription.tsx's canManagePlan); everyone else gets
+                        a read-only "View only" version of the same page. */}
                         <Route
                             path="/subscription"
                             element={
-                                <PrivateRoute requiredRole="SUPER_ADMIN">
+                                <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
                                         <Subscription />
                                     </AppLayout>

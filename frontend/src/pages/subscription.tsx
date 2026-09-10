@@ -121,6 +121,17 @@ export default function Subscription() {
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
+    // NEW: Super Admin and Ops Manager can actually change the plan;
+    // every other role can still open this page and see the current
+    // plan + pricing, but in read-only "view mode" — Upgrade buttons are
+    // swapped for a disabled "View only" pill and the checkout modal
+    // never opens for them. Same localStorage-read pattern already used
+    // by clients.tsx/employees.tsx/products.tsx (AuthContext isn't wired
+    // into App.jsx yet — see authcontext.tsx's header comment).
+    const currentUser = JSON.parse(localStorage.getItem("user") || "null");
+    const canManagePlan =
+        currentUser?.role === "SUPER_ADMIN" || currentUser?.role === "OPS_MANAGER";
+
     // ---------- dummy-card checkout modal ----------
     const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
     const [cardName, setCardName] = useState("");
@@ -162,7 +173,11 @@ export default function Subscription() {
 
     // Clicking "Upgrade" just opens the dummy-card modal for that plan —
     // no network call yet, nothing is charged until "Pay & Upgrade".
+    // Guarded here too (not just by swapping the button out above) so a
+    // view-only role can never trigger checkout even via a stray click
+    // or devtools call.
     const handleUpgrade = (planKey: string) => {
+        if (!canManagePlan) return;
         setError("");
         setSuccessMsg("");
         setCheckoutError("");
@@ -177,7 +192,7 @@ export default function Subscription() {
     };
 
     const handleConfirmUpgrade = async () => {
-        if (!checkoutPlan) return;
+        if (!canManagePlan || !checkoutPlan) return;
         if (!cardName.trim()) {
             setCheckoutError("Enter the name on the card.");
             return;
@@ -245,6 +260,16 @@ export default function Subscription() {
                         Manage your organization's plan and payment. Upgrading takes effect
                         immediately.
                     </p>
+                    {/* NEW: view-only notice for every role except Super Admin /
+                        Ops Manager — they can see plans and pricing here but
+                        can't actually change anything (Upgrade buttons are
+                        swapped for a disabled "View only" pill below). */}
+                    {!canManagePlan && (
+                        <p style={styles.viewOnlyNotice}>
+                            <i className="ti ti-eye" /> View only — ask your Super Admin or Ops
+                            Manager to change the plan.
+                        </p>
+                    )}
                 </div>
 
                 {loading ? (
@@ -347,19 +372,31 @@ export default function Subscription() {
                                                 Current Plan
                                             </button>
                                         ) : isEnterprise ? (
-                                            <a
-                                                href="mailto:contact@osoitech.com?subject=Enterprise%20Plan%20Inquiry"
-                                                style={styles.btnSecondary}
-                                            >
-                                                Contact Sales
-                                            </a>
+                                            canManagePlan ? (
+                                                <a
+                                                    href="mailto:contact@osoitech.com?subject=Enterprise%20Plan%20Inquiry"
+                                                    style={styles.btnSecondary}
+                                                >
+                                                    Contact Sales
+                                                </a>
+                                            ) : (
+                                                <button style={styles.btnDisabled} disabled>
+                                                    View only
+                                                </button>
+                                            )
                                         ) : isUpgradable ? (
-                                            <button
-                                                style={styles.btnPrimary}
-                                                onClick={() => handleUpgrade(planKey)}
-                                            >
-                                                Upgrade
-                                            </button>
+                                            canManagePlan ? (
+                                                <button
+                                                    style={styles.btnPrimary}
+                                                    onClick={() => handleUpgrade(planKey)}
+                                                >
+                                                    Upgrade
+                                                </button>
+                                            ) : (
+                                                <button style={styles.btnDisabled} disabled>
+                                                    View only
+                                                </button>
+                                            )
                                         ) : (
                                             <button style={styles.btnDisabled} disabled>
                                                 Included below
@@ -586,6 +623,18 @@ function getStyles(
         },
         titleDash: { color: BRAND.lightBlue, fontWeight: fontWeight.regular },
         headerSubtext: { margin: "6px 0 0", fontSize: fontSize.base, color: "#767F92" },
+        viewOnlyNotice: {
+            margin: "10px 0 0",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 12px",
+            borderRadius: radius.pill,
+            background: "#FEF3E2",
+            color: "#B45309",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+        },
         mutedText: { fontSize: fontSize.base, color: "#767F92", textAlign: "center" },
         errorText: {
             color: BRAND.red,

@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { authenticate } = require("../../middlewares/auth");
+const { requireAnyPermission } = require("../../middlewares/rbac");
 
 const {
   getPlansHandler,
@@ -28,17 +29,38 @@ router.get("/signup-status", getSignupStatusHandler);
 // req.user server-side, never trusted from the client. Not CSRF-exempt
 // (unlike the pre-signup routes above): a logged-in session already has a
 // csrfToken by this point, so the normal double-submit check applies.
+//
+// NEW: also gated on "billing.manage" — previously these had NO role
+// check at all beyond being logged in, so any authenticated user could
+// call /upgrade/mock directly and change their org's plan even though
+// the frontend only ever showed the Upgrade button to Super Admin. Now
+// only Super Admin (via the "*" wildcard) and Ops Manager actually hold
+// this permission (see permissions.js) — everyone else can still GET
+// /subscription and /plans to view the page read-only, they just can't
+// act on it. Kept as a SEPARATE middleware per route (not router.use())
+// so GET /subscription right below stays open to every role.
 router.get("/subscription", authenticate, getMySubscriptionHandler);
-router.post("/upgrade/create-order", authenticate, createUpgradeOrderHandler);
+router.post(
+  "/upgrade/create-order",
+  authenticate,
+  requireAnyPermission("billing.manage"),
+  createUpgradeOrderHandler,
+);
 router.post(
   "/upgrade/verify-payment",
   authenticate,
+  requireAnyPermission("billing.manage"),
   verifyUpgradePaymentHandler,
 );
 // Dummy/demo card path for the in-app Subscription page — see
 // mockUpgradeHandler for details. Used instead of create-order +
 // Razorpay Checkout + verify-payment when no live Razorpay keys are set.
-router.post("/upgrade/mock", authenticate, mockUpgradeHandler);
+router.post(
+  "/upgrade/mock",
+  authenticate,
+  requireAnyPermission("billing.manage"),
+  mockUpgradeHandler,
+);
 
 // IMPORTANT: Razorpay's webhook signature is computed over the RAW
 // request body. If your app.js already does `app.use(express.json())`

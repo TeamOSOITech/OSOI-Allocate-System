@@ -122,6 +122,13 @@ const ROLE_PERMISSIONS = {
     // approver for Process Lead's requests (see APPROVAL_RULES below).
     "clients.manage",
     "products.manage",
+    // NEW: org-level plan/billing management (Subscription page's actual
+    // Upgrade action) — Ops Manager can change the org's plan same as
+    // Super Admin. Every other role can still view the Subscription page
+    // (current plan + pricing) but not act on it — see
+    // billing.routes.js's requireAnyPermission("billing.manage") on the
+    // /upgrade/* routes and subscription.tsx's canManagePlan.
+    "billing.manage",
   ],
 
   [ROLES.AUDIT_MANAGER]: [

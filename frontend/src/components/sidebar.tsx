@@ -462,11 +462,12 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                 {/* Bottom row: the plant illustration sits alignSelf:flex-end
                     (right side), which leaves empty space to its LEFT —
                     that's where the Upgrade pill goes now (org-level
-                    Razorpay upgrade page, SUPER_ADMIN only), instead of a
-                    full-width row up in the nav list. Row layout so both
-                    sit on the same baseline; Upgrade only renders (and only
-                    takes up space) for SUPER_ADMIN, so a non-admin still
-                    just sees the plant alone, unchanged from before. */}
+                    Subscription page). Row layout so both sit on the same
+                    baseline. NEW: pill now shows for every role, not just
+                    SUPER_ADMIN — the page itself is view-only for anyone
+                    other than Super Admin/Ops Manager (see
+                    subscription.tsx's canManagePlan), so everyone gets to
+                    at least SEE the current plan/pricing from here. */}
                 <div
                     style={{
                         display: "flex",
@@ -476,45 +477,41 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                         flexShrink: 0,
                     }}
                 >
-                    {role === "SUPER_ADMIN" ? (
-                        <div
-                            onClick={() => {
-                                setIsOpen(false);
-                                navigate("/subscription");
-                            }}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                background:
-                                    activeLabel === "Upgrade"
-                                        ? GRADIENT_PILL
-                                        : hoveredLabel === "Upgrade"
-                                          ? COLORS.blueTint
-                                          : "transparent",
-                                border: `1.5px solid ${activeLabel === "Upgrade" ? "transparent" : COLORS.lightBlue}`,
-                                color: activeLabel === "Upgrade" ? "#fff" : COLORS.blue,
-                                borderRadius: radius.pill,
-                                padding: "7px 12px",
-                                fontSize: fontSize.sm,
-                                fontWeight: fontWeight.semibold,
-                                cursor: "pointer",
-                                marginBottom: "30px",
-                                whiteSpace: "nowrap",
-                            }}
-                            onMouseEnter={() => setHoveredLabel("Upgrade")}
-                            onMouseLeave={() => setHoveredLabel(null)}
-                        >
-                            <i
-                                className="ti ti-rocket"
-                                style={{ fontSize: fontSize.base, color: "inherit" }}
-                                aria-hidden="true"
-                            />
-                            Upgrade
-                        </div>
-                    ) : (
-                        <span />
-                    )}
+                    <div
+                        onClick={() => {
+                            setIsOpen(false);
+                            navigate("/subscription");
+                        }}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            background:
+                                activeLabel === "Upgrade"
+                                    ? GRADIENT_PILL
+                                    : hoveredLabel === "Upgrade"
+                                      ? COLORS.blueTint
+                                      : "transparent",
+                            border: `1.5px solid ${activeLabel === "Upgrade" ? "transparent" : COLORS.lightBlue}`,
+                            color: activeLabel === "Upgrade" ? "#fff" : COLORS.blue,
+                            borderRadius: radius.pill,
+                            padding: "7px 12px",
+                            fontSize: fontSize.sm,
+                            fontWeight: fontWeight.semibold,
+                            cursor: "pointer",
+                            marginBottom: "30px",
+                            whiteSpace: "nowrap",
+                        }}
+                        onMouseEnter={() => setHoveredLabel("Upgrade")}
+                        onMouseLeave={() => setHoveredLabel(null)}
+                    >
+                        <i
+                            className="ti ti-rocket"
+                            style={{ fontSize: fontSize.base, color: "inherit" }}
+                            aria-hidden="true"
+                        />
+                        Upgrade
+                    </div>
 
                     {/* Decorative plant illustration */}
                     <svg

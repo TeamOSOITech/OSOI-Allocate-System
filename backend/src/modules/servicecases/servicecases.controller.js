@@ -209,12 +209,50 @@ async function findExistingCaseNumbersCI(
 async function getProduct(productId, organizationId) {
   const { data, error } = await supabase
     .from("service_master")
-    .select("id, product_name")
+    // NEW: `teams` too — needed by assertVerticalHeadCanUseProduct below
+    // to check a Vertical Head is only ever creating cases against a
+    // service their own team is assigned to.
+    .select("id, product_name, teams")
     .eq("id", productId)
     .eq("organization_id", organizationId)
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+// NEW: Vertical Head can create cases (Log Cases — Manual Entry, Auto
+// Generate, Upload) same as Ops Manager/Process Lead/Super Admin
+// (tasks.allocate.team grants the route), but ONLY for a service their
+// own team is assigned to — never any other team's service. The Service
+// dropdown on the frontend already only ever shows their team's
+// services (GET /api/products scopes the list the same way — see
+// products.controller.js's scopeProductsForVerticalHead), so this is
+// belt-and-suspenders: it stops a Vertical Head from creating a case
+// for an out-of-team service by calling the API directly with a
+// productId that was never actually in their dropdown. Every other
+// role is unaffected — returns true immediately for them.
+async function assertVerticalHeadCanUseProduct(req, product) {
+  if (req.user.role !== "VERTICAL_HEAD") return { ok: true };
+
+  const { data: self } = await supabase
+    .from("user_master")
+    .select('"Worked In Teams"')
+    .eq("Auth User Id", req.user.userId)
+    .eq("organization_id", req.user.organizationId)
+    .maybeSingle();
+
+  const ownTeam = (self?.["Worked In Teams"] || "").trim().toLowerCase();
+  const productTeams = (product?.teams || []).map((t) =>
+    (t || "").trim().toLowerCase(),
+  );
+
+  if (!ownTeam || !productTeams.includes(ownTeam)) {
+    return {
+      ok: false,
+      message: "Access denied — this service isn't assigned to your team.",
+    };
+  }
+  return { ok: true };
 }
 
 // NEW: resolves ids of every service_master/clients/subclients row in
@@ -725,6 +763,10 @@ async function createServiceCases(req, res) {
         .status(404)
         .json({ success: false, message: "Service not found" });
     }
+    const vhScope = await assertVerticalHeadCanUseProduct(req, product);
+    if (!vhScope.ok) {
+      return res.status(403).json({ success: false, message: vhScope.message });
+    }
     if (clientId) {
       const { data: client, error: clientError } = await supabase
         .from("clients")
@@ -915,6 +957,10 @@ async function uploadCustomServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
+    }
+    const vhScope = await assertVerticalHeadCanUseProduct(req, product);
+    if (!vhScope.ok) {
+      return res.status(403).json({ success: false, message: vhScope.message });
     }
 
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
@@ -1203,6 +1249,10 @@ async function manualCreateServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
+    }
+    const vhScope = await assertVerticalHeadCanUseProduct(req, product);
+    if (!vhScope.ok) {
+      return res.status(403).json({ success: false, message: vhScope.message });
     }
     if (clientId) {
       const { data: client, error: clientError } = await supabase
