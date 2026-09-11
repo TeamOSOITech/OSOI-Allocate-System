@@ -109,15 +109,17 @@ const menuItems: MenuItem[] = [
         roles: SUPER_ADMIN_ONLY,
     },
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
-    // NEW: Approvals — same role set as the backend's APPROVAL_RULES
-    // approvers/requestedBy combined (Process Lead sees their own
-    // submitted requests; Ops Manager/Audit Manager/Super Admin see and
-    // decide on the ones routed to them).
+    // Approvals — decision-makers only. Process Lead no longer sees this
+    // link: they submit requests via their normal actions (e.g. Add
+    // Service) and get told inline that it's pending — they don't need
+    // to visit this page. Only roles that can actually approve/reject
+    // (see APPROVAL_RULES.approvers in backend/src/config/permissions.js)
+    // get the link.
     {
         label: "Approvals",
         icon: "ti ti-checkbox",
         path: "/approvals",
-        roles: ADMIN_TIER,
+        roles: ["OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"],
     },
     {
         // Renamed from "Quality Scores" — this page now has a QC Queue

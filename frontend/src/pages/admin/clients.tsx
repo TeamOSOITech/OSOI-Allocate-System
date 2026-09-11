@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import MyPendingApprovals from "../../components/mypendingapprovals";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -1533,6 +1534,22 @@ export default function Clients() {
                             </p>
 
                             <div style={styles.headerActions}>
+                                {/* Process Lead can't reach the full Approvals page
+                                    anymore (decision-makers only) — this gives them a
+                                    read-only way to check their own submitted Client/
+                                    Subclient requests without leaving this page.
+                                    Renders nothing for any other role. */}
+                                <MyPendingApprovals
+                                    types={[
+                                        "CLIENT_CREATE",
+                                        "CLIENT_UPDATE",
+                                        "CLIENT_DELETE",
+                                        "SUBCLIENT_CREATE",
+                                        "SUBCLIENT_UPDATE",
+                                        "SUBCLIENT_DELETE",
+                                    ]}
+                                />
+
                                 {/* Sample sheet is only useful for bulk-uploading, which
                                     itself is gated behind canManage — Team Member /
                                     Vertical Head (view-only) have no use for a template

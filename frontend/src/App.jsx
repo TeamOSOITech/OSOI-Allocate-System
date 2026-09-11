@@ -451,15 +451,23 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                             }
                         />
 
-                        {/* NEW: Approvals — Process Lead sees their own submitted
-                        requests, Ops Manager/Audit Manager/Super Admin see
-                        (and decide on) requests routed to them. Same role
-                        set as everything else gated by APPROVAL_RULES on
-                        the backend. */}
+                        {/* Approvals — decision-makers only. Process Lead no
+                        longer gets page access here: they submit requests
+                        via their normal actions (e.g. Add Service) and are
+                        told "submitted for approval" inline — they don't
+                        need to visit this page to track them. Only the
+                        roles that can actually decide (approve/reject) —
+                        Ops Manager, Audit Manager, Super Admin — can open
+                        it. Backend (approvals.routes.js /
+                        approvals.controller.js) is unaffected: it already
+                        scopes what each caller can see/act on per-request,
+                        this is purely the page-level gate. */}
                         <Route
                             path="/approvals"
                             element={
-                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                <PrivateRoute
+                                    requiredRole={["OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"]}
+                                >
                                     <AppLayout onLogout={handleLogout}>
                                         <Approvals />
                                     </AppLayout>

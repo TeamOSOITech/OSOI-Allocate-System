@@ -80,6 +80,7 @@ type ApprovalRequest = {
     type: string;
     requested_by: string;
     requestedByName?: string | null;
+    requestedByRole?: string | null;
     target_user_id: string | null;
     payload: Record<string, any>;
     status: string;
@@ -103,6 +104,12 @@ export default function Approvals() {
 
     const [search, setSearch] = useState("");
     const [expandedId, setExpandedId] = useState<string | null>(null);
+
+    // Filter toggle: "Process Lead only" narrows the list down to
+    // requests raised by a Process Lead (e.g. Add Service/Client/
+    // Subclient/User) — off shows everything the caller is eligible to
+    // act on, same as before.
+    const [processLeadOnly, setProcessLeadOnly] = useState(false);
 
     // Per-row decision in flight, so only that row's buttons disable —
     // acting on one request doesn't lock the whole list.
@@ -131,15 +138,19 @@ export default function Approvals() {
     }, []);
 
     const filteredRequests = useMemo(() => {
+        const base = processLeadOnly
+            ? requests.filter((r) => r.requestedByRole === "PROCESS_LEAD")
+            : requests;
+
         const q = search.trim().toLowerCase();
-        if (!q) return requests;
-        return requests.filter((r) => {
+        if (!q) return base;
+        return base.filter((r) => {
             const typeLabel = (TYPE_LABELS[r.type] || r.type).toLowerCase();
             const entityName = (payloadEntityName(r.payload) || "").toLowerCase();
             const requester = (r.requestedByName || "").toLowerCase();
             return typeLabel.includes(q) || entityName.includes(q) || requester.includes(q);
         });
-    }, [requests, search]);
+    }, [requests, search, processLeadOnly]);
 
     const handleDecision = async (id: string, decision: "APPROVE" | "REJECT") => {
         setDecidingId(id);
@@ -206,6 +217,18 @@ export default function Approvals() {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
+                        <button
+                            type="button"
+                            style={{
+                                ...styles.plFilterBtn,
+                                ...(processLeadOnly ? styles.plFilterBtnActive : {}),
+                            }}
+                            onClick={() => setProcessLeadOnly((v) => !v)}
+                            aria-pressed={processLeadOnly}
+                        >
+                            <i className="ti ti-filter" style={{ fontSize: fontSize.md }} />
+                            Process Lead requests
+                        </button>
                     </div>
 
                     <div style={styles.scrollArea}>
@@ -423,6 +446,27 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         color: "#16233c",
         width: "100%",
+    },
+
+    plFilterBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        whiteSpace: "nowrap",
+        background: "#f7f9fc",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "9px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "#3b4a63",
+        cursor: "pointer",
+        flexShrink: 0,
+    },
+    plFilterBtnActive: {
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        borderColor: "transparent",
+        color: "#fff",
     },
 
     scrollArea: { flex: 1, minHeight: 0, overflowY: "auto" },

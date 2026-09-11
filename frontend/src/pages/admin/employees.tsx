@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { authFetch } from "../../utils/authFetch";
 import { useRoleLabels } from "../../context/roleLabelsContext";
+import MyPendingApprovals from "../../components/mypendingapprovals";
 //import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
@@ -713,6 +714,16 @@ export default function Employees() {
                                         ? `Showing your team (${myTeam}). Switch to "Organisation" to browse everyone.`
                                         : "Browse your organization by department and team."}
                                 </p>
+                            </div>
+
+                            {/* Process Lead can't reach the full Approvals page
+                                anymore (decision-makers only) — this gives them a
+                                read-only way to check their own submitted requests
+                                without leaving this page. Same header-row placement
+                                as Services/Clients (top-right, next to the page
+                                title). Renders nothing for any other role. */}
+                            <div style={styles.headerActions}>
+                                <MyPendingApprovals types={["USER_CREATE"]} />
                             </div>
                         </div>
                     )}
@@ -2059,6 +2070,12 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "space-between",
         gap: 16,
+        flexWrap: "wrap",
+    },
+    headerActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
         flexWrap: "wrap",
     },
     pageTitle: {

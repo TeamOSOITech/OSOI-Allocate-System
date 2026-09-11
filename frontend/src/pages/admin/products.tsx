@@ -3,6 +3,7 @@ import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import MyPendingApprovals from "../../components/mypendingapprovals";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -1056,6 +1057,15 @@ const Products = () => {
                             </p>
 
                             <div style={styles.headerActions}>
+                                {/* Process Lead can't reach the full Approvals page
+                                    anymore (decision-makers only) — this gives them a
+                                    read-only way to check their own submitted requests
+                                    without leaving the Services page. Renders nothing
+                                    for any other role. */}
+                                <MyPendingApprovals
+                                    types={["SERVICE_CREATE", "SERVICE_UPDATE", "SERVICE_DELETE"]}
+                                />
+
                                 {/* FIX: Sample Sheet was NOT gated behind canManage, unlike
                                     Bulk Upload and Add Service right below it — so
                                     view-only roles (Vertical Head, Team Member) could see
@@ -1124,6 +1134,9 @@ const Products = () => {
                     {isMobile && (
                         <div style={styles.headerRowMobile}>
                             <h2 style={styles.pageTitle}>Services</h2>
+                            <MyPendingApprovals
+                                types={["SERVICE_CREATE", "SERVICE_UPDATE", "SERVICE_DELETE"]}
+                            />
                             {canManage && (
                                 <button
                                     style={styles.addBtn}
