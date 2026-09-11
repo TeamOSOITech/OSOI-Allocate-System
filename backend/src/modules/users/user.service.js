@@ -31,6 +31,7 @@ const { createClient } = require("@supabase/supabase-js");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
 const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
+const { canAssignRole } = require("../../config/permissions");
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
@@ -475,6 +476,196 @@ async function createUserAndGenerateResetLink({
   };
 }
 
+/**
+ * Looks up a user's own Email + Role from user_master by their Auth User
+ * Id. Used by approvals.controller.js's applyApprovedAction() (USER_CREATE
+ * case) to reconstruct the original requester's identity — the gate only
+ * has req.user available at REQUEST time, but by APPROVAL time all we're
+ * handed back is the stored `requested_by` (an Auth User Id) — so
+ * processAddUserRequest() below still gets a real role + email to run its
+ * checks against, instead of those checks silently no-op'ing.
+ */
+async function getRequesterContext(authUserId, organizationId) {
+  const { data, error } = await supabaseAdmin
+    .from("user_master")
+    .select('"Email", "Role"')
+    .eq("Auth User Id", authUserId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return { email: data["Email"], role: data["Role"] };
+}
+
+/**
+ * Core add-user (single) validation + creation — every check and the
+ * actual account creation that used to live inline in user.controller.js's
+ * addUser(). Pulled out so it can run from TWO call sites with identical
+ * behaviour:
+ *   1. user.controller.js addUser() — the immediate path, for callers NOT
+ *      gated by APPROVAL_RULES.USER_CREATE (Ops Manager, Super Admin).
+ *   2. approvals.controller.js applyApprovedAction()'s USER_CREATE case —
+ *      re-runs this SAME function once an Ops Manager approves a Process
+ *      Lead's pending request. This matters: a request can sit PENDING
+ *      for a while, during which the seat limit could fill up, or the
+ *      requested email could get taken by something else — re-checking
+ *      at approval time (rather than trusting whatever passed at request
+ *      time) means those cases are still caught instead of silently
+ *      creating a bad/duplicate account.
+ *
+ * @param {object} body - same shape as the add-user request body.
+ * @param {object} requester - { role, email, organizationId } of whoever
+ *   is ultimately responsible for this create (the original Process Lead
+ *   requester when called from applyApprovedAction — NOT the Ops Manager
+ *   who approved it — so role/domain checks stay anchored to who actually
+ *   asked for this account, matching what would have happened had it not
+ *   been gated).
+ * @returns {{statusCode: number, body: object}} - always resolves (never
+ *   throws for expected validation failures); caller decides whether to
+ *   forward this straight to res.json() (addUser) or just log it
+ *   (applyApprovedAction, matching the HIDE_TASK pattern of logging
+ *   failures rather than throwing out of an approval decision).
+ */
+async function processAddUserRequest(body, requester) {
+  body = body || {};
+  const {
+    role: requesterRole,
+    email: requesterEmail,
+    organizationId,
+  } = requester || {};
+
+  const email = normalizeEmail(body.email);
+
+  if (!body.fullName || !email || !body.role) {
+    return {
+      statusCode: 400,
+      body: { message: "Full name, email and role are required." },
+    };
+  }
+
+  if (!isProfessionalEmail(email)) {
+    return {
+      statusCode: 400,
+      body: {
+        message:
+          "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
+      },
+    };
+  }
+
+  const creatorDomain = getDomain(requesterEmail);
+  if (!sameDomain(email, creatorDomain)) {
+    return {
+      statusCode: 400,
+      body: {
+        message: creatorDomain
+          ? `You can only add users with an @${creatorDomain} email address.`
+          : "Could not verify your organization's domain. Contact support.",
+      },
+    };
+  }
+
+  const requestedRole = String(body.role)
+    .toUpperCase()
+    .trim()
+    .replace(/[\s\-]+/g, "_");
+  if (!canAssignRole(requesterRole, requestedRole)) {
+    return {
+      statusCode: 403,
+      body: {
+        message: `Your role (${requesterRole}) is not allowed to create a user with role ${requestedRole}.`,
+      },
+    };
+  }
+
+  if (body.phone && !isValidPhone(body.phone)) {
+    return {
+      statusCode: 400,
+      body: { message: "Phone number must be exactly 10 digits." },
+    };
+  }
+
+  if (body.reportingManager) {
+    const rmCheck = await validateReportingManager(
+      body.reportingManager,
+      organizationId,
+    );
+    if (!rmCheck.valid) {
+      return { statusCode: 400, body: { message: rmCheck.message } };
+    }
+  }
+
+  const alreadyExists = await emailExists(email);
+  if (alreadyExists) {
+    return {
+      statusCode: 409,
+      body: { message: `A user with email ${email} already exists.` },
+    };
+  }
+
+  const [limit, currentCount] = await Promise.all([
+    getOrgUserLimit(organizationId),
+    getOrgUserCount(organizationId),
+  ]);
+  if (currentCount >= limit) {
+    return {
+      statusCode: 403,
+      body: {
+        message: `Your plan allows up to ${limit} users and you've reached that limit. Upgrade your subscription to add more users.`,
+      },
+    };
+  }
+
+  const tempPassword = body.password || generateFallbackPassword();
+
+  const {
+    user,
+    resetLink,
+    resetLinkGenerated,
+    resetLinkError,
+    resetEmailSent,
+    resetEmailError,
+    userMasterInserted,
+    userMasterError,
+  } = await createUserAndGenerateResetLink({
+    email,
+    tempPassword,
+    organizationId,
+    metadata: {
+      fullName: body.fullName,
+      firstName: body.firstName,
+      lastName: body.lastName,
+      employeeId: body.employeeId,
+      designation: body.designation,
+      department: body.department,
+      dob: body.dob,
+      doj: body.doj,
+      reportingManager: body.reportingManager,
+      workedInTeams: body.Teams,
+      role: requestedRole,
+    },
+  });
+
+  return {
+    statusCode: 201,
+    body: {
+      message: !userMasterInserted
+        ? `User created in Auth, but user_master insert failed (${userMasterError}) — this user CANNOT log in until this is fixed.`
+        : resetEmailSent
+          ? "User created, reset link emailed."
+          : "User created, but the reset email could not be sent — copy resetLink and share it manually.",
+      user,
+      resetLink,
+      resetLinkGenerated,
+      resetLinkError,
+      resetEmailSent,
+      resetEmailError,
+      userMasterInserted,
+      userMasterError,
+    },
+  };
+}
+
 function generateFallbackPassword() {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
@@ -501,4 +692,6 @@ module.exports = {
   validateReportingManagerAgainst,
   createUserAndGenerateResetLink,
   generateFallbackPassword,
+  getRequesterContext,
+  processAddUserRequest,
 };

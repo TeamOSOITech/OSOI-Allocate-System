@@ -61,7 +61,6 @@ async function resolveReportingManagerId(requesterUserId, organizationId) {
 function approvalGate(type, { includeParamsId = false } = {}) {
   return async (req, res, next) => {
     try {
-      return next(); // TEMP: approval flow disabled for testing — remove this line to re-enable
       const rule = APPROVAL_RULES[type];
       if (!rule) {
         // Misconfigured call site (typo'd type) — fail loudly in

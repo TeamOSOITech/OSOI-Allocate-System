@@ -22,6 +22,7 @@
 const supabase = require("../../config/supabaseClient");
 const { APPROVAL_RULES } = require("../../config/permissions");
 const productsService = require("../products/products.service");
+const userService = require("../users/user.service");
 
 async function createRequest(req, res) {
   try {
@@ -409,6 +410,47 @@ async function applyApprovedAction(request) {
         .delete()
         .eq("id", body.id)
         .eq("organization_id", orgId);
+      break;
+    }
+
+    // ---- NEW: User (Add User) ----
+    // Re-runs the FULL add-user validation (professional email, tenant
+    // domain lock, assignable-role, phone format, reporting manager,
+    // duplicate email, seat limit) against the original Process Lead
+    // requester's identity — not the approving Ops Manager's — then
+    // creates the account. See userService.processAddUserRequest() for
+    // why this re-checks rather than trusting whatever passed when the
+    // request was first filed.
+    case "USER_CREATE": {
+      const requesterCtx = await userService.getRequesterContext(
+        request.requested_by,
+        orgId,
+      );
+      if (!requesterCtx) {
+        console.error(
+          `USER_CREATE approval ${request.id}: could not resolve original requester ${request.requested_by} — user not created.`,
+        );
+        break;
+      }
+
+      const result = await userService.processAddUserRequest(body, {
+        role: requesterCtx.role,
+        email: requesterCtx.email,
+        organizationId: orgId,
+      });
+
+      // The approval decision itself has already been recorded as
+      // APPROVED at this point — a validation failure here (e.g. seat
+      // limit filled up, or the email got taken while this sat PENDING)
+      // means the account was never actually created. Logged loudly
+      // rather than thrown, same pattern as HIDE_TASK above, so one bad
+      // request doesn't fail the whole decideRequest() call.
+      if (result.statusCode >= 400) {
+        console.error(
+          `USER_CREATE approval ${request.id} failed to apply:`,
+          result.body,
+        );
+      }
       break;
     }
   }

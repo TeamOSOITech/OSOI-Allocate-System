@@ -10,152 +10,24 @@ const userService = require("./user.service");
 
 // ---------------------------------------------------------------------------
 // POST /api/users/add-user  (single user)
+//
+// APPROVAL: when the caller is PROCESS_LEAD, this route never actually
+// reaches here — approvalGate("USER_CREATE") (see user.routes.js) files
+// the request into approval_requests instead. Only callers who act
+// directly (Ops Manager, Super Admin) hit this handler. All the actual
+// validation + creation logic now lives in
+// userService.processAddUserRequest() so the SAME checks run again, on a
+// Process Lead's original payload, once an Ops Manager approves it — see
+// applyApprovedAction()'s USER_CREATE case in approvals.controller.js.
 // ---------------------------------------------------------------------------
 async function addUser(req, res) {
   try {
-    const body = req.body || {};
-    const email = userService.normalizeEmail(body.email);
-
-    if (!body.fullName || !email || !body.role) {
-      return res
-        .status(400)
-        .json({ message: "Full name, email and role are required." });
-    }
-
-    // SECURITY FIX (Finding #09): this rule previously only lived in
-    // the frontend form — enforce it here too so a direct API call
-    // can't bypass it.
-    if (!userService.isProfessionalEmail(email)) {
-      return res.status(400).json({
-        message:
-          "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
-      });
-    }
-
-    // NEW: tenant lock — new user's email domain must match the
-    // requesting admin's own domain (same organization). Prevents an
-    // admin at "you@cms.com" from onboarding "someone@otherco.com".
-    // req.user.email comes straight from Supabase Auth (authenticate
-    // middleware) — no extra DB lookup needed.
-    const creatorDomain = userService.getDomain(req.user.email);
-    if (!userService.sameDomain(email, creatorDomain)) {
-      return res.status(400).json({
-        message: creatorDomain
-          ? `You can only add users with an @${creatorDomain} email address.`
-          : "Could not verify your organization's domain. Contact support.",
-      });
-    }
-
-    // SECURITY: never trust body.role blindly — check it against what
-    // THIS caller's role is allowed to hand out. See ASSIGNABLE_ROLES
-    // in config/permissions.js. Without this, any role holding
-    // "users.onboard" could set role: "SUPER_ADMIN" and self-escalate.
-    //
-    // FIX: normalize spaces/dashes to underscores too (e.g. "TEAM
-    // MEMBER" -> "TEAM_MEMBER") — the frontend now does this on bulk
-    // uploads, but the backend must never rely on the frontend having
-    // done so (direct API calls, older cached frontend builds, etc).
-    const requestedRole = String(body.role)
-      .toUpperCase()
-      .trim()
-      .replace(/[\s\-]+/g, "_");
-    if (!canAssignRole(req.user.role, requestedRole)) {
-      return res.status(403).json({
-        message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole}.`,
-      });
-    }
-
-    // NEW: phone must be 10 digits, if provided.
-    if (body.phone && !userService.isValidPhone(body.phone)) {
-      return res.status(400).json({
-        message: "Phone number must be exactly 10 digits.",
-      });
-    }
-
-    // NEW: reporting manager, if provided, must be a real user OR a
-    // manually-added entry, in the same organization.
-    if (body.reportingManager) {
-      const rmCheck = await userService.validateReportingManager(
-        body.reportingManager,
-        req.user.organizationId,
-      );
-      if (!rmCheck.valid) {
-        return res.status(400).json({ message: rmCheck.message });
-      }
-    }
-
-    const alreadyExists = await userService.emailExists(email);
-    if (alreadyExists) {
-      return res
-        .status(409)
-        .json({ message: `A user with email ${email} already exists.` });
-    }
-
-    // Plan seat limit — count is by email in user_master for this org.
-    const [limit, currentCount] = await Promise.all([
-      userService.getOrgUserLimit(req.user.organizationId),
-      userService.getOrgUserCount(req.user.organizationId),
-    ]);
-    if (currentCount >= limit) {
-      return res.status(403).json({
-        message: `Your plan allows up to ${limit} users and you've reached that limit. Upgrade your subscription to add more users.`,
-      });
-    }
-
-    // Password is optional from the frontend now — if somehow missing,
-    // generate one here too as a safety net.
-    const tempPassword =
-      body.password || userService.generateFallbackPassword();
-
-    const {
-      user,
-      resetLink,
-      resetLinkGenerated,
-      resetLinkError,
-      resetEmailSent,
-      resetEmailError,
-      userMasterInserted,
-      userMasterError,
-    } = await userService.createUserAndGenerateResetLink({
-      email,
-      tempPassword,
+    const result = await userService.processAddUserRequest(req.body, {
+      role: req.user.role,
+      email: req.user.email,
       organizationId: req.user.organizationId,
-      metadata: {
-        fullName: body.fullName,
-        firstName: body.firstName,
-        lastName: body.lastName,
-        employeeId: body.employeeId,
-        designation: body.designation,
-        department: body.department,
-        dob: body.dob,
-        doj: body.doj,
-        reportingManager: body.reportingManager,
-        // FIX (Finding #06): frontend (adduser.tsx) sends this field as
-        // "Teams" (capital T), not "workedInTeams" — the old key was
-        // never sent by the client, so every newly created user got
-        // "Worked In Teams": null despite it being a required field.
-        // The edit path already read the right key; this was the
-        // unfixed create-path instance of the same mismatch.
-        workedInTeams: body.Teams,
-        role: requestedRole,
-      },
     });
-
-    return res.status(201).json({
-      message: !userMasterInserted
-        ? `User created in Auth, but user_master insert failed (${userMasterError}) — this user CANNOT log in until this is fixed.`
-        : resetEmailSent
-          ? "User created, reset link emailed."
-          : "User created, but the reset email could not be sent — copy resetLink and share it manually.",
-      user,
-      resetLink,
-      resetLinkGenerated,
-      resetLinkError,
-      resetEmailSent,
-      resetEmailError,
-      userMasterInserted,
-      userMasterError,
-    });
+    return res.status(result.statusCode).json(result.body);
   } catch (err) {
     console.error("add-user error:", err);
     return res

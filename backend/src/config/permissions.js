@@ -242,6 +242,24 @@ const APPROVAL_RULES = {
     approvers: [ROLES.OPS_MANAGER],
     restrictToReportingManager: true,
   },
+
+  // NEW: Process Lead's Add User (single) requests also require Ops
+  // Manager approval before the account is actually created — same
+  // requestedBy/approvers/restrictToReportingManager shape as
+  // CLIENT/SUBCLIENT/SERVICE above. Wired in user.routes.js via
+  // approvalGate("USER_CREATE"); applied in approvals.controller.js's
+  // applyApprovedAction() via userService.processAddUserRequest(), which
+  // re-runs the full add-user validation (domain lock, assignable-role,
+  // seat limit, duplicate email) at approval time — not just at request
+  // time — since those can change while the request sits PENDING.
+  // Bulk-add-user is intentionally NOT gated, mirroring the
+  // bulk-upload exemption already in place for clients/subclients/products.
+  USER_CREATE: {
+    description: "Add a new user (Process Lead's Add User request)",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
+  },
 };
 
 // SECURITY: which roles a given role is allowed to CREATE via
