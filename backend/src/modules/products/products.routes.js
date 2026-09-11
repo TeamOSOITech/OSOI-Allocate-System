@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const router = express.Router();
 const productController = require("./products.controller");
+const productService = require("./products.service");
 const { authenticate } = require("../../middlewares/auth");
 const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 const {
@@ -84,10 +85,23 @@ router.put(
 
 // Delete now uses "products.manage" instead of a hardcoded
 // SUPER_ADMIN-only check.
+// NEW: resolveExtraPayload looks up the product's own name before the
+// approval_requests row is created (see the matching comment in
+// clients.routes.js's CLIENT_DELETE route) — stored as `product_name`
+// to match the field payloadEntityName() looks for on the frontend.
 router.delete(
   "/:id",
   requireAnyPermission("products.manage"),
-  approvalGate("SERVICE_DELETE", { includeParamsId: true }),
+  approvalGate("SERVICE_DELETE", {
+    includeParamsId: true,
+    resolveExtraPayload: async (req) => {
+      const product = await productService.getProductById(
+        Number(req.params.id),
+        req.user.organizationId,
+      );
+      return product ? { product_name: product.product_name } : {};
+    },
+  }),
   productController.deleteProduct,
 );
 

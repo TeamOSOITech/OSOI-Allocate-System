@@ -29,6 +29,7 @@ const {
 } = require("../../middlewares/approvalGate");
 
 const clientsController = require("./clients.controller");
+const clientsService = require("./clients.service");
 
 // SECURITY FIX (Finding #16): this had NO fileFilter or size limit —
 // same gap already patched in subclients.routes.js and
@@ -114,10 +115,23 @@ router.put(
 );
 
 // ---------- DELETE /api/clients/:id ----------
+// NEW: resolveExtraPayload looks up the client's own name before the
+// approval_requests row is created — a DELETE has no body, so without
+// this the Approvals page would only ever have the raw id to show
+// ("Client Deletion — 134" instead of "Client Deletion — Acme Corp").
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
-  approvalGate("CLIENT_DELETE", { includeParamsId: true }),
+  approvalGate("CLIENT_DELETE", {
+    includeParamsId: true,
+    resolveExtraPayload: async (req) => {
+      const client = await clientsService.getClientById(
+        Number(req.params.id),
+        req.user.organizationId,
+      );
+      return client ? { name: client.name } : {};
+    },
+  }),
   clientsController.deleteClient,
 );
 

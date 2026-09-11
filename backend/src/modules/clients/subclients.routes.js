@@ -15,6 +15,7 @@ const { requireAnyPermission } = require("../../middlewares/rbac");
 const { approvalGate } = require("../../middlewares/approvalGate");
 
 const subclientsController = require("./subclients.controller");
+const subclientsService = require("./subclients.service");
 
 // SECURITY FIX (Finding #16): no fileFilter or size limit previously —
 // restricted to the spreadsheet types this endpoint actually parses,
@@ -86,10 +87,22 @@ router.put(
 );
 
 // ---------- DELETE /api/subclients/:id ----------
+// NEW: resolveExtraPayload looks up the subclient's own name before the
+// approval_requests row is created (see the matching comment in
+// clients.routes.js's CLIENT_DELETE route).
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
-  approvalGate("SUBCLIENT_DELETE", { includeParamsId: true }),
+  approvalGate("SUBCLIENT_DELETE", {
+    includeParamsId: true,
+    resolveExtraPayload: async (req) => {
+      const subclient = await subclientsService.getSubclientById(
+        Number(req.params.id),
+        req.user.organizationId,
+      );
+      return subclient ? { name: subclient.name } : {};
+    },
+  }),
   subclientsController.deleteSubclient,
 );
 

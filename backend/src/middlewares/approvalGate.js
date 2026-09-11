@@ -58,8 +58,19 @@ async function resolveReportingManagerId(requesterUserId, organizationId) {
  * @param {boolean} [options.includeParamsId] - merge req.params.id into the
  *   stored payload as `id` (needed for UPDATE/DELETE, where the target
  *   record's id lives in the URL, not the body).
+ * @param {(req: object) => Promise<object>} [options.resolveExtraPayload] -
+ *   optional async fn returning extra fields to merge into the stored
+ *   payload — used by DELETE routes (whose request body is normally
+ *   empty) to look up and stash the entity's name at request-creation
+ *   time, so the Approvals page can show "Acme Corp" instead of just an
+ *   id. Errors here are swallowed (logged, payload left as-is) so a
+ *   lookup failure never blocks the approval request itself from being
+ *   filed.
  */
-function approvalGate(type, { includeParamsId = false } = {}) {
+function approvalGate(
+  type,
+  { includeParamsId = false, resolveExtraPayload = null } = {},
+) {
   return async (req, res, next) => {
     try {
       const rule = APPROVAL_RULES[type];
@@ -77,9 +88,21 @@ function approvalGate(type, { includeParamsId = false } = {}) {
         return next();
       }
 
+      let extra = {};
+      if (resolveExtraPayload) {
+        try {
+          extra = (await resolveExtraPayload(req)) || {};
+        } catch (lookupErr) {
+          console.error(
+            `approvalGate(${type}): resolveExtraPayload failed:`,
+            lookupErr,
+          );
+        }
+      }
+
       const payload = includeParamsId
-        ? { id: req.params.id, ...req.body }
-        : { ...req.body };
+        ? { id: req.params.id, ...extra, ...req.body }
+        : { ...extra, ...req.body };
 
       // When this rule is meant to go specifically to the requester's own
       // reporting manager (rather than any Ops Manager broadly), resolve

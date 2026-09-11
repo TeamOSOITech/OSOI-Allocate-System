@@ -195,12 +195,23 @@ async function listHistory(req, res) {
 async function decideRequest(req, res) {
   try {
     const { id } = req.params;
-    const { decision, remarks } = req.body; // remarks: optional, mainly used on REJECT
+    const { decision, remarks } = req.body; // remarks: optional on APPROVE, required on REJECT
 
     if (!["APPROVE", "REJECT"].includes(decision)) {
       return res.status(400).json({
         success: false,
         message: "decision must be APPROVE or REJECT",
+      });
+    }
+
+    // NEW: remarks are mandatory on REJECT (so there's always a reason
+    // on record for whoever requested it), optional on APPROVE. Mirrors
+    // the same rule enforced in the frontend's reject modal — checked
+    // here too so a direct API call can't skip it.
+    if (decision === "REJECT" && (!remarks || !remarks.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Remarks are required when rejecting a request.",
       });
     }
 
