@@ -899,24 +899,36 @@ export default function Approvals() {
                                                 className="ap-row"
                                                 style={{
                                                     ...styles.row,
-                                                    borderLeft: `3px solid ${tint}`,
+                                                    borderLeft: `4px solid ${tint}`,
                                                 }}
                                             >
-                                                <div style={styles.rowTop}>
+                                                {isSelectMode && (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedIds.has(r.id)}
+                                                        onChange={() => toggleSelectOne(r.id)}
+                                                        style={{
+                                                            ...styles.rowSelectCheckbox,
+                                                            marginTop: 4,
+                                                        }}
+                                                        aria-label={`Select ${
+                                                            TYPE_LABELS[r.type] || r.type
+                                                        } request`}
+                                                    />
+                                                )}
+
+                                                <div
+                                                    style={{
+                                                        ...styles.rowIcon,
+                                                        background: `${tint}1A`,
+                                                        color: tint,
+                                                    }}
+                                                >
+                                                    <i className={iconFor(r.type)} />
+                                                </div>
+
+                                                <div style={styles.rowBody}>
                                                     <div style={styles.rowMain}>
-                                                        {isSelectMode && (
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={selectedIds.has(r.id)}
-                                                                onChange={() =>
-                                                                    toggleSelectOne(r.id)
-                                                                }
-                                                                style={styles.rowSelectCheckbox}
-                                                                aria-label={`Select ${
-                                                                    TYPE_LABELS[r.type] || r.type
-                                                                } request`}
-                                                            />
-                                                        )}
                                                         <span
                                                             style={{
                                                                 ...styles.typeBadge,
@@ -930,71 +942,98 @@ export default function Approvals() {
                                                             {entityName || "—"}
                                                         </span>
                                                     </div>
+
+                                                    <div style={styles.rowMetaLine}>
+                                                        <span style={styles.rowMetaItem}>
+                                                            <i
+                                                                className="ti ti-calendar"
+                                                                style={{ fontSize: fontSize.md }}
+                                                            />
+                                                            {formatDateTime(r.created_at)}
+                                                        </span>
+                                                        <span style={styles.rowMetaDivider}>|</span>
+                                                        <span style={styles.rowMetaItem}>
+                                                            <i
+                                                                className="ti ti-user"
+                                                                style={{ fontSize: fontSize.md }}
+                                                            />
+                                                            Requested by{" "}
+                                                            <strong>
+                                                                {r.requestedByName ||
+                                                                    "Unknown user"}
+                                                            </strong>
+                                                        </span>
+                                                    </div>
+
+                                                    <button
+                                                        type="button"
+                                                        className="ap-expand-btn"
+                                                        style={{
+                                                            ...styles.expandBtn,
+                                                            background: `${tint}14`,
+                                                            color: tint,
+                                                        }}
+                                                        onClick={() =>
+                                                            setExpandedId(isExpanded ? null : r.id)
+                                                        }
+                                                    >
+                                                        <i className="ti ti-eye" />
+                                                        {isExpanded
+                                                            ? "Hide details"
+                                                            : "View details"}
+                                                    </button>
+
+                                                    {isExpanded && (
+                                                        <PayloadDetails
+                                                            payload={r.payload}
+                                                            type={r.type}
+                                                        />
+                                                    )}
+
+                                                    {rowError && (
+                                                        <p style={styles.rowError}>{rowError}</p>
+                                                    )}
+                                                </div>
+
+                                                <div style={styles.rowRight}>
                                                     <span style={styles.rowMeta}>
+                                                        <i className="ti ti-clock" />
                                                         {formatDateTime(r.created_at)}
                                                     </span>
-                                                </div>
-
-                                                <div style={styles.rowMetaLine}>
-                                                    Requested by{" "}
-                                                    <strong>
-                                                        {r.requestedByName || "Unknown user"}
-                                                    </strong>
-                                                </div>
-
-                                                <button
-                                                    type="button"
-                                                    className="ap-expand-btn"
-                                                    style={styles.expandBtn}
-                                                    onClick={() =>
-                                                        setExpandedId(isExpanded ? null : r.id)
-                                                    }
-                                                >
-                                                    {isExpanded ? "Hide details" : "View details"}
-                                                </button>
-
-                                                {isExpanded && (
-                                                    <PayloadDetails
-                                                        payload={r.payload}
-                                                        type={r.type}
-                                                    />
-                                                )}
-
-                                                {rowError && (
-                                                    <p style={styles.rowError}>{rowError}</p>
-                                                )}
-
-                                                <div style={styles.actionsRow}>
-                                                    <button
-                                                        type="button"
-                                                        className="ap-reject-btn"
-                                                        style={{
-                                                            ...styles.rejectBtn,
-                                                            opacity: isDeciding ? 0.6 : 1,
-                                                            cursor: isDeciding
-                                                                ? "not-allowed"
-                                                                : "pointer",
-                                                        }}
-                                                        disabled={isDeciding}
-                                                        onClick={() => openRejectModal(r)}
-                                                    >
-                                                        Reject
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="ap-approve-btn"
-                                                        style={{
-                                                            ...styles.approveBtn,
-                                                            opacity: isDeciding ? 0.6 : 1,
-                                                            cursor: isDeciding
-                                                                ? "not-allowed"
-                                                                : "pointer",
-                                                        }}
-                                                        disabled={isDeciding}
-                                                        onClick={() => openApproveModal(r)}
-                                                    >
-                                                        {isDeciding ? "Working…" : "Approve"}
-                                                    </button>
+                                                    <div style={styles.actionsRow}>
+                                                        <button
+                                                            type="button"
+                                                            className="ap-reject-btn"
+                                                            style={{
+                                                                ...styles.rejectBtn,
+                                                                opacity: isDeciding ? 0.6 : 1,
+                                                                cursor: isDeciding
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
+                                                            }}
+                                                            disabled={isDeciding}
+                                                            onClick={() => openRejectModal(r)}
+                                                        >
+                                                            <i className="ti ti-trash" />
+                                                            Reject
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="ap-approve-btn"
+                                                            style={{
+                                                                ...styles.approveBtn,
+                                                                opacity: isDeciding ? 0.6 : 1,
+                                                                cursor: isDeciding
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
+                                                            }}
+                                                            disabled={isDeciding}
+                                                            onClick={() => openApproveModal(r)}
+                                                        >
+                                                            <i className="ti ti-circle-check" />
+                                                            {isDeciding ? "Working…" : "Approve"}
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         );
@@ -1034,10 +1073,20 @@ export default function Approvals() {
                                                 className="ap-row"
                                                 style={{
                                                     ...styles.row,
-                                                    borderLeft: `3px solid ${tint}`,
+                                                    borderLeft: `4px solid ${tint}`,
                                                 }}
                                             >
-                                                <div style={styles.rowTop}>
+                                                <div
+                                                    style={{
+                                                        ...styles.rowIcon,
+                                                        background: `${tint}1A`,
+                                                        color: tint,
+                                                    }}
+                                                >
+                                                    <i className={iconFor(r.type)} />
+                                                </div>
+
+                                                <div style={styles.rowBody}>
                                                     <div style={styles.rowMain}>
                                                         <span
                                                             style={{
@@ -1065,51 +1114,72 @@ export default function Approvals() {
                                                             {isApproved ? "Approved" : "Rejected"}
                                                         </span>
                                                     </div>
+
+                                                    <div style={styles.rowMetaLine}>
+                                                        <span style={styles.rowMetaItem}>
+                                                            <i
+                                                                className="ti ti-user"
+                                                                style={{ fontSize: fontSize.md }}
+                                                            />
+                                                            Requested by{" "}
+                                                            <strong>
+                                                                {r.requestedByName ||
+                                                                    "Unknown user"}
+                                                            </strong>
+                                                        </span>
+                                                        <span style={styles.rowMetaDivider}>|</span>
+                                                        <span style={styles.rowMetaItem}>
+                                                            {isApproved ? "Approved" : "Rejected"}{" "}
+                                                            by{" "}
+                                                            <strong>
+                                                                {r.decidedByName || "Unknown user"}
+                                                            </strong>
+                                                        </span>
+                                                    </div>
+
+                                                    {r.remarks && (
+                                                        <div style={styles.remarksLine}>
+                                                            <span style={styles.remarksLabel}>
+                                                                Remarks:
+                                                            </span>{" "}
+                                                            {r.remarks}
+                                                        </div>
+                                                    )}
+
+                                                    <button
+                                                        type="button"
+                                                        className="ap-expand-btn"
+                                                        style={{
+                                                            ...styles.expandBtn,
+                                                            background: `${tint}14`,
+                                                            color: tint,
+                                                        }}
+                                                        onClick={() =>
+                                                            setExpandedId(isExpanded ? null : r.id)
+                                                        }
+                                                    >
+                                                        <i className="ti ti-eye" />
+                                                        {isExpanded
+                                                            ? "Hide details"
+                                                            : "View details"}
+                                                    </button>
+
+                                                    {isExpanded && (
+                                                        <PayloadDetails
+                                                            payload={r.payload}
+                                                            type={r.type}
+                                                        />
+                                                    )}
+                                                </div>
+
+                                                <div style={styles.rowRight}>
                                                     <span style={styles.rowMeta}>
+                                                        <i className="ti ti-clock" />
                                                         {r.decided_at
                                                             ? formatDateTime(r.decided_at)
                                                             : "—"}
                                                     </span>
                                                 </div>
-
-                                                <div style={styles.rowMetaLine}>
-                                                    Requested by{" "}
-                                                    <strong>
-                                                        {r.requestedByName || "Unknown user"}
-                                                    </strong>
-                                                    {" · "}
-                                                    {isApproved ? "Approved" : "Rejected"} by{" "}
-                                                    <strong>
-                                                        {r.decidedByName || "Unknown user"}
-                                                    </strong>
-                                                </div>
-
-                                                {r.remarks && (
-                                                    <div style={styles.remarksLine}>
-                                                        <span style={styles.remarksLabel}>
-                                                            Remarks:
-                                                        </span>{" "}
-                                                        {r.remarks}
-                                                    </div>
-                                                )}
-
-                                                <button
-                                                    type="button"
-                                                    className="ap-expand-btn"
-                                                    style={styles.expandBtn}
-                                                    onClick={() =>
-                                                        setExpandedId(isExpanded ? null : r.id)
-                                                    }
-                                                >
-                                                    {isExpanded ? "Hide details" : "View details"}
-                                                </button>
-
-                                                {isExpanded && (
-                                                    <PayloadDetails
-                                                        payload={r.payload}
-                                                        type={r.type}
-                                                    />
-                                                )}
                                             </div>
                                         );
                                     })}
@@ -1639,48 +1709,92 @@ const styles: Record<string, CSSProperties> = {
     },
     emptyText: { margin: 0, fontSize: fontSize.base, color: "#7c8aa3" },
 
-    list: { display: "flex", flexDirection: "column", gap: 10 },
+    list: { display: "flex", flexDirection: "column", gap: 14 },
     row: {
         background: "#fff",
         borderRadius: radius.lg,
-        padding: 16,
-        boxShadow: "0 4px 14px rgba(0,0,0,.04)",
+        padding: "18px 22px",
+        boxShadow: "0 4px 18px rgba(16,24,40,.05)",
+        display: "flex",
+        alignItems: "stretch",
+        gap: 16,
+        flexWrap: "wrap",
+    },
+    rowIcon: {
+        width: 52,
+        height: 52,
+        borderRadius: radius.md,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: fontSize["2xl"],
+        flexShrink: 0,
+    },
+    rowBody: {
+        flex: 1,
+        minWidth: 220,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 10,
     },
     rowTop: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "space-between",
-        gap: 12,
+        gap: 16,
         flexWrap: "wrap",
     },
     rowMain: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
     typeBadge: {
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        padding: "3px 10px",
-        borderRadius: radius.xl,
+        padding: "4px 12px",
+        borderRadius: radius.pill,
         whiteSpace: "nowrap",
     },
     entityName: {
-        fontSize: fontSize.md,
+        fontSize: fontSize.xl,
         fontWeight: fontWeight.semibold,
         color: "#16233c",
     },
-    rowMeta: { fontSize: fontSize.sm, color: "#9099AC", whiteSpace: "nowrap" },
-    rowMetaLine: { fontSize: fontSize.sm, color: "#7d90a6" },
+    rowMeta: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: fontSize.sm,
+        color: "#9099AC",
+        whiteSpace: "nowrap",
+    },
+    rowMetaLine: {
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 8,
+        fontSize: fontSize.sm,
+        color: "#7d90a6",
+    },
+    rowMetaItem: { display: "flex", alignItems: "center", gap: 6 },
+    rowMetaDivider: { color: "#d6dde8" },
+    rowRight: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        gap: 14,
+        flexShrink: 0,
+    },
 
     expandBtn: {
         alignSelf: "flex-start",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
         border: "none",
-        background: "transparent",
-        color: "var(--brand-blue)",
+        borderRadius: radius.pill,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
-        padding: 0,
+        padding: "7px 16px",
     },
     detailRowsWrap: { display: "flex", flexDirection: "column", gap: 8 },
     detailRowCard: {
@@ -1710,25 +1824,33 @@ const styles: Record<string, CSSProperties> = {
 
     rowError: { margin: 0, fontSize: fontSize.sm, color: "#dc2626", fontWeight: fontWeight.medium },
 
-    actionsRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 },
+    actionsRow: { display: "flex", justifyContent: "flex-end", gap: 10 },
     approveBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
         background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
-        borderRadius: radius.md,
+        borderRadius: radius.pill,
         padding: "9px 20px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb),0.25)",
+        whiteSpace: "nowrap",
     },
     rejectBtn: {
-        background: "#fff",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#fdeeee",
         color: "#dc2626",
-        border: "1px solid #fecaca",
-        borderRadius: radius.md,
+        border: "1px solid #fbd8d8",
+        borderRadius: radius.pill,
         padding: "9px 20px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
+        whiteSpace: "nowrap",
     },
 
     // ---- Tabs (Pending / History) ----
