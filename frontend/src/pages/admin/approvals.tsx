@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
@@ -250,10 +250,20 @@ export default function Approvals() {
     // act on, same as before.
     const [processLeadOnly, setProcessLeadOnly] = useState(false);
 
-    // Per-row decision in flight, so only that row's buttons disable —
-    // acting on one request doesn't lock the whole list.
-    const [decidingId, setDecidingId] = useState<string | null>(null);
+    // Requests currently in flight — a Set (not a single id) so several
+    // rows can show "Working…" at once during a bulk action, without
+    // locking the whole list the way a single decidingId would.
+    const [decidingIds, setDecidingIds] = useState<Set<string>>(new Set());
     const [decideError, setDecideError] = useState<{ id: string; message: string } | null>(null);
+
+    // Belt-and-suspenders duplicate guard: once a request id has actually
+    // been sent to the backend for a decision, it goes in here and stays
+    // — even across the brief gap before disabled-button state re-renders
+    // — so the SAME request can never be submitted twice (double-click,
+    // a stale row re-appearing, or being picked twice across selection +
+    // a manual click). A second attempt just shows an alert instead of
+    // hitting the network again.
+    const sentIdsRef = useRef<Set<string>>(new Set());
 
     // Reject confirmation modal: which request (if any) is pending a
     // "are you sure?" + remarks before the reject actually fires.
@@ -261,9 +271,21 @@ export default function Approvals() {
     const [rejectRemarks, setRejectRemarks] = useState("");
 
     // Approve confirmation modal — same "are you sure?" pattern as
-    // Reject, remarks here are optional.
+    // Reject, minus the remarks field.
     const [approveTarget, setApproveTarget] = useState<ApprovalRequest | null>(null);
-    const [approveRemarks, setApproveRemarks] = useState("");
+
+    // Multi-select (Pending tab only) — mirrors the "Select" toggle +
+    // bulk-action bar pattern already used on Products/Clients: hidden by
+    // default, checkboxes appear once turned on.
+    const [isSelectMode, setIsSelectMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    // Bulk reject/approve confirmation modals — same shape as the
+    // single-request ones above, just holding an array of targets.
+    const [bulkRejectTargets, setBulkRejectTargets] = useState<ApprovalRequest[] | null>(null);
+    const [bulkApproveTargets, setBulkApproveTargets] = useState<ApprovalRequest[] | null>(null);
+    const [bulkRemarks, setBulkRemarks] = useState("");
+    const [bulkProcessing, setBulkProcessing] = useState(false);
 
     const fetchRequests = async () => {
         setLoading(true);
@@ -367,21 +389,128 @@ export default function Approvals() {
     };
 
     const closeRejectModal = () => {
-        if (decidingId === rejectTarget?.id) return; // don't dismiss mid-submit
+        if (rejectTarget && decidingIds.has(rejectTarget.id)) return; // don't dismiss mid-submit
         setRejectTarget(null);
         setRejectRemarks("");
     };
 
     const openApproveModal = (request: ApprovalRequest) => {
         setApproveTarget(request);
-        setApproveRemarks("");
         setDecideError(null);
     };
 
     const closeApproveModal = () => {
-        if (decidingId === approveTarget?.id) return; // don't dismiss mid-submit
+        if (approveTarget && decidingIds.has(approveTarget.id)) return; // don't dismiss mid-submit
         setApproveTarget(null);
-        setApproveRemarks("");
+    };
+
+    // Select mode (Pending tab): toggling it on/off always clears
+    // whatever was checked, same as Products/Clients.
+    const toggleSelectMode = () => {
+        setIsSelectMode((v) => !v);
+        setSelectedIds(new Set());
+    };
+    const toggleSelectOne = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+    const allVisibleSelected =
+        filteredRequests.length > 0 && filteredRequests.every((r) => selectedIds.has(r.id));
+    const toggleSelectAll = () => {
+        setSelectedIds(allVisibleSelected ? new Set() : new Set(filteredRequests.map((r) => r.id)));
+    };
+    const selectedRequests = useMemo(
+        () => filteredRequests.filter((r) => selectedIds.has(r.id)),
+        [filteredRequests, selectedIds]
+    );
+
+    // Leaving the Pending tab always exits select mode — the bulk bar and
+    // its selection are meaningless on History.
+    useEffect(() => {
+        if (tab !== "pending") {
+            setIsSelectMode(false);
+            setSelectedIds(new Set());
+        }
+    }, [tab]);
+
+    // Sends exactly one decision to the backend. sentIdsRef guarantees a
+    // given request id is only ever POSTed once — a second call for the
+    // same id (double-click, duplicate row, re-selecting it) is turned
+    // away as "duplicate" without touching the network. A 409 from the
+    // server (someone else already decided it, or it was somehow queued
+    // twice) comes back as "already-decided" instead of "ok" so callers
+    // can tell the two success paths apart.
+    type DecisionOutcome =
+        | { kind: "duplicate" }
+        | { kind: "already-decided" }
+        | { kind: "error"; message: string }
+        | { kind: "ok" };
+
+    const submitDecision = async (
+        request: ApprovalRequest,
+        decision: "APPROVE" | "REJECT",
+        remarks?: string
+    ): Promise<DecisionOutcome> => {
+        if (sentIdsRef.current.has(request.id)) {
+            return { kind: "duplicate" };
+        }
+        sentIdsRef.current.add(request.id);
+        try {
+            const res = await authFetch(`${ENDPOINT}/${request.id}/decision`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(remarks ? { decision, remarks } : { decision }),
+            });
+            const json = await res.json();
+            if (res.status === 409) {
+                return { kind: "already-decided" };
+            }
+            if (!res.ok || json.success === false) {
+                sentIdsRef.current.delete(request.id); // let them retry
+                return {
+                    kind: "error",
+                    message: json.message || `Failed to ${decision.toLowerCase()} request`,
+                };
+            }
+            return { kind: "ok" };
+        } catch (err: any) {
+            sentIdsRef.current.delete(request.id);
+            return { kind: "error", message: err.message || "Something went wrong." };
+        }
+    };
+
+    const dropFromPending = (id: string) => {
+        setRequests((prev) => prev.filter((r) => r.id !== id));
+        setSelectedIds((prev) => {
+            if (!prev.has(id)) return prev;
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+        });
+    };
+
+    const addToHistory = (
+        request: ApprovalRequest,
+        decision: "APPROVE" | "REJECT",
+        remarks?: string
+    ) => {
+        if (!historyLoaded) return;
+        const decided: ApprovalRequest = {
+            ...request,
+            status: decision === "APPROVE" ? "APPROVED" : "REJECTED",
+            decided_at: new Date().toISOString(),
+            remarks: remarks || null,
+        };
+        setHistory((prev) => [decided, ...prev]);
+        setHistoryCounts((prev) => ({
+            total: prev.total + 1,
+            approved: prev.approved + (decision === "APPROVE" ? 1 : 0),
+            rejected: prev.rejected + (decision === "REJECT" ? 1 : 0),
+        }));
     };
 
     const handleDecision = async (
@@ -390,63 +519,124 @@ export default function Approvals() {
         remarks?: string
     ) => {
         const id = request.id;
-        setDecidingId(id);
+
+        if (sentIdsRef.current.has(id)) {
+            window.alert("This request has already been sent.");
+            return;
+        }
+
+        setDecidingIds((prev) => new Set(prev).add(id));
         setDecideError(null);
-        try {
-            const res = await authFetch(`${ENDPOINT}/${id}/decision`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(remarks ? { decision, remarks } : { decision }),
-            });
-            const json = await res.json();
-            if (!res.ok || json.success === false) {
-                throw new Error(json.message || `Failed to ${decision.toLowerCase()} request`);
-            }
-            // Decided requests drop out of the PENDING list on the backend —
-            // remove locally too instead of a full refetch, and (if the
-            // History tab has already been loaded) drop the freshly-decided
-            // request straight into it so it's there without a re-fetch.
-            setRequests((prev) => prev.filter((r) => r.id !== id));
-            if (historyLoaded) {
-                const decided: ApprovalRequest = {
-                    ...request,
-                    status: decision === "APPROVE" ? "APPROVED" : "REJECTED",
-                    decided_at: new Date().toISOString(),
-                    remarks: remarks || null,
-                };
-                setHistory((prev) => [decided, ...prev]);
-                setHistoryCounts((prev) => ({
-                    total: prev.total + 1,
-                    approved: prev.approved + (decision === "APPROVE" ? 1 : 0),
-                    rejected: prev.rejected + (decision === "REJECT" ? 1 : 0),
-                }));
-            }
-            if (decision === "REJECT") {
-                setRejectTarget(null);
-                setRejectRemarks("");
-            } else {
-                setApproveTarget(null);
-            }
-        } catch (err: any) {
-            setDecideError({ id, message: err.message || "Something went wrong." });
-        } finally {
-            setDecidingId(null);
+        const outcome = await submitDecision(request, decision, remarks);
+        setDecidingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+        });
+
+        if (outcome.kind === "duplicate") {
+            window.alert("This request has already been sent.");
+            return;
+        }
+        if (outcome.kind === "already-decided") {
+            window.alert("Already sent — this request has already been decided.");
+            dropFromPending(id);
+            setRejectTarget(null);
+            setApproveTarget(null);
+            setRejectRemarks("");
+            return;
+        }
+        if (outcome.kind === "error") {
+            setDecideError({ id, message: outcome.message });
+            return;
+        }
+
+        // ok — decided requests drop out of the PENDING list on the
+        // backend; remove locally too instead of a full refetch, and (if
+        // the History tab has already been loaded) drop the freshly-
+        // decided request straight into it so it's there without a
+        // re-fetch.
+        dropFromPending(id);
+        addToHistory(request, decision, remarks);
+        if (decision === "REJECT") {
+            setRejectTarget(null);
+            setRejectRemarks("");
+        } else {
+            setApproveTarget(null);
         }
     };
 
-    // Remarks are mandatory on Reject (so there's always a reason on
-    // record), optional on Approve.
-    const rejectRemarksValid = rejectRemarks.trim().length > 0;
-
     const confirmReject = () => {
         if (!rejectTarget) return;
-        if (!rejectRemarksValid) return;
-        handleDecision(rejectTarget, "REJECT", rejectRemarks.trim());
+        handleDecision(rejectTarget, "REJECT", rejectRemarks.trim() || undefined);
     };
 
     const confirmApprove = () => {
         if (!approveTarget) return;
-        handleDecision(approveTarget, "APPROVE", approveRemarks.trim() || undefined);
+        handleDecision(approveTarget, "APPROVE");
+    };
+
+    // Bulk approve/reject — processed one at a time (not in parallel) so
+    // there's never more than one in-flight decision for the whole batch,
+    // same "send it once" guarantee as the single-request path just
+    // extended across a selection. Anything the backend reports as
+    // already decided is quietly dropped from Pending; the alert at the
+    // end only fires when something in the batch needed the user's
+    // attention (already sent, or failed).
+    const runBulkDecision = async (
+        targets: ApprovalRequest[],
+        decision: "APPROVE" | "REJECT",
+        remarks?: string
+    ) => {
+        setBulkProcessing(true);
+        let done = 0;
+        let alreadyDone = 0;
+        let failed = 0;
+
+        for (const target of targets) {
+            setDecidingIds((prev) => new Set(prev).add(target.id));
+            const outcome = await submitDecision(target, decision, remarks);
+            setDecidingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(target.id);
+                return next;
+            });
+
+            if (outcome.kind === "ok") {
+                done += 1;
+                dropFromPending(target.id);
+                addToHistory(target, decision, remarks);
+            } else if (outcome.kind === "already-decided" || outcome.kind === "duplicate") {
+                alreadyDone += 1;
+                dropFromPending(target.id);
+            } else {
+                failed += 1;
+            }
+        }
+
+        setBulkProcessing(false);
+        setBulkRejectTargets(null);
+        setBulkApproveTargets(null);
+        setBulkRemarks("");
+        setIsSelectMode(false);
+
+        if (alreadyDone > 0 || failed > 0) {
+            const parts: string[] = [];
+            if (done) parts.push(`${done} ${decision === "APPROVE" ? "approved" : "rejected"}`);
+            if (alreadyDone) parts.push(`${alreadyDone} already sent (skipped)`);
+            if (failed) parts.push(`${failed} failed — please retry`);
+            window.alert(parts.join(", ") + ".");
+        }
+    };
+
+    const confirmBulkReject = () => {
+        if (!bulkRejectTargets || !bulkRejectTargets.length) return;
+        runBulkDecision(bulkRejectTargets, "REJECT", bulkRemarks.trim() || undefined);
+    };
+
+    const confirmBulkApprove = () => {
+        if (!bulkApproveTargets || !bulkApproveTargets.length) return;
+        runBulkDecision(bulkApproveTargets, "APPROVE");
     };
 
     return (
@@ -548,18 +738,39 @@ export default function Approvals() {
                             />
                         </div>
                         {tab === "pending" ? (
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.plFilterBtn,
-                                    ...(processLeadOnly ? styles.plFilterBtnActive : {}),
-                                }}
-                                onClick={() => setProcessLeadOnly((v) => !v)}
-                                aria-pressed={processLeadOnly}
-                            >
-                                <i className="ti ti-filter" style={{ fontSize: fontSize.md }} />
-                                Process Lead requests
-                            </button>
+                            <>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.plFilterBtn,
+                                        ...(processLeadOnly ? styles.plFilterBtnActive : {}),
+                                    }}
+                                    onClick={() => setProcessLeadOnly((v) => !v)}
+                                    aria-pressed={processLeadOnly}
+                                >
+                                    <i className="ti ti-filter" style={{ fontSize: fontSize.md }} />
+                                    Process Lead requests
+                                </button>
+                                {/* "Select" toggle — checkboxes for bulk approve/reject only
+                                    show once this is switched on, same pattern as bulk-delete
+                                    on Products/Clients. */}
+                                {filteredRequests.length > 0 && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.selectModeBtn,
+                                            ...(isSelectMode ? styles.selectModeBtnActive : {}),
+                                        }}
+                                        onClick={toggleSelectMode}
+                                    >
+                                        <i
+                                            className={isSelectMode ? "ti ti-x" : "ti ti-checkbox"}
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                        {isSelectMode ? "Cancel" : "Select"}
+                                    </button>
+                                )}
+                            </>
                         ) : (
                             <div style={styles.historyStatusFilterGroup}>
                                 {(["ALL", "APPROVED", "REJECTED"] as const).map((s) => (
@@ -586,6 +797,54 @@ export default function Approvals() {
                         )}
                     </div>
 
+                    {/* Bulk-select bar — a "Select All" checkbox plus Approve/Reject
+                        Selected buttons that appear once at least one request is
+                        checked, so acting on many requests doesn't mean opening each
+                        row's confirm dialog one at a time. */}
+                    {tab === "pending" && isSelectMode && filteredRequests.length > 0 && (
+                        <div style={styles.bulkSelectBar}>
+                            <label style={styles.bulkSelectAllLabel}>
+                                <input
+                                    type="checkbox"
+                                    checked={allVisibleSelected}
+                                    onChange={toggleSelectAll}
+                                />
+                                {allVisibleSelected ? "Deselect All" : "Select All"}
+                                {selectedIds.size > 0 && (
+                                    <span style={styles.bulkSelectCount}>
+                                        {selectedIds.size} selected
+                                    </span>
+                                )}
+                            </label>
+                            {selectedIds.size > 0 && (
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        style={styles.bulkRejectBtn}
+                                        onClick={() => setBulkRejectTargets(selectedRequests)}
+                                    >
+                                        <i
+                                            className="ti ti-x"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Reject Selected ({selectedIds.size})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={styles.bulkApproveBtn}
+                                        onClick={() => setBulkApproveTargets(selectedRequests)}
+                                    >
+                                        <i
+                                            className="ti ti-check"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        Approve Selected ({selectedIds.size})
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {tab === "pending" ? (
                         <div style={styles.scrollArea}>
                             {loading ? (
@@ -610,7 +869,7 @@ export default function Approvals() {
                                         const tint = tintFor(r.type);
                                         const entityName = payloadEntityName(r.payload, r.type);
                                         const isExpanded = expandedId === r.id;
-                                        const isDeciding = decidingId === r.id;
+                                        const isDeciding = decidingIds.has(r.id);
                                         const rowError =
                                             decideError && decideError.id === r.id
                                                 ? decideError.message
@@ -627,6 +886,19 @@ export default function Approvals() {
                                             >
                                                 <div style={styles.rowTop}>
                                                     <div style={styles.rowMain}>
+                                                        {isSelectMode && (
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedIds.has(r.id)}
+                                                                onChange={() =>
+                                                                    toggleSelectOne(r.id)
+                                                                }
+                                                                style={styles.rowSelectCheckbox}
+                                                                aria-label={`Select ${
+                                                                    TYPE_LABELS[r.type] || r.type
+                                                                } request`}
+                                                            />
+                                                        )}
                                                         <span
                                                             style={{
                                                                 ...styles.typeBadge,
@@ -830,10 +1102,9 @@ export default function Approvals() {
                 </div>
             </div>
 
-            {/* Reject confirmation modal — remarks are REQUIRED here (so
-                every rejection has a reason on record), "Yes, Reject" is
-                disabled while empty and while the decision is in flight
-                so a double-click can't fire it twice. */}
+            {/* Reject confirmation modal — remarks are optional, "Yes,
+                Reject" is disabled while the decision is in flight so a
+                double-click can't fire it twice. */}
             {rejectTarget && (
                 <div style={styles.overlay} onClick={closeRejectModal}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
@@ -862,7 +1133,7 @@ export default function Approvals() {
                             </p>
 
                             <div>
-                                <label style={styles.formLabel}>Remarks (required)</label>
+                                <label style={styles.formLabel}>Remarks (optional)</label>
                                 <textarea
                                     style={styles.formTextarea}
                                     rows={3}
@@ -870,11 +1141,6 @@ export default function Approvals() {
                                     value={rejectRemarks}
                                     onChange={(e) => setRejectRemarks(e.target.value)}
                                 />
-                                {!rejectRemarksValid && (
-                                    <p style={styles.formError}>
-                                        Please add a reason before rejecting.
-                                    </p>
-                                )}
                             </div>
 
                             {decideError && decideError.id === rejectTarget.id && (
@@ -890,7 +1156,7 @@ export default function Approvals() {
                                         justifyContent: "center",
                                     }}
                                     onClick={closeRejectModal}
-                                    disabled={decidingId === rejectTarget.id}
+                                    disabled={decidingIds.has(rejectTarget.id)}
                                 >
                                     No
                                 </button>
@@ -899,19 +1165,17 @@ export default function Approvals() {
                                     style={{
                                         ...styles.rejectConfirmBtn,
                                         flex: 1,
-                                        opacity:
-                                            decidingId === rejectTarget.id || !rejectRemarksValid
-                                                ? 0.7
-                                                : 1,
-                                        cursor:
-                                            decidingId === rejectTarget.id || !rejectRemarksValid
-                                                ? "not-allowed"
-                                                : "pointer",
+                                        opacity: decidingIds.has(rejectTarget.id) ? 0.7 : 1,
+                                        cursor: decidingIds.has(rejectTarget.id)
+                                            ? "not-allowed"
+                                            : "pointer",
                                     }}
                                     onClick={confirmReject}
-                                    disabled={decidingId === rejectTarget.id || !rejectRemarksValid}
+                                    disabled={decidingIds.has(rejectTarget.id)}
                                 >
-                                    {decidingId === rejectTarget.id ? "Rejecting…" : "Yes, Reject"}
+                                    {decidingIds.has(rejectTarget.id)
+                                        ? "Rejecting…"
+                                        : "Yes, Reject"}
                                 </button>
                             </div>
                         </div>
@@ -920,7 +1184,7 @@ export default function Approvals() {
             )}
 
             {/* Approve confirmation modal — same "are you sure?" pattern
-                as Reject; remarks here are OPTIONAL. */}
+                as Reject, minus the remarks field. */}
             {approveTarget && (
                 <div style={styles.overlay} onClick={closeApproveModal}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
@@ -948,17 +1212,6 @@ export default function Approvals() {
                                 ? This will take effect immediately.
                             </p>
 
-                            <div>
-                                <label style={styles.formLabel}>Remarks (optional)</label>
-                                <textarea
-                                    style={styles.formTextarea}
-                                    rows={3}
-                                    placeholder="Add a note about this approval…"
-                                    value={approveRemarks}
-                                    onChange={(e) => setApproveRemarks(e.target.value)}
-                                />
-                            </div>
-
                             {decideError && decideError.id === approveTarget.id && (
                                 <p style={styles.formError}>{decideError.message}</p>
                             )}
@@ -972,7 +1225,7 @@ export default function Approvals() {
                                         justifyContent: "center",
                                     }}
                                     onClick={closeApproveModal}
-                                    disabled={decidingId === approveTarget.id}
+                                    disabled={decidingIds.has(approveTarget.id)}
                                 >
                                     No
                                 </button>
@@ -981,18 +1234,161 @@ export default function Approvals() {
                                     style={{
                                         ...styles.approveConfirmBtn,
                                         flex: 1,
-                                        opacity: decidingId === approveTarget.id ? 0.7 : 1,
-                                        cursor:
-                                            decidingId === approveTarget.id
-                                                ? "not-allowed"
-                                                : "pointer",
+                                        opacity: decidingIds.has(approveTarget.id) ? 0.7 : 1,
+                                        cursor: decidingIds.has(approveTarget.id)
+                                            ? "not-allowed"
+                                            : "pointer",
                                     }}
                                     onClick={confirmApprove}
-                                    disabled={decidingId === approveTarget.id}
+                                    disabled={decidingIds.has(approveTarget.id)}
                                 >
-                                    {decidingId === approveTarget.id
+                                    {decidingIds.has(approveTarget.id)
                                         ? "Approving…"
                                         : "Yes, Approve"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk reject confirmation — same "are you sure?" + remarks
+                pattern as the single-request modal, applied to every
+                selected request. */}
+            {bulkRejectTargets && bulkRejectTargets.length > 0 && (
+                <div
+                    style={styles.overlay}
+                    onClick={() => !bulkProcessing && setBulkRejectTargets(null)}
+                >
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>
+                                Reject {bulkRejectTargets.length} request
+                                {bulkRejectTargets.length === 1 ? "" : "s"}?
+                            </h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={() => !bulkProcessing && setBulkRejectTargets(null)}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to reject these{" "}
+                                <strong>{bulkRejectTargets.length}</strong> request
+                                {bulkRejectTargets.length === 1 ? "" : "s"}? This can't be undone.
+                            </p>
+
+                            <div>
+                                <label style={styles.formLabel}>
+                                    Remarks (optional, applied to all)
+                                </label>
+                                <textarea
+                                    style={styles.formTextarea}
+                                    rows={3}
+                                    placeholder="Add a reason for rejecting…"
+                                    value={bulkRemarks}
+                                    onChange={(e) => setBulkRemarks(e.target.value)}
+                                />
+                            </div>
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={() => setBulkRejectTargets(null)}
+                                    disabled={bulkProcessing}
+                                >
+                                    No
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.rejectConfirmBtn,
+                                        flex: 1,
+                                        opacity: bulkProcessing ? 0.7 : 1,
+                                        cursor: bulkProcessing ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={confirmBulkReject}
+                                    disabled={bulkProcessing}
+                                >
+                                    {bulkProcessing
+                                        ? "Rejecting…"
+                                        : `Yes, Reject ${bulkRejectTargets.length}`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk approve confirmation — same pattern, minus remarks. */}
+            {bulkApproveTargets && bulkApproveTargets.length > 0 && (
+                <div
+                    style={styles.overlay}
+                    onClick={() => !bulkProcessing && setBulkApproveTargets(null)}
+                >
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>
+                                Approve {bulkApproveTargets.length} request
+                                {bulkApproveTargets.length === 1 ? "" : "s"}?
+                            </h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={() => !bulkProcessing && setBulkApproveTargets(null)}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to approve these{" "}
+                                <strong>{bulkApproveTargets.length}</strong> request
+                                {bulkApproveTargets.length === 1 ? "" : "s"}? This will take effect
+                                immediately.
+                            </p>
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={() => setBulkApproveTargets(null)}
+                                    disabled={bulkProcessing}
+                                >
+                                    No
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.approveConfirmBtn,
+                                        flex: 1,
+                                        opacity: bulkProcessing ? 0.7 : 1,
+                                        cursor: bulkProcessing ? "not-allowed" : "pointer",
+                                    }}
+                                    onClick={confirmBulkApprove}
+                                    disabled={bulkProcessing}
+                                >
+                                    {bulkProcessing
+                                        ? "Approving…"
+                                        : `Yes, Approve ${bulkApproveTargets.length}`}
                                 </button>
                             </div>
                         </div>
@@ -1111,6 +1507,92 @@ const styles: Record<string, CSSProperties> = {
         background: "linear-gradient(135deg, #08A1CE, #204297)",
         borderColor: "transparent",
         color: "#fff",
+    },
+
+    // ---- Multi-select (bulk approve/reject) ----
+    selectModeBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#f7f9fc",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        padding: "9px 14px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: "#3b4a63",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+    },
+    selectModeBtnActive: {
+        background: "#e7ecf8",
+        color: "#204297",
+        border: "1px solid #204297",
+    },
+    bulkSelectBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+        flexShrink: 0,
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "10px 14px",
+        boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+    },
+    bulkSelectAllLabel: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: "#3b4a63",
+        cursor: "pointer",
+    },
+    bulkSelectCount: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#204297",
+        background: "#e7ecf8",
+        padding: "3px 10px",
+        borderRadius: 999,
+    },
+    bulkApproveBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.md,
+        padding: "9px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
+        whiteSpace: "nowrap",
+    },
+    bulkRejectBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "#fff",
+        color: "#dc2626",
+        border: "1px solid #fecaca",
+        borderRadius: radius.md,
+        padding: "9px 16px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+    },
+    rowSelectCheckbox: {
+        width: 16,
+        height: 16,
+        cursor: "pointer",
+        flexShrink: 0,
     },
 
     scrollArea: { flex: 1, minHeight: 0, overflowY: "auto" },
