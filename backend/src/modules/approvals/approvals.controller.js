@@ -22,6 +22,8 @@
 const supabase = require("../../config/supabaseClient");
 const { APPROVAL_RULES } = require("../../config/permissions");
 const productsService = require("../products/products.service");
+const productsController = require("../products/products.controller");
+const clientsController = require("../clients/clients.controller");
 const userService = require("../users/user.service");
 
 async function createRequest(req, res) {
@@ -458,6 +460,66 @@ async function applyApprovedAction(request) {
         console.error(
           `USER_CREATE approval ${request.id} failed to apply:`,
           result.body,
+        );
+      }
+      break;
+    }
+
+    // ---- NEW: bulk-upload counterparts of the CREATE cases above ----
+    // Each replays the SAME row-processing function the direct
+    // (non-gated) bulk-upload path uses, against the `rows` array that
+    // bulkApprovalGate() (or, for users, approvalGate()) parsed and
+    // stored at request time. Per-row results aren't surfaced anywhere
+    // (there's no requester-facing response at approval time), so
+    // failures are just logged — same pattern as HIDE_TASK/USER_CREATE
+    // above, so one bad row/request doesn't fail the whole decision.
+    case "CLIENT_BULK_CREATE": {
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const { failedCount, results } =
+        await clientsController.processClientBulkRows(rows, orgId);
+      if (failedCount > 0) {
+        console.error(
+          `CLIENT_BULK_CREATE approval ${request.id}: ${failedCount}/${rows.length} row(s) failed:`,
+          results.filter((r) => r.status === "failed"),
+        );
+      }
+      break;
+    }
+    case "SERVICE_BULK_CREATE": {
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const { failedCount, results } =
+        await productsController.processProductBulkRows(rows, orgId);
+      if (failedCount > 0) {
+        console.error(
+          `SERVICE_BULK_CREATE approval ${request.id}: ${failedCount}/${rows.length} row(s) failed:`,
+          results.filter((r) => !r.success),
+        );
+      }
+      break;
+    }
+    case "USER_BULK_CREATE": {
+      const users = Array.isArray(body.users) ? body.users : [];
+      const requesterCtx = await userService.getRequesterContext(
+        request.requested_by,
+        orgId,
+      );
+      if (!requesterCtx) {
+        console.error(
+          `USER_BULK_CREATE approval ${request.id}: could not resolve original requester ${request.requested_by} — no users created.`,
+        );
+        break;
+      }
+
+      const results = await userService.processBulkAddUserRequest(users, {
+        role: requesterCtx.role,
+        email: requesterCtx.email,
+        organizationId: orgId,
+      });
+      const failed = results.filter((r) => !r.success);
+      if (failed.length > 0) {
+        console.error(
+          `USER_BULK_CREATE approval ${request.id}: ${failed.length}/${results.length} row(s) failed:`,
+          failed,
         );
       }
       break;

@@ -666,6 +666,202 @@ async function processAddUserRequest(body, requester) {
   };
 }
 
+/**
+ * Core bulk-add-user validation + creation — every check and the loop
+ * that used to live inline in user.controller.js's bulkAddUser(). Pulled
+ * out so it can run from TWO call sites with identical behaviour, same
+ * reasoning as processAddUserRequest() above:
+ *   1. user.controller.js bulkAddUser() — the immediate path, for
+ *      callers NOT gated by APPROVAL_RULES.USER_BULK_CREATE (Ops
+ *      Manager, Super Admin).
+ *   2. approvals.controller.js applyApprovedAction()'s USER_BULK_CREATE
+ *      case — re-runs this SAME function, against the ORIGINAL Process
+ *      Lead requester's identity (not the approving Ops Manager's),
+ *      once an Ops Manager approves a pending bulk request.
+ *
+ * @param {Array<object>} users - rows from the bulk upload.
+ * @param {object} requester - { role, email, organizationId } of whoever
+ *   is ultimately responsible for this create (mirrors
+ *   processAddUserRequest's `requester` param).
+ * @returns {Promise<Array<object>>} one result entry per input row —
+ *   never throws for expected per-row validation failures.
+ */
+async function processBulkAddUserRequest(users, requester) {
+  const {
+    role: requesterRole,
+    email: requesterEmail,
+    organizationId,
+  } = requester || {};
+
+  const results = [];
+  const seenEmails = new Set();
+
+  const [limit, currentCount, existingAuthEmails, reportingManagerCandidates] =
+    await Promise.all([
+      getOrgUserLimit(organizationId),
+      getOrgUserCount(organizationId),
+      fetchAllAuthEmails(),
+      fetchOrgReportingManagerCandidates(organizationId),
+    ]);
+  let remainingSlots = Math.max(limit - currentCount, 0);
+
+  const creatorDomain = getDomain(requesterEmail);
+
+  for (const rawUser of users) {
+    const email = normalizeEmail(rawUser.email);
+
+    if (!email) {
+      results.push({
+        email: rawUser.email || "(missing)",
+        success: false,
+        message: "Missing email.",
+      });
+      continue;
+    }
+
+    if (!isProfessionalEmail(email)) {
+      results.push({
+        email,
+        success: false,
+        message:
+          "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
+      });
+      continue;
+    }
+
+    if (!sameDomain(email, creatorDomain)) {
+      results.push({
+        email,
+        success: false,
+        message: creatorDomain
+          ? `Email domain doesn't match your organization (@${creatorDomain}).`
+          : "Could not verify your organization's domain.",
+      });
+      continue;
+    }
+
+    const requestedRole = String(rawUser.role || "")
+      .toUpperCase()
+      .trim()
+      .replace(/[\s\-]+/g, "_");
+    if (!canAssignRole(requesterRole, requestedRole)) {
+      results.push({
+        email,
+        success: false,
+        message: `Your role (${requesterRole}) is not allowed to create a user with role ${requestedRole || "(missing)"}.`,
+      });
+      continue;
+    }
+
+    if (rawUser.phone && !isValidPhone(rawUser.phone)) {
+      results.push({
+        email,
+        success: false,
+        message: "Phone number must be exactly 10 digits.",
+      });
+      continue;
+    }
+
+    if (rawUser.reportingManager) {
+      const rmCheck = validateReportingManagerAgainst(
+        rawUser.reportingManager,
+        reportingManagerCandidates,
+      );
+      if (!rmCheck.valid) {
+        results.push({ email, success: false, message: rmCheck.message });
+        continue;
+      }
+    }
+
+    if (seenEmails.has(email)) {
+      results.push({
+        email,
+        success: false,
+        message: "Duplicate email in this file — skipped.",
+      });
+      continue;
+    }
+    seenEmails.add(email);
+
+    if (remainingSlots <= 0) {
+      results.push({
+        email,
+        success: false,
+        message: `Your plan allows up to ${limit} users — skipped, upgrade your subscription to add more.`,
+      });
+      continue;
+    }
+
+    try {
+      const alreadyExists = existingAuthEmails.has(email);
+      if (alreadyExists) {
+        results.push({
+          email,
+          success: false,
+          message: "User with this email already exists.",
+        });
+        continue;
+      }
+
+      const tempPassword = rawUser.password || generateFallbackPassword();
+
+      const {
+        resetLink,
+        resetEmailSent,
+        resetEmailError,
+        userMasterInserted,
+        userMasterError,
+      } = await createUserAndGenerateResetLink({
+        email,
+        tempPassword,
+        organizationId,
+        metadata: {
+          fullName: rawUser.firstName
+            ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
+            : undefined,
+          firstName: rawUser.firstName,
+          lastName: rawUser.lastName,
+          employeeId: rawUser.employeeId,
+          designation: rawUser.designation,
+          department: rawUser.department,
+          dob: rawUser.dob,
+          doj: rawUser.doj,
+          reportingManager: rawUser.reportingManager,
+          workedInTeams: rawUser.Teams,
+          role: requestedRole,
+        },
+      });
+
+      remainingSlots -= 1;
+
+      results.push({
+        email,
+        success: true,
+        resetLink,
+        resetEmailSent,
+        userMasterInserted,
+        message: !userMasterInserted
+          ? `User created in Auth, but user_master insert failed (${userMasterError}) — CANNOT log in until fixed.`
+          : resetEmailSent
+            ? "User created, reset link emailed."
+            : `User created, but reset email failed (${resetEmailError}). Use resetLink to share manually.`,
+      });
+
+      // Small delay between rows — Gmail SMTP has its own send-rate
+      // limits, so don't hammer it in a tight bulk loop.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } catch (innerErr) {
+      results.push({
+        email,
+        success: false,
+        message: innerErr.message || "Failed to create this user.",
+      });
+    }
+  }
+
+  return results;
+}
+
 function generateFallbackPassword() {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
@@ -694,4 +890,5 @@ module.exports = {
   generateFallbackPassword,
   getRequesterContext,
   processAddUserRequest,
+  processBulkAddUserRequest,
 };

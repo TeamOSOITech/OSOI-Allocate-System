@@ -431,8 +431,156 @@ async function downloadTemplate(req, res) {
 }
 
 // ---------- Excel bulk upload ----------
-// NOTE: bulk upload is NOT approval-gated (same reasoning as products'
-// bulk upload) — it always creates directly regardless of caller's role.
+// APPROVAL: gated the same way as single create/update/delete on this
+// module — see CLIENT_BULK_CREATE in src/config/permissions.js and
+// bulkApprovalGate() in src/middlewares/approvalGate.js, wired up in
+// clients.routes.js. Process Lead's upload gets intercepted there (the
+// file is parsed into `rows` and stored as the approval payload) and
+// never reaches this function; Ops Manager / Audit Manager / Super Admin
+// still land here and create directly, same as before. Parsing is kept
+// as a standalone export (parseClientBulkRows) so the gate and this
+// handler use the exact same logic, and the row-processing loop is a
+// standalone export (processClientBulkRows) so applyApprovedAction() in
+// approvals.controller.js can replay it later against the same rows.
+
+function parseClientBulkRows(fileBuffer) {
+  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    defval: "",
+  });
+}
+
+async function processClientBulkRows(rows, orgId) {
+  const clientCache = new Map();
+  const subclientCache = new Map();
+
+  const results = [];
+  let createdCount = 0;
+  let failedCount = 0;
+
+  const norm = (v) => (v || "").toString().trim();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 2;
+    const clientNameRaw = norm(row["Client Name"]);
+    const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
+
+    try {
+      const clientName = clientNameRaw;
+      const clientCountry = norm(row["Client Country"]) || null;
+      const clientStatus =
+        norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
+
+      const website = norm(row["Website"]) || null;
+      const companyEmail = norm(row["Company Email"]) || null;
+      const companyPhone = norm(row["Company Phone"]) || null;
+
+      const primaryContactName = norm(row["Primary Contact Name"]) || null;
+      const primaryContactEmail = norm(row["Primary Contact Email"]) || null;
+      const primaryContactPhone = norm(row["Primary Contact Phone"]) || null;
+
+      const secondaryContactName = norm(row["Secondary Contact Name"]) || null;
+      const secondaryContactEmail =
+        norm(row["Secondary Contact Email"]) || null;
+      const secondaryContactPhone =
+        norm(row["Secondary Contact Phone"]) || null;
+
+      const subName = norm(row["Subclient Name"]);
+      const subStatus =
+        norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
+
+      if (!clientName) {
+        failedCount++;
+        results.push({
+          row: rowNum,
+          identifier: rowIdentifier,
+          status: "failed",
+          message: "Client Name is required",
+        });
+        continue;
+      }
+
+      // ---- resolve client (scoped to this org — a same-named client
+      // in another org must NOT be matched or reused here) ----
+      const clientKey = clientName.toLowerCase();
+      let client = clientCache.get(clientKey);
+
+      if (!client) {
+        const existing = await clientsService.findClientByName(
+          orgId,
+          clientName,
+        );
+
+        if (existing) {
+          client = existing;
+        } else {
+          client = await clientsService.insertClientRow({
+            name: clientName,
+            country: clientCountry,
+            status: clientStatus,
+            website,
+            main_email: companyEmail,
+            main_phone: companyPhone,
+            primary_contact_name: primaryContactName,
+            primary_contact_email: primaryContactEmail,
+            primary_contact_phone: primaryContactPhone,
+            secondary_contact_name: secondaryContactName,
+            secondary_contact_email: secondaryContactEmail,
+            secondary_contact_phone: secondaryContactPhone,
+            organization_id: orgId,
+          });
+        }
+        clientCache.set(clientKey, client);
+      }
+
+      // ---- resolve subclient (optional), scoped to org + client ----
+      if (subName) {
+        const subKey = `${client.id}::${subName.toLowerCase()}`;
+        let subclient = subclientCache.get(subKey);
+
+        if (!subclient) {
+          const existingSub = await clientsService.findSubclientByName(
+            orgId,
+            client.id,
+            subName,
+          );
+
+          if (existingSub) {
+            subclient = existingSub;
+          } else {
+            subclient = await clientsService.insertSubclientRow({
+              name: subName,
+              client_id: client.id,
+              status: subStatus,
+              organization_id: orgId,
+            });
+          }
+          subclientCache.set(subKey, subclient);
+        }
+      }
+
+      createdCount++;
+      results.push({
+        row: rowNum,
+        identifier: rowIdentifier,
+        status: "created",
+      });
+    } catch (rowErr) {
+      console.error(`Row ${rowNum} error:`, rowErr);
+      failedCount++;
+      results.push({
+        row: rowNum,
+        identifier: rowIdentifier,
+        status: "failed",
+        message: rowErr.message || "Unknown error",
+      });
+    }
+  }
+
+  return { results, createdCount, failedCount };
+}
 
 async function bulkUpload(req, res) {
   try {
@@ -442,11 +590,7 @@ async function bulkUpload(req, res) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: "",
-    });
+    const rows = parseClientBulkRows(req.file.buffer);
 
     if (!rows.length) {
       return res
@@ -454,133 +598,10 @@ async function bulkUpload(req, res) {
         .json({ message: "Uploaded file has no data rows" });
     }
 
-    const clientCache = new Map();
-    const subclientCache = new Map();
-
-    const results = [];
-    let createdCount = 0;
-    let failedCount = 0;
-
-    const norm = (v) => (v || "").toString().trim();
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowNum = i + 2;
-      const clientNameRaw = norm(row["Client Name"]);
-      const rowIdentifier = clientNameRaw || `Row ${rowNum}`;
-
-      try {
-        const clientName = clientNameRaw;
-        const clientCountry = norm(row["Client Country"]) || null;
-        const clientStatus =
-          norm(row["Client Status"]) === "Inactive" ? "Inactive" : "Active";
-
-        const website = norm(row["Website"]) || null;
-        const companyEmail = norm(row["Company Email"]) || null;
-        const companyPhone = norm(row["Company Phone"]) || null;
-
-        const primaryContactName = norm(row["Primary Contact Name"]) || null;
-        const primaryContactEmail = norm(row["Primary Contact Email"]) || null;
-        const primaryContactPhone = norm(row["Primary Contact Phone"]) || null;
-
-        const secondaryContactName =
-          norm(row["Secondary Contact Name"]) || null;
-        const secondaryContactEmail =
-          norm(row["Secondary Contact Email"]) || null;
-        const secondaryContactPhone =
-          norm(row["Secondary Contact Phone"]) || null;
-
-        const subName = norm(row["Subclient Name"]);
-        const subStatus =
-          norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
-
-        if (!clientName) {
-          failedCount++;
-          results.push({
-            row: rowNum,
-            identifier: rowIdentifier,
-            status: "failed",
-            message: "Client Name is required",
-          });
-          continue;
-        }
-
-        // ---- resolve client (scoped to this org — a same-named client
-        // in another org must NOT be matched or reused here) ----
-        const clientKey = clientName.toLowerCase();
-        let client = clientCache.get(clientKey);
-
-        if (!client) {
-          const existing = await clientsService.findClientByName(
-            orgId,
-            clientName,
-          );
-
-          if (existing) {
-            client = existing;
-          } else {
-            client = await clientsService.insertClientRow({
-              name: clientName,
-              country: clientCountry,
-              status: clientStatus,
-              website,
-              main_email: companyEmail,
-              main_phone: companyPhone,
-              primary_contact_name: primaryContactName,
-              primary_contact_email: primaryContactEmail,
-              primary_contact_phone: primaryContactPhone,
-              secondary_contact_name: secondaryContactName,
-              secondary_contact_email: secondaryContactEmail,
-              secondary_contact_phone: secondaryContactPhone,
-              organization_id: orgId,
-            });
-          }
-          clientCache.set(clientKey, client);
-        }
-
-        // ---- resolve subclient (optional), scoped to org + client ----
-        if (subName) {
-          const subKey = `${client.id}::${subName.toLowerCase()}`;
-          let subclient = subclientCache.get(subKey);
-
-          if (!subclient) {
-            const existingSub = await clientsService.findSubclientByName(
-              orgId,
-              client.id,
-              subName,
-            );
-
-            if (existingSub) {
-              subclient = existingSub;
-            } else {
-              subclient = await clientsService.insertSubclientRow({
-                name: subName,
-                client_id: client.id,
-                status: subStatus,
-                organization_id: orgId,
-              });
-            }
-            subclientCache.set(subKey, subclient);
-          }
-        }
-
-        createdCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "created",
-        });
-      } catch (rowErr) {
-        console.error(`Row ${rowNum} error:`, rowErr);
-        failedCount++;
-        results.push({
-          row: rowNum,
-          identifier: rowIdentifier,
-          status: "failed",
-          message: rowErr.message || "Unknown error",
-        });
-      }
-    }
+    const { results, createdCount, failedCount } = await processClientBulkRows(
+      rows,
+      orgId,
+    );
 
     res.status(200).json({
       message: "Bulk upload processed",
@@ -700,6 +721,8 @@ module.exports = {
   createClient,
   downloadTemplate,
   bulkUpload,
+  parseClientBulkRows,
+  processClientBulkRows,
   getClientById,
   updateClient,
   deleteClient,

@@ -196,9 +196,148 @@ const parseTimeTaken = (raw) => {
 // bulk-created service starting with an empty teams list that had to be
 // tagged manually afterwards from Edit.
 //
-// NOTE: bulk upload is NOT approval-gated — it's intentionally not routed
-// through approvalGate() in products.routes.js, so it always creates
-// directly regardless of the caller's role.
+// APPROVAL: gated the same way as single create/update/delete on this
+// module now — see SERVICE_BULK_CREATE in src/config/permissions.js and
+// bulkApprovalGate() in src/middlewares/approvalGate.js, wired up in
+// products.routes.js. Process Lead's upload gets intercepted there (the
+// file is parsed into `rows` and stored as the approval payload, and the
+// temp file is cleaned up there too) and never reaches this function;
+// Ops Manager / Audit Manager / Super Admin still land here and create
+// directly, same as before. Parsing is a standalone export
+// (parseProductBulkRows) so the gate and this handler use the exact same
+// logic, and the row-processing loop is a standalone export
+// (processProductBulkRows) so applyApprovedAction() in
+// approvals.controller.js can replay it later against the same rows.
+
+function parseProductBulkRows(filePath) {
+  const workbook = xlsx.readFile(filePath);
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  return xlsx.utils.sheet_to_json(sheet, { defval: null });
+}
+
+async function processProductBulkRows(rows, orgId) {
+  // Load this org's known teams ONCE up front — reuses getAllTeams()
+  // directly so this list is IDENTICAL to what the Add/Edit Service
+  // form's Teams multi-select shows (curated `teams` table rows PLUS
+  // any team name already in use on an employee's "Worked In Teams"
+  // field — see teams.service.js). Querying the `teams` table alone
+  // here used to accept fewer names than the dropdown actually offers.
+  const orgTeams = await getAllTeams(orgId);
+
+  const teamNameByLower = new Map(
+    (orgTeams || []).map((t) => [
+      String(t.name || "")
+        .trim()
+        .toLowerCase(),
+      t.name,
+    ]),
+  );
+
+  // Splits a "Teams" cell like "Tech, SD" into ["Tech","SD"], validates
+  // every piece against teamNameByLower, and returns either the
+  // resolved (correctly-cased) team names or a list of anything not
+  // recognized so the caller can fail that row with a clear reason.
+  function resolveTeamsCell(raw) {
+    const trimmed = (raw || "").toString().trim();
+    if (!trimmed) return { teams: [], unknown: [] };
+
+    const pieces = trimmed
+      .split(/[,;]/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    const teams = [];
+    const unknown = [];
+    for (const piece of pieces) {
+      const match = teamNameByLower.get(piece.toLowerCase());
+      if (match) teams.push(match);
+      else unknown.push(piece);
+    }
+    return { teams, unknown };
+  }
+
+  const results = [];
+  let createdCount = 0;
+  let failedCount = 0;
+
+  // Process one row at a time so a single bad row doesn't sink the
+  // whole batch, and so we can report exactly which row failed and why.
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const rowNumber = index + 2; // +2 accounts for header row + 1-indexing
+
+    // FIX: sample-sheet template (frontend's handleDownloadTemplate,
+    // PRODUCT_NAME_COLUMN) generates the column as "Service Name" — this
+    // was reading "Product Name" instead, a header that never existed in
+    // the actual uploaded sheet, so every single row failed with
+    // "Missing Product Name" no matter what was in the file.
+    const product_name = row["Service Name"]?.toString().trim() || null;
+    const { value: time_taken, unit: time_unit } = parseTimeTaken(
+      row["Time Taken"],
+    );
+
+    const identifier = product_name || `Row ${rowNumber}`;
+
+    if (!product_name) {
+      results.push({
+        identifier,
+        row: rowNumber,
+        success: false,
+        message: "Missing Service Name",
+      });
+      failedCount++;
+      continue;
+    }
+
+    if (time_taken === null || !time_unit) {
+      results.push({
+        identifier,
+        row: rowNumber,
+        success: false,
+        message: `Could not parse "Time Taken" value: "${row["Time Taken"]}"`,
+      });
+      failedCount++;
+      continue;
+    }
+
+    // NEW: optional Teams column — "Tech, SD" etc. Every team named
+    // must already exist for this org (same rule as the employee bulk
+    // upload's Teams check); an unrecognized team fails the row rather
+    // than silently being dropped or auto-created.
+    const { teams, unknown: unknownTeams } = resolveTeamsCell(row["Teams"]);
+    if (unknownTeams.length > 0) {
+      results.push({
+        identifier,
+        row: rowNumber,
+        success: false,
+        message: `Team(s) not listed: ${unknownTeams.join(", ")}`,
+      });
+      failedCount++;
+      continue;
+    }
+
+    try {
+      await productService.createProduct(
+        { product_name, time_taken, time_unit, teams },
+        orgId,
+      );
+      results.push({ identifier, row: rowNumber, success: true });
+      createdCount++;
+    } catch (err) {
+      results.push({
+        identifier,
+        row: rowNumber,
+        success: false,
+        message: err.message,
+      });
+      failedCount++;
+    }
+  }
+
+  return { results, createdCount, failedCount };
+}
+
 const bulkUploadProducts = async (req, res) => {
   try {
     if (!req.file) {
@@ -208,11 +347,7 @@ const bulkUploadProducts = async (req, res) => {
     }
 
     const orgId = req.user.organizationId;
-
-    const workbook = xlsx.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const rows = xlsx.utils.sheet_to_json(sheet, { defval: null });
+    const rows = parseProductBulkRows(req.file.path);
 
     fs.unlink(req.file.path, () => {});
 
@@ -222,123 +357,10 @@ const bulkUploadProducts = async (req, res) => {
         .json({ success: false, message: "Excel file is empty" });
     }
 
-    // Load this org's known teams ONCE up front — reuses getAllTeams()
-    // directly so this list is IDENTICAL to what the Add/Edit Service
-    // form's Teams multi-select shows (curated `teams` table rows PLUS
-    // any team name already in use on an employee's "Worked In Teams"
-    // field — see teams.service.js). Querying the `teams` table alone
-    // here used to accept fewer names than the dropdown actually offers.
-    const orgTeams = await getAllTeams(orgId);
-
-    const teamNameByLower = new Map(
-      (orgTeams || []).map((t) => [
-        String(t.name || "")
-          .trim()
-          .toLowerCase(),
-        t.name,
-      ]),
+    const { results, createdCount, failedCount } = await processProductBulkRows(
+      rows,
+      orgId,
     );
-
-    // Splits a "Teams" cell like "Tech, SD" into ["Tech","SD"], validates
-    // every piece against teamNameByLower, and returns either the
-    // resolved (correctly-cased) team names or a list of anything not
-    // recognized so the caller can fail that row with a clear reason.
-    function resolveTeamsCell(raw) {
-      const trimmed = (raw || "").toString().trim();
-      if (!trimmed) return { teams: [], unknown: [] };
-
-      const pieces = trimmed
-        .split(/[,;]/)
-        .map((p) => p.trim())
-        .filter(Boolean);
-
-      const teams = [];
-      const unknown = [];
-      for (const piece of pieces) {
-        const match = teamNameByLower.get(piece.toLowerCase());
-        if (match) teams.push(match);
-        else unknown.push(piece);
-      }
-      return { teams, unknown };
-    }
-
-    const results = [];
-    let createdCount = 0;
-    let failedCount = 0;
-
-    // Process one row at a time so a single bad row doesn't sink the
-    // whole batch, and so we can report exactly which row failed and why.
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index];
-      const rowNumber = index + 2; // +2 accounts for header row + 1-indexing
-
-      // FIX: sample-sheet template (frontend's handleDownloadTemplate,
-      // PRODUCT_NAME_COLUMN) generates the column as "Service Name" — this
-      // was reading "Product Name" instead, a header that never existed in
-      // the actual uploaded sheet, so every single row failed with
-      // "Missing Product Name" no matter what was in the file.
-      const product_name = row["Service Name"]?.toString().trim() || null;
-      const { value: time_taken, unit: time_unit } = parseTimeTaken(
-        row["Time Taken"],
-      );
-
-      const identifier = product_name || `Row ${rowNumber}`;
-
-      if (!product_name) {
-        results.push({
-          identifier,
-          row: rowNumber,
-          success: false,
-          message: "Missing Service Name",
-        });
-        failedCount++;
-        continue;
-      }
-
-      if (time_taken === null || !time_unit) {
-        results.push({
-          identifier,
-          row: rowNumber,
-          success: false,
-          message: `Could not parse "Time Taken" value: "${row["Time Taken"]}"`,
-        });
-        failedCount++;
-        continue;
-      }
-
-      // NEW: optional Teams column — "Tech, SD" etc. Every team named
-      // must already exist for this org (same rule as the employee bulk
-      // upload's Teams check); an unrecognized team fails the row rather
-      // than silently being dropped or auto-created.
-      const { teams, unknown: unknownTeams } = resolveTeamsCell(row["Teams"]);
-      if (unknownTeams.length > 0) {
-        results.push({
-          identifier,
-          row: rowNumber,
-          success: false,
-          message: `Team(s) not listed: ${unknownTeams.join(", ")}`,
-        });
-        failedCount++;
-        continue;
-      }
-
-      try {
-        await productService.createProduct(
-          { product_name, time_taken, time_unit, teams },
-          orgId,
-        );
-        results.push({ identifier, row: rowNumber, success: true });
-        createdCount++;
-      } catch (err) {
-        results.push({
-          identifier,
-          row: rowNumber,
-          success: false,
-          message: err.message,
-        });
-        failedCount++;
-      }
-    }
 
     return res.status(201).json({
       success: true,
@@ -422,6 +444,8 @@ module.exports = {
   getProductById,
   createProduct,
   bulkUploadProducts,
+  parseProductBulkRows,
+  processProductBulkRows,
   updateProduct,
   deleteProduct,
 };

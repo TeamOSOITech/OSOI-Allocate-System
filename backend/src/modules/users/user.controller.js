@@ -5,7 +5,6 @@
 // file just orchestrates: read the request, call the service, shape the
 // response. Wired up by user.routes.js.
 
-const { canAssignRole } = require("../../config/permissions");
 const userService = require("./user.service");
 
 // ---------------------------------------------------------------------------
@@ -38,6 +37,16 @@ async function addUser(req, res) {
 
 // ---------------------------------------------------------------------------
 // POST /api/users/bulk-add-user  (array of users from Excel)
+//
+// APPROVAL: when the caller is PROCESS_LEAD, this route never actually
+// reaches here — approvalGate("USER_BULK_CREATE") (see user.routes.js)
+// files the request into approval_requests instead, same pattern as
+// add-user above. Only callers who act directly (Ops Manager, Super
+// Admin) hit this handler. All the actual per-row validation + creation
+// logic now lives in userService.processBulkAddUserRequest() so the SAME
+// checks run again, on a Process Lead's original rows, once an Ops
+// Manager approves it — see applyApprovedAction()'s USER_BULK_CREATE
+// case in approvals.controller.js.
 // ---------------------------------------------------------------------------
 async function bulkAddUser(req, res) {
   try {
@@ -46,219 +55,11 @@ async function bulkAddUser(req, res) {
       return res.status(400).json({ message: "No users provided." });
     }
 
-    const results = [];
-    const seenEmails = new Set();
-
-    // Plan seat limit — figure out how many more users this org can
-    // add before touching anything, then stop handing out slots once
-    // it's used up (still runs duplicate/validation checks on the rest
-    // so the response reports why each row was skipped).
-    //
-    // PERFORMANCE FIX: existing-email and reporting-manager checks used
-    // to run fresh (a full Supabase Auth user-list scan, and 2 DB
-    // queries respectively) INSIDE the loop below, once per row — a
-    // 50-row upload meant 50x the work. Both are now fetched ONCE here
-    // and checked in-memory per row instead.
-    const [
-      limit,
-      currentCount,
-      existingAuthEmails,
-      reportingManagerCandidates,
-    ] = await Promise.all([
-      userService.getOrgUserLimit(req.user.organizationId),
-      userService.getOrgUserCount(req.user.organizationId),
-      userService.fetchAllAuthEmails(),
-      userService.fetchOrgReportingManagerCandidates(req.user.organizationId),
-    ]);
-    let remainingSlots = Math.max(limit - currentCount, 0);
-
-    // NEW: tenant lock — resolve the caller's own domain once, reuse
-    // for every row. req.user.email comes from Supabase Auth directly.
-    const creatorDomain = userService.getDomain(req.user.email);
-
-    for (const rawUser of users) {
-      const email = userService.normalizeEmail(rawUser.email);
-
-      if (!email) {
-        results.push({
-          email: rawUser.email || "(missing)",
-          success: false,
-          message: "Missing email.",
-        });
-        continue;
-      }
-
-      // SECURITY FIX (Finding #09): same rule as add-user — reject rows
-      // with a personal/free email domain instead of trusting the
-      // frontend's client-side check.
-      if (!userService.isProfessionalEmail(email)) {
-        results.push({
-          email,
-          success: false,
-          message:
-            "Email must be a company domain (Gmail, Yahoo, Outlook etc. are not allowed).",
-        });
-        continue;
-      }
-
-      // NEW: tenant lock — every row's email domain must match the
-      // caller's own domain.
-      if (!userService.sameDomain(email, creatorDomain)) {
-        results.push({
-          email,
-          success: false,
-          message: creatorDomain
-            ? `Email domain doesn't match your organization (@${creatorDomain}).`
-            : "Could not verify your organization's domain.",
-        });
-        continue;
-      }
-
-      // SECURITY: same check as add-user — reject any row asking for a
-      // role this caller isn't allowed to hand out, instead of trusting
-      // whatever the Excel file says. See ASSIGNABLE_ROLES.
-      //
-      // FIX: normalize spaces/dashes to underscores too (e.g. "TEAM
-      // MEMBER" -> "TEAM_MEMBER") — same reasoning as add-user above.
-      const requestedRole = String(rawUser.role || "")
-        .toUpperCase()
-        .trim()
-        .replace(/[\s\-]+/g, "_");
-      if (!canAssignRole(req.user.role, requestedRole)) {
-        results.push({
-          email,
-          success: false,
-          message: `Your role (${req.user.role}) is not allowed to create a user with role ${requestedRole || "(missing)"}.`,
-        });
-        continue;
-      }
-
-      // NEW: phone must be 10 digits, if provided.
-      if (rawUser.phone && !userService.isValidPhone(rawUser.phone)) {
-        results.push({
-          email,
-          success: false,
-          message: "Phone number must be exactly 10 digits.",
-        });
-        continue;
-      }
-
-      // NEW: reporting manager, if provided, must be a real user OR a
-      // manually-added entry, in the same organization.
-      //
-      // PERFORMANCE FIX: checked against the sets fetched once above,
-      // instead of running 2 fresh DB queries for every row.
-      if (rawUser.reportingManager) {
-        const rmCheck = userService.validateReportingManagerAgainst(
-          rawUser.reportingManager,
-          reportingManagerCandidates,
-        );
-        if (!rmCheck.valid) {
-          results.push({ email, success: false, message: rmCheck.message });
-          continue;
-        }
-      }
-
-      // Duplicate check within THIS upload batch — email only, role/password ignored
-      if (seenEmails.has(email)) {
-        results.push({
-          email,
-          success: false,
-          message: "Duplicate email in this file — skipped.",
-        });
-        continue;
-      }
-      seenEmails.add(email);
-
-      if (remainingSlots <= 0) {
-        results.push({
-          email,
-          success: false,
-          message: `Your plan allows up to ${limit} users — skipped, upgrade your subscription to add more.`,
-        });
-        continue;
-      }
-
-      try {
-        // Duplicate check against existing DB/auth users — email only.
-        //
-        // PERFORMANCE FIX: this used to call emailExists(email), which
-        // pages through EVERY Supabase Auth user on EVERY row — the
-        // main cause of bulk uploads being slow. Now just an in-memory
-        // Set lookup against the snapshot fetched once above.
-        const alreadyExists = existingAuthEmails.has(email);
-        if (alreadyExists) {
-          results.push({
-            email,
-            success: false,
-            message: "User with this email already exists.",
-          });
-          continue;
-        }
-
-        const tempPassword =
-          rawUser.password || userService.generateFallbackPassword();
-
-        const {
-          resetLink,
-          resetEmailSent,
-          resetEmailError,
-          userMasterInserted,
-          userMasterError,
-        } = await userService.createUserAndGenerateResetLink({
-          email,
-          tempPassword,
-          organizationId: req.user.organizationId,
-          metadata: {
-            fullName: rawUser.firstName
-              ? `${rawUser.firstName} ${rawUser.lastName || ""}`.trim()
-              : undefined,
-            firstName: rawUser.firstName,
-            lastName: rawUser.lastName,
-            employeeId: rawUser.employeeId,
-            designation: rawUser.designation,
-            department: rawUser.department,
-            dob: rawUser.dob,
-            doj: rawUser.doj,
-            reportingManager: rawUser.reportingManager,
-            // FIX (Finding #06): bulk rows are mapped client-side via
-            // mapBulkRow() in adduser.tsx, which also uses "Teams"
-            // (capital T), same mismatch as the single add-user path
-            // above.
-            workedInTeams: rawUser.Teams,
-            role: requestedRole,
-          },
-        });
-
-        remainingSlots -= 1;
-
-        // Account creation always counts as success here — email delivery
-        // is reported separately so a failed send doesn't look like a
-        // failed signup. resetLink is still included as a manual fallback.
-        results.push({
-          email,
-          success: true,
-          resetLink,
-          resetEmailSent,
-          userMasterInserted,
-          message: !userMasterInserted
-            ? `User created in Auth, but user_master insert failed (${userMasterError}) — CANNOT log in until fixed.`
-            : resetEmailSent
-              ? "User created, reset link emailed."
-              : `User created, but reset email failed (${resetEmailError}). Use resetLink to share manually.`,
-        });
-
-        // Small delay between rows — Gmail SMTP has its own send-rate
-        // limits, so don't hammer it in a tight bulk loop.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      } catch (innerErr) {
-        results.push({
-          email,
-          success: false,
-          message: innerErr.message || "Failed to create this user.",
-        });
-      }
-    }
+    const results = await userService.processBulkAddUserRequest(users, {
+      role: req.user.role,
+      email: req.user.email,
+      organizationId: req.user.organizationId,
+    });
 
     return res.status(200).json({ results });
   } catch (err) {

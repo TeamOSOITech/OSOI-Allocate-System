@@ -23,7 +23,10 @@ const { requireAnyPermission } = require("../../middlewares/rbac");
 // handler — see src/middlewares/approvalGate.js and the CLIENT_CREATE /
 // CLIENT_UPDATE / CLIENT_DELETE rules in src/config/permissions.js. Ops
 // Manager / Audit Manager / Super Admin are unaffected (act immediately).
-const { approvalGate } = require("../../middlewares/approvalGate");
+const {
+  approvalGate,
+  bulkApprovalGate,
+} = require("../../middlewares/approvalGate");
 
 const clientsController = require("./clients.controller");
 
@@ -83,12 +86,18 @@ router.get("/bulk/template", clientsController.downloadTemplate);
 
 // ---------- Excel bulk upload ----------
 // MUST be declared above "/:id" so it isn't shadowed by the param route.
-// NOTE: bulk upload is NOT approval-gated (same reasoning as products'
-// bulk upload) — it always creates directly regardless of caller's role.
+// APPROVAL: Process Lead's bulk upload now goes through the same
+// Ops-Manager approval flow as single create — see CLIENT_BULK_CREATE
+// in src/config/permissions.js and bulkApprovalGate() in
+// src/middlewares/approvalGate.js. Ops Manager / Audit Manager / Super
+// Admin are unaffected and still create directly.
 router.post(
   "/bulk/upload",
   requireAnyPermission("clients.manage"),
   upload.single("file"),
+  bulkApprovalGate("CLIENT_BULK_CREATE", (file) =>
+    clientsController.parseClientBulkRows(file.buffer),
+  ),
   clientsController.bulkUpload,
 );
 

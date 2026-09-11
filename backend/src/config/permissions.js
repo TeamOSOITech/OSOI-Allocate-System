@@ -252,10 +252,42 @@ const APPROVAL_RULES = {
   // re-runs the full add-user validation (domain lock, assignable-role,
   // seat limit, duplicate email) at approval time — not just at request
   // time — since those can change while the request sits PENDING.
-  // Bulk-add-user is intentionally NOT gated, mirroring the
-  // bulk-upload exemption already in place for clients/subclients/products.
   USER_CREATE: {
     description: "Add a new user (Process Lead's Add User request)",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
+  },
+
+  // NEW: bulk-upload counterparts of CLIENT_CREATE / SERVICE_CREATE /
+  // USER_CREATE above — Process Lead's bulk uploads (Excel) for clients,
+  // services (products), and users now require Ops Manager approval
+  // before anything is actually created, same as the single-record
+  // flows. Previously these three were deliberately exempt from
+  // approval ("bulk uploads always create directly regardless of
+  // caller's role") — that exemption has been removed per updated
+  // requirements.
+  //
+  // Wired up by bulkApprovalGate() in src/middlewares/approvalGate.js
+  // (clients/products, which are file uploads — the file is parsed into
+  // `rows` at request time and that array is stored as the payload) and
+  // by the existing approvalGate() (users, whose bulk route already
+  // takes a plain JSON body of `{ users: [...] }`). Applied in
+  // approvals.controller.js's applyApprovedAction().
+  CLIENT_BULK_CREATE: {
+    description: "Bulk-upload clients/subclients from an Excel sheet",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
+  },
+  SERVICE_BULK_CREATE: {
+    description: "Bulk-upload services (products) from an Excel sheet",
+    requestedBy: [ROLES.PROCESS_LEAD],
+    approvers: [ROLES.OPS_MANAGER],
+    restrictToReportingManager: true,
+  },
+  USER_BULK_CREATE: {
+    description: "Bulk-add users from an Excel sheet",
     requestedBy: [ROLES.PROCESS_LEAD],
     approvers: [ROLES.OPS_MANAGER],
     restrictToReportingManager: true,

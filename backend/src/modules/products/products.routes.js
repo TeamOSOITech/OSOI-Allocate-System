@@ -4,7 +4,10 @@ const router = express.Router();
 const productController = require("./products.controller");
 const { authenticate } = require("../../middlewares/auth");
 const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
-const { approvalGate } = require("../../middlewares/approvalGate");
+const {
+  approvalGate,
+  bulkApprovalGate,
+} = require("../../middlewares/approvalGate");
 
 // SECURITY FIX (Finding #16): no fileFilter or size limit previously —
 // restricted to the spreadsheet types this endpoint actually parses,
@@ -53,10 +56,18 @@ router.post(
   approvalGate("SERVICE_CREATE"),
   productController.createProduct,
 );
+// APPROVAL: Process Lead's bulk upload now goes through the same
+// Ops-Manager approval flow as single create (SERVICE_CREATE above) —
+// see SERVICE_BULK_CREATE in src/config/permissions.js and
+// bulkApprovalGate() in src/middlewares/approvalGate.js. Ops Manager /
+// Audit Manager / Super Admin are unaffected and still create directly.
 router.post(
   "/bulk/upload",
   requireAnyPermission("products.manage"),
   upload.single("file"),
+  bulkApprovalGate("SERVICE_BULK_CREATE", (file) =>
+    productController.parseProductBulkRows(file.path),
+  ),
   productController.bulkUploadProducts,
 );
 

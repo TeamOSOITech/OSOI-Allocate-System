@@ -36,14 +36,18 @@ router.post(
 // ---------------------------------------------------------------------------
 // POST /api/users/bulk-add-user  (array of users from Excel)
 //
-// NOT approval-gated, deliberately — mirrors the same exemption already
-// in place for clients/subclients/products bulk uploads (see
-// clients.routes.js). Bulk uploads always create directly regardless of
-// caller's role.
+// APPROVAL: intercepts Process Lead's bulk-add-user request here and
+// files it as a pending approval, same as single Add User above — see
+// USER_BULK_CREATE in src/config/permissions.js. This route's body is
+// already plain JSON ({ users: [...] }, parsed client-side from the
+// Excel file), so the regular approvalGate() (not the file-upload
+// bulkApprovalGate() used by clients/products) applies here unchanged.
+// Ops Manager / Super Admin are unaffected (act immediately).
 // ---------------------------------------------------------------------------
 router.post(
   "/bulk-add-user",
   requirePermission("users.onboard"),
+  approvalGate("USER_BULK_CREATE"),
   userController.bulkAddUser,
 );
 
