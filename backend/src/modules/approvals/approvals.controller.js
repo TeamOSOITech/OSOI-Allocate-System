@@ -84,80 +84,109 @@ async function createRequest(req, res) {
   }
 }
 
-async function listRequests(req, res) {
-  try {
-    // Fetch every pending request in this org, then decide per-request
-    // whether the caller may see it — some types are broad role-based
-    // (any approver role sees them), others (restrictToReportingManager)
-    // are narrowed to one specific target_user_id. A single Supabase
-    // query can't express that mix cleanly, so it's filtered here instead.
-    const { data, error } = await supabase
-      .from("approval_requests")
-      .select("*")
-      .eq("status", "PENDING")
-      .eq("organization_id", req.user.organizationId)
-      .order("created_at", { ascending: false });
+// Shared by listRequests (PENDING) and listHistory (APPROVED/REJECTED):
+// fetches every request in this org matching `statuses`, narrows to
+// whichever ones this caller is allowed to see (SUPER_ADMIN sees all,
+// everyone sees their own, approvers see whatever they're eligible to
+// decide — same rule whether it's still pending or already decided),
+// then attaches human names for both the requester and (if decided)
+// whoever approved/rejected it, instead of leaving the frontend with
+// raw UUIDs.
+async function visibleRequestsFor(req, statuses) {
+  const { data, error } = await supabase
+    .from("approval_requests")
+    .select("*")
+    .in("status", statuses)
+    .eq("organization_id", req.user.organizationId)
+    .order("created_at", { ascending: false });
 
-    if (error) throw error;
+  if (error) throw error;
 
-    const visible = (data || []).filter((request) => {
-      if (req.user.role === "SUPER_ADMIN") return true;
-      if (request.requested_by === req.user.userId) return true; // always see your own
+  const visible = (data || []).filter((request) => {
+    if (req.user.role === "SUPER_ADMIN") return true;
+    if (request.requested_by === req.user.userId) return true; // always see your own
 
-      const rule = APPROVAL_RULES[request.type];
-      if (!rule) return false;
+    const rule = APPROVAL_RULES[request.type];
+    if (!rule) return false;
 
-      if (rule.restrictToReportingManager) {
-        // Narrowed to the specific reporting manager it was routed to —
-        // unless none could be resolved at request time, in which case
-        // fall back to the broad approver-role list so it's never stuck
-        // un-actionable.
-        return request.target_user_id
-          ? request.target_user_id === req.user.userId
-          : rule.approvers.includes(req.user.role);
-      }
-
-      return rule.approvers.includes(req.user.role);
-    });
-
-    // NEW: attach each requester's display name (+ role) so the frontend
-    // never has to show a raw UUID, and so it can filter "requests
-    // submitted by a Process Lead" without guessing from `type` (a type
-    // like SERVICE_CREATE happens to only ever come from Process Lead
-    // today per APPROVAL_RULES, but reading the requester's actual role
-    // stays correct even if that mapping changes later). One batched
-    // lookup for every distinct requested_by in this page of results,
-    // instead of an N+1 query.
-    const requesterIds = Array.from(
-      new Set(visible.map((r) => r.requested_by)),
-    ).filter(Boolean);
-    let infoById = {};
-    if (requesterIds.length > 0) {
-      const { data: requesters } = await supabase
-        .from("user_master")
-        .select('"Auth User Id", "First Name", "Last Name", "Role"')
-        .in("Auth User Id", requesterIds);
-
-      infoById = (requesters || []).reduce((acc, u) => {
-        const name = [u["First Name"], u["Last Name"]]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
-        acc[u["Auth User Id"]] = {
-          name: name || null,
-          role: u["Role"] || null,
-        };
-        return acc;
-      }, {});
+    if (rule.restrictToReportingManager) {
+      // Narrowed to the specific reporting manager it was routed to —
+      // unless none could be resolved at request time, in which case
+      // fall back to the broad approver-role list so it's never stuck
+      // un-actionable.
+      return request.target_user_id
+        ? request.target_user_id === req.user.userId
+        : rule.approvers.includes(req.user.role);
     }
 
-    const enriched = visible.map((r) => ({
-      ...r,
-      requestedByName: infoById[r.requested_by]?.name || null,
-      requestedByRole: infoById[r.requested_by]?.role || null,
-    }));
+    return rule.approvers.includes(req.user.role);
+  });
 
+  // One batched lookup for every distinct requester/decider in this
+  // page of results, instead of an N+1 query.
+  const userIds = Array.from(
+    new Set([
+      ...visible.map((r) => r.requested_by),
+      ...visible.map((r) => r.approved_by),
+    ]),
+  ).filter(Boolean);
+
+  let infoById = {};
+  if (userIds.length > 0) {
+    const { data: users } = await supabase
+      .from("user_master")
+      .select('"Auth User Id", "First Name", "Last Name", "Role"')
+      .in("Auth User Id", userIds);
+
+    infoById = (users || []).reduce((acc, u) => {
+      const name = [u["First Name"], u["Last Name"]]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      acc[u["Auth User Id"]] = {
+        name: name || null,
+        role: u["Role"] || null,
+      };
+      return acc;
+    }, {});
+  }
+
+  return visible.map((r) => ({
+    ...r,
+    requestedByName: infoById[r.requested_by]?.name || null,
+    requestedByRole: infoById[r.requested_by]?.role || null,
+    decidedByName: infoById[r.approved_by]?.name || null,
+  }));
+}
+
+async function listRequests(req, res) {
+  try {
+    const enriched = await visibleRequestsFor(req, ["PENDING"]);
     res.json({ success: true, data: enriched });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+}
+
+// NEW: GET /api/approvals/history — everything this caller is eligible
+// to see that's already been decided (APPROVED or REJECTED), newest
+// first. Same visibility rule as the pending list above, just without
+// the status=PENDING filter. `counts` is a quick total/approved/rejected
+// breakdown over exactly what's returned, so the frontend doesn't have
+// to recompute it (or refetch) just to show a summary strip.
+async function listHistory(req, res) {
+  try {
+    const enriched = await visibleRequestsFor(req, ["APPROVED", "REJECTED"]);
+    const counts = enriched.reduce(
+      (acc, r) => {
+        acc.total += 1;
+        if (r.status === "APPROVED") acc.approved += 1;
+        else if (r.status === "REJECTED") acc.rejected += 1;
+        return acc;
+      },
+      { total: 0, approved: 0, rejected: 0 },
+    );
+    res.json({ success: true, data: enriched, counts });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -166,7 +195,7 @@ async function listRequests(req, res) {
 async function decideRequest(req, res) {
   try {
     const { id } = req.params;
-    const { decision } = req.body; // "APPROVE" | "REJECT"
+    const { decision, remarks } = req.body; // remarks: optional, mainly used on REJECT
 
     if (!["APPROVE", "REJECT"].includes(decision)) {
       return res.status(400).json({
@@ -216,6 +245,10 @@ async function decideRequest(req, res) {
         status: decision === "APPROVE" ? "APPROVED" : "REJECTED",
         approved_by: req.user.userId,
         decided_at: new Date().toISOString(),
+        // Remarks are optional either way (typically used to explain a
+        // rejection), stored as-is; empty/whitespace-only counts as none.
+        remarks:
+          typeof remarks === "string" && remarks.trim() ? remarks.trim() : null,
       })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
@@ -527,4 +560,4 @@ async function applyApprovedAction(request) {
   }
 }
 
-module.exports = { createRequest, listRequests, decideRequest };
+module.exports = { createRequest, listRequests, listHistory, decideRequest };
