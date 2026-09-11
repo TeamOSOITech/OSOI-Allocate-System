@@ -118,32 +118,41 @@ async function listRequests(req, res) {
       return rule.approvers.includes(req.user.role);
     });
 
-    // NEW: attach each requester's display name so the frontend never has
-    // to show a raw UUID. One batched lookup for every distinct
-    // requested_by in this page of results, instead of an N+1 query.
+    // NEW: attach each requester's display name (+ role) so the frontend
+    // never has to show a raw UUID, and so it can filter "requests
+    // submitted by a Process Lead" without guessing from `type` (a type
+    // like SERVICE_CREATE happens to only ever come from Process Lead
+    // today per APPROVAL_RULES, but reading the requester's actual role
+    // stays correct even if that mapping changes later). One batched
+    // lookup for every distinct requested_by in this page of results,
+    // instead of an N+1 query.
     const requesterIds = Array.from(
       new Set(visible.map((r) => r.requested_by)),
     ).filter(Boolean);
-    let namesById = {};
+    let infoById = {};
     if (requesterIds.length > 0) {
       const { data: requesters } = await supabase
         .from("user_master")
-        .select('"Auth User Id", "First Name", "Last Name"')
+        .select('"Auth User Id", "First Name", "Last Name", "Role"')
         .in("Auth User Id", requesterIds);
 
-      namesById = (requesters || []).reduce((acc, u) => {
+      infoById = (requesters || []).reduce((acc, u) => {
         const name = [u["First Name"], u["Last Name"]]
           .filter(Boolean)
           .join(" ")
           .trim();
-        acc[u["Auth User Id"]] = name || null;
+        acc[u["Auth User Id"]] = {
+          name: name || null,
+          role: u["Role"] || null,
+        };
         return acc;
       }, {});
     }
 
     const enriched = visible.map((r) => ({
       ...r,
-      requestedByName: namesById[r.requested_by] || null,
+      requestedByName: infoById[r.requested_by]?.name || null,
+      requestedByRole: infoById[r.requested_by]?.role || null,
     }));
 
     res.json({ success: true, data: enriched });
