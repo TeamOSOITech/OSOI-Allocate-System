@@ -190,6 +190,37 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
 
     let res = await fetchWithColdStartRetry(url, buildInit());
 
+    // CSRF desync fix: if the in-memory/localStorage csrfToken has fallen
+    // out of sync with the actual csrfToken cookie (session refreshed in
+    // another tab, backend restart, cookie expired/rotated, etc.), every
+    // PUT/POST/DELETE fails with 403 "CSRF check failed" forever — GET
+    // keeps working fine since it's exempt (see csrf.js), which is
+    // exactly why lists load but Edit/Delete silently do nothing. There
+    // was previously no recovery path for this at all. Same idea as the
+    // 401 handling below: call the refresh endpoint (which re-issues a
+    // fresh csrfToken cookie + returns the matching value in its body,
+    // captured via setCsrfToken in refreshSession()), then retry once.
+    if (res.status === 403 && !SAFE_METHODS.has(method)) {
+        let isCsrfFailure = false;
+        try {
+            const cloned = res.clone();
+            const body = await cloned.json();
+            isCsrfFailure = /csrf/i.test(body?.message || "");
+        } catch {
+            // Non-JSON or unreadable body — treat as a real permission
+            // 403, not a CSRF desync, and fall through unchanged.
+        }
+
+        if (isCsrfFailure) {
+            const refreshed = await refreshSession();
+            if (refreshed) {
+                res = await fetchWithColdStartRetry(url, buildInit());
+            }
+            // If refresh itself failed, res stays the original 403 —
+            // caller sees the real error instead of hanging.
+        }
+    }
+
     if (res.status === 401) {
         const refreshed = await refreshSession();
         if (!refreshed) {

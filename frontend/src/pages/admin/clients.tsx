@@ -414,6 +414,16 @@ export default function Clients() {
     // for approval instead of applying immediately) — see approvalGate.js.
     const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
+    // NEW: auto-dismiss the banner above after 10s instead of leaving it
+    // on screen until the user clicks the ✕. Resets on every new notice
+    // (e.g. approving a second row right after the first) and cleans up
+    // the timer on unmount / notice change so it never fires stale.
+    useEffect(() => {
+        if (!approvalNotice) return;
+        const timer = setTimeout(() => setApprovalNotice(null), 5000);
+        return () => clearTimeout(timer);
+    }, [approvalNotice]);
+
     // ---- Edit state ----
     const [editTarget, setEditTarget] = useState<ViewDetailsTarget | null>(null);
     const [editForm, setEditForm] = useState({ ...emptyForm });

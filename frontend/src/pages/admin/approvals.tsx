@@ -261,8 +261,9 @@ export default function Approvals() {
     const [rejectRemarks, setRejectRemarks] = useState("");
 
     // Approve confirmation modal — same "are you sure?" pattern as
-    // Reject, minus the remarks field.
+    // Reject, remarks here are optional.
     const [approveTarget, setApproveTarget] = useState<ApprovalRequest | null>(null);
+    const [approveRemarks, setApproveRemarks] = useState("");
 
     const fetchRequests = async () => {
         setLoading(true);
@@ -373,12 +374,14 @@ export default function Approvals() {
 
     const openApproveModal = (request: ApprovalRequest) => {
         setApproveTarget(request);
+        setApproveRemarks("");
         setDecideError(null);
     };
 
     const closeApproveModal = () => {
         if (decidingId === approveTarget?.id) return; // don't dismiss mid-submit
         setApproveTarget(null);
+        setApproveRemarks("");
     };
 
     const handleDecision = async (
@@ -431,14 +434,19 @@ export default function Approvals() {
         }
     };
 
+    // Remarks are mandatory on Reject (so there's always a reason on
+    // record), optional on Approve.
+    const rejectRemarksValid = rejectRemarks.trim().length > 0;
+
     const confirmReject = () => {
         if (!rejectTarget) return;
-        handleDecision(rejectTarget, "REJECT", rejectRemarks.trim() || undefined);
+        if (!rejectRemarksValid) return;
+        handleDecision(rejectTarget, "REJECT", rejectRemarks.trim());
     };
 
     const confirmApprove = () => {
         if (!approveTarget) return;
-        handleDecision(approveTarget, "APPROVE");
+        handleDecision(approveTarget, "APPROVE", approveRemarks.trim() || undefined);
     };
 
     return (
@@ -822,9 +830,10 @@ export default function Approvals() {
                 </div>
             </div>
 
-            {/* Reject confirmation modal — remarks are optional, "Yes,
-                Reject" is disabled while the decision is in flight so a
-                double-click can't fire it twice. */}
+            {/* Reject confirmation modal — remarks are REQUIRED here (so
+                every rejection has a reason on record), "Yes, Reject" is
+                disabled while empty and while the decision is in flight
+                so a double-click can't fire it twice. */}
             {rejectTarget && (
                 <div style={styles.overlay} onClick={closeRejectModal}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
@@ -853,7 +862,7 @@ export default function Approvals() {
                             </p>
 
                             <div>
-                                <label style={styles.formLabel}>Remarks (optional)</label>
+                                <label style={styles.formLabel}>Remarks (required)</label>
                                 <textarea
                                     style={styles.formTextarea}
                                     rows={3}
@@ -861,6 +870,11 @@ export default function Approvals() {
                                     value={rejectRemarks}
                                     onChange={(e) => setRejectRemarks(e.target.value)}
                                 />
+                                {!rejectRemarksValid && (
+                                    <p style={styles.formError}>
+                                        Please add a reason before rejecting.
+                                    </p>
+                                )}
                             </div>
 
                             {decideError && decideError.id === rejectTarget.id && (
@@ -885,14 +899,17 @@ export default function Approvals() {
                                     style={{
                                         ...styles.rejectConfirmBtn,
                                         flex: 1,
-                                        opacity: decidingId === rejectTarget.id ? 0.7 : 1,
+                                        opacity:
+                                            decidingId === rejectTarget.id || !rejectRemarksValid
+                                                ? 0.7
+                                                : 1,
                                         cursor:
-                                            decidingId === rejectTarget.id
+                                            decidingId === rejectTarget.id || !rejectRemarksValid
                                                 ? "not-allowed"
                                                 : "pointer",
                                     }}
                                     onClick={confirmReject}
-                                    disabled={decidingId === rejectTarget.id}
+                                    disabled={decidingId === rejectTarget.id || !rejectRemarksValid}
                                 >
                                     {decidingId === rejectTarget.id ? "Rejecting…" : "Yes, Reject"}
                                 </button>
@@ -903,7 +920,7 @@ export default function Approvals() {
             )}
 
             {/* Approve confirmation modal — same "are you sure?" pattern
-                as Reject, minus the remarks field. */}
+                as Reject; remarks here are OPTIONAL. */}
             {approveTarget && (
                 <div style={styles.overlay} onClick={closeApproveModal}>
                     <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
@@ -930,6 +947,17 @@ export default function Approvals() {
                                 </strong>
                                 ? This will take effect immediately.
                             </p>
+
+                            <div>
+                                <label style={styles.formLabel}>Remarks (optional)</label>
+                                <textarea
+                                    style={styles.formTextarea}
+                                    rows={3}
+                                    placeholder="Add a note about this approval…"
+                                    value={approveRemarks}
+                                    onChange={(e) => setApproveRemarks(e.target.value)}
+                                />
+                            </div>
 
                             {decideError && decideError.id === approveTarget.id && (
                                 <p style={styles.formError}>{decideError.message}</p>
