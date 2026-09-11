@@ -98,15 +98,24 @@ export default function Header({
         <header style={isMobile ? styles.headerMobile : styles.header}>
             {/* LEFT */}
             <div style={isMobile ? styles.leftMobile : styles.left}>
-                <div style={styles.logoBlock}>
+                <div
+                    style={
+                        isMobile
+                            ? styles.logoBlock
+                            : { ...styles.logoBlock, width: 148, justifyContent: "center" }
+                    }
+                >
                     <img
                         src="/Logo.jpg"
                         alt="Logo"
                         style={{
                             width: isMobile ? 30 : 125,
-                            height: isMobile ? 30 : 125,
+                            height: isMobile ? 9 : 38,
                             objectFit: "contain",
-                            borderRadius: radius.sm,
+                            borderRadius: isMobile ? 4.5 : 19,
+                            paddingLeft: 10,
+                            paddingRight: 10,
+                            backgroundColor: "#fff",
                             flexShrink: 0,
                         }}
                     />
@@ -353,7 +362,6 @@ function getStyles(BRAND: {
             minWidth: 0,
             overflow: "hidden",
             paddingLeft: 20,
-            borderLeft: "1px solid rgba(255,255,255,0.3)",
         },
         welcome: {
             fontSize: fontSize.md,
