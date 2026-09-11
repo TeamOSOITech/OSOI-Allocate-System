@@ -260,6 +260,10 @@ export default function Approvals() {
     const [rejectTarget, setRejectTarget] = useState<ApprovalRequest | null>(null);
     const [rejectRemarks, setRejectRemarks] = useState("");
 
+    // Approve confirmation modal — same "are you sure?" pattern as
+    // Reject, minus the remarks field.
+    const [approveTarget, setApproveTarget] = useState<ApprovalRequest | null>(null);
+
     const fetchRequests = async () => {
         setLoading(true);
         setError("");
@@ -367,6 +371,16 @@ export default function Approvals() {
         setRejectRemarks("");
     };
 
+    const openApproveModal = (request: ApprovalRequest) => {
+        setApproveTarget(request);
+        setDecideError(null);
+    };
+
+    const closeApproveModal = () => {
+        if (decidingId === approveTarget?.id) return; // don't dismiss mid-submit
+        setApproveTarget(null);
+    };
+
     const handleDecision = async (
         request: ApprovalRequest,
         decision: "APPROVE" | "REJECT",
@@ -407,6 +421,8 @@ export default function Approvals() {
             if (decision === "REJECT") {
                 setRejectTarget(null);
                 setRejectRemarks("");
+            } else {
+                setApproveTarget(null);
             }
         } catch (err: any) {
             setDecideError({ id, message: err.message || "Something went wrong." });
@@ -418,6 +434,11 @@ export default function Approvals() {
     const confirmReject = () => {
         if (!rejectTarget) return;
         handleDecision(rejectTarget, "REJECT", rejectRemarks.trim() || undefined);
+    };
+
+    const confirmApprove = () => {
+        if (!approveTarget) return;
+        handleDecision(approveTarget, "APPROVE");
     };
 
     return (
@@ -672,7 +693,7 @@ export default function Approvals() {
                                                                 : "pointer",
                                                         }}
                                                         disabled={isDeciding}
-                                                        onClick={() => handleDecision(r, "APPROVE")}
+                                                        onClick={() => openApproveModal(r)}
                                                     >
                                                         {isDeciding ? "Working…" : "Approve"}
                                                     </button>
@@ -874,6 +895,76 @@ export default function Approvals() {
                                     disabled={decidingId === rejectTarget.id}
                                 >
                                     {decidingId === rejectTarget.id ? "Rejecting…" : "Yes, Reject"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Approve confirmation modal — same "are you sure?" pattern
+                as Reject, minus the remarks field. */}
+            {approveTarget && (
+                <div style={styles.overlay} onClick={closeApproveModal}>
+                    <div style={styles.detailsModal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.detailsHeader}>
+                            <h3 style={styles.detailsTitle}>Approve this request?</h3>
+                            <button
+                                style={styles.closeBtn}
+                                onClick={closeApproveModal}
+                                type="button"
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.detailsBody}>
+                            <p style={{ margin: 0, fontSize: fontSize.base, color: "#3b4a63" }}>
+                                Are you sure you want to approve{" "}
+                                <strong>
+                                    {payloadEntityName(approveTarget.payload, approveTarget.type) ||
+                                        TYPE_LABELS[approveTarget.type] ||
+                                        approveTarget.type}
+                                </strong>
+                                ? This will take effect immediately.
+                            </p>
+
+                            {decideError && decideError.id === approveTarget.id && (
+                                <p style={styles.formError}>{decideError.message}</p>
+                            )}
+
+                            <div style={{ display: "flex", gap: 10 }}>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.secondaryBtn,
+                                        flex: 1,
+                                        justifyContent: "center",
+                                    }}
+                                    onClick={closeApproveModal}
+                                    disabled={decidingId === approveTarget.id}
+                                >
+                                    No
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.approveConfirmBtn,
+                                        flex: 1,
+                                        opacity: decidingId === approveTarget.id ? 0.7 : 1,
+                                        cursor:
+                                            decidingId === approveTarget.id
+                                                ? "not-allowed"
+                                                : "pointer",
+                                    }}
+                                    onClick={confirmApprove}
+                                    disabled={decidingId === approveTarget.id}
+                                >
+                                    {decidingId === approveTarget.id
+                                        ? "Approving…"
+                                        : "Yes, Approve"}
                                 </button>
                             </div>
                         </div>
@@ -1263,5 +1354,19 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
         boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+    },
+    approveConfirmBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.md,
+        padding: "12px 20px",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        boxShadow: "0 6px 16px rgba(32,66,151,0.25)",
     },
 };
