@@ -302,6 +302,11 @@ export default function AddUser() {
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkResults, setBulkResults] = useState<any[] | null>(null);
+    // NEW: 202 = the whole bulk request went to the reporting manager for
+    // approval instead of creating anything yet (Process Lead's bulk
+    // upload — see USER_BULK_CREATE in the backend). Mutually exclusive
+    // with bulkResults: only one of the two is ever set at a time.
+    const [bulkPendingApprovalMsg, setBulkPendingApprovalMsg] = useState<string | null>(null);
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState("");
 
@@ -640,6 +645,7 @@ export default function AddUser() {
         setBulkError("");
         setBulkSubmitting(true);
         setBulkResults(null);
+        setBulkPendingApprovalMsg(null);
 
         try {
             const arrayBuffer = await bulkFile.arrayBuffer();
@@ -713,11 +719,23 @@ export default function AddUser() {
 
                 const data = await response.json();
                 if (!response.ok) throw new Error(data?.message || "Bulk upload failed");
+
+                // NEW: 202 = a Process Lead's bulk upload went to their
+                // reporting manager for approval instead of creating any
+                // accounts yet — nothing to show in the row-by-row
+                // results table.
+                if (response.status === 202) {
+                    setBulkPendingApprovalMsg(
+                        data?.message || "This bulk upload has been submitted for approval."
+                    );
+                    return;
+                }
                 backendResults = data.results || [];
             }
 
             // Combine so the results list shows every row from the sheet —
             // locally-rejected rows plus whatever the backend returned.
+            setBulkPendingApprovalMsg(null);
             setBulkResults([...preFailedResults, ...backendResults]);
         } catch (err: any) {
             setBulkError(err?.message || "Something went wrong reading the file.");
@@ -730,6 +748,7 @@ export default function AddUser() {
         setShowBulkModal(false);
         setBulkFile(null);
         setBulkResults(null);
+        setBulkPendingApprovalMsg(null);
         setBulkError("");
     };
 
@@ -1484,6 +1503,20 @@ export default function AddUser() {
                             </div>
 
                             {bulkError && <p style={styles.error}>{bulkError}</p>}
+
+                            {bulkPendingApprovalMsg && (
+                                <div
+                                    style={{
+                                        ...styles.resultsSection,
+                                        color: "#17181C",
+                                    }}
+                                >
+                                    <strong>Submitted for Approval</strong>
+                                    <p style={{ margin: "8px 0 0", fontSize: fontSize.base }}>
+                                        {bulkPendingApprovalMsg}
+                                    </p>
+                                </div>
+                            )}
 
                             {bulkResults && (
                                 <div style={styles.resultsSection}>

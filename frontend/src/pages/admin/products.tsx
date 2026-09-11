@@ -294,6 +294,11 @@ const Products = () => {
     const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
+    // NEW: 202 = a Process Lead's bulk upload went to their reporting
+    // manager for approval instead of creating anything yet (see
+    // SERVICE_BULK_CREATE on the backend). Mutually exclusive with
+    // bulkResult.
+    const [bulkPendingApprovalMsg, setBulkPendingApprovalMsg] = useState<string | null>(null);
     const [bulkError, setBulkError] = useState("");
 
     const fetchProducts = async () => {
@@ -691,6 +696,7 @@ const Products = () => {
     const openBulkModal = () => {
         setBulkFile(null);
         setBulkResult(null);
+        setBulkPendingApprovalMsg(null);
         setBulkError("");
         setShowBulkModal(true);
     };
@@ -699,6 +705,7 @@ const Products = () => {
         setShowBulkModal(false);
         setBulkFile(null);
         setBulkResult(null);
+        setBulkPendingApprovalMsg(null);
         setBulkError("");
     };
 
@@ -706,6 +713,7 @@ const Products = () => {
         const file = e.target.files?.[0] || null;
         setBulkFile(file);
         setBulkResult(null);
+        setBulkPendingApprovalMsg(null);
         setBulkError("");
     };
 
@@ -718,6 +726,7 @@ const Products = () => {
         setBulkUploading(true);
         setBulkError("");
         setBulkResult(null);
+        setBulkPendingApprovalMsg(null);
 
         try {
             const formData = new FormData();
@@ -732,6 +741,17 @@ const Products = () => {
 
             if (!response.ok) {
                 throw new Error(data?.message || "Bulk upload failed");
+            }
+
+            // NEW: 202 = a Process Lead's bulk upload went to their
+            // reporting manager for approval instead of creating
+            // anything yet (see SERVICE_BULK_CREATE on the backend) —
+            // there's no row-by-row result to show yet.
+            if (response.status === 202) {
+                setBulkPendingApprovalMsg(
+                    data?.message || "This bulk upload has been submitted for approval."
+                );
+                return;
             }
 
             // FIX: backend responds with { success, data: {...} } — this was
@@ -1905,6 +1925,13 @@ const Products = () => {
                             <p style={{ ...styles.formError, margin: "0 28px 20px" }}>
                                 {bulkError}
                             </p>
+                        )}
+
+                        {bulkPendingApprovalMsg && (
+                            <div style={styles.resultsSection}>
+                                <strong>Submitted for Approval</strong>
+                                <p style={{ margin: "8px 0 0" }}>{bulkPendingApprovalMsg}</p>
+                            </div>
                         )}
 
                         {bulkResult && (
