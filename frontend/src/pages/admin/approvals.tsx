@@ -36,6 +36,7 @@ const TYPE_LABELS: Record<string, string> = {
     QC_PERMISSION_GRANT: "QC Permission Grant",
     NEW_VERTICAL: "New Vertical",
     HIDE_TASK: "Hide Task",
+    USER_CREATE: "New User",
 };
 
 // Which brand-tint each type family gets, purely visual (matches the
@@ -47,6 +48,7 @@ const TYPE_TINTS: Record<string, string> = {
     QC_PERMISSION_GRANT: "#0ca678",
     NEW_VERTICAL: "#ea580c",
     HIDE_TASK: "#dc2626",
+    USER: "#d97706",
 };
 
 function tintFor(type: string) {
@@ -58,7 +60,7 @@ function tintFor(type: string) {
 // reads "Acme Corp" instead of just "New Client".
 function payloadEntityName(payload: Record<string, any> | null | undefined) {
     if (!payload) return null;
-    return payload.name || payload.product_name || null;
+    return payload.name || payload.product_name || payload.fullName || null;
 }
 
 function formatDateTime(iso: string) {
@@ -374,7 +376,7 @@ const styles: Record<string, CSSProperties> = {
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
-        fontWeight: fontWeight.bold,
+        fontWeight: fontWeight.semibold,
         color: "#17181C",
         textAlign: "left",
     },

@@ -50,6 +50,12 @@ const Billing = lazy(() => import("./pages/admin/billing"));
 // already-logged-in organization) — linked from the Sidebar's Upgrade
 // entry, sits right above Sign off.
 const Subscription = lazy(() => import("./pages/subscription"));
+// NEW: Approvals — where a Process Lead's gated Client/Subclient/
+// Service/User (Add User) requests actually show up for an Ops Manager
+// (or Audit Manager/Super Admin) to Approve/Reject. Page already existed
+// but was never wired into routing/sidebar — see the route + sidebar
+// entry below.
+const Approvals = lazy(() => import("./pages/admin/approvals"));
 // FIX (#16 — 404 page): catch-all for any unmatched route.
 const NotFound = lazy(() => import("./pages/notfound"));
 //import VoiceAssistant from "./components/voiceAssistant";
@@ -440,6 +446,22 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 >
                                     <AppLayout onLogout={handleLogout}>
                                         <AddUser />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Approvals — Process Lead sees their own submitted
+                        requests, Ops Manager/Audit Manager/Super Admin see
+                        (and decide on) requests routed to them. Same role
+                        set as everything else gated by APPROVAL_RULES on
+                        the backend. */}
+                        <Route
+                            path="/approvals"
+                            element={
+                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <Approvals />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

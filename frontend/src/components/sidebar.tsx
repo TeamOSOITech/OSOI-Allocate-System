@@ -109,6 +109,16 @@ const menuItems: MenuItem[] = [
         roles: SUPER_ADMIN_ONLY,
     },
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
+    // NEW: Approvals — same role set as the backend's APPROVAL_RULES
+    // approvers/requestedBy combined (Process Lead sees their own
+    // submitted requests; Ops Manager/Audit Manager/Super Admin see and
+    // decide on the ones routed to them).
+    {
+        label: "Approvals",
+        icon: "ti ti-checkbox",
+        path: "/approvals",
+        roles: ADMIN_TIER,
+    },
     {
         // Renamed from "Quality Scores" — this page now has a QC Queue
         // / Audit Queue toggle (see pages/admin/qc.tsx), not just marks.
@@ -147,6 +157,7 @@ const pathToLabel: Record<string, string> = {
     "/quality-scores": "QC & Audit",
     "/profile": "Profile",
     "/subscription": "Upgrade",
+    "/approvals": "Approvals",
 };
 
 // ---- Brand palette ----

@@ -293,6 +293,12 @@ export default function AddUser() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [showSuccess, setShowSuccess] = useState(false);
+    // NEW: 202 = a Process Lead's Add User request went to their reporting
+    // manager for approval instead of being created immediately — see
+    // approvalGate.js / USER_CREATE in permissions.js. null means the
+    // success modal should show the normal "added" copy; a string means
+    // it should show this pending-approval message instead.
+    const [pendingApprovalMsg, setPendingApprovalMsg] = useState<string | null>(null);
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkResults, setBulkResults] = useState<any[] | null>(null);
@@ -788,6 +794,17 @@ export default function AddUser() {
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
                 throw new Error(data?.message || "Failed to create user");
+            }
+
+            // NEW: 202 = sent for approval, not actually created yet —
+            // surface that instead of claiming the user was added.
+            if (response.status === 202) {
+                const data = await response.json().catch(() => null);
+                setPendingApprovalMsg(
+                    data?.message || "Submitted for approval — waiting on your reporting manager."
+                );
+            } else {
+                setPendingApprovalMsg(null);
             }
 
             setShowSuccess(true);
@@ -1393,9 +1410,14 @@ export default function AddUser() {
                     <div style={styles.overlay}>
                         <div style={styles.successModal}>
                             <div style={styles.successIcon}>✓</div>
-                            <h3 style={styles.successTitle}>User Added Successfully</h3>
+                            <h3 style={styles.successTitle}>
+                                {pendingApprovalMsg
+                                    ? "Submitted for Approval"
+                                    : "User Added Successfully"}
+                            </h3>
                             <p style={styles.successText}>
-                                {formData.fullName} has been added as a new user.
+                                {pendingApprovalMsg ||
+                                    `${formData.fullName} has been added as a new user.`}
                             </p>
                             <button style={styles.successBtn} onClick={handleSuccessClose}>
                                 OK
