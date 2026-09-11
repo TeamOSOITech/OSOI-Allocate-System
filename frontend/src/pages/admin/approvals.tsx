@@ -63,6 +63,24 @@ function tintFor(type: string) {
     return TYPE_TINTS[type] || TYPE_TINTS[family] || "#204297";
 }
 
+// Which icon each type family gets for the row's avatar square — purely
+// visual, same "family" fallback as tintFor above (an unmapped subtype
+// still gets its family's icon instead of a blank square).
+const TYPE_ICONS: Record<string, string> = {
+    SERVICE: "ti-package",
+    CLIENT: "ti-building",
+    SUBCLIENT: "ti-users",
+    QC_PERMISSION_GRANT: "ti-shield-check",
+    NEW_VERTICAL: "ti-category-2",
+    HIDE_TASK: "ti-eye-off",
+    USER: "ti-user-plus",
+};
+
+function iconFor(type: string) {
+    const family = type.split("_")[0];
+    return `ti ${TYPE_ICONS[type] || TYPE_ICONS[family] || "ti-file-text"}`;
+}
+
 // Bulk-upload payloads don't store a single entity — they store every
 // parsed spreadsheet row (or, for users, the raw `{ users: [...] }`
 // body). Both shapes are just an array of row-like objects, so
@@ -1400,6 +1418,16 @@ export default function Approvals() {
 }
 
 const styles: Record<string, CSSProperties> = {
+    // colorScheme: "light" pins this page to its own light palette
+    // regardless of the OS/browser's dark-mode setting. Without it, a
+    // system in dark mode still renders this page's literal colors
+    // (background/text are always explicit inline styles here, so those
+    // never break) but the BROWSER also starts drawing native form
+    // controls (search input, textarea, checkboxes) with its own dark
+    // defaults — text-on-transparent that can look blank against this
+    // page's light card backgrounds. Locking color-scheme keeps every
+    // control's native rendering light too, so the page looks the same
+    // whether the system is in light or dark mode.
     root: {
         display: "flex",
         width: "100%",
@@ -1407,8 +1435,10 @@ const styles: Record<string, CSSProperties> = {
         flex: 1,
         minHeight: 0,
         background: "#f4f7fb",
+        color: "#16233c",
         fontFamily: fontFamily.base,
         overflow: "hidden",
+        colorScheme: "light",
     },
     rootMobile: {
         display: "flex",
@@ -1418,9 +1448,11 @@ const styles: Record<string, CSSProperties> = {
         minHeight: 0,
         width: "100%",
         background: "#f4f7fb",
+        color: "#16233c",
         fontFamily: fontFamily.base,
         position: "relative",
         overflow: "hidden",
+        colorScheme: "light",
     },
     contentCol: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 },
     contentColMobile: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 },
@@ -1504,7 +1536,7 @@ const styles: Record<string, CSSProperties> = {
         flexShrink: 0,
     },
     plFilterBtnActive: {
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         borderColor: "transparent",
         color: "#fff",
     },
@@ -1526,9 +1558,9 @@ const styles: Record<string, CSSProperties> = {
         flexShrink: 0,
     },
     selectModeBtnActive: {
-        background: "#e7ecf8",
-        color: "#204297",
-        border: "1px solid #204297",
+        background: "color-mix(in srgb, var(--brand-light-blue) 14%, white)",
+        color: "var(--brand-blue)",
+        border: "1px solid var(--brand-blue)",
     },
     bulkSelectBar: {
         display: "flex",
@@ -1554,8 +1586,8 @@ const styles: Record<string, CSSProperties> = {
     bulkSelectCount: {
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#204297",
-        background: "#e7ecf8",
+        color: "var(--brand-blue)",
+        background: "color-mix(in srgb, var(--brand-light-blue) 14%, white)",
         padding: "3px 10px",
         borderRadius: 999,
     },
@@ -1563,7 +1595,7 @@ const styles: Record<string, CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
@@ -1571,7 +1603,7 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
-        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
+        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb),0.25)",
         whiteSpace: "nowrap",
     },
     bulkRejectBtn: {
@@ -1644,7 +1676,7 @@ const styles: Record<string, CSSProperties> = {
         alignSelf: "flex-start",
         border: "none",
         background: "transparent",
-        color: "#204297",
+        color: "var(--brand-blue)",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
@@ -1680,14 +1712,14 @@ const styles: Record<string, CSSProperties> = {
 
     actionsRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 },
     approveBtn: {
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
         padding: "9px 20px",
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
-        boxShadow: "0 6px 14px rgba(32,66,151,0.25)",
+        boxShadow: "0 6px 14px rgba(var(--brand-blue-rgb),0.25)",
     },
     rejectBtn: {
         background: "#fff",
@@ -1720,7 +1752,7 @@ const styles: Record<string, CSSProperties> = {
     },
     tabBtnActive: {
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         boxShadow: "0 2px 8px rgba(0,0,0,.08)",
     },
 
@@ -1842,7 +1874,7 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: 6,
         background: "#fff",
-        color: "#204297",
+        color: "var(--brand-blue)",
         border: "1px solid #cfe0f5",
         borderRadius: radius.md,
         padding: "11px 16px",
@@ -1870,13 +1902,13 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        background: "linear-gradient(135deg, #08A1CE, #204297)",
+        background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
         border: "none",
         borderRadius: radius.md,
         padding: "12px 20px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        boxShadow: "0 6px 16px rgba(32,66,151,0.25)",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.25)",
     },
 };
