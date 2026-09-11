@@ -245,10 +245,16 @@ async function decideRequest(req, res) {
         status: decision === "APPROVE" ? "APPROVED" : "REJECTED",
         approved_by: req.user.userId,
         decided_at: new Date().toISOString(),
-        // Remarks are optional either way (typically used to explain a
-        // rejection), stored as-is; empty/whitespace-only counts as none.
-        remarks:
-          typeof remarks === "string" && remarks.trim() ? remarks.trim() : null,
+        // FIX: this used to always send `remarks` (even null) on every
+        // decision, including APPROVE — which broke Approve entirely on
+        // any org that hasn't run the "ALTER TABLE approval_requests ADD
+        // COLUMN remarks text" migration yet (Postgrest errors on an
+        // unknown column in the update body). Only touch the column when
+        // there's an actual remark to store — Approve never sends one, so
+        // it no longer depends on that column existing at all.
+        ...(typeof remarks === "string" && remarks.trim()
+          ? { remarks: remarks.trim() }
+          : {}),
       })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
