@@ -1145,34 +1145,6 @@ const Products = () => {
                         </div>
                     )}
 
-                    {/* NEW: My Team / Organisation scope toggle — defaults to "My
-                        Team" (services aligned to this employee's own team);
-                        switching to "Organisation" widens the list to every
-                        service, same All/My-Team split used on the Today's
-                        Allocation -> Employees tab, applied here to services. */}
-                    <div style={styles.viewToggle}>
-                        <button
-                            type="button"
-                            onClick={() => changeScope("team")}
-                            style={{
-                                ...styles.scopeToggleBtn,
-                                ...(scope === "team" ? styles.viewToggleBtnActive : {}),
-                            }}
-                        >
-                            My Team
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => changeScope("org")}
-                            style={{
-                                ...styles.scopeToggleBtn,
-                                ...(scope === "org" ? styles.viewToggleBtnActive : {}),
-                            }}
-                        >
-                            Organisation
-                        </button>
-                    </div>
-
                     {/* Filters */}
                     <div style={isMobile ? styles.filterRowMobile : styles.filterRow}>
                         <div style={styles.searchWrap}>
@@ -1188,6 +1160,26 @@ const Products = () => {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
+
+                        {/* CHANGED: was a separate My Team / Organisation
+                            pill-toggle sitting on its own row above the
+                            search bar — moved to a dropdown right next to
+                            the search box instead, matching the
+                            Employees page's scope selector. */}
+                        <select
+                            style={styles.filterSelect}
+                            value={scope}
+                            onChange={(e) => changeScope(e.target.value as "team" | "org")}
+                            aria-label="Scope"
+                            title={
+                                scope === "team" && !myTeam
+                                    ? "Your account has no team set, so this currently shows everyone."
+                                    : undefined
+                            }
+                        >
+                            <option value="team">My Team</option>
+                            <option value="org">Organisation</option>
+                        </select>
 
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every row/card
@@ -2207,25 +2199,6 @@ const styles: Record<string, CSSProperties> = {
     viewToggleBtnActive: {
         background: "#e7ecf8",
         color: "var(--brand-blue)",
-    },
-
-    // NEW: My Team / Organisation scope toggle — text buttons inside the
-    // same pill wrapper (styles.viewToggle) as the grid/list view toggle,
-    // just wider than the icon-only buttons to fit a label.
-    scopeToggleBtn: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: 32,
-        padding: "0 12px",
-        border: "none",
-        background: "transparent",
-        borderRadius: radius.sm,
-        color: "#7c8aa3",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
     },
 
     // NEW: "Select" toggle button — switches bulk-select mode on/off so the
