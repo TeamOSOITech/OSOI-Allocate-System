@@ -75,6 +75,33 @@ async function sendMail({ to, subject, html }) {
   throw lastErr;
 }
 
+// SECURITY FIX: heading/bodyText used to be interpolated straight into
+// the HTML template below with no escaping. registerOrganization.
+// controller.js's call site passes the user-supplied Organization Name
+// straight into `heading` (e.g. `Welcome, ${trimmedOrgName}!`) — so
+// someone could sign up with a name like `<img src=x onerror=...>` and
+// have it land, unescaped, inside an HTML email actually rendered by a
+// mail client. Escaping the handful of HTML-special characters before
+// building the template closes this off for every current and future
+// caller, without having to remember to escape at each call site.
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return ch;
+    }
+  });
+
 function buildResetLinkEmailHtml({
   heading,
   bodyText,
@@ -83,12 +110,12 @@ function buildResetLinkEmailHtml({
 }) {
   return `
     <div style="font-family: sans-serif; max-width: 480px; margin: auto;">
-      <h2>${heading}</h2>
-      <p>${bodyText}</p>
-      <a href="${actionLink}"
+      <h2>${escapeHtml(heading)}</h2>
+      <p>${escapeHtml(bodyText)}</p>
+      <a href="${escapeHtml(actionLink)}"
          style="display:inline-block;padding:12px 24px;background:#204297;
                 color:#fff;border-radius:8px;text-decoration:none;font-weight:700;">
-        ${buttonText}
+        ${escapeHtml(buttonText)}
       </a>
       <p style="color:#888;font-size:12px;margin-top:24px;">
         If you didn't expect this email, you can ignore it.

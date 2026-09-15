@@ -154,13 +154,32 @@ const upgradeOrgSubscription = async (supabase, organizationId, plan) => {
 
 // Verifies the signature Razorpay Checkout returns to the browser after
 // a successful payment (order_id + payment_id + signature).
+//
+// SECURITY FIX: this used to compare with `===`, a plain string
+// comparison. String comparison in V8 short-circuits on the first
+// differing byte, so a well-positioned attacker measuring response
+// timing over many attempts could — in theory — narrow down a correct
+// signature byte-by-byte instead of having to guess the whole 64-hex-
+// char HMAC at once. crypto.timingSafeEqual() always takes the same
+// time regardless of where the strings diverge, closing that off. It
+// throws on a length mismatch, so that's checked first (a length
+// mismatch is a safe, non-timing-sensitive fact to check normally —
+// it's already obvious just from `signature`'s length in the request).
+const safeCompareHex = (expectedHex, actualHex) => {
+  if (typeof actualHex !== "string") return false;
+  const expectedBuf = Buffer.from(expectedHex, "hex");
+  const actualBuf = Buffer.from(actualHex, "hex");
+  if (expectedBuf.length !== actualBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, actualBuf);
+};
+
 const verifyPaymentSignature = ({ orderId, paymentId, signature }) => {
   const expected = crypto
     .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
     .update(`${orderId}|${paymentId}`)
     .digest("hex");
 
-  return expected === signature;
+  return safeCompareHex(expected, signature);
 };
 
 // Verifies the signature on Razorpay's server-to-server webhook calls.
@@ -172,7 +191,39 @@ const verifyWebhookSignature = (rawBody, signature) => {
     .update(rawBody)
     .digest("hex");
 
-  return expected === signature;
+  return safeCompareHex(expected, signature);
+};
+
+// SECURITY FIX (plan tampering): verifyPaymentSignature only proves a
+// real payment happened for THIS orderId+paymentId pair — it says
+// nothing about which plan that payment was actually FOR. The plan
+// name used to come straight from the request body at verify-payment
+// time, completely unchecked, so someone could pay for the cheap Basic
+// order and then call verify-payment with plan: "professional" to get
+// the pricier plan's user limit for the Basic price (the signature
+// still checks out — it never covered `plan` in the first place).
+//
+// Fix: re-fetch the order from Razorpay's own API (using our secret
+// key, so this can't be spoofed) and confirm the plan the caller is
+// now claiming actually matches (a) the plan stamped in the order's
+// `notes` at creation time (see createOrder above) AND (b) the order's
+// paid amount for that plan in PLAN_CONFIG — belt-and-suspenders, since
+// notes are just metadata Razorpay stores verbatim (trustworthy only
+// because *we* set them at order-creation time) while amount is the
+// actual charged figure Razorpay enforces.
+const verifyOrderMatchesPlan = async (orderId, claimedPlanKey) => {
+  const expectedConfig = PLAN_CONFIG[claimedPlanKey];
+  if (!expectedConfig) return false;
+
+  const order = await getRazorpay().orders.fetch(orderId);
+  if (!order) return false;
+
+  const orderPlan = String(order.notes?.plan || "").toLowerCase();
+  if (orderPlan !== claimedPlanKey) return false;
+
+  if (Number(order.amount) !== Number(expectedConfig.amount)) return false;
+
+  return true;
 };
 
 module.exports = {
@@ -182,6 +233,7 @@ module.exports = {
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
+  verifyOrderMatchesPlan,
   getPlanByName,
   getActiveSubscription,
   upgradeOrgSubscription,

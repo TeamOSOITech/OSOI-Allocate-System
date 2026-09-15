@@ -6,7 +6,9 @@
 // Excel template/upload, and shapes responses. Wired up by
 // clients.routes.js.
 
-const XLSX = require("xlsx");
+// SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
+// src/utils/parseSpreadsheet.js for why.
+const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const clientsService = require("./clients.service");
 
@@ -242,7 +244,17 @@ async function listClients(req, res) {
       );
     });
 
-    const withPending = await attachPendingClientApprovals(formatted, orgId);
+    // FIX: same issue as products.controller.js's getAllProducts —
+    // /api/clients is called from Service Cases' "select client"
+    // dropdown too, not just this Clients management page. A still-
+    // pending CLIENT_CREATE has no real client behind it yet, so it
+    // shouldn't be pickable there. Only merge in placeholder rows when
+    // explicitly asked for via ?includePending=true, which only
+    // clients.tsx passes.
+    const includePending = req.query.includePending === "true";
+    const withPending = includePending
+      ? await attachPendingClientApprovals(formatted, orgId)
+      : formatted;
 
     res.json(withPending);
   } catch (err) {
@@ -443,12 +455,8 @@ async function downloadTemplate(req, res) {
 // standalone export (processClientBulkRows) so applyApprovedAction() in
 // approvals.controller.js can replay it later against the same rows.
 
-function parseClientBulkRows(fileBuffer) {
-  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-  const sheetName = workbook.SheetNames[0];
-  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-    defval: "",
-  });
+async function parseClientBulkRows(fileBuffer, originalFilename) {
+  return parseSpreadsheetRows(fileBuffer, originalFilename, { defval: "" });
 }
 
 async function processClientBulkRows(rows, orgId) {
@@ -590,7 +598,12 @@ async function bulkUpload(req, res) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const rows = parseClientBulkRows(req.file.buffer);
+    let rows;
+    try {
+      rows = await parseClientBulkRows(req.file.buffer, req.file.originalname);
+    } catch (parseErr) {
+      return res.status(400).json({ message: parseErr.message });
+    }
 
     if (!rows.length) {
       return res
@@ -647,6 +660,25 @@ async function getClientById(req, res) {
 async function updateClient(req, res) {
   try {
     const orgId = req.user.organizationId;
+
+    // GUARD: same reasoning as products.controller.js's updateProduct —
+    // "pending-<request id>" is a placeholder id for a not-yet-approved
+    // CLIENT_CREATE, not a real row (see attachPendingClientApprovals
+    // above). approvalGate.js already rejects this for roles that go
+    // through approval; this covers Ops Manager/Super Admin, who act
+    // directly and bypass that middleware. Without this, Number(id)
+    // below turns into NaN and the query fails downstream instead of
+    // with a clean, explained error.
+    if (
+      typeof req.params.id === "string" &&
+      req.params.id.startsWith("pending-")
+    ) {
+      return res.status(400).json({
+        message:
+          "This client is still awaiting approval to be created and can't be edited yet.",
+      });
+    }
+
     const id = Number(req.params.id);
 
     if (!req.body?.name || !req.body.name.trim()) {
@@ -691,6 +723,18 @@ async function updateClient(req, res) {
 async function deleteClient(req, res) {
   try {
     const orgId = req.user.organizationId;
+
+    // GUARD: same as updateClient above.
+    if (
+      typeof req.params.id === "string" &&
+      req.params.id.startsWith("pending-")
+    ) {
+      return res.status(400).json({
+        message:
+          "This client is still awaiting approval to be created and can't be deleted yet.",
+      });
+    }
+
     const id = Number(req.params.id);
 
     const exists = await clientsService.clientExists(id, orgId);

@@ -8,6 +8,7 @@ const {
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
+  verifyOrderMatchesPlan,
   getPlanByName,
   getActiveSubscription,
   upgradeOrgSubscription,
@@ -149,6 +150,8 @@ const verifyPaymentHandler = async (req, res) => {
         .json({ success: false, message: "Missing required fields" });
     }
 
+    const normalizedPlan = String(plan).toLowerCase();
+
     const isValid = verifyPaymentSignature({ orderId, paymentId, signature });
     if (!isValid) {
       return res
@@ -156,7 +159,30 @@ const verifyPaymentHandler = async (req, res) => {
         .json({ success: false, message: "Payment verification failed" });
     }
 
-    const record = generateSignupRecord({ email, plan, orderId, paymentId });
+    // SECURITY: a valid signature only proves orderId+paymentId were
+    // really paid on Razorpay — it says nothing about which plan that
+    // order was FOR. Without this check, someone could pay for the
+    // cheap plan then claim a pricier one right here, since `plan`
+    // above is otherwise just whatever the client sends. Re-fetch the
+    // order from Razorpay (our own API key, can't be spoofed) and
+    // confirm it actually matches this plan's price/notes.
+    const planMatches = await verifyOrderMatchesPlan(orderId, normalizedPlan);
+    if (!planMatches) {
+      console.error(
+        `verify-payment: order ${orderId} does not match claimed plan "${normalizedPlan}" — refusing to mint a signup token.`,
+      );
+      return res.status(400).json({
+        success: false,
+        message: "This payment does not match the selected plan.",
+      });
+    }
+
+    const record = generateSignupRecord({
+      email,
+      plan: normalizedPlan,
+      orderId,
+      paymentId,
+    });
 
     const { error } = await supabase
       .from("payment_signups")
@@ -356,6 +382,22 @@ const verifyUpgradePaymentHandler = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Payment verification failed" });
+    }
+
+    // SECURITY: same plan-tampering check as verifyPaymentHandler above
+    // — a valid signature alone doesn't prove this order was actually
+    // created for `normalizedPlan`. Without this, any authenticated
+    // user with billing.manage could pay for Basic and claim
+    // Professional here to upgrade their org's user limit for less.
+    const planMatches = await verifyOrderMatchesPlan(orderId, normalizedPlan);
+    if (!planMatches) {
+      console.error(
+        `upgrade/verify-payment: order ${orderId} does not match claimed plan "${normalizedPlan}" (org ${req.user.organizationId}) — refusing to upgrade.`,
+      );
+      return res.status(400).json({
+        success: false,
+        message: "This payment does not match the selected plan.",
+      });
     }
 
     const planRow = await getPlanByName(supabase, normalizedPlan);

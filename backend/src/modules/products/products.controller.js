@@ -1,5 +1,7 @@
 const fs = require("fs");
-const xlsx = require("xlsx");
+// SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
+// src/utils/parseSpreadsheet.js for why.
+const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const productService = require("./products.service");
 const supabase = require("../../config/supabaseClient");
 const { getAllTeams } = require("../teams/teams.service");
@@ -91,10 +93,23 @@ const getAllProducts = async (req, res) => {
     const products = await productService.getAllProducts(
       req.user.organizationId,
     );
-    const withPending = await attachPendingApprovals(
-      products,
-      req.user.organizationId,
-    );
+
+    // FIX: this same endpoint is called from everywhere a service list
+    // is needed — Daily Work, Today's Allocation, Self Allocation, QC,
+    // Service Cases, Clients — not just the admin Products page. Only
+    // the Products page actually wants the "Awaiting approval"
+    // placeholder rows merged in (that's where the badge/View-Details/
+    // hidden-Edit-Delete treatment lives — see products.tsx). Everywhere
+    // else, a still-pending SERVICE_CREATE has no real product behind
+    // it yet, so it was showing up as a pickable option in dropdowns
+    // that then couldn't actually be allocated/worked against. Now it
+    // only gets merged in when explicitly asked for via
+    // ?includePending=true, which only products.tsx passes.
+    const includePending = req.query.includePending === "true";
+    const withPending = includePending
+      ? await attachPendingApprovals(products, req.user.organizationId)
+      : products;
+
     const scoped = await scopeProductsForVerticalHead(withPending, req);
     return res.status(200).json({ success: true, data: scoped });
   } catch (error) {
@@ -209,11 +224,9 @@ const parseTimeTaken = (raw) => {
 // (processProductBulkRows) so applyApprovedAction() in
 // approvals.controller.js can replay it later against the same rows.
 
-function parseProductBulkRows(filePath) {
-  const workbook = xlsx.readFile(filePath);
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  return xlsx.utils.sheet_to_json(sheet, { defval: null });
+async function parseProductBulkRows(filePath, originalFilename) {
+  const buffer = fs.readFileSync(filePath);
+  return parseSpreadsheetRows(buffer, originalFilename, { defval: null });
 }
 
 async function processProductBulkRows(rows, orgId) {
@@ -347,7 +360,16 @@ const bulkUploadProducts = async (req, res) => {
     }
 
     const orgId = req.user.organizationId;
-    const rows = parseProductBulkRows(req.file.path);
+
+    let rows;
+    try {
+      rows = await parseProductBulkRows(req.file.path, req.file.originalname);
+    } catch (parseErr) {
+      fs.unlink(req.file.path, () => {});
+      return res
+        .status(400)
+        .json({ success: false, message: parseErr.message });
+    }
 
     fs.unlink(req.file.path, () => {});
 
@@ -382,6 +404,21 @@ const bulkUploadProducts = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // GUARD: same reasoning as approvalGate.js's check on this route —
+    // "pending-<request id>" is a placeholder id for a not-yet-approved
+    // SERVICE_CREATE, not a real row. Ops Manager/Super Admin bypass
+    // approvalGate (they act directly), so this route can still be hit
+    // with that id. Fail clean here instead of letting Postgres throw
+    // "invalid input syntax for type bigint".
+    if (typeof id === "string" && id.startsWith("pending-")) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This service is still awaiting approval to be created and can't be edited yet.",
+      });
+    }
+
     const { product_name, time_taken, time_unit, teams } = req.body;
 
     if (time_unit && !["minutes", "hours"].includes(time_unit)) {
@@ -412,6 +449,18 @@ const updateProduct = async (req, res) => {
 const deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // GUARD: same as updateProduct above — a placeholder id for a
+    // still-pending SERVICE_CREATE can't be deleted; there's no real
+    // row behind it yet.
+    if (typeof id === "string" && id.startsWith("pending-")) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This service is still awaiting approval to be created and can't be deleted yet.",
+      });
+    }
+
     const product = await productService.deleteProduct(
       id,
       req.user.organizationId,

@@ -88,6 +88,23 @@ function approvalGate(
         return next();
       }
 
+      // GUARD: an UPDATE/DELETE route's :id can be a "pending-<request
+      // id>" placeholder — the frontend shows not-yet-approved CREATEs
+      // as regular-looking rows (see attachPendingApprovals in
+      // products.controller.js / clients.controller.js), and nothing
+      // stopped someone from clicking Edit/Delete on one of those. That
+      // id would get stored verbatim in this request's payload, and
+      // only blow up later — as a Postgres "invalid input syntax for
+      // type bigint" error — when an approver tries to actually apply
+      // it. Reject up front instead, with a message that explains why.
+      if (includeParamsId && /^pending-/.test(String(req.params.id))) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "This item is still awaiting approval to be created and can't be edited or deleted yet.",
+        });
+      }
+
       let extra = {};
       if (resolveExtraPayload) {
         try {
@@ -190,7 +207,15 @@ function bulkApprovalGate(type, parseRows) {
 
       let rows;
       try {
-        rows = parseRows(req.file);
+        // SECURITY FIX: parsing moved to an async ExcelJS-based reader
+        // (see src/utils/parseSpreadsheet.js) — added `await` so a
+        // rejected promise from that lands in this catch block instead
+        // of `rows` silently becoming an unresolved Promise object
+        // (which would then fail the Array.isArray check below with a
+        // confusing "no data rows" error). Safe for the old synchronous
+        // parseRows callbacks too — awaiting a non-Promise value just
+        // resolves immediately with it.
+        rows = await parseRows(req.file);
       } catch (parseErr) {
         if (req.file.path) fs.unlink(req.file.path, () => {});
         return res.status(400).json({
