@@ -19,12 +19,15 @@ const path = require("path");
 const upload = multer({
   dest: "uploads/",
   fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
+    // SECURITY FIX: dropped ".xls" — same reasoning as
+    // clients.routes.js (src/utils/parseSpreadsheet.js only reads
+    // .xlsx/.csv).
+    const allowed = [".xlsx", ".csv"];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+      cb(new Error("Only .xlsx or .csv files are allowed"));
     }
   },
   limits: { fileSize: 10 * 1024 * 1024 },

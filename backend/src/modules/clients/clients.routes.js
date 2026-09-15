@@ -44,12 +44,16 @@ const clientsService = require("./clients.service");
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
+    // SECURITY FIX: dropped ".xls" (legacy binary Excel format) — the
+    // xlsx package that used to parse it is gone (see
+    // src/utils/parseSpreadsheet.js), and its ExcelJS replacement only
+    // reads the modern .xlsx/.csv formats.
+    const allowed = [".xlsx", ".csv"];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+      cb(new Error("Only .xlsx or .csv files are allowed"));
     }
   },
   limits: { fileSize: 10 * 1024 * 1024 },
