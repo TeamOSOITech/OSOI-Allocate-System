@@ -346,6 +346,11 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [photoError, setPhotoError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // NEW: click the avatar to view it full-size, like the photo
+    // lightboxes in most other apps. Purely a view — the camera/edit
+    // button (a separate element on top of the avatar) still opens the
+    // file picker as before.
+    const [isAvatarPreviewOpen, setIsAvatarPreviewOpen] = useState(false);
 
     const [activeTab, setActiveTab] = useState<"today" | "past">("today");
     const [dateFilter, setDateFilter] = useState("");
@@ -477,6 +482,17 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [employee, profile]);
+
+    // Close the avatar lightbox on Escape, same as clicking the backdrop
+    // or the X button.
+    useEffect(() => {
+        if (!isAvatarPreviewOpen) return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setIsAvatarPreviewOpen(false);
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [isAvatarPreviewOpen]);
 
     const name =
         profile?.first_name || profile?.last_name
@@ -990,7 +1006,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <div style={styles.avatarBlock}>
                         <div style={styles.avatarWrap}>
                             {photoUrl ? (
-                                <img src={photoUrl} alt={name} style={styles.avatarImg} />
+                                <img
+                                    src={photoUrl}
+                                    alt={name}
+                                    style={{ ...styles.avatarImg, cursor: "pointer" }}
+                                    onClick={() => setIsAvatarPreviewOpen(true)}
+                                    title="View photo"
+                                />
                             ) : (
                                 <div style={styles.avatar}>{initials || "?"}</div>
                             )}
@@ -1920,6 +1942,29 @@ export default function Profile({ onLogout }: ProfileProps) {
             )}
 
             {selfAllocToast && <div style={styles.toast}>{selfAllocToast}</div>}
+
+            {/* NEW: click-to-zoom lightbox for the profile photo, same
+                pattern as the bulk modal overlay above (fixed, dark
+                backdrop, closes on backdrop click / X / Escape). */}
+            {isAvatarPreviewOpen && photoUrl && (
+                <div style={styles.lightboxOverlay} onClick={() => setIsAvatarPreviewOpen(false)}>
+                    <button
+                        type="button"
+                        style={styles.lightboxCloseBtn}
+                        onClick={() => setIsAvatarPreviewOpen(false)}
+                        aria-label="Close"
+                        title="Close"
+                    >
+                        <i className="ti ti-x" style={{ fontSize: fontSize.lg }} />
+                    </button>
+                    <img
+                        src={photoUrl}
+                        alt={name}
+                        style={styles.lightboxImg}
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            )}
         </div>
     );
 }
@@ -2515,6 +2560,45 @@ function getStyles(
             fontWeight: fontWeight.medium,
         },
         smallMuted: { fontSize: fontSize.xs, color: "#9099AC" },
+
+        // ---- Avatar lightbox (click profile photo to zoom) ----
+        lightboxOverlay: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(10,15,25,0.82)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 300,
+            padding: 24,
+            cursor: "zoom-out",
+        },
+        lightboxImg: {
+            maxWidth: "min(90vw, 480px)",
+            maxHeight: "80vh",
+            width: "auto",
+            height: "auto",
+            borderRadius: radius.lg,
+            boxShadow: "0 24px 70px rgba(0,0,0,0.5)",
+            cursor: "default",
+            objectFit: "contain",
+        },
+        lightboxCloseBtn: {
+            position: "fixed",
+            top: 20,
+            right: 24,
+            width: 40,
+            height: 40,
+            borderRadius: "50%",
+            border: "none",
+            background: "rgba(255,255,255,0.15)",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            zIndex: 301,
+        },
 
         // ---- Bulk Submit modal ----
         bulkOverlay: {
