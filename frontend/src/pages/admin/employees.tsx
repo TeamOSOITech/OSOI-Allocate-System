@@ -719,12 +719,8 @@ export default function Employees() {
                             {/* Process Lead can't reach the full Approvals page
                                 anymore (decision-makers only) — this gives them a
                                 read-only way to check their own submitted requests
-                                without leaving this page. Same header-row placement
-                                as Services/Clients (top-right, next to the page
-                                title). Renders nothing for any other role. */}
-                            <div style={styles.headerActions}>
-                                <MyPendingApprovals types={["USER_CREATE"]} />
-                            </div>
+                                without leaving this page. Renders nothing for any
+                                other role. */}
                         </div>
                     )}
 
@@ -755,6 +751,8 @@ export default function Employees() {
                                 </button>
                             )}
                         </div>
+
+                        {!isMobile && <MyPendingApprovals types={["USER_CREATE"]} />}
 
                         {/* NEW: My Team / Organisation scope toggle. Opens on
                             "My Team" — only people who share the logged-in

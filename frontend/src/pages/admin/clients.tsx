@@ -103,6 +103,13 @@ function withCurrencyUpdate<T extends { currency: string; productRates: ProductR
 }
 
 type Client = {
+    // NOTE: declared as `number` for the common case, but the backend
+    // can actually send a "pending-<request id>" string placeholder for
+    // a still-unapproved CLIENT_CREATE (see attachPendingClientApprovals
+    // in clients.controller.js). isPendingCreateClient() below checks
+    // this at runtime via String(c.id) rather than widening this type,
+    // since Edit/Delete are hidden for those rows and never call
+    // openEditModal/openDeleteConfirm with a placeholder id anyway.
     id: number;
     name: string;
     country: string | null;
@@ -123,7 +130,20 @@ type Client = {
     // client_products junction table — each with its own amount/currency.
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
+    approvalStatus?: "PENDING_CREATE" | "PENDING_UPDATE" | "PENDING_DELETE";
 };
+
+// A "PENDING_CREATE" client is a placeholder synthesized from an
+// approval request that hasn't been approved yet — its real id (at
+// runtime) is "pending-<request id>", not a real database id. Editing/
+// deleting it would submit a CLIENT_UPDATE/DELETE whose payload.id is
+// that placeholder string, which fails with a Postgres bigint error the
+// moment an approver tries to approve it. Same bug/fix as
+// isPendingCreate in products.tsx. Uses String(c.id) rather than a
+// typed check since the declared type stays `number` (see note above).
+function isPendingCreateClient(c: Client) {
+    return String(c.id).startsWith("pending-");
+}
 
 // Subclients now carry the same Primary/Secondary contact fields as Clients
 // so both entities are viewable, editable, and exportable with parity.
@@ -469,8 +489,18 @@ export default function Clients() {
         setLoading(true);
         setError("");
         try {
+            // NOTE: clients.tsx is the one place meant to show still-
+            // pending "New Client" rows (Awaiting approval badge,
+            // Edit/Delete hidden — see isPendingCreateClient below).
+            // Everywhere else that reads /api/clients (Service Cases'
+            // client picker, History, Billing) intentionally does NOT
+            // pass this, so a not-yet-approved client never shows up as
+            // a selectable option there. Same reasoning applies to
+            // /api/products below — no includePending here means the
+            // client-product-linking dropdown only offers already-
+            // approved services.
             const [clientsRes, subclientsRes, productsRes] = await Promise.all([
-                authFetch(`${apiBase}/api/clients`, { cache: "no-store" }),
+                authFetch(`${apiBase}/api/clients?includePending=true`, { cache: "no-store" }),
                 authFetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
                 authFetch(`${apiBase}/api/products`, { cache: "no-store" }),
             ]);
@@ -1879,10 +1909,20 @@ export default function Clients() {
                                                                     checked={selectedIds.has(
                                                                         client.id
                                                                     )}
+                                                                    disabled={isPendingCreateClient(
+                                                                        client
+                                                                    )}
                                                                     onChange={() =>
                                                                         toggleSelectOne(client.id)
                                                                     }
                                                                     aria-label={`Select ${client.name}`}
+                                                                    title={
+                                                                        isPendingCreateClient(
+                                                                            client
+                                                                        )
+                                                                            ? "Still awaiting approval — can't be selected"
+                                                                            : undefined
+                                                                    }
                                                                 />
                                                             </td>
                                                         )}
@@ -1890,6 +1930,11 @@ export default function Clients() {
                                                             <span style={styles.tdNameText}>
                                                                 {client.name}
                                                             </span>
+                                                            {isPendingCreateClient(client) && (
+                                                                <span style={styles.pendingBadge}>
+                                                                    Awaiting approval
+                                                                </span>
+                                                            )}
                                                         </td>
                                                         <td style={styles.td}>
                                                             <span style={styles.tdMuted}>
@@ -1985,54 +2030,64 @@ export default function Clients() {
                                                                     from the API. Now hidden entirely for
                                                                     anyone canManage doesn't cover, matching
                                                                     the same gate already used for the Add
-                                                                    button above. */}
-                                                                {canManage && (
-                                                                    <button
-                                                                        type="button"
-                                                                        className="cl-icon-btn"
-                                                                        style={styles.iconBtn}
-                                                                        aria-label="Edit"
-                                                                        title="Edit client"
-                                                                        onClick={() =>
-                                                                            openEditModal({
-                                                                                type: "client",
-                                                                                data: client,
-                                                                            })
-                                                                        }
-                                                                    >
-                                                                        <i
-                                                                            className="ti ti-pencil"
-                                                                            style={{
-                                                                                fontSize:
-                                                                                    fontSize.base,
-                                                                            }}
-                                                                        />
-                                                                    </button>
-                                                                )}
-                                                                {canManage && (
-                                                                    <button
-                                                                        type="button"
-                                                                        className="cl-icon-btn-danger"
-                                                                        style={styles.iconBtnDanger}
-                                                                        aria-label="Delete"
-                                                                        title="Delete client"
-                                                                        onClick={() =>
-                                                                            openDeleteConfirm(
-                                                                                "client",
-                                                                                client.id,
-                                                                                client.name
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        <i
-                                                                            className="ti ti-trash"
-                                                                            style={{
-                                                                                fontSize:
-                                                                                    fontSize.base,
-                                                                            }}
-                                                                        />
-                                                                    </button>
-                                                                )}
+                                                                    button above. Also hidden for still-
+                                                                    pending-create placeholder rows — see
+                                                                    isPendingCreateClient. */}
+                                                                {canManage &&
+                                                                    !isPendingCreateClient(
+                                                                        client
+                                                                    ) && (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="cl-icon-btn"
+                                                                            style={styles.iconBtn}
+                                                                            aria-label="Edit"
+                                                                            title="Edit client"
+                                                                            onClick={() =>
+                                                                                openEditModal({
+                                                                                    type: "client",
+                                                                                    data: client,
+                                                                                })
+                                                                            }
+                                                                        >
+                                                                            <i
+                                                                                className="ti ti-pencil"
+                                                                                style={{
+                                                                                    fontSize:
+                                                                                        fontSize.base,
+                                                                                }}
+                                                                            />
+                                                                        </button>
+                                                                    )}
+                                                                {canManage &&
+                                                                    !isPendingCreateClient(
+                                                                        client
+                                                                    ) && (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="cl-icon-btn-danger"
+                                                                            style={
+                                                                                styles.iconBtnDanger
+                                                                            }
+                                                                            aria-label="Delete"
+                                                                            title="Delete client"
+                                                                            onClick={() =>
+                                                                                openDeleteConfirm(
+                                                                                    "client",
+                                                                                    client.id,
+                                                                                    client.name
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            <i
+                                                                                className="ti ti-trash"
+                                                                                style={{
+                                                                                    fontSize:
+                                                                                        fontSize.base,
+                                                                                }}
+                                                                            />
+                                                                        </button>
+                                                                    )}
                                                             </div>
                                                         </td>
                                                     </tr>
@@ -2240,9 +2295,15 @@ export default function Clients() {
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedIds.has(client.id)}
+                                                        disabled={isPendingCreateClient(client)}
                                                         onChange={() => toggleSelectOne(client.id)}
                                                         onClick={(e) => e.stopPropagation()}
                                                         aria-label={`Select ${client.name}`}
+                                                        title={
+                                                            isPendingCreateClient(client)
+                                                                ? "Still awaiting approval — can't be selected"
+                                                                : undefined
+                                                        }
                                                         style={styles.cardSelectCheckbox}
                                                     />
                                                 )}
@@ -2269,6 +2330,11 @@ export default function Clients() {
                                                         >
                                                             {client.subclients} Subclients
                                                         </span>
+                                                        {isPendingCreateClient(client) && (
+                                                            <span style={styles.pendingBadge}>
+                                                                Awaiting approval
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -2593,56 +2659,75 @@ export default function Clients() {
                                     Gate them the same way as the list-row icons
                                     above (canManage), so anyone without edit/delete
                                     permission never sees affordances that are
-                                    guaranteed to fail. */}
-                                {canManage && (
-                                    <button
-                                        type="button"
-                                        style={{
-                                            ...styles.secondaryBtn,
-                                            flex: 1,
-                                            justifyContent: "center",
-                                        }}
-                                        onClick={() => {
-                                            const target = viewDetails;
-                                            setViewDetails(null);
-                                            if (target) openEditModal(target);
-                                        }}
-                                    >
-                                        <i
-                                            className="ti ti-pencil"
-                                            style={{ fontSize: fontSize.base }}
-                                        />
-                                        Edit
-                                    </button>
-                                )}
-                                {canManage && (
-                                    <button
-                                        type="button"
-                                        style={{
-                                            ...styles.addSubmitBtn,
-                                            flex: 1,
-                                            background: "linear-gradient(135deg, #ef4444, #b91c1c)",
-                                            boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
-                                        }}
-                                        onClick={() => {
-                                            const target = viewDetails;
-                                            setViewDetails(null);
-                                            if (target) {
-                                                openDeleteConfirm(
-                                                    target.type,
-                                                    target.data.id,
-                                                    target.data.name
-                                                );
-                                            }
-                                        }}
-                                    >
-                                        <i
-                                            className="ti ti-trash"
-                                            style={{ fontSize: fontSize.base }}
-                                        />
-                                        Delete
-                                    </button>
-                                )}
+                                    guaranteed to fail. Also hidden when this is a
+                                    still-pending-create client placeholder — see
+                                    isPendingCreateClient. */}
+                                {canManage &&
+                                    viewDetails.type === "client" &&
+                                    isPendingCreateClient(viewDetails.data) && (
+                                        <p style={styles.pendingNote}>
+                                            This client is still awaiting approval to be created —
+                                            it can't be edited or deleted until then.
+                                        </p>
+                                    )}
+                                {canManage &&
+                                    !(
+                                        viewDetails.type === "client" &&
+                                        isPendingCreateClient(viewDetails.data)
+                                    ) && (
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.secondaryBtn,
+                                                flex: 1,
+                                                justifyContent: "center",
+                                            }}
+                                            onClick={() => {
+                                                const target = viewDetails;
+                                                setViewDetails(null);
+                                                if (target) openEditModal(target);
+                                            }}
+                                        >
+                                            <i
+                                                className="ti ti-pencil"
+                                                style={{ fontSize: fontSize.base }}
+                                            />
+                                            Edit
+                                        </button>
+                                    )}
+                                {canManage &&
+                                    !(
+                                        viewDetails.type === "client" &&
+                                        isPendingCreateClient(viewDetails.data)
+                                    ) && (
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.addSubmitBtn,
+                                                flex: 1,
+                                                background:
+                                                    "linear-gradient(135deg, #ef4444, #b91c1c)",
+                                                boxShadow: "0 6px 16px rgba(220,38,38,0.3)",
+                                            }}
+                                            onClick={() => {
+                                                const target = viewDetails;
+                                                setViewDetails(null);
+                                                if (target) {
+                                                    openDeleteConfirm(
+                                                        target.type,
+                                                        target.data.id,
+                                                        target.data.name
+                                                    );
+                                                }
+                                            }}
+                                        >
+                                            <i
+                                                className="ti ti-trash"
+                                                style={{ fontSize: fontSize.base }}
+                                            />
+                                            Delete
+                                        </button>
+                                    )}
                             </div>
                         </div>
                     </div>
@@ -3951,6 +4036,19 @@ const styles: Record<string, CSSProperties> = {
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
     },
+    pendingBadge: {
+        display: "inline-block",
+        marginLeft: 8,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#b45309",
+        background: "#fef3c7",
+        border: "1px solid #fde68a",
+        borderRadius: radius.xl,
+        padding: "2px 8px",
+        whiteSpace: "nowrap",
+        verticalAlign: "middle",
+    },
     tdMuted: {
         fontSize: fontSize.sm,
         color: "#5a6c85",
@@ -4046,6 +4144,13 @@ const styles: Record<string, CSSProperties> = {
         marginTop: 6,
         paddingTop: 16,
         borderTop: "1px solid #f0f0f0",
+    },
+    pendingNote: {
+        margin: 0,
+        fontSize: fontSize.sm,
+        color: "#7c8aa3",
+        textAlign: "center",
+        flex: 1,
     },
 
     addBody: {

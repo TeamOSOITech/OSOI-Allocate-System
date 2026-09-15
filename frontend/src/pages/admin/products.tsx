@@ -46,7 +46,23 @@ type Product = {
     teams?: string[];
     created_at?: string;
     updated_at?: string;
+    // Stamped by the backend (see products.controller.js's
+    // attachPendingApprovals) when this row is itself a still-pending
+    // SERVICE_CREATE, or has a pending SERVICE_UPDATE/DELETE sitting on
+    // top of it. Undefined/absent means "nothing pending" as before.
+    approvalStatus?: "PENDING_CREATE" | "PENDING_UPDATE" | "PENDING_DELETE";
 };
+
+// A "PENDING_CREATE" row is a placeholder synthesized from an approval
+// request that hasn't been approved yet — its id is "pending-<request
+// id>", not a real database id. Editing/deleting it would submit a
+// SERVICE_UPDATE/DELETE whose payload.id is that placeholder string,
+// which blows up with a Postgres bigint error the moment an Ops Manager
+// tries to approve it. So: no Edit/Delete on these until the create
+// itself is approved and the row becomes real.
+function isPendingCreate(p: Product) {
+    return typeof p.id === "string" && p.id.startsWith("pending-");
+}
 
 type ProductForm = {
     product_name: string;
@@ -313,7 +329,15 @@ const Products = () => {
         setLoading(true);
         setError("");
         try {
-            const res = await authFetch(ENDPOINT, {
+            // NOTE: this page is the one place that's supposed to show
+            // still-pending "New Service" rows (with the "Awaiting
+            // approval" badge, Edit/Delete hidden — see
+            // isPendingCreate below). Everywhere else that reads
+            // /api/products (Daily Work, Today's Allocation, Self
+            // Allocation, QC, Service Cases, Clients) intentionally
+            // does NOT pass this, so a not-yet-approved service never
+            // shows up as a selectable option there.
+            const res = await authFetch(`${ENDPOINT}?includePending=true`, {
                 headers: { "Content-Type": "application/json" },
             });
             const json = await res.json();
@@ -1403,6 +1427,11 @@ const Products = () => {
                                                         <span style={styles.tdNameText}>
                                                             {p.product_name}
                                                         </span>
+                                                        {isPendingCreate(p) && (
+                                                            <span style={styles.pendingBadge}>
+                                                                Awaiting approval
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td style={styles.td}>
                                                         <span style={styles.tdContactLine}>
@@ -1431,8 +1460,11 @@ const Products = () => {
                                                                 were always rendered regardless of role,
                                                                 so Team Member / Vertical Head (view-only)
                                                                 could see and click them and get a 403.
-                                                                Gated behind canManage now. */}
-                                                            {canManage && (
+                                                                Gated behind canManage now. Also hidden
+                                                                for still-pending-create placeholder rows
+                                                                (see isPendingCreate) — there's no real
+                                                                record yet to edit/delete. */}
+                                                            {canManage && !isPendingCreate(p) && (
                                                                 <button
                                                                     type="button"
                                                                     className="pr-icon-btn"
@@ -1449,7 +1481,7 @@ const Products = () => {
                                                                     />
                                                                 </button>
                                                             )}
-                                                            {canManage && (
+                                                            {canManage && !isPendingCreate(p) && (
                                                                 <button
                                                                     type="button"
                                                                     className="pr-icon-btn-danger"
@@ -1532,6 +1564,11 @@ const Products = () => {
                                                             ? "Hourly"
                                                             : "Per minute"}
                                                     </span>
+                                                    {isPendingCreate(p) && (
+                                                        <span style={styles.pendingBadge}>
+                                                            Awaiting approval
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -1608,14 +1645,21 @@ const Products = () => {
                             </div>
 
                             <div style={styles.detailsModalFooter}>
+                                {canManage && isPendingCreate(viewDetails) && (
+                                    <p style={styles.pendingNote}>
+                                        This service is still awaiting approval to be created — it
+                                        can't be edited or deleted until then.
+                                    </p>
+                                )}
                                 {/* FIX: same as clients.tsx — these View Details
                                     modal Edit/Delete buttons were always rendered
                                     regardless of role, so Team Member / Vertical
                                     Head (view-only) could click them and only find
                                     out via a backend "Access denied" on submit.
                                     Gated behind canManage, matching the list-row
-                                    icons above. */}
-                                {canManage && (
+                                    icons above. Also hidden for still-pending-
+                                    create placeholder rows — see isPendingCreate. */}
+                                {canManage && !isPendingCreate(viewDetails) && (
                                     <button
                                         type="button"
                                         style={{
@@ -1636,7 +1680,7 @@ const Products = () => {
                                         Edit
                                     </button>
                                 )}
-                                {canManage && (
+                                {canManage && !isPendingCreate(viewDetails) && (
                                     <button
                                         type="button"
                                         style={{
@@ -2534,6 +2578,26 @@ const styles: Record<string, CSSProperties> = {
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+    },
+    pendingBadge: {
+        display: "inline-block",
+        marginLeft: 8,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#b45309",
+        background: "#fef3c7",
+        border: "1px solid #fde68a",
+        borderRadius: radius.xl,
+        padding: "2px 8px",
+        whiteSpace: "nowrap",
+        verticalAlign: "middle",
+    },
+    pendingNote: {
+        margin: 0,
+        fontSize: fontSize.sm,
+        color: "#7c8aa3",
+        textAlign: "center",
+        flex: 1,
     },
     tdMuted: {
         fontSize: fontSize.sm,
