@@ -23,12 +23,15 @@ const subclientsService = require("./subclients.service");
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
+    // SECURITY FIX: dropped ".xls" — see clients.routes.js's identical
+    // comment; same parser swap (src/utils/parseSpreadsheet.js) applies
+    // here.
+    const allowed = [".xlsx", ".csv"];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+      cb(new Error("Only .xlsx or .csv files are allowed"));
     }
   },
   limits: { fileSize: 10 * 1024 * 1024 },

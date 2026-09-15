@@ -5,7 +5,9 @@
 // validates input, calls the service, builds the Excel template/upload,
 // and shapes responses. Wired up by subclients.routes.js.
 
-const XLSX = require("xlsx");
+// SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
+// src/utils/parseSpreadsheet.js for why.
+const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const subclientsService = require("./subclients.service");
 
@@ -361,11 +363,18 @@ async function bulkUpload(req, res) {
 
     const orgId = req.user.organizationId;
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: "",
-    });
+    let rows;
+    try {
+      rows = await parseSpreadsheetRows(
+        req.file.buffer,
+        req.file.originalname,
+        {
+          defval: "",
+        },
+      );
+    } catch (parseErr) {
+      return res.status(400).json({ message: parseErr.message });
+    }
 
     if (!rows.length) {
       return res
