@@ -31,16 +31,21 @@ const {
 } = require("./servicecases.controller");
 
 // Same memory-storage + extension-filter pattern as clients/subclients
-// bulk upload — file never touches disk, only .xlsx/.xls/.csv accepted.
+// bulk upload — file never touches disk, only .xlsx/.csv accepted.
+//
+// SECURITY FIX: dropped ".xls" (legacy binary Excel format) — the xlsx
+// package that used to parse it is gone (see
+// src/utils/parseSpreadsheet.js), replaced with an ExcelJS-based reader
+// that only understands the modern .xlsx/.csv formats.
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const allowed = [".xlsx", ".xls", ".csv"];
+    const allowed = [".xlsx", ".csv"];
     const ext = file.originalname
       .slice(file.originalname.lastIndexOf("."))
       .toLowerCase();
     if (allowed.includes(ext)) return cb(null, true);
-    cb(new Error("Only .xlsx, .xls, .csv files are allowed"));
+    cb(new Error("Only .xlsx or .csv files are allowed"));
   },
 });
 

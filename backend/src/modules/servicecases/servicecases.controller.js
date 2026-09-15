@@ -18,7 +18,9 @@
 // untouched by any of this.
 
 const supabase = require("../../config/supabaseClient");
-const XLSX = require("xlsx");
+// SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
+// src/utils/parseSpreadsheet.js for why.
+const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 
 // ---------- brand theme (same palette as clients.controller.js) ----------
@@ -963,11 +965,20 @@ async function uploadCustomServiceCases(req, res) {
       return res.status(403).json({ success: false, message: vhScope.message });
     }
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const sheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: "",
-    });
+    let sheetRows;
+    try {
+      sheetRows = await parseSpreadsheetRows(
+        req.file.buffer,
+        req.file.originalname,
+        {
+          defval: "",
+        },
+      );
+    } catch (parseErr) {
+      return res
+        .status(400)
+        .json({ success: false, message: parseErr.message });
+    }
 
     if (!sheetRows.length) {
       return res
