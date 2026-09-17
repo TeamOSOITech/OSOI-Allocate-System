@@ -106,7 +106,7 @@ const menuItems: MenuItem[] = [
         label: "History",
         icon: "ti ti-history",
         path: "/history",
-        roles: SUPER_ADMIN_ONLY,
+        roles: ["AUDIT_MANAGER"],
     },
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
     // Approvals — decision-makers only. Process Lead no longer sees this
