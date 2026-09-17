@@ -631,6 +631,15 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: background was hardcoded light but color was never set,
+        // so text fell back to the browser's own default — which in
+        // system/OS dark theme is light-on-light, making "Add from
+        // other teams…", the search box, and the external-search input
+        // all render as blank/invisible even though the box itself was
+        // visible. Match the explicit-light-everything pattern used
+        // elsewhere in this file (see externalRow's color, and root's
+        // comment above).
+        color: "#17181C",
         minWidth: 170,
         width: "100%",
         boxSizing: "border-box",
