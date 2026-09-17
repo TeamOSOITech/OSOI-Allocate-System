@@ -262,7 +262,7 @@ const ShieldIcon = () => (
     </Icon>
 );
 const CameraIcon = () => (
-    <Icon size={13}>
+    <Icon size={17}>
         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z" />
         <circle cx="12" cy="13" r="4" />
     </Icon>
@@ -2149,21 +2149,21 @@ function getStyles(
         avatarBlock: { display: "flex", alignItems: "center", gap: 16 },
         avatarWrap: { position: "relative", flexShrink: 0 },
         avatar: {
-            width: 64,
-            height: 64,
+            width: 96,
+            height: 96,
             borderRadius: radius.circle,
             background: GRADIENT,
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: fontSize["2xl"],
+            fontSize: fontSize["6xl"],
             fontWeight: fontWeight.semibold,
             boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
         },
         avatarImg: {
-            width: 64,
-            height: 64,
+            width: 96,
+            height: 96,
             borderRadius: radius.circle,
             objectFit: "cover",
             boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
@@ -2172,8 +2172,8 @@ function getStyles(
             position: "absolute",
             right: -2,
             bottom: -2,
-            width: 24,
-            height: 24,
+            width: 32,
+            height: 32,
             borderRadius: radius.circle,
             background: BRAND.blue,
             color: "#fff",

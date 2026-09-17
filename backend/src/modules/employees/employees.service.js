@@ -144,13 +144,79 @@ async function updateEmployeeRow(id, organizationId, updatePayload) {
 }
 
 async function deleteEmployeeRow(id, organizationId) {
-  const { error } = await supabase
+  // FIX: this used to only delete the user_master row, leaving the
+  // Supabase Auth account behind untouched. user.service.js's
+  // emailExists() checks Supabase Auth (not user_master) before letting
+  // someone be re-added, so a "deleted" employee's email stayed
+  // permanently blocked from re-onboarding with an "already exists"
+  // error — even though they no longer showed up anywhere in the app.
+  //
+  // ORDER MATTERS: user_master."Auth User Id" is FK-referenced against
+  // auth.users, so the user_master row must be deleted FIRST. Deleting
+  // the Auth user while that row still exists trips the FK constraint
+  // and Supabase's admin API surfaces that as a generic 500 from
+  // GoTrueAdminApi.deleteUser (confirmed in testing) — not a clean,
+  // catchable error. Once the referencing row is gone, deleting the
+  // Auth account is safe.
+  const { error: dbError } = await supabase
     .from("user_master")
     .delete()
     .eq("Auth User Id", id)
     .eq("organization_id", organizationId);
 
-  if (error) throw error;
+  if (dbError) throw dbError;
+
+  // RETRY: the Auth delete call can fail on a purely transient network
+  // hiccup (seen in testing as AuthRetryableFetchError — the request
+  // never even reached Supabase, nothing to do with FKs/data). Since
+  // this is the actual account removal that unblocks re-adding the same
+  // email, we don't want one dropped packet to leave it permanently
+  // orphaned. Retry a few times with a short backoff before giving up.
+  const MAX_ATTEMPTS = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const { error: authError } = await supabase.auth.admin.deleteUser(id);
+
+    if (!authError) {
+      lastError = null;
+      break;
+    }
+
+    // "User not found" just means it was already removed from Auth in a
+    // previous attempt (or never had a real Auth account) — not a real
+    // failure, since the goal (email free to re-add) is already met.
+    // No point retrying this one.
+    const alreadyGone =
+      authError.status === 404 || /not.?found/i.test(authError.message || "");
+    if (alreadyGone) {
+      lastError = null;
+      break;
+    }
+
+    lastError = authError;
+    if (attempt < MAX_ATTEMPTS) {
+      // Short exponential backoff: 300ms, 900ms.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 300 * 3 ** (attempt - 1)),
+      );
+    }
+  }
+
+  if (lastError) {
+    // The user_master row is already gone at this point — the employee
+    // has disappeared from the app either way. We only log here (not
+    // throw) so the caller still sees delete as successful; an Auth
+    // account stuck behind after all retries needs manual cleanup in
+    // the Supabase dashboard, but it no longer blocks anything else in
+    // the app itself.
+    console.error(
+      `deleteEmployeeRow: user_master row ${id} was deleted, but the ` +
+        `Supabase Auth account could not be removed after ${MAX_ATTEMPTS} ` +
+        `attempts. It needs manual cleanup in the Supabase dashboard:`,
+      lastError,
+    );
+  }
 }
 
 module.exports = {
