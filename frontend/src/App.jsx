@@ -154,6 +154,7 @@ const ADMIN_AND_VERTICAL_HEAD_ROLES = [...ADMIN_TIER_ROLES, "VERTICAL_HEAD"];
 const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
     const user = JSON.parse(localStorage.getItem("user") || "null");
+    const location = useLocation();
 
     // The login response doesn't include a profile photo — that only
     // lives on the employee record (user_master.photo_url). Fetch it
@@ -181,6 +182,60 @@ const AppLayout = ({ children, onLogout }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, user?.userId]);
 
+    // Org-branded logo shown in the header everywhere (falls back to the
+    // default /Logo.jpg on the header side if this is null/not yet
+    // loaded). Fetched for every role, since the header itself is
+    // shared — only the ability to CHANGE it is restricted below.
+    const [logoUrl, setLogoUrl] = useState(null);
+    const [logoUploading, setLogoUploading] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_URL}/api/organization/logo`);
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!cancelled) setLogoUrl(json?.data?.logoUrl || null);
+            } catch {
+                // fall back to the default logo, nothing further to do.
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // Changing the logo is only offered on the Home page (/report — the
+    // sidebar's "Home" item, separate from "Dashboard") and only to
+    // SUPER_ADMIN — everywhere/everyone else just sees the logo, same
+    // as before.
+    const canEditLogo = user?.role === "SUPER_ADMIN" && location.pathname === "/report";
+
+    const handleLogoChange = async (file) => {
+        setLogoUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append("logo", file);
+            const res = await authFetch(`${API_URL}/api/organization/logo`, {
+                method: "PATCH",
+                body: formData,
+            });
+            const json = await res.json();
+            if (!res.ok || json.success === false) {
+                throw new Error(json.message || "Failed to update logo");
+            }
+            setLogoUrl(json?.data?.logoUrl || null);
+        } catch (err) {
+            // Same lightweight error surfacing used elsewhere in this
+            // layout (photo fetch above) — a toast/inline banner isn't
+            // wired up at this shell level, so this at least tells the
+            // person the change didn't take instead of silently no-op'ing.
+            window.alert(err?.message || "Failed to update logo");
+        } finally {
+            setLogoUploading(false);
+        }
+    };
+
     return (
         // Outer shell locked to exactly the viewport height, with overflow
         // hidden — the shell itself can NEVER scroll, no matter what.
@@ -207,6 +262,10 @@ const AppLayout = ({ children, onLogout }) => {
                             : user?.email || ""
                     }
                     photoUrl={photoUrl}
+                    logoUrl={logoUrl}
+                    canEditLogo={canEditLogo}
+                    onLogoChange={handleLogoChange}
+                    logoUploading={logoUploading}
                     onLogout={onLogout}
                 />
             </div>

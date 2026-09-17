@@ -149,6 +149,13 @@ function loadRoute(name, path) {
 }
 
 app.use("/api/auth", loadRoute("auth", "./src/modules/auth/auth.routes"));
+// Per-organization branding — GET is open to any logged-in role (the
+// header showing the logo isn't SUPER_ADMIN-only), PATCH is gated to
+// SUPER_ADMIN inside the route file itself.
+app.use(
+  "/api",
+  loadRoute("organizations", "./src/modules/organizations/organization.routes"),
+);
 app.use("/api/tasks", loadRoute("tasks", "./src/modules/tasks/tasks.routes"));
 app.use(
   "/api/reports",

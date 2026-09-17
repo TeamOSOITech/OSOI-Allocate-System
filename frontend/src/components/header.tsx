@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme, THEMES } from "../context/themecontext";
@@ -9,6 +9,14 @@ interface HeaderProps {
     userName?: string;
     photoUrl?: string | null;
     logoSrc?: string;
+    // Org-branded logo (falls back to the default /Logo.jpg when unset).
+    // canEditLogo/onLogoChange are only passed in from AppLayout on the
+    // home page, and only for SUPER_ADMIN — everywhere/everyone else the
+    // logo is shown but not editable.
+    logoUrl?: string | null;
+    canEditLogo?: boolean;
+    onLogoChange?: (file: File) => void | Promise<void>;
+    logoUploading?: boolean;
     onRefresh?: () => void;
     onHelp?: () => void;
     onNotificationsClick?: () => void;
@@ -16,6 +24,26 @@ interface HeaderProps {
     onChangePassword?: () => void;
     onLogout?: () => void;
     notificationCount?: number;
+}
+
+// Small camera icon for the "change logo" overlay button — same style
+// as the one used for the profile-photo editor.
+function CameraIcon() {
+    return (
+        <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z" />
+            <circle cx="12" cy="13" r="4" />
+        </svg>
+    );
 }
 
 const MOBILE_BREAKPOINT = 768;
@@ -43,6 +71,10 @@ function getInitials(name: string) {
 export default function Header({
     userName,
     photoUrl,
+    logoUrl,
+    canEditLogo = false,
+    onLogoChange,
+    logoUploading = false,
     onRefresh,
     onHelp,
     onNotificationsClick,
@@ -58,6 +90,16 @@ export default function Header({
     const navigate = useNavigate();
     const displayName = userName || "Administrator";
     const firstName = displayName.split(" ")[0];
+
+    // Logo change (SUPER_ADMIN, home page only — gated by the canEditLogo
+    // prop passed in from AppLayout, not decided here).
+    const logoFileInputRef = useRef<HTMLInputElement>(null);
+    const handleLogoEditClick = () => logoFileInputRef.current?.click();
+    const handleLogoFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) onLogoChange?.(file);
+        if (logoFileInputRef.current) logoFileInputRef.current.value = "";
+    };
 
     const [menuOpen, setMenuOpen] = useState(false);
     // Only "theme" is left as a sub-panel now — Display mode was removed,
@@ -105,20 +147,48 @@ export default function Header({
                             : { ...styles.logoBlock, width: 148, justifyContent: "center" }
                     }
                 >
-                    <img
-                        src="/Logo.jpg"
-                        alt="Logo"
-                        style={{
-                            width: isMobile ? 30 : 125,
-                            height: isMobile ? 9 : 38,
-                            objectFit: "contain",
-                            borderRadius: isMobile ? 4.5 : 19,
-                            paddingLeft: 10,
-                            paddingRight: 10,
-                            backgroundColor: "#fff",
-                            flexShrink: 0,
-                        }}
-                    />
+                    {/* Wrapper only exists to anchor the edit badge — the
+                    <img> itself keeps its exact same size/oval shape
+                    (borderRadius) whether or not editing is available.
+                    Only the `src` changes when an org logo is set. */}
+                    <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+                        <img
+                            src={logoUrl || "/Logo.jpg"}
+                            alt="Logo"
+                            style={{
+                                width: isMobile ? 30 : 125,
+                                height: isMobile ? 9 : 38,
+                                objectFit: "contain",
+                                borderRadius: isMobile ? 4.5 : 19,
+                                paddingLeft: 10,
+                                paddingRight: 10,
+                                backgroundColor: "#fff",
+                                flexShrink: 0,
+                                opacity: logoUploading ? 0.5 : 1,
+                            }}
+                        />
+                        {canEditLogo && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={handleLogoEditClick}
+                                    disabled={logoUploading}
+                                    title="Change logo"
+                                    aria-label="Change logo"
+                                    style={styles.logoEditBtn}
+                                >
+                                    <CameraIcon />
+                                </button>
+                                <input
+                                    ref={logoFileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    style={{ display: "none" }}
+                                    onChange={handleLogoFileChange}
+                                />
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 {!isMobile && (
@@ -385,6 +455,23 @@ function getStyles(BRAND: {
             borderRadius: radius.circle,
             background: "#ffffff",
             flexShrink: 0,
+        },
+
+        logoEditBtn: {
+            position: "absolute",
+            right: -4,
+            bottom: -4,
+            width: 20,
+            height: 20,
+            borderRadius: radius.circle,
+            background: BRAND.blue,
+            color: "#fff",
+            border: "2px solid #fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
         },
 
         right: { display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 },
