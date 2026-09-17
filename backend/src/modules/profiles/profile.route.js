@@ -85,9 +85,23 @@ router.get("/profile", authenticate, async (req, res) => {
     // instead of an empty, editable form. Fall back to sensible blank
     // defaults — the PATCH handler below now upserts, so the very next
     // save creates the row for real.
+    // FIX: this response never included the user's actual app role
+    // (SUPER_ADMIN, OPS_MANAGER, etc.) — the `profiles` table has no
+    // role column at all, so profile.role was always undefined on the
+    // frontend. Profile page then fell through to a separate
+    // /api/employees/:id lookup, and if THAT ever failed to match, all
+    // the way down to the raw cached Supabase Auth session object in
+    // localStorage — whose generic `role` field ("authenticated"/"user")
+    // has nothing to do with the app's own role and was showing up on
+    // screen as literally "user". req.user.role is already resolved
+    // from user_master by the authenticate middleware on every request,
+    // so it's the one reliable source — send it straight through.
     res.json({
       success: true,
-      data: data || { user_id: requestedUserId, phone: null, bio: null },
+      data: {
+        ...(data || { user_id: requestedUserId, phone: null, bio: null }),
+        role: isSelf ? req.user.role : (data || {}).role,
+      },
     });
   } catch (err) {
     res.status(400).json({
