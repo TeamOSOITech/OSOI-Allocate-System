@@ -1,7 +1,5 @@
 const crypto = require("crypto");
 
-// TODO: point this at your existing Supabase client (the same one used
-// by clients.controller.js / verticals.controller.js).
 const supabase = require("../../config/supabaseClient");
 
 const {

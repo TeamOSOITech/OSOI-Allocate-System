@@ -734,6 +734,9 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: missing color made these dropdowns' text invisible in
+        // system dark theme.
+        color: "#17181C",
         minWidth: 170,
         width: "100%",
         boxSizing: "border-box",

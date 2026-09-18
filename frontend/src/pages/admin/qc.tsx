@@ -972,6 +972,10 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #e5e7eb",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: missing color made this dropdown's text invisible in
+        // system dark theme (some usages already override it inline —
+        // this just fixes the default so every plain usage is safe too).
+        color: "#17181C",
         width: "100%",
         boxSizing: "border-box",
     },
@@ -1165,6 +1169,9 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: missing color made typed remarks text invisible in
+        // system dark theme.
+        color: "#17181C",
         width: "100%",
         boxSizing: "border-box",
         resize: "vertical",
@@ -1205,6 +1212,9 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         fontWeight: fontWeight.medium,
         background: "#fafafa",
+        // FIX: missing color made the typed marks value invisible in
+        // system dark theme.
+        color: "#17181C",
         width: 90,
         boxSizing: "border-box",
     },

@@ -881,6 +881,9 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #dbe6f0",
         fontSize: fontSize.sm,
         background: "#f7fafc",
+        // FIX: missing color made typed search text (and the
+        // placeholder) invisible in system dark theme.
+        color: "#17181C",
     },
     searchClearBtn: {
         position: "absolute",

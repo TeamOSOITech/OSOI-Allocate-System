@@ -1110,6 +1110,11 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: background was hardcoded light but color was never set,
+        // so text fell back to the browser default — invisible in
+        // system dark theme (same bug fixed in
+        // todaysallocationemployees.tsx's styles.select).
+        color: "#17181C",
         minWidth: 170,
     },
     autoBtn: {
@@ -1315,6 +1320,9 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
+        // FIX: missing color made this dropdown's text invisible in
+        // system dark theme.
+        color: "#17181C",
     },
     // Single "Allocate" button below the whole list — saves every row
     // whose dropdown selection differs from what's saved, in one click,

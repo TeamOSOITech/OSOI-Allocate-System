@@ -65,12 +65,6 @@ const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .map((s) => s.trim())
   .filter(Boolean);
 
-// TEMP DEBUG: remove once CORS is confirmed working in production. Prints
-// exactly what the server resolved FRONTEND_URLS to at boot, so a typo,
-// missing env var, or stray whitespace/quotes is visible in the Render logs
-// instead of having to guess from the CORS error alone.
-console.log("CORS allowedOrigins:", allowedOrigins);
-
 app.use(
   cors({
     origin: (origin, callback) => {

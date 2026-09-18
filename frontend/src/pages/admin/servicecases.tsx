@@ -1897,6 +1897,9 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             border: "1px solid #ececf5",
             fontSize: fontSize.sm,
             background: "#fafafa",
+            // FIX: missing color made this filter dropdown's text
+            // invisible in system dark theme.
+            color: "#17181C",
             minWidth: 180,
         },
         // NEW: toggles bulk-select mode (checkboxes) on/off. Sits next to
