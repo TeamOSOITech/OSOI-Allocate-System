@@ -2185,9 +2185,33 @@ async function resolveQueryServiceCase(req, res) {
       .maybeSingle();
     if (error) throw error;
     if (!data) {
+      // Nothing was updated. If it's the caller's own case and it is no
+      // longer a 'QUERY', someone else (a manager / admin) already
+      // completed it — say so, so the page can just refresh instead of
+      // showing a scary error.
+      const { data: current, error: currentError } = await supabase
+        .from("service_cases")
+        .select("submission_type, assigned_employee_id")
+        .eq("id", id)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (currentError) throw currentError;
+      if (
+        current &&
+        current.assigned_employee_id === req.user.userId &&
+        current.submission_type &&
+        current.submission_type !== "QUERY"
+      ) {
+        return res.status(409).json({
+          success: false,
+          alreadyCompleted: true,
+          message: "This query was already completed by someone else.",
+          data: { submissionType: current.submission_type },
+        });
+      }
       return res.status(404).json({
         success: false,
-        message: "Query not found, already completed, or not assigned to you.",
+        message: "Query not found or not assigned to you.",
       });
     }
 
@@ -2204,6 +2228,89 @@ async function resolveQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("resolveQueryServiceCase error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/complete-query
+// body (optional): { resolutionType: 'DONE_BY_TEAM' | 'COMPLETED' | 'DONE_BY_CLIENT' }
+//
+// A manager / admin marks SOMEONE ELSE's open query as completed (Production
+// Reports -> "Mark completed"). Defaults to 'DONE_BY_TEAM' = "Completed by
+// Team". Same permission gate as the other manager-side case actions
+// (QC, audit, allocate). The employee's Profile page picks the change up
+// on its own: the case leaves "In Query" and shows up under "Query
+// Completed" as "Completed by Team".
+//
+// Like resolve-query, query_text is KEPT so the case is still recognised
+// as a completed query.
+// ------------------------------------------------------------
+async function completeQueryServiceCase(req, res) {
+  try {
+    const { id } = req.params;
+    const resolutionType = (req.body?.resolutionType || "DONE_BY_TEAM")
+      .toString()
+      .trim();
+
+    if (!QUERY_RESOLUTION_TYPES.includes(resolutionType)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "resolutionType must be 'COMPLETED', 'DONE_BY_TEAM' or 'DONE_BY_CLIENT'.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({ submission_type: resolutionType })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .eq("submission_status", "SUBMITTED")
+      .eq("submission_type", "QUERY")
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+
+    if (!data) {
+      const { data: current, error: currentError } = await supabase
+        .from("service_cases")
+        .select("submission_type")
+        .eq("id", id)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (currentError) throw currentError;
+      if (
+        current &&
+        current.submission_type &&
+        current.submission_type !== "QUERY"
+      ) {
+        return res.status(409).json({
+          success: false,
+          alreadyCompleted: true,
+          message: "This query was already completed.",
+          data: { submissionType: current.submission_type },
+        });
+      }
+      return res.status(404).json({
+        success: false,
+        message: "Query not found.",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} query marked completed.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        submissionStatus: data.submission_status,
+        submissionType: data.submission_type,
+        queryText: data.query_text,
+      },
+    });
+  } catch (err) {
+    console.error("completeQueryServiceCase error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -2571,6 +2678,7 @@ module.exports = {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   resolveQueryServiceCase,
+  completeQueryServiceCase,
   bulkSubmitServiceCases,
   selfAllocateServiceCases,
   updateServiceCaseQc,

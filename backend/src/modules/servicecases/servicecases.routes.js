@@ -25,6 +25,7 @@ const {
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
   resolveQueryServiceCase,
+  completeQueryServiceCase,
   bulkSubmitServiceCases,
   selfAllocateServiceCases,
   updateServiceCaseQc,
@@ -123,6 +124,14 @@ router.patch("/:id/submit", submitServiceCase);
 // no-special-permission rule as /:id/submit; the controller only ever
 // touches a QUERY case assigned to the caller.
 router.patch("/:id/resolve-query", resolveQueryServiceCase);
+// NEW: a manager / admin completes SOMEONE ELSE's open query (Production
+// Reports -> "Mark completed"). Default outcome is "Completed by Team".
+// Same permission gate as the other manager-side case actions below.
+router.patch(
+  "/:id/complete-query",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  completeQueryServiceCase,
+);
 // NEW: Quality Scores (QC) page — Pass/Fail + marks. Fixes the page
 // calling a route that never existed before (was returning Express's
 // HTML 404 page, which the frontend then failed to parse as JSON).
