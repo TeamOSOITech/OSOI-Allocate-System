@@ -63,6 +63,18 @@ function todayStr() {
     ).padStart(2, "0")}`;
 }
 
+// submitted_at is a full timestamp (UTC). This gives the viewer's LOCAL
+// calendar date (YYYY-MM-DD) — slicing the raw string instead would show
+// the previous day for anything submitted early morning IST.
+function localDateStr(iso: string | null) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+
 function formatDisplayDate(iso: string | null) {
     if (!iso) return "-";
     const [y, m, d] = iso.split("-");
@@ -439,6 +451,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     );
     const [resolvingId, setResolvingId] = useState<string | null>(null);
     const [queryError, setQueryError] = useState<string | null>(null);
+    // Neutral info line (not an error) — e.g. "already completed by someone else".
+    const [queryNotice, setQueryNotice] = useState<string | null>(null);
 
     // ---- Self Allocation modal (pick a service you're aligned to →
     // pick up remaining/pending cases on it, for yourself) ----
@@ -454,6 +468,21 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [selfAllocSubmitting, setSelfAllocSubmitting] = useState(false);
     const [selfAllocSuccessCount, setSelfAllocSuccessCount] = useState<number | null>(null);
     const [selfAllocToast, setSelfAllocToast] = useState("");
+
+    // Success toast for Submit Work / Bulk Submit / completing a query.
+    const [toastMsg, setToastMsg] = useState("");
+    const toastTimerRef = useRef<number | null>(null);
+    const showToast = (msg: string) => {
+        setToastMsg(msg);
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = window.setTimeout(() => setToastMsg(""), 3500);
+    };
+    useEffect(
+        () => () => {
+            if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+        },
+        []
+    );
 
     const cachedUser = (() => {
         try {
@@ -522,8 +551,51 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
+    // Quietly re-reads just my cases (no full-page loading flash). This is
+    // what lets a query that someone else completed — e.g. a manager
+    // marking it "Completed by Team" — leave "In Query" here without the
+    // employee having to reload the whole page.
+    const lastCasesRefreshRef = useRef(0);
+    const refreshCases = async () => {
+        lastCasesRefreshRef.current = Date.now();
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases?mine=true&pageSize=2000`);
+            const json = await safeJson(res);
+            if (res.ok && json.success) setCases(json.data || []);
+        } catch (err) {
+            console.error("Failed to refresh my cases:", err);
+        }
+    };
+
     useEffect(() => {
         loadAll();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // While the All Query popup is open, re-check every 15s so a query
+    // completed by someone else disappears from "In Query" on its own.
+    useEffect(() => {
+        if (!showQueryModal) return;
+        const timer = window.setInterval(() => {
+            if (!resolvingId) refreshCases();
+        }, 15000);
+        return () => window.clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showQueryModal, resolvingId]);
+
+    // Coming back to this tab (popup open or not) also re-checks, so the
+    // "All Query (N)" count on the button doesn't go stale.
+    useEffect(() => {
+        const onVisible = () => {
+            if (
+                document.visibilityState === "visible" &&
+                Date.now() - lastCasesRefreshRef.current > 10000
+            ) {
+                refreshCases();
+            }
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () => document.removeEventListener("visibilitychange", onVisible);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -694,9 +766,12 @@ export default function Profile({ onLogout }: ProfileProps) {
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json.message || "Failed to submit work");
+            const submittedCaseNo = selected.caseNumber;
+            const submittedLabel = outcomeLabel(submitType || null);
             setSelectedId(null);
             setSubmitType("");
             setSubmitQueryText("");
+            showToast(`${submittedCaseNo} submitted successfully — ${submittedLabel}.`);
             await loadAll();
         } catch (err: any) {
             setSubmitError(err?.message || "Failed to submit work");
@@ -967,7 +1042,11 @@ export default function Profile({ onLogout }: ProfileProps) {
             if (!res.ok || !json.success) {
                 throw new Error(json.message || "Bulk submit failed");
             }
+            const submittedCount = json.data?.submittedCount ?? bulkRowsToSubmit.length;
             closeBulkModal();
+            showToast(
+                `${submittedCount} case${submittedCount === 1 ? "" : "s"} submitted successfully.`
+            );
             await loadAll();
         } catch (err: any) {
             setBulkError(err?.message || "Bulk submit failed");
@@ -981,13 +1060,18 @@ export default function Profile({ onLogout }: ProfileProps) {
         setQueryView("OPEN");
         setQuerySearch("");
         setQueryError(null);
+        setQueryNotice(null);
         setResolveTypeById({});
         setShowQueryModal(true);
+        // Always show the latest — someone else may have completed some
+        // of these since the page was loaded.
+        refreshCases();
     };
 
     const closeQueryModal = () => {
         setShowQueryModal(false);
         setQueryError(null);
+        setQueryNotice(null);
     };
 
     // Marks one open query as completed (by me / the team / the client).
@@ -1000,6 +1084,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             return;
         }
         setQueryError(null);
+        setQueryNotice(null);
         setResolvingId(c.id);
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/resolve-query`, {
@@ -1008,6 +1093,20 @@ export default function Profile({ onLogout }: ProfileProps) {
                 body: JSON.stringify({ resolutionType }),
             });
             const json = await safeJson(res);
+            // Someone else (a manager / admin) got there first — not an
+            // error. Just refresh; the row moves to "Query Completed".
+            if (res.status === 409 && json.alreadyCompleted) {
+                setResolveTypeById((prev) => {
+                    const next = { ...prev };
+                    delete next[c.id];
+                    return next;
+                });
+                setQueryNotice(
+                    `${c.caseNumber} was already completed by someone else — it's now under Query Completed.`
+                );
+                await refreshCases();
+                return;
+            }
             if (!res.ok || !json.success) {
                 throw new Error(json.message || "Failed to complete query");
             }
@@ -1016,6 +1115,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 delete next[c.id];
                 return next;
             });
+            showToast(`${c.caseNumber} query marked ${outcomeLabel(resolutionType)}.`);
             await loadAll();
         } catch (err: any) {
             setQueryError(err?.message || "Failed to complete query");
@@ -1541,11 +1641,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 </button>
                                             ) : submitted ? (
                                                 <span style={styles.smallMuted}>
-                                                    {formatDisplayDate(
-                                                        c.submittedAt
-                                                            ? c.submittedAt.slice(0, 10)
-                                                            : null
-                                                    )}
+                                                    {formatDisplayDate(localDateStr(c.submittedAt))}
                                                 </span>
                                             ) : (
                                                 <button
@@ -1854,7 +1950,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <h3 style={styles.bulkModalTitle}>All Queries</h3>
                                 <p style={styles.bulkModalSubtitle}>
                                     Every query you've raised, across all dates. Once a query is
-                                    sorted out, mark it as completed from here.
+                                    sorted out, mark it as completed from here. If your team
+                                    completes one, it moves to Query Completed on its own (as
+                                    "Completed by Team").
                                 </p>
                             </div>
                             <button
@@ -2029,6 +2127,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
 
                         {queryError && <p style={styles.rowError}>{queryError}</p>}
+                        {queryNotice && (
+                            <p style={{ ...styles.rowError, color: BRAND.blue }}>{queryNotice}</p>
+                        )}
 
                         <div style={styles.bulkModalFooter}>
                             <button
@@ -2291,6 +2392,23 @@ export default function Profile({ onLogout }: ProfileProps) {
             )}
 
             {selfAllocToast && <div style={styles.toast}>{selfAllocToast}</div>}
+            {toastMsg && (
+                <div
+                    role="status"
+                    style={{
+                        ...styles.toast,
+                        zIndex: 400, // above the modals (200), so it shows from inside All Query too
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                    }}
+                >
+                    <span style={{ color: BRAND.green, display: "flex" }}>
+                        <CheckIcon />
+                    </span>
+                    {toastMsg}
+                </div>
+            )}
 
             {/* NEW: click-to-zoom lightbox for the profile photo, same
                 pattern as the bulk modal overlay above (fixed, dark

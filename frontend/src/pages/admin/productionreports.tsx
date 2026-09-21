@@ -30,12 +30,17 @@ import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
+import { getCurrentUser, hasRole } from "../../utils/auth";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
 const EXPORT_PAGE_SIZE = 5000; // fetched in batches until a short page comes back
 const MOBILE_BREAKPOINT = 768;
+// Roles allowed to mark SOMEONE ELSE's query as completed — same roles that
+// hold tasks.allocate.team / tasks.allocate.org on the backend, which is
+// what actually enforces it (this list only decides who SEES the button).
+const CAN_COMPLETE_QUERY_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD", "VERTICAL_HEAD"];
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -87,6 +92,19 @@ type ServiceCaseRow = {
     queryText: string | null;
     submittedAt: string | null;
 };
+
+// submitted_at is a full timestamp (UTC). Returns the viewer's LOCAL calendar
+// date as YYYY-MM-DD (same format as the Date column) — or "" if not
+// submitted yet. Slicing the raw string instead would show the previous day
+// for anything submitted early morning IST.
+function submittedDateStr(iso: string | null) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
 
 // Label shown for each post-allocation submission outcome. DONE_BY_TEAM
 // is the stored value for "Completed by Team" (label renamed only).
@@ -307,7 +325,9 @@ export default function ProductionReport() {
                 // NEW: post-allocation submission outcome + any query
                 // text raised, next to the existing allocation Status.
                 Submission: submissionLabel(r.submissionType),
-                Query: r.submissionType === "QUERY" ? r.queryText || "" : "",
+                // NEW: the date the employee actually submitted the case.
+                "Submitted Date": submittedDateStr(r.submittedAt),
+                Query: r.queryText || "",
             }));
 
             const ws = XLSX.utils.json_to_sheet(sheetData);
@@ -320,6 +340,7 @@ export default function ProductionReport() {
                 { wch: 18 }, // Allocated By
                 { wch: 12 }, // Status
                 { wch: 20 }, // Submission
+                { wch: 14 }, // Submitted Date
                 { wch: 28 }, // Query
             ];
             const wb = XLSX.utils.book_new();
@@ -332,6 +353,53 @@ export default function ProductionReport() {
             showToast(err?.message || "Export failed.");
         } finally {
             setExporting(false);
+        }
+    };
+
+    // ---- Mark a query completed (by Team) ----
+    // Anyone with allocate permission can close an employee's open query
+    // from here. The employee's Profile > All Query popup picks it up on
+    // its own: it leaves "In Query" and shows under "Query Completed" as
+    // "Completed by Team".
+    const canCompleteQuery = hasRole(getCurrentUser(), CAN_COMPLETE_QUERY_ROLES);
+    const [completingId, setCompletingId] = useState<string | null>(null);
+
+    const completeQuery = async (r: ServiceCaseRow) => {
+        setCompletingId(r.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${r.id}/complete-query`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+            });
+            const json = await res.json();
+            // 409 = someone already completed it — treat as done, just sync the row.
+            if (!res.ok && !(res.status === 409 && json.alreadyCompleted)) {
+                throw new Error(json?.message || `HTTP ${res.status}`);
+            }
+            setRows((prev) =>
+                prev.map((x) =>
+                    x.id === r.id
+                        ? {
+                              ...x,
+                              submissionType:
+                                  json?.data?.submissionType === "QUERY" ||
+                                  !json?.data?.submissionType
+                                      ? "DONE_BY_TEAM"
+                                      : json.data.submissionType,
+                          }
+                        : x
+                )
+            );
+            showToast(
+                res.ok
+                    ? `${r.caseNumber} marked Completed by Team.`
+                    : json.message || "Already completed."
+            );
+        } catch (err: any) {
+            showToast(err?.message || "Could not complete the query.");
+        } finally {
+            setCompletingId(null);
         }
     };
 
@@ -601,6 +669,8 @@ export default function ProductionReport() {
                                     (allocated → submitted → completed/by team/by client/query),
                                     not just allocation status. */}
                                 <span style={styles.colStatus}>Submission</span>
+                                {/* NEW: the date the case was submitted (blank until it is). */}
+                                <span style={styles.colStatus}>Submitted Date</span>
                                 <span style={styles.colQuery}>Query</span>
                             </div>
                             {loading ? (
@@ -658,10 +728,51 @@ export default function ProductionReport() {
                                                     {subPill.label}
                                                 </span>
                                             </span>
-                                            <span style={styles.colQuery}>
-                                                {r.submissionType === "QUERY"
-                                                    ? r.queryText || "—"
-                                                    : "—"}
+                                            <span
+                                                style={styles.colStatus}
+                                                title={
+                                                    r.submittedAt
+                                                        ? new Date(r.submittedAt).toLocaleString()
+                                                        : undefined
+                                                }
+                                            >
+                                                {submittedDateStr(r.submittedAt) || "—"}
+                                            </span>
+                                            {/* A completed query keeps its text, so it still
+                                                reads as "was a query". Open queries also get a
+                                                Mark completed button for anyone allowed to. */}
+                                            <span
+                                                style={{
+                                                    ...styles.colQuery,
+                                                    display: "flex",
+                                                    flexDirection: "column",
+                                                    alignItems: "flex-start",
+                                                    gap: 4,
+                                                }}
+                                            >
+                                                <span
+                                                    title={r.queryText || undefined}
+                                                    style={{
+                                                        maxWidth: "100%",
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                    }}
+                                                >
+                                                    {r.queryText || "—"}
+                                                </span>
+                                                {r.submissionType === "QUERY" &&
+                                                    canCompleteQuery && (
+                                                        <button
+                                                            type="button"
+                                                            style={styles.completeQueryBtn}
+                                                            disabled={completingId === r.id}
+                                                            onClick={() => completeQuery(r)}
+                                                        >
+                                                            {completingId === r.id
+                                                                ? "Saving…"
+                                                                : "Mark completed"}
+                                                        </button>
+                                                    )}
                                             </span>
                                         </div>
                                     );
@@ -745,7 +856,17 @@ export default function ProductionReport() {
                                                     {subPill.label}
                                                 </span>
                                             </div>
-                                            {r.submissionType === "QUERY" && (
+                                            {r.submittedAt && (
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Submitted Date
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {submittedDateStr(r.submittedAt)}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {(r.submissionType === "QUERY" || r.queryText) && (
                                                 <div style={styles.mobileCardRow}>
                                                     <span style={styles.mobileCardLabel}>
                                                         Query
@@ -754,6 +875,18 @@ export default function ProductionReport() {
                                                         {r.queryText || "—"}
                                                     </span>
                                                 </div>
+                                            )}
+                                            {r.submissionType === "QUERY" && canCompleteQuery && (
+                                                <button
+                                                    type="button"
+                                                    style={styles.completeQueryBtn}
+                                                    disabled={completingId === r.id}
+                                                    onClick={() => completeQuery(r)}
+                                                >
+                                                    {completingId === r.id
+                                                        ? "Saving…"
+                                                        : "Mark completed"}
+                                                </button>
                                             )}
                                         </div>
                                     );
@@ -800,7 +933,9 @@ export default function ProductionReport() {
     );
 }
 
-const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px 130px 1.3fr";
+// Submission (170px) is wider than before so "Completed by Client" fits on
+// one line; Submitted Date (130px) fits its header + YYYY-MM-DD.
+const GRID_COLS = "100px 1fr 1fr 100px 1fr 1fr 100px 170px 130px 1.3fr";
 
 const styles: Record<string, CSSProperties> = {
     // Explicit opaque light background so the page never shows the OS/
@@ -990,7 +1125,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
-        minWidth: 1150,
+        minWidth: 1340,
     },
     tableRow: {
         display: "grid",
@@ -1001,7 +1136,7 @@ const styles: Record<string, CSSProperties> = {
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
-        minWidth: 1150,
+        minWidth: 1340,
     },
     totalsRow: {
         display: "flex",
@@ -1012,7 +1147,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#FAFBFF",
         fontSize: fontSize.sm,
         color: "#374151",
-        minWidth: 1150,
+        minWidth: 1340,
     },
     // NEW: subtle vertical divider between columns so values in
     // adjacent columns (Case #, Client, Service...) are visually
@@ -1072,8 +1207,20 @@ const styles: Record<string, CSSProperties> = {
         whiteSpace: "nowrap",
         color: "#374151",
     },
+    // Small outline button — "Mark completed" on an open query.
+    completeQueryBtn: {
+        border: "1px solid rgba(var(--brand-blue-rgb),0.3)",
+        background: "#fff",
+        color: BRAND.blue,
+        borderRadius: radius.pill,
+        padding: "3px 10px",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
     statusPill: {
         display: "inline-flex",
+        whiteSpace: "nowrap",
         padding: "3px 10px",
         borderRadius: radius.pill,
         fontSize: fontSize.xs,
