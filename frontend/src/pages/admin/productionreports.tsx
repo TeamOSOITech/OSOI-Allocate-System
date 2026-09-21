@@ -78,14 +78,32 @@ type ServiceCaseRow = {
     quantity: number | null;
     amount: number | null;
     // NEW: post-allocation submission — set once the assigned employee
-    // marks the case done (Completed / Done by Team / Query). Same
+    // marks the case done (Completed / Completed by Team / Completed by
+    // Client / Query). Same
     // fields the History page and Today's Allocation → History tab
     // already read from GET /api/service-cases.
     submissionStatus: "PENDING" | "SUBMITTED";
-    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "QUERY" | null;
+    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | null;
     queryText: string | null;
     submittedAt: string | null;
 };
+
+// Label shown for each post-allocation submission outcome. DONE_BY_TEAM
+// is the stored value for "Completed by Team" (label renamed only).
+function submissionLabel(type: ServiceCaseRow["submissionType"]) {
+    switch (type) {
+        case "COMPLETED":
+            return "Completed";
+        case "DONE_BY_TEAM":
+            return "Completed by Team";
+        case "DONE_BY_CLIENT":
+            return "Completed by Client";
+        case "QUERY":
+            return "Query";
+        default:
+            return "Not Submitted";
+    }
+}
 
 function todayStr() {
     const d = new Date();
@@ -114,7 +132,7 @@ export default function ProductionReport() {
     // allocation status above (a case can be Allocated but still not
     // yet submitted). Only PENDING/SUBMITTED is filterable server-side
     // (see submission_status on service_cases); the exact outcome
-    // (Completed/Done by Team/Query) shows as its own column instead of
+    // (Completed/Completed by Team/Completed by Client/Query) shows as its own column instead of
     // a filter option, since narrowing further would break the
     // page-based pagination below.
     const [submissionFilter, setSubmissionFilter] = useState<"" | "PENDING" | "SUBMITTED">("");
@@ -288,14 +306,7 @@ export default function ProductionReport() {
                 Status: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
                 // NEW: post-allocation submission outcome + any query
                 // text raised, next to the existing allocation Status.
-                Submission:
-                    r.submissionType === "COMPLETED"
-                        ? "Completed"
-                        : r.submissionType === "DONE_BY_TEAM"
-                          ? "Done by Team"
-                          : r.submissionType === "QUERY"
-                            ? "Query"
-                            : "Not Submitted",
+                Submission: submissionLabel(r.submissionType),
                 Query: r.submissionType === "QUERY" ? r.queryText || "" : "",
             }));
 
@@ -308,7 +319,7 @@ export default function ProductionReport() {
                 { wch: 18 }, // Employee
                 { wch: 18 }, // Allocated By
                 { wch: 12 }, // Status
-                { wch: 14 }, // Submission
+                { wch: 20 }, // Submission
                 { wch: 28 }, // Query
             ];
             const wb = XLSX.utils.book_new();
@@ -359,25 +370,22 @@ export default function ProductionReport() {
                 ? "rgba(var(--brand-green-rgb),0.12)"
                 : r.submissionType === "DONE_BY_TEAM"
                   ? "rgba(var(--brand-blue-rgb),0.12)"
-                  : r.submissionType === "QUERY"
-                    ? "rgba(220,38,38,0.12)"
-                    : "rgba(156,163,175,0.15)",
+                  : r.submissionType === "DONE_BY_CLIENT"
+                    ? "rgba(124,58,237,0.12)"
+                    : r.submissionType === "QUERY"
+                      ? "rgba(220,38,38,0.12)"
+                      : "rgba(156,163,175,0.15)",
         color:
             r.submissionType === "COMPLETED"
                 ? BRAND.green
                 : r.submissionType === "DONE_BY_TEAM"
                   ? BRAND.blue
-                  : r.submissionType === "QUERY"
-                    ? BRAND.red
-                    : BRAND.grey,
-        label:
-            r.submissionType === "COMPLETED"
-                ? "Completed"
-                : r.submissionType === "DONE_BY_TEAM"
-                  ? "Done by Team"
-                  : r.submissionType === "QUERY"
-                    ? "Query"
-                    : "Not Submitted",
+                  : r.submissionType === "DONE_BY_CLIENT"
+                    ? "#7C3AED"
+                    : r.submissionType === "QUERY"
+                      ? BRAND.red
+                      : BRAND.grey,
+        label: submissionLabel(r.submissionType),
     });
 
     return (
@@ -590,7 +598,7 @@ export default function ProductionReport() {
                                 <span style={styles.colStatus}>Status</span>
                                 {/* NEW: post-allocation submission outcome + any query
                                     text raised, so the report shows the full lifecycle
-                                    (allocated → submitted → completed/done by team/query),
+                                    (allocated → submitted → completed/by team/by client/query),
                                     not just allocation status. */}
                                 <span style={styles.colStatus}>Submission</span>
                                 <span style={styles.colQuery}>Query</span>
@@ -637,8 +645,8 @@ export default function ProductionReport() {
                                                     {allocPill.label}
                                                 </span>
                                             </span>
-                                            {/* NEW: Submission outcome pill — Completed / Done by
-                                                Team / Query / Not Submitted. */}
+                                            {/* NEW: Submission outcome pill — Completed / Completed
+                                                by Team / Completed by Client / Query / Not Submitted. */}
                                             <span style={styles.colStatus}>
                                                 <span
                                                     style={{

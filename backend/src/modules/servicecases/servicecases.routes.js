@@ -24,6 +24,7 @@ const {
   updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
+  resolveQueryServiceCase,
   bulkSubmitServiceCases,
   selfAllocateServiceCases,
   updateServiceCaseQc,
@@ -117,6 +118,11 @@ router.post("/bulk-submit", bulkSubmitServiceCases);
 // "/:id/submit" so it can never be shadowed.
 router.post("/self-allocate", selfAllocateServiceCases);
 router.patch("/:id/submit", submitServiceCase);
+// NEW: Profile page "All Query" — mark one of the caller's own open
+// queries as completed (by themself / the team / the client). Same
+// no-special-permission rule as /:id/submit; the controller only ever
+// touches a QUERY case assigned to the caller.
+router.patch("/:id/resolve-query", resolveQueryServiceCase);
 // NEW: Quality Scores (QC) page — Pass/Fail + marks. Fixes the page
 // calling a route that never existed before (was returning Express's
 // HTML 404 page, which the frontend then failed to parse as JSON).

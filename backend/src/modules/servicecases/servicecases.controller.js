@@ -2050,21 +2050,38 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
 //
 // Requires four columns on service_cases (see migration note):
 //   submission_status  text, default 'PENDING' ('PENDING' | 'SUBMITTED')
-//   submission_type    text ('COMPLETED' | 'DONE_BY_TEAM' | 'QUERY')
+//   submission_type    text ('COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' | 'QUERY')
 //   query_text         text, nullable
 //   submitted_at       timestamptz, nullable
 // ------------------------------------------------------------
 
+// Every outcome an employee can report when submitting a case, and how
+// each one is labelled on the Profile page:
+//   COMPLETED      -> "Completed"
+//   QUERY          -> "Query"
+//   DONE_BY_TEAM   -> "Completed by Team"   (stored value unchanged, so
+//                                            existing rows keep working —
+//                                            only the label was renamed)
+//   DONE_BY_CLIENT -> "Completed by Client"
+const SUBMISSION_TYPES = [
+  "COMPLETED",
+  "DONE_BY_TEAM",
+  "DONE_BY_CLIENT",
+  "QUERY",
+];
+// What an open Query can be turned into once it's sorted out.
+const QUERY_RESOLUTION_TYPES = SUBMISSION_TYPES.filter((t) => t !== "QUERY");
+
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/submit
-// body: { submissionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'QUERY', queryText?: string }
+// body: { submissionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' | 'QUERY', queryText?: string }
 //
 // Every submission records an outcome, not just "submitted":
-//   'COMPLETED'    — completed (by the employee themself).
-//   'DONE_BY_TEAM' — completed, but by the team rather than the
-//                    employee directly. Kept separate from 'COMPLETED'.
-//   'QUERY'        — couldn't be completed as-is; queryText carries
-//                    what the query actually is (required in this case).
+//   'COMPLETED'      — completed (by the employee themself).
+//   'DONE_BY_TEAM'   — completed by the team ("Completed by Team").
+//   'DONE_BY_CLIENT' — completed by the client ("Completed by Client").
+//   'QUERY'          — couldn't be completed as-is; queryText carries
+//                      what the query actually is (required in this case).
 // ------------------------------------------------------------
 async function submitServiceCase(req, res) {
   try {
@@ -2072,11 +2089,11 @@ async function submitServiceCase(req, res) {
     const submissionType = (req.body.submissionType || "").toString().trim();
     const queryText = (req.body.queryText || "").toString().trim();
 
-    if (!["COMPLETED", "DONE_BY_TEAM", "QUERY"].includes(submissionType)) {
+    if (!SUBMISSION_TYPES.includes(submissionType)) {
       return res.status(400).json({
         success: false,
         message:
-          "submissionType must be 'COMPLETED', 'DONE_BY_TEAM' or 'QUERY'.",
+          "submissionType must be 'COMPLETED', 'DONE_BY_TEAM', 'DONE_BY_CLIENT' or 'QUERY'.",
       });
     }
     if (submissionType === "QUERY" && !queryText) {
@@ -2123,6 +2140,70 @@ async function submitServiceCase(req, res) {
     });
   } catch (err) {
     console.error("submitServiceCase error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/resolve-query
+// body: { resolutionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' }
+//
+// Profile page -> "All Query": once a query has been sorted out, the
+// employee marks that case as completed (by themself / the team / the
+// client). Only a case that is CURRENTLY a 'QUERY' and assigned to the
+// caller can be resolved.
+//
+// query_text is deliberately KEPT here (a normal submit clears it for
+// non-query outcomes). That is how "Query Completed" is told apart from
+// a case that was never a query: submission_type is no longer 'QUERY'
+// but query_text is still filled in. No new column / migration needed.
+// ------------------------------------------------------------
+async function resolveQueryServiceCase(req, res) {
+  try {
+    const { id } = req.params;
+    const resolutionType = (req.body.resolutionType || "").toString().trim();
+
+    if (!QUERY_RESOLUTION_TYPES.includes(resolutionType)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "resolutionType must be 'COMPLETED', 'DONE_BY_TEAM' or 'DONE_BY_CLIENT'.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({ submission_type: resolutionType })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      // Self-service — can only ever resolve your own query, regardless
+      // of what id is in the URL.
+      .eq("assigned_employee_id", req.user.userId)
+      .eq("submission_status", "SUBMITTED")
+      .eq("submission_type", "QUERY")
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "Query not found, already completed, or not assigned to you.",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${data.case_number} query marked completed.`,
+      data: {
+        id: data.id,
+        caseNumber: data.case_number,
+        submissionStatus: data.submission_status,
+        submissionType: data.submission_type,
+        queryText: data.query_text,
+      },
+    });
+  } catch (err) {
+    console.error("resolveQueryServiceCase error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -2339,11 +2420,11 @@ async function bulkSubmitServiceCases(req, res) {
         .json({ success: false, message: "No cases provided." });
     }
     for (const it of cleaned) {
-      if (!["COMPLETED", "DONE_BY_TEAM", "QUERY"].includes(it.submissionType)) {
+      if (!SUBMISSION_TYPES.includes(it.submissionType)) {
         return res.status(400).json({
           success: false,
           message:
-            "Every case needs a status of 'Completed', 'Done by Team' or 'Query'.",
+            "Every case needs a status of 'Completed', 'Query', 'Completed by Team' or 'Completed by Client'.",
         });
       }
       if (it.submissionType === "QUERY" && !it.queryText) {
@@ -2489,6 +2570,7 @@ module.exports = {
   updateServiceCaseClient,
   bulkUpdateServiceCaseProfiles,
   submitServiceCase,
+  resolveQueryServiceCase,
   bulkSubmitServiceCases,
   selfAllocateServiceCases,
   updateServiceCaseQc,

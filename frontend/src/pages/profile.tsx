@@ -118,6 +118,26 @@ type EmployeeData = {
     bio?: string | null;
 };
 
+// Everything an employee can report when submitting a case. The stored
+// value for "Completed by Team" is still DONE_BY_TEAM (only its label was
+// renamed) so older rows keep working.
+type SubmissionType = "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY";
+// What an open Query can be turned into once it's sorted out.
+type QueryResolution = Exclude<SubmissionType, "QUERY">;
+
+// Dropdown order + labels, shared by the Submit panel and the Bulk modal.
+const SUBMISSION_OPTIONS: { value: SubmissionType; label: string }[] = [
+    { value: "COMPLETED", label: "Completed" },
+    { value: "QUERY", label: "Query" },
+    { value: "DONE_BY_TEAM", label: "Completed by Team" },
+    { value: "DONE_BY_CLIENT", label: "Completed by Client" },
+];
+// Same list minus "Query" — what an open query can be completed as.
+const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter((o) => o.value !== "QUERY") as {
+    value: QueryResolution;
+    label: string;
+}[];
+
 type CaseRow = {
     id: string;
     caseNumber: string;
@@ -127,7 +147,7 @@ type CaseRow = {
     profile: string;
     allocationStatus: string;
     submissionStatus: "PENDING" | "SUBMITTED";
-    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "QUERY" | null;
+    submissionType: SubmissionType | null;
     queryText: string;
     submittedAt: string | null;
 };
@@ -139,10 +159,25 @@ function isSubmitted(c: CaseRow) {
 // Turns the stored submission_type into the label shown in the
 // Outcome column (and anywhere else an outcome needs to read nicely).
 function outcomeLabel(type: CaseRow["submissionType"]) {
-    if (type === "COMPLETED") return "Completed";
-    if (type === "DONE_BY_TEAM") return "Done by Team";
-    if (type === "QUERY") return "Query";
-    return "-";
+    return SUBMISSION_OPTIONS.find((o) => o.value === type)?.label ?? "-";
+}
+
+// A query that is still open — raised by the employee, not completed yet.
+function isOpenQuery(c: CaseRow) {
+    return isSubmitted(c) && c.submissionType === "QUERY";
+}
+
+// A query that has since been completed. When a query is resolved the
+// backend keeps its query_text (a normal submit clears it for non-query
+// outcomes), so "was a query, now completed" = submitted + no longer
+// "QUERY" + query text still present.
+function isResolvedQuery(c: CaseRow) {
+    return (
+        isSubmitted(c) &&
+        !!c.submissionType &&
+        c.submissionType !== "QUERY" &&
+        (c.queryText || "").trim() !== ""
+    );
 }
 
 // ---- "Normal" (quantity-based) allocation — the OLDER flow, from
@@ -306,6 +341,13 @@ const InfoIcon = () => (
         <path d="M12 8h.01" />
     </Icon>
 );
+const QueryIcon = () => (
+    <Icon>
+        <circle cx="12" cy="12" r="10" />
+        <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" />
+        <path d="M12 17h.01" />
+    </Icon>
+);
 
 /* ---------------------------------------------------------------------- */
 /*  Main component                                                         */
@@ -362,7 +404,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     // What the employee is reporting for the selected case — mandatory
     // before "Submit Work" is enabled. "QUERY" additionally requires
     // submitQueryText to be filled in.
-    const [submitType, setSubmitType] = useState<"" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">("");
+    const [submitType, setSubmitType] = useState<"" | SubmissionType>("");
     const [submitQueryText, setSubmitQueryText] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
@@ -375,9 +417,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     // employee only needs to change the rows they actually want to
     // submit right now; anything left on "Pending" is simply skipped,
     // not blocked on.
-    const [bulkTypeById, setBulkTypeById] = useState<
-        Record<string, "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY">
-    >({});
+    const [bulkTypeById, setBulkTypeById] = useState<Record<string, "PENDING" | SubmissionType>>(
+        {}
+    );
     const [bulkQueryById, setBulkQueryById] = useState<Record<string, string>>({});
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState<string | null>(null);
@@ -385,6 +427,18 @@ export default function Profile({ onLogout }: ProfileProps) {
     // hundreds of pending cases and the employee wants to find a
     // specific one instead of scrolling.
     const [bulkSearch, setBulkSearch] = useState("");
+
+    // ---- All Query modal (every query raised, how many are still open
+    // and how many have been completed) ----
+    const [showQueryModal, setShowQueryModal] = useState(false);
+    const [queryView, setQueryView] = useState<"OPEN" | "RESOLVED">("OPEN");
+    const [querySearch, setQuerySearch] = useState("");
+    // How the employee picked to complete each open query (per row).
+    const [resolveTypeById, setResolveTypeById] = useState<Record<string, QueryResolution | "">>(
+        {}
+    );
+    const [resolvingId, setResolvingId] = useState<string | null>(null);
+    const [queryError, setQueryError] = useState<string | null>(null);
 
     // ---- Self Allocation modal (pick a service you're aligned to →
     // pick up remaining/pending cases on it, for yourself) ----
@@ -580,6 +634,27 @@ export default function Profile({ onLogout }: ProfileProps) {
         return { total, submittedCount, pendingCount };
     }, [todaysCases]);
 
+    // All Query: scoped to ALL of the employee's cases (every date), not
+    // just today — a query raised last week is still a query today.
+    const { openQueries, resolvedQueries } = useMemo(() => {
+        const newestFirst = (a: CaseRow, b: CaseRow) =>
+            (b.submittedAt || "").localeCompare(a.submittedAt || "") ||
+            (b.workDate || "").localeCompare(a.workDate || "");
+        return {
+            openQueries: cases.filter(isOpenQuery).sort(newestFirst),
+            resolvedQueries: cases.filter(isResolvedQuery).sort(newestFirst),
+        };
+    }, [cases]);
+
+    const visibleQueries = useMemo(() => {
+        const list = queryView === "OPEN" ? openQueries : resolvedQueries;
+        const q = querySearch.trim().toLowerCase();
+        if (!q) return list;
+        return list.filter((c) =>
+            `${c.caseNumber} ${c.productName || ""} ${c.queryText || ""}`.toLowerCase().includes(q)
+        );
+    }, [queryView, openQueries, resolvedQueries, querySearch]);
+
     const selected = cases.find((c) => c.id === selectedId) || null;
 
     useEffect(() => {
@@ -646,10 +721,8 @@ export default function Profile({ onLogout }: ProfileProps) {
         if (!q) return pendingTodayCases;
         const statusLabel = (id: string) => {
             const t = bulkTypeById[id];
-            if (t === "COMPLETED") return "completed";
-            if (t === "DONE_BY_TEAM") return "done by team";
-            if (t === "QUERY") return "query";
-            return "pending";
+            const label = SUBMISSION_OPTIONS.find((o) => o.value === t)?.label;
+            return label ? label.toLowerCase() : "pending";
         };
         return pendingTodayCases.filter((c) => {
             const hay = `${c.caseNumber} ${c.productName || ""} ${statusLabel(c.id)}`.toLowerCase();
@@ -660,7 +733,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     const openBulkModal = () => {
         // Default every row to "Pending" — the employee only changes
         // the ones they're actually ready to submit right now.
-        const initialType: Record<string, "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY"> = {};
+        const initialType: Record<string, "PENDING" | SubmissionType> = {};
         const initialQuery: Record<string, string> = {};
         pendingTodayCases.forEach((c) => {
             initialType[c.id] = "PENDING";
@@ -828,7 +901,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
-    const setBulkType = (id: string, value: "PENDING" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY") => {
+    const setBulkType = (id: string, value: "PENDING" | SubmissionType) => {
         setBulkTypeById((prev) => ({ ...prev, [id]: value }));
         // Switching away from "Query" clears any half-typed text so it
         // doesn't get silently sent for a row that's no longer a query.
@@ -900,6 +973,54 @@ export default function Profile({ onLogout }: ProfileProps) {
             setBulkError(err?.message || "Bulk submit failed");
         } finally {
             setBulkSubmitting(false);
+        }
+    };
+
+    // ---- All Query ----
+    const openQueryModal = () => {
+        setQueryView("OPEN");
+        setQuerySearch("");
+        setQueryError(null);
+        setResolveTypeById({});
+        setShowQueryModal(true);
+    };
+
+    const closeQueryModal = () => {
+        setShowQueryModal(false);
+        setQueryError(null);
+    };
+
+    // Marks one open query as completed (by me / the team / the client).
+    // The case then moves from "In Query" to "Query Completed" once the
+    // list is reloaded.
+    const handleResolveQuery = async (c: CaseRow) => {
+        const resolutionType = resolveTypeById[c.id];
+        if (!resolutionType) {
+            setQueryError(`Choose how ${c.caseNumber} was completed first.`);
+            return;
+        }
+        setQueryError(null);
+        setResolvingId(c.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/resolve-query`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ resolutionType }),
+            });
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to complete query");
+            }
+            setResolveTypeById((prev) => {
+                const next = { ...prev };
+                delete next[c.id];
+                return next;
+            });
+            await loadAll();
+        } catch (err: any) {
+            setQueryError(err?.message || "Failed to complete query");
+        } finally {
+            setResolvingId(null);
         }
     };
 
@@ -1221,7 +1342,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                         Past Allocation
                     </button>
                 </div>
-                <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                        type="button"
+                        className="pf-btn pf-btn-outline"
+                        style={styles.exportBtn}
+                        onClick={openQueryModal}
+                    >
+                        <QueryIcon /> All Query
+                        {openQueries.length > 0 ? ` (${openQueries.length})` : ""}
+                    </button>
                     <button
                         type="button"
                         className="pf-btn pf-btn-outline"
@@ -1328,6 +1458,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 index={i + 1}
                                 c={c}
                                 onSubmit={() => handlePickForSubmit(c)}
+                                onResolveQuery={openQueryModal}
                                 styles={styles}
                             />
                         ))}
@@ -1385,15 +1516,30 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         </td>
                                         <td style={{ ...styles.td, textAlign: "center" }}>
                                             {submitted ? (
-                                                <span style={{ fontWeight: fontWeight.medium }}>
-                                                    {outcomeLabel(c.submissionType)}
-                                                </span>
+                                                <>
+                                                    <span style={{ fontWeight: fontWeight.medium }}>
+                                                        {outcomeLabel(c.submissionType)}
+                                                    </span>
+                                                    {isResolvedQuery(c) && (
+                                                        <div style={styles.smallMuted}>
+                                                            Query resolved
+                                                        </div>
+                                                    )}
+                                                </>
                                             ) : (
                                                 <span style={styles.smallMuted}>—</span>
                                             )}
                                         </td>
                                         <td style={{ ...styles.td, textAlign: "center" }}>
-                                            {submitted ? (
+                                            {isOpenQuery(c) ? (
+                                                <button
+                                                    type="button"
+                                                    style={styles.rowSubmitBtn}
+                                                    onClick={openQueryModal}
+                                                >
+                                                    Resolve
+                                                </button>
+                                            ) : submitted ? (
                                                 <span style={styles.smallMuted}>
                                                     {formatDisplayDate(
                                                         c.submittedAt
@@ -1452,16 +1598,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 style={styles.textInput}
                                 value={submitType}
                                 onChange={(e) => {
-                                    const v = e.target.value as
-                                        "" | "COMPLETED" | "DONE_BY_TEAM" | "QUERY";
+                                    const v = e.target.value as "" | SubmissionType;
                                     setSubmitType(v);
                                     if (v !== "QUERY") setSubmitQueryText("");
                                 }}
                             >
                                 <option value="">Select status</option>
-                                <option value="COMPLETED">Completed</option>
-                                <option value="DONE_BY_TEAM">Done by Team</option>
-                                <option value="QUERY">Query</option>
+                                {SUBMISSION_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>
+                                        {o.label}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                         {submitType === "QUERY" && (
@@ -1487,10 +1634,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <div>
                         <strong>How it works?</strong>
                         <p style={{ margin: "4px 0 0" }}>
-                            Pick a case from the table above, choose whether it's completed or has a
-                            query, and submit. "Query" needs a short note on what the query is. Use
-                            "Bulk Submit" up top to submit every pending case for today in one
-                            click.
+                            Pick a case from the table above, choose its status — Completed,
+                            Completed by Team, Completed by Client or Query — and submit. "Query"
+                            needs a short note on what the query is; you can track and complete your
+                            queries later from "All Query" up top. Use "Bulk Submit" to submit every
+                            pending case for today in one click.
                         </p>
                     </div>
                 </div>
@@ -1609,19 +1757,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             setBulkType(
                                                                 c.id,
                                                                 e.target.value as
-                                                                    | "PENDING"
-                                                                    | "COMPLETED"
-                                                                    | "DONE_BY_TEAM"
-                                                                    | "QUERY"
+                                                                    "PENDING" | SubmissionType
                                                             )
                                                         }
                                                     >
                                                         <option value="PENDING">Pending</option>
-                                                        <option value="COMPLETED">Completed</option>
-                                                        <option value="DONE_BY_TEAM">
-                                                            Done by Team
-                                                        </option>
-                                                        <option value="QUERY">Query</option>
+                                                        {SUBMISSION_OPTIONS.map((o) => (
+                                                            <option key={o.value} value={o.value}>
+                                                                {o.label}
+                                                            </option>
+                                                        ))}
                                                     </select>
                                                 </td>
                                                 <td style={{ ...styles.td, whiteSpace: "normal" }}>
@@ -1689,6 +1834,210 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     : bulkRowsToSubmit.length > 0
                                       ? `Submit (${bulkRowsToSubmit.length})`
                                       : "Submit"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ---- All Query modal ---- */}
+            {showQueryModal && (
+                <div style={styles.bulkOverlay}>
+                    {/* A bit wider than the other modals so the date and the
+                        "Completed by Client" dropdown don't get clipped. */}
+                    <div
+                        style={{ ...styles.bulkModal, width: 940 }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={styles.bulkModalHeader}>
+                            <div>
+                                <h3 style={styles.bulkModalTitle}>All Queries</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Every query you've raised, across all dates. Once a query is
+                                    sorted out, mark it as completed from here.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                style={styles.closeBtn}
+                                onClick={closeQueryModal}
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* How many are still in query vs. completed. The first two
+                            tiles double as the tabs for the list below. */}
+                        <div style={styles.queryTilesRow}>
+                            <QueryTile
+                                label="In Query"
+                                value={openQueries.length}
+                                tint={BRAND.red}
+                                active={queryView === "OPEN"}
+                                onClick={() => setQueryView("OPEN")}
+                                styles={styles}
+                            />
+                            <QueryTile
+                                label="Query Completed"
+                                value={resolvedQueries.length}
+                                tint={BRAND.green}
+                                active={queryView === "RESOLVED"}
+                                onClick={() => setQueryView("RESOLVED")}
+                                styles={styles}
+                            />
+                            <QueryTile
+                                label="Total Queries"
+                                value={openQueries.length + resolvedQueries.length}
+                                tint={BRAND.blue}
+                                active={false}
+                                styles={styles}
+                            />
+                        </div>
+
+                        <input
+                            style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
+                            value={querySearch}
+                            onChange={(e) => setQuerySearch(e.target.value)}
+                            placeholder="Search by case number, service or query…"
+                        />
+
+                        <div style={styles.bulkTableWrap}>
+                            <table style={{ ...styles.bulkTable, minWidth: 820 }}>
+                                <colgroup>
+                                    <col style={{ width: "14%" }} />
+                                    <col style={{ width: "16%" }} />
+                                    <col style={{ width: "13%" }} />
+                                    <col style={{ width: "22%" }} />
+                                    <col style={{ width: "35%" }} />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style={styles.th}>Case No.</th>
+                                        <th style={styles.th}>Service</th>
+                                        <th style={styles.th}>Date</th>
+                                        <th style={styles.th}>Query</th>
+                                        <th style={styles.th}>
+                                            {queryView === "OPEN" ? "Complete as" : "Completed as"}
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {visibleQueries.length === 0 && (
+                                        <tr>
+                                            <td
+                                                colSpan={5}
+                                                style={{ ...styles.td, textAlign: "center" }}
+                                            >
+                                                <span style={styles.smallMuted}>
+                                                    {querySearch.trim()
+                                                        ? `No queries match "${querySearch}".`
+                                                        : queryView === "OPEN"
+                                                          ? "No open queries."
+                                                          : "No completed queries yet."}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {visibleQueries.map((c) => {
+                                        const chosen = resolveTypeById[c.id] || "";
+                                        const busy = resolvingId === c.id;
+                                        return (
+                                            <tr key={c.id} style={styles.tr}>
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontWeight: fontWeight.bold,
+                                                    }}
+                                                >
+                                                    {c.caseNumber}
+                                                </td>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    {c.productName || "-"}
+                                                </td>
+                                                <td style={styles.td}>
+                                                    {formatDisplayDate(c.workDate)}
+                                                </td>
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        whiteSpace: "normal",
+                                                        wordBreak: "break-word",
+                                                    }}
+                                                >
+                                                    {c.queryText || "—"}
+                                                </td>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    {queryView === "OPEN" ? (
+                                                        <div style={styles.queryResolveCell}>
+                                                            <select
+                                                                style={{
+                                                                    ...styles.textInput,
+                                                                    flex: 1,
+                                                                    minWidth: 0,
+                                                                }}
+                                                                value={chosen}
+                                                                disabled={busy}
+                                                                onChange={(e) =>
+                                                                    setResolveTypeById((prev) => ({
+                                                                        ...prev,
+                                                                        [c.id]: e.target.value as
+                                                                            QueryResolution | "",
+                                                                    }))
+                                                                }
+                                                            >
+                                                                <option value="">Select…</option>
+                                                                {RESOLUTION_OPTIONS.map((o) => (
+                                                                    <option
+                                                                        key={o.value}
+                                                                        value={o.value}
+                                                                    >
+                                                                        {o.label}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <button
+                                                                type="button"
+                                                                style={{
+                                                                    ...styles.rowSubmitBtn,
+                                                                    opacity:
+                                                                        !chosen || busy ? 0.5 : 1,
+                                                                    cursor:
+                                                                        !chosen || busy
+                                                                            ? "not-allowed"
+                                                                            : "pointer",
+                                                                }}
+                                                                disabled={!chosen || busy}
+                                                                onClick={() =>
+                                                                    handleResolveQuery(c)
+                                                                }
+                                                            >
+                                                                {busy ? "Saving…" : "Complete"}
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <span style={styles.statusDone}>
+                                                            {outcomeLabel(c.submissionType)}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {queryError && <p style={styles.rowError}>{queryError}</p>}
+
+                        <div style={styles.bulkModalFooter}>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.bulkCancelBtn}
+                                onClick={closeQueryModal}
+                            >
+                                Close
                             </button>
                         </div>
                     </div>
@@ -2030,15 +2379,52 @@ function EmptyState({ text, styles }: { text: string; styles: Record<string, CSS
     return <div style={styles.emptyState}>{text}</div>;
 }
 
+// One of the count tiles at the top of the All Query modal. With an
+// onClick it doubles as a tab (In Query / Query Completed); without one
+// (Total Queries) it's just a read-only counter.
+function QueryTile({
+    label,
+    value,
+    tint,
+    active,
+    onClick,
+    styles,
+}: {
+    label: string;
+    value: number;
+    tint: string;
+    active: boolean;
+    onClick?: () => void;
+    styles: Record<string, CSSProperties>;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            style={{
+                ...styles.queryTile,
+                borderColor: active ? tint : "#ececf5",
+                background: active ? `${tint}14` : "#fff",
+                cursor: onClick ? "pointer" : "default",
+            }}
+        >
+            <span style={{ ...styles.queryTileValue, color: tint }}>{value}</span>
+            <span style={styles.queryTileLabel}>{label}</span>
+        </button>
+    );
+}
+
 function MobileRow({
     index,
     c,
     onSubmit,
+    onResolveQuery,
     styles,
 }: {
     index: number;
     c: CaseRow;
     onSubmit: () => void;
+    onResolveQuery: () => void;
     styles: Record<string, CSSProperties>;
 }) {
     const submitted = isSubmitted(c);
@@ -2056,8 +2442,14 @@ function MobileRow({
                 <span>{formatDisplayDate(c.workDate)}</span>
                 {submitted && <span>{outcomeLabel(c.submissionType)}</span>}
             </div>
-            {submitted ? (
-                <div style={styles.smallMuted}>Submitted</div>
+            {isOpenQuery(c) ? (
+                <button type="button" style={styles.rowSubmitBtn} onClick={onResolveQuery}>
+                    Resolve
+                </button>
+            ) : submitted ? (
+                <div style={styles.smallMuted}>
+                    {isResolvedQuery(c) ? "Query resolved" : "Submitted"}
+                </div>
             ) : (
                 <button type="button" style={styles.rowSubmitBtn} onClick={onSubmit}>
                     Submit
@@ -2679,5 +3071,28 @@ function getStyles(
             fontSize: fontSize.md,
             fontWeight: fontWeight.semibold,
         },
+
+        // ---- All Query modal ----
+        queryTilesRow: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 },
+        queryTile: {
+            flex: 1,
+            minWidth: 130,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 2,
+            padding: "12px 16px",
+            borderRadius: radius.md,
+            border: "1px solid #ececf5",
+            textAlign: "left",
+            fontFamily: "inherit",
+        },
+        queryTileValue: { fontSize: fontSize["6xl"], fontWeight: fontWeight.bold, lineHeight: 1.1 },
+        queryTileLabel: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.medium,
+            color: "#767F92",
+        },
+        queryResolveCell: { display: "flex", alignItems: "center", gap: 8 },
     };
 }
