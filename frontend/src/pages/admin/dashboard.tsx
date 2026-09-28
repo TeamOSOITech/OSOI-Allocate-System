@@ -794,22 +794,9 @@ export default function Dashboard({ user }: DashboardProps) {
                             </div>
                         )}
 
-                        {/* NEW: Production trend — month-vs-month or year-vs-year,
-                            picked by the user, from ALL logged Daily Work (not just
-                            today), so this always has real numbers to show even on
-                            a day nothing's been logged yet. */}
-                        <ComparePanel
-                            title="Production"
-                            icon="ti ti-chart-bar"
-                            unit="units"
-                            getValue={getProductionValue}
-                            loading={batchHistoryLoading}
-                            styles={styles}
-                            BRAND={BRAND}
-                            isMobile={isMobile}
-                        />
-
-                        {/* KPI cards */}
+                        {/* KPI cards — quick-glance numbers come first, before any
+                            chart or comparison panel, so the very first thing a
+                            user sees on the page is today's simple totals. */}
                         <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
                             {kpis.map((kpi) => (
                                 <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
@@ -837,9 +824,26 @@ export default function Dashboard({ user }: DashboardProps) {
                                             : kpi.value}
                                     </div>
                                     <div style={styles.kpiLabel}>{kpi.label}</div>
+                                    {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
                                 </div>
                             ))}
                         </div>
+
+                        {/* Production trend — month-vs-month or year-vs-year, picked
+                            by the user, from ALL logged Daily Work (not just today),
+                            so this always has real numbers to show even on a day
+                            nothing's been logged yet. Shown after the KPI cards, as
+                            a "dig deeper" panel rather than the first thing seen. */}
+                        <ComparePanel
+                            title="Production"
+                            icon="ti ti-chart-bar"
+                            unit="units"
+                            getValue={getProductionValue}
+                            loading={batchHistoryLoading}
+                            styles={styles}
+                            BRAND={BRAND}
+                            isMobile={isMobile}
+                        />
 
                         {/* Chart */}
                         <div style={styles.panel}>
@@ -1161,6 +1165,7 @@ function QualityManagerView({
                                 </div>
                                 <div style={styles.kpiValue}>{kpi.value}</div>
                                 <div style={styles.kpiLabel}>{kpi.label}</div>
+                                {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
                             </div>
                         ))}
                     </div>
@@ -1190,6 +1195,7 @@ function QualityManagerView({
                                 </div>
                                 <div style={styles.kpiValue}>{kpi.value}</div>
                                 <div style={styles.kpiLabel}>{kpi.label}</div>
+                                {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
                             </div>
                         ))}
                     </div>
@@ -1333,17 +1339,38 @@ function getStyles(BRAND: {
             justifyContent: "center",
         },
         kpiValue: {
-            fontSize: fontSize["4xl"],
+            // Was fontSize["4xl"] (22px). Theme reserves "7xl" (32px)
+            // specifically for "hero numbers / stat highlights" — this IS
+            // that use case, it just wasn't wired up. Bumped so the number
+            // is legible at a glance instead of blending into the card.
+            fontSize: fontSize["7xl"],
             fontWeight: fontWeight.bold,
             color: "#16233a",
-            lineHeight: 1.2,
+            lineHeight: 1.15,
         },
-        kpiLabel: { fontSize: fontSize.sm, color: "#7d90a6", marginTop: 4 },
+        kpiLabel: {
+            // Was fontSize.sm (12px) at #7d90a6 (low-contrast pale gray).
+            // Bumped a step and darkened so the caption under the big
+            // number is actually easy to read, not just decorative.
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.medium,
+            color: "#4b5b73",
+            marginTop: 6,
+        },
+        kpiTip: {
+            // NEW: the explanation of what each number counts used to live
+            // only in the native `title` attribute — invisible unless you
+            // hover with a mouse, so unusable on mobile/touch. Now shown
+            // as a small always-visible caption instead.
+            fontSize: fontSize.xs,
+            color: "#93a0b4",
+            marginTop: 2,
+            lineHeight: 1.35,
+        },
         panel: {
             background: "#fff",
             borderRadius: radius.lg,
             padding: "20px",
-            height: 240,
             boxShadow: "0 4px 16px rgba(0,0,0,.04)",
         },
         panelTitleRow: { marginBottom: 16 },
@@ -1379,16 +1406,20 @@ function getStyles(BRAND: {
         emptyText: { color: "#7d90a6", fontSize: fontSize.base, textAlign: "center" },
         table: { width: "100%", borderCollapse: "collapse" },
         th: {
+            // Was fontSize.sm (12px) at pale #7d90a6 — bumped and darkened
+            // so column headers are readable, not just decorative labels.
             textAlign: "left",
-            fontSize: fontSize.sm,
+            fontSize: fontSize.base,
             fontWeight: fontWeight.semibold,
-            color: "#7d90a6",
+            color: "#5b6b82",
             padding: "10px 12px",
             borderBottom: "2px solid #eef0f3",
         },
         td: {
+            // Was fontSize.base (13px) — bumped one step so row data is
+            // comfortable to scan, especially numeric columns.
             textAlign: "left",
-            fontSize: fontSize.base,
+            fontSize: fontSize.md,
             color: "#16233a",
             padding: "12px",
             borderBottom: "1px solid #f1f2f4",

@@ -112,16 +112,16 @@ export default function TodaysAllocationCases({
     // dropdown AND Smart Allocation, not just employees whose Team
     // happens to match this service.
     const [attendanceByEmployee, setAttendanceByEmployee] = useState<
-        Record<string, "PRESENT" | "ABSENT" | "LEAVE">
+        Record<string, "PRESENT" | "ABSENT" | "LEAVE" | "HALF_DAY">
     >({});
     const fetchAttendance = useCallback(async () => {
         try {
             const res = await authFetch(`${API_BASE}/api/attendance?date=${workDate}`);
             const json = await res.json();
             if (!res.ok || !json.success) return;
-            const next: Record<string, "PRESENT" | "ABSENT" | "LEAVE"> = {};
+            const next: Record<string, "PRESENT" | "ABSENT" | "LEAVE" | "HALF_DAY"> = {};
             (json.data || []).forEach((a: any) => {
-                if (["PRESENT", "ABSENT", "LEAVE"].includes(a.status)) {
+                if (["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"].includes(a.status)) {
                     next[a.employeeId] = a.status;
                 }
             });
@@ -161,6 +161,88 @@ export default function TodaysAllocationCases({
     }, [fetchExternalMembers]);
 
     const [cases, setCases] = useState<ServiceCase[]>([]);
+
+    // Each row's own "Allocate To" dropdown must go by THAT CASE's
+    // service — not whichever service happens to be selected in the top
+    // filter (which is often "All Services", i.e. no filter at all).
+    // Without this, picking "All Services" made every row fall back to
+    // productTeams = [] below, which reads as "no team restriction" and
+    // wrongly shows every employee in every row's dropdown. Fetch each
+    // distinct service's External Members once (keyed by productId) so
+    // the per-row calculation below has what it needs regardless of the
+    // top filter.
+    const [externalMembersByProduct, setExternalMembersByProduct] = useState<
+        Record<string, Set<string>>
+    >({});
+    useEffect(() => {
+        const distinctProductIds = [...new Set(cases.map((c) => c.productId).filter(Boolean))];
+        if (distinctProductIds.length === 0) return;
+        let cancelled = false;
+        (async () => {
+            const entries = await Promise.all(
+                distinctProductIds.map(async (pid) => {
+                    try {
+                        const res = await authFetch(
+                            `${API_BASE}/api/external-members?productId=${pid}&workDate=${workDate}`
+                        );
+                        const json = await res.json();
+                        return [
+                            pid,
+                            new Set<string>(res.ok && json.success ? json.data || [] : []),
+                        ] as const;
+                    } catch {
+                        return [pid, new Set<string>()] as const;
+                    }
+                })
+            );
+            if (!cancelled) {
+                setExternalMembersByProduct(Object.fromEntries(entries));
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cases, workDate]);
+
+    // Same eligibility rule as eligibleEmployees below (team match, or
+    // explicit Present/Half Day, or External Member for THIS service),
+    // but parameterised by product id so each case row can use its own
+    // service instead of the top filter's.
+    //
+    // STRICT team-based eligibility: unlike eligibleEmployees below (used
+    // for the top summary / Smart Allocation), this does NOT let "marked
+    // Present today" alone add someone whose Team isn't linked to this
+    // service — that was exactly why the dropdown kept showing every
+    // Present employee regardless of service. Only that service's own
+    // linked Teams, or someone explicitly added as an External Member
+    // for that exact service+date, are eligible here. Attendance still
+    // vetoes: ABSENT/LEAVE always drops a person even if team-matched.
+    const getEligibleEmployeesForProduct = useCallback(
+        (pid: string) => {
+            const product = products.find((p) => String(p.id) === String(pid)) || null;
+            const productTeams = (product?.teams || [])
+                .map((t) => (t || "").trim())
+                .filter(Boolean);
+            const teamMatched =
+                productTeams.length === 0
+                    ? employees
+                    : employees.filter((e) => {
+                          const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
+                          return e.team && allowed.has(e.team.trim().toLowerCase());
+                      });
+            const externalIdsForProduct = externalMembersByProduct[pid] || new Set<string>();
+            return employees.filter((e) => {
+                const att = attendanceByEmployee[e.id];
+                if (att === "ABSENT" || att === "LEAVE") return false;
+                const isTeamMatched = teamMatched.some((t) => t.id === e.id);
+                const isExternalMember = externalIdsForProduct.has(e.id);
+                return isTeamMatched || isExternalMember;
+            });
+        },
+        [products, employees, attendanceByEmployee, externalMembersByProduct]
+    );
+
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">("");
@@ -361,7 +443,7 @@ export default function TodaysAllocationCases({
             const att = attendanceByEmployee[e.id];
             if (att === "ABSENT" || att === "LEAVE") return false;
             const isTeamMatched = teamMatched.some((t) => t.id === e.id);
-            const isExplicitlyPresent = att === "PRESENT";
+            const isExplicitlyPresent = att === "PRESENT" || att === "HALF_DAY";
             const isExternalMember = externalMemberIds.has(e.id);
             return isTeamMatched || isExplicitlyPresent || isExternalMember;
         });
@@ -913,23 +995,32 @@ export default function TodaysAllocationCases({
                                             }
                                         >
                                             <option value="">Unallocated</option>
-                                            {(eligibleEmployees.some(
-                                                (e) => e.id === c.assignedEmployeeId
-                                            )
-                                                ? eligibleEmployees
-                                                : [
-                                                      ...(c.assignedEmployeeId
-                                                          ? employees.filter(
-                                                                (e) => e.id === c.assignedEmployeeId
-                                                            )
-                                                          : []),
-                                                      ...eligibleEmployees,
-                                                  ]
-                                            ).map((emp) => (
-                                                <option key={emp.id} value={emp.id}>
-                                                    {emp.name}
-                                                </option>
-                                            ))}
+                                            {(() => {
+                                                // This row's own service — not the top
+                                                // filter's — decides who's selectable.
+                                                const rowEligible = getEligibleEmployeesForProduct(
+                                                    c.productId
+                                                );
+                                                const list = rowEligible.some(
+                                                    (e) => e.id === c.assignedEmployeeId
+                                                )
+                                                    ? rowEligible
+                                                    : [
+                                                          ...(c.assignedEmployeeId
+                                                              ? employees.filter(
+                                                                    (e) =>
+                                                                        e.id ===
+                                                                        c.assignedEmployeeId
+                                                                )
+                                                              : []),
+                                                          ...rowEligible,
+                                                      ];
+                                                return list.map((emp) => (
+                                                    <option key={emp.id} value={emp.id}>
+                                                        {emp.name}
+                                                    </option>
+                                                ));
+                                            })()}
                                         </select>
                                     </span>
                                 </div>

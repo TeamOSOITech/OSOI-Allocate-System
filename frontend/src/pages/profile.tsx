@@ -956,7 +956,8 @@ export default function Profile({ onLogout }: ProfileProps) {
             const res = await authFetch(`${API_BASE}/api/service-cases/self-allocate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ caseIds }),
+                // allocationDate: older-dated cases become today's work once claimed.
+                body: JSON.stringify({ caseIds, allocationDate: todayStr() }),
             });
             const json = await safeJson(res);
             if (!res.ok || !json.success) {

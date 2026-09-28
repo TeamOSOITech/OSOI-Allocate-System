@@ -8,8 +8,10 @@
 // Saves straight into the existing `attendance` table via the existing
 // GET/POST /api/attendance endpoints (backend/src/modules/attendance) —
 // the same table Daily Work's own Smart Allocation reads. The Cases tab's
-// "Smart Allocation" button reads whoever is PRESENT here for the chosen
-// date before splitting cases.
+// "Smart Allocation" button reads whoever is PRESENT or HALF_DAY here for
+// the chosen date before splitting cases — a Half Day employee counts as
+// half a unit, so they end up with roughly half the work of a full-day
+// Present employee.
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
@@ -49,12 +51,20 @@ type Employee = {
     department: string | null;
     team: string | null;
 };
-type AttStatus = "PRESENT" | "ABSENT" | "LEAVE";
+type AttStatus = "PRESENT" | "ABSENT" | "LEAVE" | "HALF_DAY";
+// Absent was folded into Leave — "absent ya leave, same baat hai". Kept as
+// its own AttStatus above only so old rows already saved as ABSENT still
+// type-check; it's normalized to LEAVE the moment attendance loads (see
+// fetchAttendance below) and is no longer a status the buttons can set.
+type SelectableStatus = "PRESENT" | "LEAVE" | "HALF_DAY";
 
-const STATUS_META: Record<AttStatus, { label: string; color: string; icon: string }> = {
+const STATUS_META: Record<SelectableStatus, { label: string; color: string; icon: string }> = {
     PRESENT: { label: "Present", color: BRAND.green, icon: "ti-circle-check" },
-    ABSENT: { label: "Absent", color: BRAND.red, icon: "ti-circle-x" },
     LEAVE: { label: "Leave", color: BRAND.grey, icon: "ti-calendar-off" },
+    // Counts as 0.5 towards Smart Allocation's employee count — someone
+    // marked Half Day gets roughly half the work a full-day Present
+    // employee gets. See allocations.controller.js / servicecases.controller.js.
+    HALF_DAY: { label: "Half Day", color: BRAND.amber, icon: "ti-clock-hour-4" },
 };
 
 function initials(name: string) {
@@ -93,7 +103,7 @@ export default function TodaysAllocationEmployees({
     // "External" (only the manually added ones).
     const [viewScope, setViewScope] = useState<"all" | "team" | "external">("all");
 
-    const [statusByEmployee, setStatusByEmployee] = useState<Record<string, AttStatus>>({});
+    const [statusByEmployee, setStatusByEmployee] = useState<Record<string, SelectableStatus>>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState("");
@@ -130,10 +140,12 @@ export default function TodaysAllocationEmployees({
             const res = await authFetch(`${API_BASE}/api/attendance?date=${workDate}`);
             const json = await res.json();
             if (!res.ok || !json.success) return;
-            const next: Record<string, AttStatus> = {};
+            const next: Record<string, SelectableStatus> = {};
             (json.data || []).forEach((a: any) => {
-                if (["PRESENT", "ABSENT", "LEAVE"].includes(a.status)) {
-                    next[a.employeeId] = a.status;
+                if (["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"].includes(a.status)) {
+                    // Absent is folded into Leave on this page — see note by
+                    // SelectableStatus above.
+                    next[a.employeeId] = a.status === "ABSENT" ? "LEAVE" : a.status;
                 }
             });
             setStatusByEmployee(next);
@@ -295,7 +307,7 @@ export default function TodaysAllocationEmployees({
         );
     }, [combinedList, searchText]);
 
-    const setStatus = (employeeId: string, status: AttStatus) => {
+    const setStatus = (employeeId: string, status: SelectableStatus) => {
         setStatusByEmployee((prev) => ({ ...prev, [employeeId]: status }));
     };
     const markAllPresent = () => {
@@ -310,15 +322,15 @@ export default function TodaysAllocationEmployees({
 
     const counts = useMemo(() => {
         let present = 0,
-            absent = 0,
-            leave = 0;
+            leave = 0,
+            halfDay = 0;
         filteredEmployees.forEach((e) => {
             const s = statusByEmployee[e.id] || "PRESENT";
             if (s === "PRESENT") present++;
-            else if (s === "ABSENT") absent++;
+            else if (s === "HALF_DAY") halfDay++;
             else leave++;
         });
-        return { present, absent, leave };
+        return { present, leave, halfDay };
     }, [filteredEmployees, statusByEmployee]);
 
     const handleSave = async () => {
@@ -473,11 +485,11 @@ export default function TodaysAllocationEmployees({
                     <span style={{ ...styles.countPill, color: BRAND.green }}>
                         {counts.present} Present
                     </span>
-                    <span style={{ ...styles.countPill, color: BRAND.red }}>
-                        {counts.absent} Absent
-                    </span>
                     <span style={{ ...styles.countPill, color: BRAND.grey }}>
                         {counts.leave} Leave
+                    </span>
+                    <span style={{ ...styles.countPill, color: BRAND.amber }}>
+                        {counts.halfDay} Half Day
                     </span>
                 </div>
 
@@ -532,28 +544,30 @@ export default function TodaysAllocationEmployees({
                                     </span>
                                     <span style={styles.colTeam}>{emp.team || "—"}</span>
                                     <span style={styles.colStatus}>
-                                        {(Object.keys(STATUS_META) as AttStatus[]).map((s) => (
-                                            <button
-                                                key={s}
-                                                type="button"
-                                                onClick={() => setStatus(emp.id, s)}
-                                                style={{
-                                                    ...styles.statusBtn,
-                                                    background:
-                                                        status === s
-                                                            ? STATUS_META[s].color
-                                                            : "transparent",
-                                                    color:
-                                                        status === s
-                                                            ? "#fff"
-                                                            : STATUS_META[s].color,
-                                                    border: `1px solid ${STATUS_META[s].color}`,
-                                                }}
-                                            >
-                                                <i className={`ti ${STATUS_META[s].icon}`} />
-                                                {STATUS_META[s].label}
-                                            </button>
-                                        ))}
+                                        {(Object.keys(STATUS_META) as SelectableStatus[]).map(
+                                            (s) => (
+                                                <button
+                                                    key={s}
+                                                    type="button"
+                                                    onClick={() => setStatus(emp.id, s)}
+                                                    style={{
+                                                        ...styles.statusBtn,
+                                                        background:
+                                                            status === s
+                                                                ? STATUS_META[s].color
+                                                                : "transparent",
+                                                        color:
+                                                            status === s
+                                                                ? "#fff"
+                                                                : STATUS_META[s].color,
+                                                        border: `1px solid ${STATUS_META[s].color}`,
+                                                    }}
+                                                >
+                                                    <i className={`ti ${STATUS_META[s].icon}`} />
+                                                    {STATUS_META[s].label}
+                                                </button>
+                                            )
+                                        )}
                                     </span>
                                 </div>
                             );

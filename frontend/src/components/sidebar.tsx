@@ -43,7 +43,7 @@ const menuItems: MenuItem[] = [
         // already includes OPS_MANAGER — this link was narrower than the
         // actual route (SUPER_ADMIN_ONLY), so Ops Manager could reach the
         // page directly by URL but never saw the sidebar link.
-        roles: [...SUPER_ADMIN_ONLY],
+        roles: [...SUPER_ADMIN_ONLY, "OPS_MANAGER"],
     },
     // Matches backend's "users.onboard" permission exactly (SUPER_ADMIN +
     // PROCESS_LEAD only) — see backend src/config/permissions.js. Was

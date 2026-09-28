@@ -164,6 +164,22 @@ async function fetchWithColdStartRetry(url: string, init: RequestInit): Promise<
     throw new Error("Could not reach the server.");
 }
 
+// Prints the server's error details in the browser DevTools console.
+// The UI only gets the generic message; `detail` is sent by the backend
+// outside production (or when EXPOSE_ERROR_DETAIL=true).
+async function logApiError(url: string, method: string, res: Response) {
+    if (res.ok) return;
+    try {
+        const body = await res.clone().json();
+        console.error(
+            `[API ${res.status}] ${method} ${url}`,
+            body?.detail ?? body?.message ?? body
+        );
+    } catch {
+        console.error(`[API ${res.status}] ${method} ${url}`);
+    }
+}
+
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
     const method = (options.method || "GET").toUpperCase();
 
@@ -234,9 +250,11 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
             // Refreshed successfully but STILL 401 — this is a real
             // permission/role problem, not a stale-token problem. Don't
             // loop forever; let the caller handle the response as-is.
+            await logApiError(url, method, res);
             return res;
         }
     }
 
+    await logApiError(url, method, res);
     return res;
 }
