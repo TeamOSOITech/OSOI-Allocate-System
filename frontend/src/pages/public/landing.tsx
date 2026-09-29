@@ -190,6 +190,24 @@ const STEPS = [
     },
 ];
 
+// Country picker shown in the nav (replaces the old "Sign Up" button).
+// Flags come from flagcdn.com as images, because flag emojis don't render
+// on Windows. India is the default selection.
+const COUNTRIES = [
+    { code: "IN", name: "India" },
+    { code: "US", name: "United States" },
+    { code: "GB", name: "United Kingdom" },
+    { code: "AE", name: "United Arab Emirates" },
+    { code: "SG", name: "Singapore" },
+    { code: "AU", name: "Australia" },
+    { code: "CA", name: "Canada" },
+    { code: "DE", name: "Germany" },
+    { code: "SA", name: "Saudi Arabia" },
+    { code: "NP", name: "Nepal" },
+    { code: "BD", name: "Bangladesh" },
+    { code: "LK", name: "Sri Lanka" },
+];
+
 const PLANS = [
     {
         name: "Free",
@@ -984,6 +1002,10 @@ const Landing = () => {
 
     const [menuOpen, setMenuOpen] = useState(false);
 
+    // Country picker in the nav — India selected by default.
+    const [country, setCountry] = useState("IN");
+    const [countryOpen, setCountryOpen] = useState(false);
+
     // NEW: "Plans & Pricing" now opens as a modal from the nav instead of
     // living as a section on the page — the pricing grid itself (PLANS,
     // handlePlanSelect) is unchanged, it's just rendered inside an overlay.
@@ -1260,6 +1282,63 @@ const Landing = () => {
         document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
     };
 
+    const renderCountryPicker = (variant: "desktop" | "mobile") => {
+        const current = COUNTRIES.find((c) => c.code === country) ?? COUNTRIES[0];
+        return (
+            <div className={`lp-country lp-country-${variant}`}>
+                <button
+                    type="button"
+                    className="lp-country-btn"
+                    onClick={() => setCountryOpen((v) => !v)}
+                    aria-haspopup="listbox"
+                    aria-expanded={countryOpen}
+                    aria-label={`Country: ${current.name}`}
+                >
+                    <img
+                        src={`https://flagcdn.com/w40/${current.code.toLowerCase()}.png`}
+                        alt=""
+                        width={22}
+                        height={16}
+                    />
+                    <span>{current.code}</span>
+                    <i className={`ti ${countryOpen ? "ti-chevron-up" : "ti-chevron-down"}`} />
+                </button>
+                {countryOpen && (
+                    <>
+                        <div
+                            className="lp-country-backdrop"
+                            onClick={() => setCountryOpen(false)}
+                        />
+                        <div className="lp-country-menu" role="listbox">
+                            {COUNTRIES.map((c) => (
+                                <button
+                                    key={c.code}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={c.code === country}
+                                    className={`lp-country-item${c.code === country ? " active" : ""}`}
+                                    onClick={() => {
+                                        setCountry(c.code);
+                                        setCountryOpen(false);
+                                    }}
+                                >
+                                    <img
+                                        src={`https://flagcdn.com/w40/${c.code.toLowerCase()}.png`}
+                                        alt=""
+                                        width={22}
+                                        height={16}
+                                    />
+                                    <span className="lp-country-name">{c.name}</span>
+                                    {c.code === country && <i className="ti ti-check" />}
+                                </button>
+                            ))}
+                        </div>
+                    </>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div className="lp-page">
             <style>{`
@@ -1282,7 +1361,6 @@ const Landing = () => {
                     font-size: 16px;
                     color: var(--lp-text);
                     background: #fff;
-                    overflow-x: hidden;
                 }
                 /* New: visible field labels for the login form (fix #2) */
                 .lp-field { display: flex; flex-direction: column; gap: 6px; }
@@ -1334,9 +1412,29 @@ const Landing = () => {
                     justify-content: space-between;
                     padding: 16px clamp(20px, 5vw, 56px);
                     background: var(--lp-ink);
-                    position: sticky;
+                    /* "position: fixed" instead of "sticky": sticky stops
+                       working the moment ANY ancestor's overflow isn't
+                       "visible" (it then sticks to that ancestor's box
+                       instead of the real page scroll) — too easy to
+                       re-break by accident elsewhere in a file this size.
+                       "fixed" always pins to the viewport itself, so it
+                       can't be broken that way. The trade-off: it's now
+                       out of normal document flow, so the spacer right
+                       after this nav (and the mobile menu panel below)
+                       compensate for the space it used to take up. */
+                    position: fixed;
                     top: 0;
+                    left: 0;
+                    right: 0;
                     z-index: 30;
+                }
+                /* Sits directly after the fixed nav in the JSX and reserves
+                   the same height the nav itself takes up, so page content
+                   doesn't start out hidden underneath it. 76px covers both
+                   the desktop row (16+16 padding + 38px logo) and the
+                   mobile row (16+16 padding + 44px burger button). */
+                .lp-nav-spacer {
+                    height: 76px;
                 }
                 .lp-nav-brand {
                     display: flex;
@@ -1348,18 +1446,17 @@ const Landing = () => {
                     font-size: 16px;
                     white-space: nowrap;
                 }
-                .lp-nav-brand .lp-icon-badge {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 9px;
-                    background: var(--lp-gradient);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 15px;
-                    color: #fff;
+                /* Same logo image + oval shape used in the app's own header
+                   (components/header.tsx): white pill background, contain-
+                   fit, fully-rounded ends. */
+                .lp-nav-brand .lp-nav-logo {
+                    width: 125px;
+                    height: 38px;
+                    object-fit: contain;
+                    border-radius: 19px;
+                    padding: 0 10px;
+                    background-color: #fff;
                     flex-shrink: 0;
-                    box-shadow: 0 4px 14px rgba(8,161,206,0.35);
                 }
                 .lp-nav-links {
                     display: flex;
@@ -1449,6 +1546,17 @@ const Landing = () => {
                     flex-direction: column;
                     background: var(--lp-ink-soft);
                     padding: 14px clamp(20px, 5vw, 56px) 20px;
+                    /* Nav is now "position: fixed" (out of document flow),
+                       so this panel — its next sibling — no longer lands
+                       visually right below it on its own. Pin it under the
+                       nav explicitly instead. */
+                    position: fixed;
+                    top: 76px;
+                    left: 0;
+                    right: 0;
+                    z-index: 29;
+                    max-height: calc(100dvh - 76px);
+                    overflow-y: auto;
                 }
                 .lp-mobile-panel a {
                     display: flex;
@@ -2605,22 +2713,152 @@ const Landing = () => {
                     .sc-item { white-space: nowrap; }
                 }
 
+                /* ---------- Base login/modal form styles (were missing) ---------- */
+                .lp-login-title { font-size: 22px; font-weight: 800; margin: 0 0 8px; color: var(--lp-text); }
+                .lp-login-subtitle { font-size: 14.5px; color: var(--lp-muted); line-height: 1.6; margin: 0 0 18px; }
+                .lp-login-error {
+                    background: #FEECEC; color: #B42318; border: 1px solid #F6D2D2;
+                    border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 14px;
+                }
+                .lp-login-input {
+                    width: 100%; box-sizing: border-box; font: 400 15px 'Inter', sans-serif;
+                    padding: 13px 14px; border-radius: 11px; border: 1px solid #DCE3EF;
+                    background: #fff; color: var(--lp-text); outline: none;
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+                .lp-login-input:focus { border-color: var(--lp-cyan); box-shadow: 0 0 0 4px rgba(8,161,206,0.14); }
+                .lp-login-submit {
+                    width: 100%; box-sizing: border-box; min-height: 48px; border: none; border-radius: 11px;
+                    background: var(--lp-gradient); color: #fff; font: 600 15px 'Inter', sans-serif;
+                    cursor: pointer; box-shadow: 0 12px 26px rgba(8,161,206,0.28);
+                    transition: filter 0.15s ease, transform 0.15s ease;
+                }
+                .lp-login-submit:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+                .lp-login-submit:disabled { opacity: 0.65; cursor: not-allowed; }
+
+                /* ---------- Payment modal ---------- */
+                .lp-pay-modal {
+                    max-width: 440px; padding: 0; overflow: hidden;
+                    max-height: 92vh; overflow-y: auto;
+                }
+                .lp-pay-head {
+                    background: linear-gradient(160deg, var(--lp-ink) 0%, #142146 60%, #1B3A7A 100%);
+                    color: #fff; padding: 34px 28px 26px; text-align: center; position: relative; overflow: hidden;
+                }
+                .lp-pay-head::before {
+                    content: ""; position: absolute; top: -90px; right: -60px; width: 240px; height: 240px;
+                    border-radius: 50%; background: var(--lp-cyan); opacity: 0.25; filter: blur(60px);
+                }
+                .lp-pay-head > * { position: relative; }
+                .lp-pay-badge {
+                    display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+                    padding: 5px 14px; border-radius: 999px; margin-bottom: 12px;
+                    background: var(--lp-gradient); color: #fff;
+                }
+                .lp-pay-plan { font-size: 20px; font-weight: 700; margin: 0 0 6px; color: #fff; }
+                .lp-pay-price { font-family: 'Sora', sans-serif; font-size: 38px; font-weight: 800; line-height: 1.1; color: #fff; }
+                .lp-pay-price span { font-size: 14px; font-weight: 500; color: #A9BBD9; font-family: 'Inter', sans-serif; }
+                .lp-pay-close {
+                    position: absolute; top: 10px; right: 10px; z-index: 3;
+                    background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.25); color: #fff;
+                }
+                .lp-pay-close:hover { background: rgba(255,255,255,0.26); color: #fff; }
+                .lp-pay-body { padding: 24px 28px 26px; }
+                .lp-pay-features { list-style: none; margin: 0 0 20px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+                .lp-pay-features li { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--lp-text); }
+                .lp-pay-features i { color: var(--lp-green); font-size: 16px; flex-shrink: 0; }
+                @media (max-width: 420px) { .lp-pay-features { grid-template-columns: 1fr; } }
+                .lp-pay-upgrade {
+                    width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+                    min-height: 44px; margin-bottom: 18px; border-radius: 11px; cursor: pointer;
+                    background: rgba(32,66,151,0.06); border: 1px dashed rgba(32,66,151,0.35);
+                    color: var(--lp-blue); font: 600 14px 'Inter', sans-serif;
+                }
+                .lp-pay-upgrade:hover { background: rgba(32,66,151,0.11); }
+                .lp-pay-mode {
+                    font-size: 13px; color: var(--lp-muted); background: var(--lp-bg);
+                    border: 1px solid var(--lp-border); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; line-height: 1.5;
+                }
+                .lp-pay-label { display: block; font-size: 12.5px; font-weight: 600; color: #334155; margin: 0 0 6px; }
+                .lp-pay-field { position: relative; margin-bottom: 14px; }
+                .lp-pay-field > i {
+                    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+                    font-size: 17px; color: var(--lp-muted); pointer-events: none;
+                }
+                .lp-pay-field .lp-login-input { padding-left: 42px; }
+                .lp-pay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+                .lp-pay-secure {
+                    display: flex; align-items: center; justify-content: center; gap: 7px;
+                    font-size: 12.5px; color: var(--lp-muted); margin-top: 14px;
+                }
+                .lp-pay-secure i { color: var(--lp-green); font-size: 14px; }
+                .lp-pay-back {
+                    width: 100%; margin-top: 8px; background: transparent; border: none;
+                    color: var(--lp-muted); font-size: 13.5px; cursor: pointer; min-height: 44px;
+                }
+                .lp-pay-back:hover { color: var(--lp-text); }
+                .lp-pay-done { text-align: center; padding: 8px 0 0; }
+                .lp-pay-done-icon {
+                    width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 16px;
+                    background: #E4F6F2; color: #1E8F7E; display: flex; align-items: center; justify-content: center; font-size: 30px;
+                }
+
+                /* ---------- Country picker (replaces Sign Up in nav) ---------- */
+                .lp-country { position: relative; }
+                .lp-country-btn {
+                    display: inline-flex; align-items: center; gap: 8px;
+                    min-height: 44px; padding: 0 12px; box-sizing: border-box;
+                    background: transparent; border: 1px solid #33415F; border-radius: 8px;
+                    color: #fff; font: 600 14px 'Inter', sans-serif; cursor: pointer;
+                    transition: border-color 0.15s ease, background 0.15s ease;
+                }
+                .lp-country-btn:hover { border-color: #08A1CE; background: rgba(8,161,206,0.08); }
+                .lp-country-btn img { width: 22px; height: 16px; object-fit: cover; border-radius: 2px; }
+                .lp-country-btn i { font-size: 15px; color: #B9C4DA; }
+                .lp-country-backdrop { position: fixed; inset: 0; z-index: 39; }
+                .lp-country-menu {
+                    position: absolute; top: calc(100% + 8px); right: 0; z-index: 40;
+                    width: 240px; max-height: 300px; overflow-y: auto; padding: 6px;
+                    background: #fff; border: 1px solid var(--lp-border); border-radius: 12px;
+                    box-shadow: 0 18px 40px rgba(10,18,36,0.28);
+                }
+                .lp-country-item {
+                    width: 100%; display: flex; align-items: center; gap: 10px;
+                    min-height: 44px; padding: 0 10px; box-sizing: border-box;
+                    background: none; border: none; border-radius: 8px; cursor: pointer;
+                    text-align: left; font: 500 14px 'Inter', sans-serif; color: var(--lp-text);
+                }
+                .lp-country-item:hover { background: var(--lp-bg); }
+                .lp-country-item.active { background: rgba(32,66,151,0.08); font-weight: 600; }
+                .lp-country-item img { width: 22px; height: 16px; object-fit: cover; border-radius: 2px; flex-shrink: 0; }
+                .lp-country-item .lp-country-name { flex: 1; }
+                .lp-country-item i { color: var(--lp-blue); font-size: 16px; }
+                .lp-country-mobile .lp-country-btn { width: 100%; justify-content: center; }
+                .lp-country-mobile .lp-country-menu { left: 0; right: 0; width: auto; }
+
                 /* ---------- Responsive ---------- */
                 /* FIX: Sign Up + Login buttons were always visible, even
                    alongside the burger menu — on narrow phones the three
                    together (brand + 2 buttons + burger) were wider than
-                   the viewport, so Login got pushed off-screen and the
-                   page's overflow-x:hidden clipped it instead of wrapping.
-                   Same clipping was cutting off the last hero pill below.
-                   Standard fix: below 900px, hide the header buttons and
-                   rely on the burger's mobile panel instead (Login/Sign Up
-                   are added there — see the JSX). */
+                   the viewport, so Login got pushed off-screen. Standard
+                   fix: below 900px, hide the header buttons and rely on
+                   the burger's mobile panel instead (Login/Sign Up are
+                   added there — see the JSX). */
                 html, body, #root {
                     max-width: 100%;
                     overflow-x: hidden;
                 }
+                /* The nav is "position: fixed" and covers the top 76px of
+                   the viewport, so jumping straight to a section's exact
+                   top (via scrollIntoView, or a real #hash reload) would
+                   land it right underneath the nav, hidden. This tells the
+                   browser's own scrolling to stop 76px short every time. */
+                html {
+                    scroll-padding-top: 76px;
+                }
                 @media (max-width: 900px) {
                     .lp-nav-links { display: none; }
+                    .lp-country-desktop { display: none; }
                     .lp-nav-signup-btn, .lp-nav-login-btn { display: none; }
                     .lp-burger { display: flex; }
                     .lp-mobile-panel.open { display: flex; }
@@ -2647,10 +2885,7 @@ const Landing = () => {
             {/* ---------- Nav ---------- */}
             <header className="lp-nav">
                 <div className="lp-nav-brand">
-                    <span className="lp-icon-badge">
-                        <i className="ti ti-hexagon" />
-                    </span>
-                    <span>Workforce Allocate</span>
+                    <img src="/Logo.jpg" alt="Alookate" className="lp-nav-logo" />
                 </div>
                 <nav className="lp-nav-links">
                     <a
@@ -2700,12 +2935,7 @@ const Landing = () => {
                     <button className="lp-nav-signup-btn" onClick={() => setDemoOpen(true)}>
                         Book a Demo
                     </button>
-                    <button
-                        className="lp-nav-signup-btn"
-                        onClick={() => window.open("/?signup=1", "_blank", "noopener,noreferrer")}
-                    >
-                        Sign Up
-                    </button>
+                    {renderCountryPicker("desktop")}
                     <button
                         className="lp-nav-login-btn"
                         onClick={() => window.open("/login", "_blank", "noopener,noreferrer")}
@@ -2721,6 +2951,9 @@ const Landing = () => {
                     </button>
                 </div>
             </header>
+            {/* Reserves the space the now-fixed nav used to occupy in
+                normal flow — see .lp-nav-spacer above. */}
+            <div className="lp-nav-spacer" aria-hidden="true" />
             <div className={`lp-mobile-panel${menuOpen ? " open" : ""}`}>
                 <a
                     href="#overview"
@@ -2776,13 +3009,7 @@ const Landing = () => {
                     Book a Demo
                 </button>
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                    <button
-                        className="lp-nav-signup-btn"
-                        style={{ display: "flex", flex: 1, justifyContent: "center" }}
-                        onClick={() => window.open("/?signup=1", "_blank", "noopener,noreferrer")}
-                    >
-                        Sign Up
-                    </button>
+                    <div style={{ flex: 1 }}>{renderCountryPicker("mobile")}</div>
                     <button
                         className="lp-nav-login-btn"
                         style={{ display: "flex", flex: 1, justifyContent: "center" }}
@@ -3103,9 +3330,10 @@ const Landing = () => {
                         <div className="sc-frame">
                             <div className="sc-top">
                                 <span className="sc-brand">
-                                    <i
-                                        className="ti ti-hexagon"
-                                        style={{ color: "var(--lp-blue)" }}
+                                    <img
+                                        src="/Logo.jpg"
+                                        alt="Alookate"
+                                        style={{ height: 18, objectFit: "contain" }}
                                     />
                                 </span>
                                 <span className="sc-welcome">
@@ -3198,157 +3426,215 @@ const Landing = () => {
                 </div>
             )}
 
-            {/* ---------- Checkout email modal (Basic / Professional) ---------- */}
-            {checkoutPlan && (
-                <div className="lp-checkout-overlay">
-                    <div className="lp-checkout-modal" onClick={(e) => e.stopPropagation()}>
-                        {/* NEW: header row — "Upgrade" sits to the LEFT of the
-                            existing close/Cancel (X) button, only shown to an
-                            already-logged-in user (currentUser), and only once
-                            (hidden once upgradeMode is already on, or after a
-                            successful upgrade — nothing left to switch to). */}
-                        <div
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "flex-end",
-                                gap: 10,
-                            }}
-                        >
-                            {currentUser && !upgradeMode && !upgradeSuccessMsg && (
+            {/* ---------- Checkout modal (Basic / Professional) ---------- */}
+            {checkoutPlan &&
+                (() => {
+                    const plan = PLANS.find((p) => p.name === checkoutPlan.name);
+                    return (
+                        <div className="lp-checkout-overlay">
+                            <div
+                                className="lp-checkout-modal lp-pay-modal"
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <button
-                                    type="button"
-                                    className="lp-login-submit"
-                                    style={{
-                                        width: "auto",
-                                        padding: "6px 16px",
-                                        fontSize: fontSize.sm,
-                                    }}
-                                    onClick={handleStartUpgrade}
+                                    className="lp-checkout-close lp-pay-close"
+                                    onClick={() => setCheckoutPlan(null)}
+                                    aria-label="Close"
                                     disabled={checkoutLoading}
                                 >
-                                    Upgrade
+                                    <i className="ti ti-x" />
                                 </button>
-                            )}
-                            <button
-                                className="lp-checkout-close"
-                                onClick={() => setCheckoutPlan(null)}
-                                aria-label="Close"
-                                disabled={checkoutLoading}
-                            >
-                                <i className="ti ti-x" />
-                            </button>
-                        </div>
 
-                        <h3 className="lp-login-title">{checkoutPlan.name} Plan</h3>
+                                <div className="lp-pay-head">
+                                    <span className="lp-pay-badge">
+                                        {plan?.badge ?? "Selected plan"}
+                                    </span>
+                                    <h3 className="lp-pay-plan">{checkoutPlan.name} Plan</h3>
+                                    <div className="lp-pay-price">
+                                        {checkoutPlan.price}
+                                        <span> / user / month</span>
+                                    </div>
+                                </div>
 
-                        {upgradeSuccessMsg ? (
-                            <>
-                                <p className="lp-login-subtitle">{upgradeSuccessMsg}</p>
-                                <button
-                                    className="lp-login-submit"
-                                    style={{ width: "100%", boxSizing: "border-box" }}
-                                    onClick={() => setCheckoutPlan(null)}
-                                >
-                                    Done
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                <p className="lp-login-subtitle">
-                                    {upgradeMode ? (
-                                        <>
-                                            {checkoutPlan.price} / user / month — this upgrades your
-                                            EXISTING organization's plan ({currentUser?.email}). No
-                                            new account is created. Demo checkout, no real card is
-                                            charged.
-                                        </>
+                                <div className="lp-pay-body">
+                                    {upgradeSuccessMsg ? (
+                                        <div className="lp-pay-done">
+                                            <div className="lp-pay-done-icon">
+                                                <i className="ti ti-check" />
+                                            </div>
+                                            <p className="lp-login-subtitle">{upgradeSuccessMsg}</p>
+                                            <button
+                                                className="lp-login-submit"
+                                                onClick={() => setCheckoutPlan(null)}
+                                            >
+                                                Done
+                                            </button>
+                                        </div>
                                     ) : (
                                         <>
-                                            {checkoutPlan.price} / user / month — this is a demo
-                                            checkout, no real card is charged.
+                                            {plan && (
+                                                <ul className="lp-pay-features">
+                                                    {plan.features.map((f) => (
+                                                        <li key={f}>
+                                                            <i className="ti ti-circle-check" />
+                                                            {f}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+
+                                            {currentUser && !upgradeMode && (
+                                                <button
+                                                    type="button"
+                                                    className="lp-pay-upgrade"
+                                                    onClick={handleStartUpgrade}
+                                                    disabled={checkoutLoading}
+                                                >
+                                                    <i className="ti ti-arrow-up-circle" />
+                                                    Already a customer? Upgrade your plan
+                                                </button>
+                                            )}
+
+                                            {upgradeMode && (
+                                                <div className="lp-pay-mode">
+                                                    This upgrades your existing organization's plan
+                                                    ({currentUser?.email}). No new account is
+                                                    created.
+                                                </div>
+                                            )}
+
+                                            {checkoutError && (
+                                                <div className="lp-login-error">
+                                                    {checkoutError}
+                                                </div>
+                                            )}
+
+                                            {!upgradeMode && (
+                                                <>
+                                                    <label className="lp-pay-label">Email</label>
+                                                    <div className="lp-pay-field">
+                                                        <i className="ti ti-mail" />
+                                                        <input
+                                                            type="email"
+                                                            placeholder="you@company.com"
+                                                            value={checkoutEmail}
+                                                            onChange={(e) =>
+                                                                setCheckoutEmail(e.target.value)
+                                                            }
+                                                            className="lp-login-input"
+                                                            disabled={checkoutLoading}
+                                                        />
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            <label className="lp-pay-label">Card number</label>
+                                            <div className="lp-pay-field">
+                                                <i className="ti ti-credit-card" />
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    placeholder="1234 5678 9012 3456"
+                                                    value={cardNumber}
+                                                    onChange={(e) => {
+                                                        const d = e.target.value
+                                                            .replace(/\D/g, "")
+                                                            .slice(0, 16);
+                                                        setCardNumber(
+                                                            d.replace(/(.{4})/g, "$1 ").trim()
+                                                        );
+                                                    }}
+                                                    className="lp-login-input"
+                                                    disabled={checkoutLoading}
+                                                />
+                                            </div>
+
+                                            <div className="lp-pay-row">
+                                                <div>
+                                                    <label className="lp-pay-label">Expiry</label>
+                                                    <div className="lp-pay-field">
+                                                        <i className="ti ti-calendar" />
+                                                        <input
+                                                            type="text"
+                                                            inputMode="numeric"
+                                                            placeholder="MM/YY"
+                                                            value={cardExpiry}
+                                                            onChange={(e) => {
+                                                                const d = e.target.value
+                                                                    .replace(/\D/g, "")
+                                                                    .slice(0, 4);
+                                                                setCardExpiry(
+                                                                    d.length > 2
+                                                                        ? `${d.slice(0, 2)}/${d.slice(2)}`
+                                                                        : d
+                                                                );
+                                                            }}
+                                                            className="lp-login-input"
+                                                            disabled={checkoutLoading}
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="lp-pay-label">CVV</label>
+                                                    <div className="lp-pay-field">
+                                                        <i className="ti ti-lock" />
+                                                        <input
+                                                            type="password"
+                                                            inputMode="numeric"
+                                                            placeholder="•••"
+                                                            value={cardCvv}
+                                                            onChange={(e) =>
+                                                                setCardCvv(
+                                                                    e.target.value
+                                                                        .replace(/\D/g, "")
+                                                                        .slice(0, 4)
+                                                                )
+                                                            }
+                                                            className="lp-login-input"
+                                                            disabled={checkoutLoading}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                className="lp-login-submit"
+                                                onClick={
+                                                    upgradeMode
+                                                        ? handleConfirmUpgrade
+                                                        : handleConfirmCheckout
+                                                }
+                                                disabled={checkoutLoading}
+                                            >
+                                                {checkoutLoading
+                                                    ? "Processing payment…"
+                                                    : upgradeMode
+                                                      ? `Upgrade & Pay ${checkoutPlan.price}`
+                                                      : `Pay ${checkoutPlan.price} & Continue`}
+                                            </button>
+
+                                            {upgradeMode && (
+                                                <button
+                                                    type="button"
+                                                    className="lp-pay-back"
+                                                    onClick={() => setUpgradeMode(false)}
+                                                    disabled={checkoutLoading}
+                                                >
+                                                    Back to new signup checkout
+                                                </button>
+                                            )}
+
+                                            <div className="lp-pay-secure">
+                                                <i className="ti ti-shield-lock" />
+                                                Demo checkout — no real card is charged
+                                            </div>
                                         </>
                                     )}
-                                </p>
-                                {checkoutError && (
-                                    <div className="lp-login-error">{checkoutError}</div>
-                                )}
-                                {/* Email is only needed for a brand-new organization
-                                    signup — an upgrade already knows who's asking via
-                                    the logged-in session, so this is skipped entirely
-                                    in upgradeMode. */}
-                                {!upgradeMode && (
-                                    <input
-                                        type="email"
-                                        placeholder="Enter your email"
-                                        value={checkoutEmail}
-                                        onChange={(e) => setCheckoutEmail(e.target.value)}
-                                        className="lp-login-input"
-                                        style={{ marginBottom: 10 }}
-                                    />
-                                )}
-                                <input
-                                    type="text"
-                                    placeholder="Card number"
-                                    value={cardNumber}
-                                    onChange={(e) => setCardNumber(e.target.value)}
-                                    className="lp-login-input"
-                                    style={{ marginBottom: 10 }}
-                                />
-                                <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                                    <input
-                                        type="text"
-                                        placeholder="MM/YY"
-                                        value={cardExpiry}
-                                        onChange={(e) => setCardExpiry(e.target.value)}
-                                        className="lp-login-input"
-                                        style={{ marginBottom: 0 }}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="CVV"
-                                        value={cardCvv}
-                                        onChange={(e) => setCardCvv(e.target.value)}
-                                        className="lp-login-input"
-                                        style={{ marginBottom: 0 }}
-                                    />
                                 </div>
-                                <button
-                                    className="lp-login-submit"
-                                    onClick={
-                                        upgradeMode ? handleConfirmUpgrade : handleConfirmCheckout
-                                    }
-                                    disabled={checkoutLoading}
-                                >
-                                    {checkoutLoading
-                                        ? "Processing payment…"
-                                        : upgradeMode
-                                          ? "Upgrade & Pay"
-                                          : "Pay & Continue"}
-                                </button>
-                                {upgradeMode && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setUpgradeMode(false)}
-                                        disabled={checkoutLoading}
-                                        style={{
-                                            width: "100%",
-                                            marginTop: 10,
-                                            background: "transparent",
-                                            border: "none",
-                                            color: "var(--lp-text-muted, #767F92)",
-                                            fontSize: fontSize.sm,
-                                            cursor: "pointer",
-                                        }}
-                                    >
-                                        Back to new signup checkout
-                                    </button>
-                                )}
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
+                            </div>
+                        </div>
+                    );
+                })()}
 
             {/* ---------- "Sign up your organization" popup ---------- */}
             {orgSignupOpen && (
