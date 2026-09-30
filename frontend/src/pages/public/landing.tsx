@@ -91,7 +91,7 @@ const FEATURES = [
 // sits between the "What Alookate is" section and the "Why Choose" section.
 const APPLICATIONS = [
     { icon: "ti-briefcase", label: "Professional Services" },
-    { icon: "ti-handshake", label: "Consulting" },
+    { icon: "ti-bulb", label: "Consulting" },
     { icon: "ti-cpu", label: "IT & Technology" },
     { icon: "ti-settings", label: "Operations" },
     { icon: "ti-heartbeat", label: "Healthcare" },
@@ -1779,405 +1779,136 @@ const Landing = () => {
                     flex-shrink: 0;
                 }
 
-                /* ---------- Sections ---------- */
-                .lp-section { padding: clamp(36px, 6vw, 64px) clamp(20px, 5vw, 56px); text-align: center; }
-                .lp-section-title { font-size: clamp(24px, 4vw, 30px); font-weight: 800; margin: 0 0 8px; color: var(--lp-text); }
-                .lp-section-subtitle { color: var(--lp-muted); margin-bottom: 40px; font-size: 16px; line-height: 1.6; }
+                /* ---------- Sections (redesigned) ---------- */
+                .lp-section { padding: clamp(48px, 7vw, 88px) clamp(20px, 5vw, 56px); text-align: center; }
+                .lp-section-title { font-size: clamp(26px, 4vw, 38px); font-weight: 800; margin: 0 0 12px; color: var(--lp-text); letter-spacing: -0.01em; }
+                .lp-section-subtitle { color: var(--lp-muted); margin: 0 auto 44px; font-size: 16.5px; line-height: 1.65; max-width: 640px; }
+                .lp-about-rail { width: 56px; height: 4px; border-radius: 999px; background: var(--lp-gradient); margin: 0 auto 20px; }
+                .lp-about-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--lp-blue); background: rgba(32,66,151,0.08); border: 1px solid rgba(32,66,151,0.18); padding: 6px 14px; border-radius: 999px; }
+                .lp2-wrap { max-width: 1120px; margin: 0 auto; position: relative; }
 
-                /* ---------- What Alookate is ---------- */
-                .lp-about-section { background: var(--lp-bg); text-align: left; }
-                .lp-about-wrap { max-width: 1020px; margin: 0 auto; }
-                .lp-about-rail {
-                    width: 56px;
-                    height: 4px;
-                    border-radius: 999px;
-                    background: var(--lp-gradient);
-                    margin: 0 auto 20px;
-                }
-                .lp-about-section .lp-section-title,
-                .lp-about-section .lp-section-subtitle { text-align: center; }
-                .lp-about-section .lp-section-subtitle {
-                    max-width: 720px;
-                    margin-left: auto;
-                    margin-right: auto;
-                }
-                .lp-about-lede {
-                    font-size: 15.5px;
-                    color: var(--lp-muted);
-                    line-height: 1.7;
-                    max-width: 720px;
-                    margin: 0 0 18px;
-                    text-align: left;
-                }
-                .lp-about-lede strong { color: var(--lp-text); font-weight: 700; }
-                .lp-about-section .lp-about-rail { margin: 0 0 20px; }
+                /* Stats band overlapping the hero */
+                .lp2-stats-sec { position: relative; z-index: 3; padding: 0 clamp(20px, 5vw, 56px); margin-top: -44px; background: linear-gradient(180deg, transparent 44px, #fff 44px); }
+                .lp2-stats { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); background: #fff; border-radius: 22px; box-shadow: 0 30px 60px -20px rgba(10,18,36,0.35), 0 0 0 1px var(--lp-border); overflow: hidden; }
+                .lp2-stat { padding: 26px 24px; text-align: left; border-left: 1px solid var(--lp-border); }
+                .lp2-stat:first-child { border-left: none; }
+                .lp2-stat-num { white-space: nowrap; font-family: 'Sora', sans-serif; font-weight: 800; font-size: clamp(26px, 3.2vw, 34px); line-height: 1.1; background: var(--lp-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+                .lp2-stat-label { margin-top: 6px; font-size: 14px; color: var(--lp-muted); line-height: 1.45; }
+                @media (max-width: 480px) { .lp2-stat { padding: 20px 16px; } .lp2-stat-num { font-size: 22px; } }
+                @media (max-width: 820px) { .lp2-stats { grid-template-columns: repeat(2, 1fr); } .lp2-stat:nth-child(3) { border-left: none; } .lp2-stat:nth-child(n+3) { border-top: 1px solid var(--lp-border); } }
 
-                .lp-about-grid {
-                    display: grid;
-                    grid-template-columns: 1.1fr 0.9fr;
-                    gap: 40px;
-                    align-items: start;
-                }
-                @media (max-width: 860px) {
-                    .lp-about-grid { grid-template-columns: 1fr; gap: 28px; }
-                }
+                /* What is + industries marquee */
+                .lp-apps-section { background: #fff; padding-bottom: clamp(40px, 6vw, 72px); }
+                .lp2-about { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(28px, 5vw, 64px); align-items: center; text-align: left; margin-bottom: 64px; }
+                .lp2-about h2 { text-align: left; margin-top: 14px; }
+                .lp2-about p { color: var(--lp-muted); font-size: 16.5px; line-height: 1.75; margin: 0; }
+                .lp2-about-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+                .lp2-about-tile { border-radius: 18px; padding: 20px; text-align: left; }
+                .lp2-about-tile i { font-size: 24px; display: block; margin-bottom: 12px; }
+                .lp2-about-tile b { display: block; font-family: 'Sora', sans-serif; font-size: 16px; color: var(--lp-text); margin-bottom: 4px; }
+                .lp2-about-tile span { font-size: 13.5px; color: #4B5B75; line-height: 1.5; display: block; }
+                @media (max-width: 860px) { .lp2-about { grid-template-columns: 1fr; } }
+                .lp2-marquee { overflow: hidden; margin-top: 8px; -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+                .lp2-marquee-track { display: flex; gap: 14px; width: max-content; animation: lp2-scroll 32s linear infinite; }
+                .lp2-marquee:hover .lp2-marquee-track { animation-play-state: paused; }
+                @keyframes lp2-scroll { to { transform: translateX(-50%); } }
+                @media (prefers-reduced-motion: reduce) { .lp2-marquee-track { animation: none; flex-wrap: wrap; width: auto; justify-content: center; } }
+                .lp2-pill { display: inline-flex; align-items: center; gap: 12px; padding: 12px 22px 12px 12px; border-radius: 999px; background: var(--lp-bg); border: 1px solid var(--lp-border); font-family: 'Sora', sans-serif; font-weight: 600; font-size: 15px; color: var(--lp-text); white-space: nowrap; }
+                .lp2-pill i { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--lp-gradient); color: #fff; font-size: 18px; }
 
-                /* Simple, plain-list rows (left-aligned, minimal look) */
-                .lp-about-plain-rows { border-top: 1px solid var(--lp-border); }
-                .lp-about-plain-row {
-                    display: grid;
-                    grid-template-columns: 140px 1fr;
-                    gap: 18px;
-                    padding: 20px 0;
-                    border-bottom: 1px solid var(--lp-border);
-                }
-                @media (max-width: 520px) {
-                    .lp-about-plain-row { grid-template-columns: 1fr; gap: 4px; }
-                }
-                .lp-about-plain-row dt {
-                    font-weight: 700;
-                    font-size: 16px;
-                    color: var(--lp-text);
-                    font-family: 'Sora', sans-serif;
-                    margin: 0;
-                }
-                .lp-about-plain-row dd {
-                    margin: 0;
-                    font-size: 15px;
-                    color: var(--lp-muted);
-                    line-height: 1.6;
-                }
+                /* Why choose: bento */
+                #features { background: var(--lp-bg); }
+                .lp2-bento { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; text-align: left; }
+                .lp2-bento-card { grid-column: span 1; background: #fff; border: 1px solid var(--lp-border); border-radius: 22px; padding: 28px; position: relative; overflow: hidden; transition: box-shadow .2s ease, border-color .2s ease; }
+                .lp2-bento-card:hover { box-shadow: 0 20px 44px rgba(32,66,151,0.13); border-color: #C9DCF7; }
+                .lp2-bento-card.wide { grid-column: span 2; }
+                .lp2-bento-card.dark { background: linear-gradient(150deg, var(--lp-ink) 0%, #16265A 100%); border-color: transparent; color: #B9C9E0; }
+                .lp2-bento-card.dark::after { content: ""; position: absolute; width: 260px; height: 260px; right: -80px; bottom: -100px; border-radius: 50%; background: var(--lp-cyan); opacity: .28; filter: blur(60px); }
+                .lp2-bento-card.tint { background: linear-gradient(150deg, #EAF6FB 0%, #E6F7F3 100%); border-color: #CFE9EF; }
+                .lp2-bento-icon { width: 48px; height: 48px; border-radius: 14px; background: var(--lp-gradient); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 18px; position: relative; z-index: 1; }
+                .lp2-bento-card h3 { font-size: 18px; margin: 0 0 8px; color: var(--lp-text); position: relative; z-index: 1; }
+                .lp2-bento-card.dark h3 { color: #fff; font-size: 22px; }
+                .lp2-bento-card p { margin: 0; font-size: 15px; line-height: 1.65; color: var(--lp-muted); position: relative; z-index: 1; }
+                .lp2-bento-card.dark p { color: #B9C9E0; }
+                @media (max-width: 900px) { .lp2-bento { grid-template-columns: repeat(2, 1fr); } }
+                @media (max-width: 560px) { .lp2-bento { grid-template-columns: 1fr; } .lp2-bento-card.wide { grid-column: span 1; } }
 
-                .lp-about-side-plain {
-                    background: #fff;
-                    border-radius: 16px;
-                    padding: 36px 32px;
-                    box-shadow: 0 20px 40px -12px rgba(17,24,40,0.08);
-                    align-self: center;
-                }
-                .lp-about-side-plain h3 {
-                    font-size: 19px;
-                    margin-bottom: 16px;
-                    font-family: 'Sora', sans-serif;
-                    color: var(--lp-text);
-                }
-                .lp-about-side-plain p {
-                    font-size: 15px;
-                    color: var(--lp-muted);
-                    line-height: 1.7;
-                }
-                .lp-about-side-plain p + p { margin-top: 14px; }
+                /* Old way vs new way */
+                .lp2-vs { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; position: relative; text-align: left; }
+                .lp2-vs-card { border-radius: 24px; padding: clamp(26px, 4vw, 38px); }
+                .lp2-vs-card.old { background: #FBF3F3; border: 1px solid #F3D9D9; }
+                .lp2-vs-card.new { background: linear-gradient(150deg, var(--lp-ink) 0%, #16265A 100%); color: #fff; box-shadow: 0 30px 60px -24px rgba(10,18,36,0.6); position: relative; overflow: hidden; }
+                .lp2-vs-card.new::after { content: ""; position: absolute; width: 300px; height: 300px; top: -120px; right: -100px; border-radius: 50%; background: var(--lp-green); opacity: .25; filter: blur(70px); }
+                .lp2-vs-card h3 { font-size: 21px; margin: 0 0 4px; color: var(--lp-text); }
+                .lp2-vs-card.new h3 { color: #fff; }
+                .lp2-vs-sub { font-size: 14px; color: var(--lp-muted); margin: 0 0 22px; }
+                .lp2-vs-card.new .lp2-vs-sub { color: #9FB4D6; }
+                .lp2-vs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; position: relative; z-index: 1; }
+                .lp2-vs-list li { display: grid; grid-template-columns: 26px 1fr; gap: 12px; font-size: 15px; line-height: 1.6; color: #4B5B75; }
+                .lp2-vs-card.new .lp2-vs-list li { color: #E3ECFA; }
+                .lp2-vs-mark { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; margin-top: 1px; }
+                .lp2-vs-mark.bad { background: #FBDADA; color: #C0392B; }
+                .lp2-vs-mark.good { background: var(--lp-green); color: #06281F; }
+                .lp2-vs-badge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 52px; height: 52px; border-radius: 50%; background: #fff; box-shadow: 0 8px 24px rgba(10,18,36,0.25); display: flex; align-items: center; justify-content: center; font-family: 'Sora', sans-serif; font-weight: 800; font-size: 14px; color: var(--lp-blue); z-index: 2; }
+                @media (max-width: 780px) { .lp2-vs { grid-template-columns: 1fr; } .lp2-vs-badge { display: none; } }
 
-                .lp-about-tag {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: var(--lp-blue);
-                    background: rgba(32,66,151,0.08);
-                    border: 1px solid rgba(32,66,151,0.18);
-                    padding: 5px 12px;
-                    border-radius: 999px;
-                    margin-bottom: 16px;
-                }
+                /* Everything the day needs */
+                .lp-everything-section { background: var(--lp-bg); }
+                .lp2-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; text-align: left; }
+                .lp2-card { background: #fff; border: 1px solid var(--lp-border); border-radius: 20px; padding: 26px; transition: transform .2s ease, box-shadow .2s ease; }
+                .lp2-card:hover { transform: translateY(-3px); box-shadow: 0 18px 40px rgba(32,66,151,0.12); }
+                .lp2-card-icon { width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 21px; margin-bottom: 16px; }
+                .lp2-card:nth-child(4n+1) .lp2-card-icon { background: #EAF2FE; color: #2F6FED; }
+                .lp2-card:nth-child(4n+2) .lp2-card-icon { background: #E8F8F0; color: #16A34A; }
+                .lp2-card:nth-child(4n+3) .lp2-card-icon { background: #F1ECFB; color: #8B5CF6; }
+                .lp2-card:nth-child(4n) .lp2-card-icon { background: #FFF1E0; color: #D97706; }
+                .lp2-card h3 { font-size: 17px; margin: 0 0 8px; color: var(--lp-text); }
+                .lp2-card p { margin: 0; font-size: 15px; line-height: 1.65; color: var(--lp-muted); }
+                @media (max-width: 900px) { .lp2-grid3 { grid-template-columns: repeat(2, 1fr); } }
+                @media (max-width: 560px) { .lp2-grid3 { grid-template-columns: 1fr; } }
 
-                /* ---------- Applications (NEW) ---------- */
-                .lp-apps-section { background: #fff; position: relative; overflow: hidden; }
-                .lp-apps-section::before {
-                    content: "";
-                    position: absolute;
-                    top: -120px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    width: 640px;
-                    height: 320px;
-                    background: radial-gradient(closest-side, rgba(8,161,206,0.10), transparent 70%);
-                    pointer-events: none;
-                }
-                .lp-apps-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-                    gap: 36px 24px;
-                    max-width: 1000px;
-                    margin: 40px auto 0;
-                    position: relative;
-                }
-                .lp-app-item {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 14px;
-                    text-align: center;
-                }
-                .lp-app-icon {
-                    width: 72px;
-                    height: 72px;
-                    border-radius: 22px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 28px;
-                    color: #fff;
-                    background: var(--lp-gradient);
-                    box-shadow: 0 10px 24px rgba(32,66,151,0.22), 0 0 0 6px rgba(32,66,151,0.05);
-                    transition: transform 0.25s ease, box-shadow 0.25s ease;
-                }
-                .lp-app-item:hover .lp-app-icon {
-                    transform: translateY(-6px) scale(1.04);
-                    box-shadow: 0 18px 34px rgba(8,161,206,0.3), 0 0 0 8px rgba(8,161,206,0.08);
-                }
-                .lp-app-label {
-                    font-size: 14.5px;
-                    font-weight: 600;
-                    color: var(--lp-text);
-                    font-family: 'Sora', sans-serif;
-                    line-height: 1.35;
-                }
+                /* How it works */
+                .lp-how-section { background: #fff; }
+                .lp2-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; text-align: left; }
+                .lp2-step { border: 1px solid var(--lp-border); border-radius: 22px; padding: 28px; background: linear-gradient(180deg, #fff, var(--lp-bg)); }
+                .lp2-step-num { width: 44px; height: 44px; border-radius: 50%; background: var(--lp-gradient); color: #fff; font-family: 'Sora', sans-serif; font-weight: 800; font-size: 18px; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; box-shadow: 0 8px 18px rgba(32,66,151,0.28); }
+                .lp2-step h3 { font-size: 19px; margin: 0 0 10px; color: var(--lp-text); }
+                .lp2-step p { font-size: 15px; line-height: 1.7; color: var(--lp-muted); margin: 0 0 16px; }
+                .lp2-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+                .lp2-tag { font-size: 12.5px; font-weight: 600; color: var(--lp-blue); background: rgba(32,66,151,0.08); border: 1px solid rgba(32,66,151,0.16); padding: 5px 12px; border-radius: 999px; }
+                @media (max-width: 780px) { .lp2-steps { grid-template-columns: 1fr; } }
 
-                .lp-feature-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                    gap: 22px;
-                    max-width: 1100px;
-                    margin: 40px auto 0;
-                    text-align: left;
-                }
-                .lp-feature-card {
-                    background: #fff;
-                    border: 1px solid var(--lp-border);
-                    border-radius: 14px;
-                    padding: 28px 26px;
-                    transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
-                }
-                .lp-feature-card:hover {
-                    box-shadow: 0 14px 34px rgba(32,66,151,0.12);
-                    transform: translateY(-4px);
-                    border-color: #C9DCF7;
-                }
-                .lp-feature-icon {
-                    width: 44px;
-                    height: 44px;
-                    border-radius: 11px;
-                    background: var(--lp-gradient);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 20px;
-                    color: #fff;
-                    margin-bottom: 16px;
-                }
-                .lp-feature-title { font-weight: 700; font-size: 16.5px; margin-bottom: 8px; font-family: 'Sora', sans-serif; color: var(--lp-text); }
-                .lp-feature-desc { font-size: 15px; color: var(--lp-muted); line-height: 1.6; }
+                /* Pricing teaser */
+                .lp2-price-sec { background: var(--lp-bg); }
+                .lp2-price-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; text-align: left; }
+                .lp2-price-chip { background: #fff; border: 1px solid var(--lp-border); border-radius: 20px; padding: 22px; position: relative; }
+                .lp2-price-chip.hot { background: var(--lp-gradient); color: #fff; border-color: transparent; box-shadow: 0 24px 44px -16px rgba(32,66,151,0.6); }
+                .lp2-price-chip small { display: block; font-size: 13.5px; font-weight: 600; color: var(--lp-muted); margin-bottom: 8px; }
+                .lp2-price-chip.hot small { color: rgba(255,255,255,0.85); }
+                .lp2-price-chip b { font-family: 'Sora', sans-serif; font-size: 26px; font-weight: 800; color: var(--lp-text); display: block; line-height: 1.15; }
+                .lp2-price-chip.hot b { color: #fff; }
+                .lp2-price-chip span { display: block; margin-top: 8px; font-size: 13.5px; line-height: 1.5; color: var(--lp-muted); }
+                .lp2-price-chip.hot span { color: rgba(255,255,255,0.88); }
+                .lp2-badge { position: absolute; top: -11px; right: 16px; background: #FFB547; color: #3A2500; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+                @media (max-width: 900px) { .lp2-price-row { grid-template-columns: repeat(2, 1fr); } }
+                @media (max-width: 480px) { .lp2-price-row { grid-template-columns: 1fr; } }
 
-                /* ---------- Why teams switch (NEW) ---------- */
-                .lp-switch-section { background: var(--lp-bg); text-align: left; }
-                .lp-switch-wrap { max-width: 1020px; margin: 0 auto; }
-                .lp-switch-section .lp-section-title,
-                .lp-switch-section .lp-section-subtitle { text-align: left; }
-                .lp-switch-section .lp-section-subtitle { max-width: 640px; margin: 0 0 40px; }
-                .lp-switch-cols {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    border: 1px solid var(--lp-border);
-                    border-radius: 16px;
-                    overflow: hidden;
-                    background: #fff;
-                    box-shadow: 0 16px 40px rgba(32,66,151,0.08);
-                }
-                @media (max-width: 780px) {
-                    .lp-switch-cols { grid-template-columns: 1fr; }
-                }
-                .lp-switch-col { padding: 30px 32px; }
-                .lp-switch-col + .lp-switch-col { border-left: 1px solid var(--lp-border); }
-                @media (max-width: 780px) {
-                    .lp-switch-col + .lp-switch-col { border-left: none; border-top: 1px solid var(--lp-border); }
-                }
-                .lp-switch-col h3 { font-size: 18px; margin-bottom: 4px; font-family: 'Sora', sans-serif; color: var(--lp-text); }
-                .lp-switch-col .lp-switch-sub { font-size: 13.5px; color: var(--lp-muted); margin-bottom: 20px; }
-                .lp-switch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
-                .lp-switch-list li { display: grid; grid-template-columns: 22px 1fr; gap: 12px; font-size: 15px; color: var(--lp-text); line-height: 1.6; }
-                .lp-switch-mark {
-                    width: 20px; height: 20px; border-radius: 6px;
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: 12px; font-weight: 700; margin-top: 2px; flex-shrink: 0;
-                }
-                .lp-switch-mark.bad { background: #FEECEC; color: #C0392B; }
-                .lp-switch-mark.good { background: #E4F6F2; color: #1E8F7E; }
-
-                /* ---------- Everything the day needs (NEW) ---------- */
-                .lp-everything-section { background: var(--lp-bg); text-align: left; }
-                .lp-everything-wrap { max-width: 1020px; margin: 0 auto; }
-                .lp-everything-section .lp-section-title,
-                .lp-everything-section .lp-section-subtitle { text-align: left; }
-                .lp-everything-section .lp-section-subtitle { max-width: 640px; margin: 0 0 40px; }
-                .lp-everything-grid {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 1px;
-                    background: var(--lp-border);
-                    border: 1px solid var(--lp-border);
-                    border-radius: 16px;
-                    overflow: hidden;
-                }
-                @media (max-width: 900px) {
-                    .lp-everything-grid { grid-template-columns: repeat(2, 1fr); }
-                }
-                @media (max-width: 560px) {
-                    .lp-everything-grid { grid-template-columns: 1fr; }
-                }
-                .lp-everything-card {
-                    background: #fff;
-                    padding: 28px 26px;
-                    transition: background 0.2s ease;
-                }
-                .lp-everything-card:hover { background: var(--lp-bg); }
-                .lp-everything-icon {
-                    width: 42px;
-                    height: 42px;
-                    border-radius: 12px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    margin-bottom: 16px;
-                    background: var(--lp-gradient);
-                    color: #fff;
-                    box-shadow: 0 6px 16px rgba(32,66,151,0.22);
-                }
-                .lp-everything-icon i { font-size: 19px; }
-                .lp-everything-title {
-                    font-weight: 700;
-                    font-size: 16.5px;
-                    margin-bottom: 7px;
-                    font-family: 'Sora', sans-serif;
-                    color: var(--lp-text);
-                }
-                .lp-everything-desc { font-size: 15px; color: var(--lp-muted); line-height: 1.6; }
-
-                /* ---------- How it works, in four moves (NEW) ---------- */
-                .lp-how-section { background: var(--lp-bg); text-align: left; }
-                .lp-how-wrap { max-width: 1020px; margin: 0 auto; }
-                .lp-how-section .lp-section-title,
-                .lp-how-section .lp-section-subtitle { text-align: left; }
-                .lp-how-section .lp-section-subtitle { max-width: 640px; margin: 0 0 8px; }
-                .lp-how-steps { margin-top: 38px; border-top: 1px solid var(--lp-border); }
-                .lp-how-step {
-                    display: grid;
-                    grid-template-columns: 60px 1fr;
-                    gap: 22px;
-                    padding: 26px 0;
-                    border-bottom: 1px solid var(--lp-border);
-                    align-items: start;
-                    position: relative;
-                }
-                .lp-how-step:not(:last-child)::after {
-                    content: "";
-                    position: absolute;
-                    left: 29px;
-                    top: 56px;
-                    bottom: -1px;
-                    width: 2px;
-                    background: linear-gradient(180deg, rgba(32,66,151,0.25), rgba(8,161,206,0.06));
-                }
-                @media (max-width: 560px) {
-                    .lp-how-step { grid-template-columns: 36px 1fr; gap: 14px; }
-                    .lp-how-step:not(:last-child)::after { left: 17px; top: 44px; }
-                }
-                .lp-how-num {
-                    font-family: 'Sora', sans-serif;
-                    font-weight: 800;
-                    font-size: 30px;
-                    line-height: 1;
-                    background: var(--lp-gradient);
-                    -webkit-background-clip: text;
-                    background-clip: text;
-                    color: transparent;
-                    position: relative;
-                    z-index: 1;
-                }
-                .lp-how-step h3 {
-                    font-size: 18px;
-                    margin-bottom: 8px;
-                    color: var(--lp-text);
-                }
-                .lp-how-step p {
-                    font-size: 15px;
-                    color: var(--lp-muted);
-                    line-height: 1.65;
-                    margin: 0 0 14px;
-                }
-                .lp-how-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-                .lp-how-tag {
-                    font-size: 12.5px;
-                    font-weight: 600;
-                    color: var(--lp-blue);
-                    background: rgba(32,66,151,0.08);
-                    border: 1px solid rgba(32,66,151,0.16);
-                    padding: 5px 12px;
-                    border-radius: 999px;
-                }
-
-                /* ---------- Bottom CTA: "See it run on your own working day" (NEW) ---------- */
-                .lp-cta-section {
-                    background: linear-gradient(160deg, var(--lp-ink) 0%, var(--lp-ink-soft) 55%, #142146 100%);
-                    color: #B9C9E0;
-                    text-align: left;
-                    position: relative;
-                    overflow: hidden;
-                }
-                .lp-cta-wrap { max-width: 1020px; margin: 0 auto; position: relative; z-index: 1; }
-                .lp-cta-title {
-                    font-size: clamp(26px, 4vw, 38px);
-                    font-weight: 800;
-                    color: #fff;
-                    margin: 0 0 16px;
-                    max-width: 18em;
-                }
-                .lp-cta-desc {
-                    font-size: 16px;
-                    color: #B9C9E0;
-                    max-width: 38em;
-                    line-height: 1.65;
-                    margin: 0 0 30px;
-                }
+                /* Bottom CTA */
+                .lp-cta-section { background: #fff; padding-top: clamp(32px, 5vw, 64px); }
+                .lp2-cta { position: relative; overflow: hidden; border-radius: 32px; padding: clamp(36px, 6vw, 72px); text-align: left; color: #B9C9E0; background: linear-gradient(150deg, var(--lp-ink) 0%, #16265A 60%, #0E4A66 100%); display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: center; }
+                .lp-cta-title { font-size: clamp(28px, 4.2vw, 42px); font-weight: 800; color: #fff; margin: 0 0 16px; line-height: 1.15; }
+                .lp-cta-desc { font-size: 16.5px; line-height: 1.7; color: #B9C9E0; margin: 0 0 28px; max-width: 34em; }
                 .lp-cta-actions { display: flex; gap: 14px; flex-wrap: wrap; }
-                .lp-cta-btn-primary {
-                    background: #fff;
-                    color: var(--lp-ink);
-                    border: none;
-                    border-radius: 9px;
-                    padding: 13px 26px;
-                    min-height: 44px;
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    box-sizing: border-box;
-                    font-weight: 700;
-                    cursor: pointer;
-                    font-size: 15px;
-                    font-family: inherit;
-                    box-shadow: 0 12px 24px rgba(0,0,0,0.35);
-                    transition: transform 0.15s ease;
-                }
-                .lp-cta-btn-primary:hover { transform: translateY(-1px); }
-                .lp-cta-btn-secondary {
-                    background: transparent;
-                    color: #fff;
-                    border: 1px solid rgba(255,255,255,0.35);
-                    border-radius: 9px;
-                    padding: 13px 26px;
-                    min-height: 44px;
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    box-sizing: border-box;
-                    font-weight: 700;
-                    cursor: pointer;
-                    font-size: 15px;
-                    font-family: inherit;
-                    transition: border-color 0.15s ease, background 0.15s ease;
-                }
-                .lp-cta-btn-secondary:hover { border-color: #fff; background: rgba(255,255,255,0.08); }
+                .lp-cta-btn-primary, .lp-cta-btn-secondary { min-height: 48px; padding: 13px 28px; border-radius: 12px; font-weight: 700; font-size: 15.5px; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-sizing: border-box; transition: transform .15s ease, background .15s ease; }
+                .lp-cta-btn-primary { background: linear-gradient(135deg, #FFB547, #FF8A3D); color: #2A1500; border: none; box-shadow: 0 14px 28px rgba(255,138,61,0.35); }
+                .lp-cta-btn-secondary { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.4); }
+                .lp-cta-btn-primary:hover, .lp-cta-btn-secondary:hover { transform: translateY(-2px); }
+                .lp-cta-btn-secondary:hover { background: rgba(255,255,255,0.09); }
+                .lp2-cta-list { list-style: none; margin: 0; padding: 22px; border-radius: 20px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); display: flex; flex-direction: column; gap: 14px; position: relative; z-index: 1; }
+                .lp2-cta-list li { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; color: #E3ECFA; line-height: 1.5; }
+                .lp2-cta-list i { color: var(--lp-green); font-size: 20px; }
+                .lp2-cta-left { position: relative; z-index: 1; }
+                @media (max-width: 860px) { .lp2-cta { grid-template-columns: 1fr; } }
 
                 /* ---------- Testimonial (social proof) ---------- */
                 .lp-testimonial-card {
@@ -2313,44 +2044,20 @@ const Landing = () => {
                 .lp-price-btn.secondary { background: #fff; color: var(--lp-text); border: 1px solid #CBD5E1; }
                 .lp-price-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
 
-                /* ---------- Footer ---------- */
-                .lp-footer {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 22px clamp(20px, 5vw, 56px);
-                    background: var(--lp-ink);
-                    color: #8FA3C4;
-                    font-size: 12.5px;
-                    flex-wrap: wrap;
-                    gap: 12px;
-                }
+                /* ---------- Footer (redesigned) ---------- */
+                .lp-footer { text-align: left; background: var(--lp-ink); color: #8FA3C4; padding: 56px clamp(20px, 5vw, 56px) 0; font-size: 14px; }
+                .lp2-foot { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 40px; padding-bottom: 40px; }
+                .lp2-foot img { height: 40px; border-radius: 8px; margin-bottom: 14px; }
+                .lp2-foot p { margin: 0; line-height: 1.7; max-width: 26em; }
+                .lp2-foot h4 { color: #fff; font-family: 'Sora', sans-serif; font-size: 15px; margin: 0 0 14px; }
+                .lp2-foot button, .lp-footer a { background: none; border: none; padding: 0; font: inherit; color: #8FA3C4; text-decoration: none; cursor: pointer; display: flex; align-items: center; min-height: 36px; text-align: left; }
+                .lp2-foot button:hover, .lp-footer a:hover { color: #fff; }
+                .lp2-foot-bar { max-width: 1120px; margin: 0 auto; border-top: 1px solid #1E2A47; padding: 14px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; }
                 .lp-footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
-                .lp-footer a {
-                    display: inline-flex;
-                    align-items: center;
-                    /* FIX (#1): footer links were bare text with no
-                       padding — this brings the hit area to 44px tall. */
-                    min-height: 44px;
-                    padding: 4px 2px;
-                    box-sizing: border-box;
-                    color: #8FA3C4;
-                    text-decoration: none;
-                }
-                .lp-footer a:hover { color: #fff; }
-                /* New: social profile links (fix #4) */
                 .lp-footer-social { display: flex; gap: 8px; }
-                .lp-footer-social a {
-                    width: 44px;
-                    height: 44px;
-                    min-height: 44px;
-                    border-radius: 10px;
-                    border: 1px solid #26314F;
-                    justify-content: center;
-                    font-size: 16px;
-                    padding: 0;
-                }
+                .lp-footer-social a { width: 44px; height: 44px; min-height: 44px; border-radius: 10px; border: 1px solid #26314F; justify-content: center; font-size: 16px; }
                 .lp-footer-social a:hover { border-color: #08A1CE; }
+                @media (max-width: 720px) { .lp2-foot { grid-template-columns: 1fr 1fr; } .lp2-foot > div:first-child { grid-column: 1 / -1; } }
 
                 /* ---------- Checkout modal ---------- */
                 .lp-checkout-overlay {
@@ -3114,86 +2821,138 @@ const Landing = () => {
                 </div>
             </section>
 
-            {/* ---------- Applications (NEW) ---------- */}
+            {/* ---------- Stats band (overlaps hero) ---------- */}
+            <div className="lp2-stats-sec">
+                <div className="lp2-stats">
+                    {[
+                        ["1 click", "Smart Allocation across everyone marked present"],
+                        ["4 roles", "Super admin, admin, manager and user"],
+                        ["₹0", "to start, on the Free plan"],
+                        ["0 installs", "Runs in any browser, on any device"],
+                    ].map(([n, l]) => (
+                        <div key={n} className="lp2-stat">
+                            <div className="lp2-stat-num">{n}</div>
+                            <div className="lp2-stat-label">{l}</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* ---------- What is + industries ---------- */}
             <section id="applications" className="lp-section lp-apps-section">
-                <h2 className="lp-section-title" style={{ marginBottom: 8 }}>
-                    What is Alookate
-                </h2>
-                <p className="lp-section-subtitle" style={{ maxWidth: 720, margin: "0 auto 32px" }}>
-                    Alookate is a workforce allocation system for teams that handle daily case work.
-                    It keeps track of your clients, the services you deliver, your people and every
-                    case that moves between them — and hands out today's work to whoever is actually
-                    present, without a spreadsheet or a single person holding it all together.
-                </p>
-                <span className="lp-about-tag" style={{ display: "table", margin: "0 auto 16px" }}>
-                    <i className="ti ti-apps" /> Applications
-                </span>
-                <h2 className="lp-section-title">Where Alookate Delivers Results</h2>
-                <p className="lp-section-subtitle">
-                    Built for teams that move cases, not tickets — across every kind of service
-                    floor.
-                </p>
-                <div className="lp-apps-grid">
-                    {APPLICATIONS.map((a) => (
-                        <div key={a.label} className="lp-app-item">
-                            <div className="lp-app-icon">
-                                <i className={`ti ${a.icon}`} />
-                            </div>
-                            <div className="lp-app-label">{a.label}</div>
+                <div className="lp2-wrap">
+                    <div className="lp2-about">
+                        <div>
+                            <span className="lp-about-tag">
+                                <i className="ti ti-sparkles" /> What is Alookate
+                            </span>
+                            <h2 className="lp-section-title">
+                                Daily case work, handed out fairly and tracked end to end.
+                            </h2>
+                            <p>
+                                Alookate keeps track of your clients, the services you deliver, your
+                                people and every case that moves between them, then hands out
+                                today's work to whoever is actually present. No spreadsheet, and no
+                                single person holding it all together.
+                            </p>
                         </div>
-                    ))}
+                        <div className="lp2-about-tiles">
+                            {ABOUT_DEFS.map((a) => (
+                                <div
+                                    key={a.title}
+                                    className="lp2-about-tile"
+                                    style={{ background: a.bg }}
+                                >
+                                    <i className={`ti ${a.icon}`} style={{ color: a.fg }} />
+                                    <b>{a.title}</b>
+                                    <span>{a.desc}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <h2 className="lp-section-title">Where Alookate delivers results</h2>
+                    <p className="lp-section-subtitle" style={{ marginBottom: 28 }}>
+                        Built for teams that move cases, not tickets, across every kind of service
+                        floor.
+                    </p>
+                    <div className="lp2-marquee">
+                        <div className="lp2-marquee-track">
+                            {[...APPLICATIONS, ...APPLICATIONS].map((a, i) => (
+                                <span key={a.label + i} className="lp2-pill">
+                                    <i className={`ti ${a.icon}`} />
+                                    {a.label}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </section>
 
-            {/* ---------- Why choose ---------- */}
+            {/* ---------- Why choose (bento) ---------- */}
             <section id="features" className="lp-section">
-                <h2 className="lp-section-title">Why Choose Workforce Allocation?</h2>
-                <div className="lp-feature-grid">
-                    {FEATURES.map((f) => (
-                        <div key={f.title} className="lp-feature-card">
-                            <div className="lp-feature-icon">
-                                <i className={`ti ${f.icon}`} />
-                            </div>
-                            <div className="lp-feature-title">{f.title}</div>
-                            <div className="lp-feature-desc">{f.desc}</div>
-                        </div>
-                    ))}
+                <div className="lp2-wrap">
+                    <h2 className="lp-section-title">Why choose Workforce Allocation?</h2>
+                    <p className="lp-section-subtitle">
+                        The right people on the right work, with security and control built in.
+                    </p>
+                    <div className="lp2-bento">
+                        {FEATURES.map((f, i) => {
+                            const variant =
+                                i === 0
+                                    ? "wide dark"
+                                    : i === 5
+                                      ? "wide tint"
+                                      : i >= 6
+                                        ? "wide"
+                                        : "";
+                            return (
+                                <div key={f.title} className={`lp2-bento-card ${variant}`}>
+                                    <div className="lp2-bento-icon">
+                                        <i className={`ti ${f.icon}`} />
+                                    </div>
+                                    <h3>{f.title}</h3>
+                                    <p>{f.desc}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             </section>
 
-            {/* ---------- Why teams switch (NEW) ---------- */}
-            <section id="switch" className="lp-section lp-switch-section">
-                <div className="lp-switch-wrap">
-                    <div className="lp-about-rail" />
-                    <h2 className="lp-section-title">Spreadsheets Work — Until Someone's Away</h2>
+            {/* ---------- Old way vs new way ---------- */}
+            <section id="switch" className="lp-section">
+                <div className="lp2-wrap">
+                    <h2 className="lp-section-title">Spreadsheets work, until someone's away</h2>
                     <p className="lp-section-subtitle">
                         Allocation by spreadsheet holds up right until the one person who owns it
-                        takes a day off. Here's what changes once that job belongs to a system
-                        instead.
+                        takes a day off. Here's what changes when the system owns the job.
                     </p>
-                    <div className="lp-switch-cols">
-                        <div className="lp-switch-col">
-                            <h3>The Usual Monday</h3>
-                            <p className="lp-switch-sub">
-                                What allocation looks like without a system
-                            </p>
-                            <ul className="lp-switch-list">
-                                {OLD_WAY.map((point, i) => (
+                    <div className="lp2-vs">
+                        <div className="lp2-vs-card old">
+                            <h3>The usual Monday</h3>
+                            <p className="lp2-vs-sub">Allocation without a system</p>
+                            <ul className="lp2-vs-list">
+                                {OLD_WAY.map((p, i) => (
                                     <li key={i}>
-                                        <span className="lp-switch-mark bad">✕</span>
-                                        <span>{point}</span>
+                                        <span className="lp2-vs-mark bad">
+                                            <i className="ti ti-x" />
+                                        </span>
+                                        <span>{p}</span>
                                     </li>
                                 ))}
                             </ul>
                         </div>
-                        <div className="lp-switch-col">
-                            <h3>The Same Monday, on Alookate</h3>
-                            <p className="lp-switch-sub">What the system takes off your plate</p>
-                            <ul className="lp-switch-list">
-                                {NEW_WAY.map((point, i) => (
+                        <div className="lp2-vs-badge">VS</div>
+                        <div className="lp2-vs-card new">
+                            <h3>The same Monday, on Alookate</h3>
+                            <p className="lp2-vs-sub">What the system takes off your plate</p>
+                            <ul className="lp2-vs-list">
+                                {NEW_WAY.map((p, i) => (
                                     <li key={i}>
-                                        <span className="lp-switch-mark good">✓</span>
-                                        <span>{point}</span>
+                                        <span className="lp2-vs-mark good">
+                                            <i className="ti ti-check" />
+                                        </span>
+                                        <span>{p}</span>
                                     </li>
                                 ))}
                             </ul>
@@ -3202,50 +2961,46 @@ const Landing = () => {
                 </div>
             </section>
 
-            {/* ---------- Everything the day needs (NEW) ---------- */}
+            {/* ---------- Everything the day needs ---------- */}
             <section className="lp-section lp-everything-section">
-                <div className="lp-everything-wrap">
-                    <div className="lp-about-rail" />
-                    <h2 className="lp-section-title">Everything the Day Needs</h2>
+                <div className="lp2-wrap">
+                    <h2 className="lp-section-title">Everything the day needs</h2>
                     <p className="lp-section-subtitle">
-                        The small things that decide whether a system gets used after week two.
+                        The small things that decide whether a system is still used after week two.
                     </p>
-                    <div className="lp-everything-grid">
+                    <div className="lp2-grid3">
                         {EVERYTHING.map((f) => (
-                            <div key={f.title} className="lp-everything-card">
-                                <div className="lp-everything-icon">
+                            <div key={f.title} className="lp2-card">
+                                <div className="lp2-card-icon">
                                     <i className={`ti ${f.icon}`} />
                                 </div>
-                                <div className="lp-everything-title">{f.title}</div>
-                                <div className="lp-everything-desc">{f.desc}</div>
+                                <h3>{f.title}</h3>
+                                <p>{f.desc}</p>
                             </div>
                         ))}
                     </div>
                 </div>
             </section>
 
-            {/* ---------- How it works, in four moves (NEW) ---------- */}
+            {/* ---------- How it works ---------- */}
             <section className="lp-section lp-how-section">
-                <div className="lp-how-wrap">
-                    <div className="lp-about-rail" />
-                    <h2 className="lp-section-title">How It Works, in Four Moves</h2>
+                <div className="lp2-wrap">
+                    <h2 className="lp-section-title">How it works, in four moves</h2>
                     <p className="lp-section-subtitle">
                         Set up once, then repeat three steps every working day.
                     </p>
-                    <div className="lp-how-steps">
+                    <div className="lp2-steps">
                         {STEPS.map((s, i) => (
-                            <div key={s.title} className="lp-how-step">
-                                <div className="lp-how-num">{i + 1}</div>
-                                <div>
-                                    <h3>{s.title}</h3>
-                                    <p>{s.desc}</p>
-                                    <div className="lp-how-tags">
-                                        {s.tags.map((t) => (
-                                            <span key={t} className="lp-how-tag">
-                                                {t}
-                                            </span>
-                                        ))}
-                                    </div>
+                            <div key={s.title} className="lp2-step">
+                                <div className="lp2-step-num">{i + 1}</div>
+                                <h3>{s.title}</h3>
+                                <p>{s.desc}</p>
+                                <div className="lp2-tags">
+                                    {s.tags.map((t) => (
+                                        <span key={t} className="lp2-tag">
+                                            {t}
+                                        </span>
+                                    ))}
                                 </div>
                             </div>
                         ))}
@@ -3253,52 +3008,135 @@ const Landing = () => {
                 </div>
             </section>
 
-            {/* ---------- Bottom CTA: "See it run on your own working day" (NEW) ---------- */}
-            <section id="demo" className="lp-section lp-cta-section">
-                <div className="lp-hero-glow g1" style={{ top: -140, right: -80 }} />
-                <div className="lp-hero-glow g2" style={{ bottom: -140, left: -100 }} />
-                <div className="lp-cta-wrap">
-                    <h2 className="lp-cta-title">See it run on your own working day.</h2>
-                    <p className="lp-cta-desc">
-                        Tell us how many people you allocate to and which services you run. We'll
-                        set up a walkthrough on data that looks like yours, and you'll know inside
-                        half an hour whether it fits.
+            {/* ---------- Pricing teaser ---------- */}
+            <section className="lp-section lp2-price-sec">
+                <div className="lp2-wrap">
+                    <h2 className="lp-section-title">Start free. Upgrade when your team grows.</h2>
+                    <p className="lp-section-subtitle">
+                        Plans from ₹0 to custom pricing, with no setup fee to get started.
                     </p>
-                    <div className="lp-cta-actions">
-                        <button className="lp-cta-btn-primary" onClick={() => setDemoOpen(true)}>
-                            Book a demo
+                    <div className="lp2-price-row">
+                        {PLANS.map((p) => (
+                            <div
+                                key={p.name}
+                                className={`lp2-price-chip ${p.highlighted ? "hot" : ""}`}
+                            >
+                                {p.highlighted && <span className="lp2-badge">{p.badge}</span>}
+                                <small>{p.name}</small>
+                                <b>{p.price}</b>
+                                <span>{p.period || p.desc}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="lp-cta-actions" style={{ justifyContent: "center" }}>
+                        <button className="lp-cta-btn-primary" onClick={() => setPricingOpen(true)}>
+                            Compare plans <i className="ti ti-arrow-right" />
                         </button>
                         <button
                             className="lp-cta-btn-secondary"
-                            onClick={() => scrollTo("overview")}
+                            style={{
+                                color: "var(--lp-blue)",
+                                borderColor: "#C9DCF7",
+                                background: "#fff",
+                            }}
+                            onClick={() => navigate("/login")}
                         >
-                            Back to the top
+                            Start free
                         </button>
                     </div>
                 </div>
             </section>
 
-            <footer className="lp-footer">
-                <span>© {new Date().getFullYear()} Workforce Allocation. All rights reserved.</span>
-                <div className="lp-footer-links">
-                    <a href="#">Privacy Policy</a>
-                    <a href="#">Terms of Use</a>
-                </div>
-                {SOCIAL_LINKS.length > 0 && (
-                    <div className="lp-footer-social">
-                        {SOCIAL_LINKS.map((s) => (
-                            <a
-                                key={s.label}
-                                href={s.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={s.label}
-                            >
-                                <i className={`ti ${s.icon}`} aria-hidden="true" />
-                            </a>
-                        ))}
+            {/* ---------- Bottom CTA ---------- */}
+            <section id="demo" className="lp-section lp-cta-section">
+                <div className="lp2-wrap">
+                    <div className="lp2-cta">
+                        <div className="lp-hero-glow g1" style={{ top: -140, right: -80 }} />
+                        <div className="lp-hero-glow g2" style={{ bottom: -160, left: -100 }} />
+                        <div className="lp2-cta-left">
+                            <h2 className="lp-cta-title">See it run on your own working day.</h2>
+                            <p className="lp-cta-desc">
+                                Tell us how many people you allocate to and which services you run.
+                                We'll set up a walkthrough on data that looks like yours.
+                            </p>
+                            <div className="lp-cta-actions">
+                                <button
+                                    className="lp-cta-btn-primary"
+                                    onClick={() => setDemoOpen(true)}
+                                >
+                                    Book a demo <i className="ti ti-arrow-right" />
+                                </button>
+                                <button
+                                    className="lp-cta-btn-secondary"
+                                    onClick={() => scrollTo("overview")}
+                                >
+                                    Back to the top
+                                </button>
+                            </div>
+                        </div>
+                        <ul className="lp2-cta-list">
+                            {[
+                                "A walkthrough on data that looks like yours",
+                                "You'll know inside half an hour whether it fits",
+                                "Free plan available, no setup fee",
+                            ].map((t) => (
+                                <li key={t}>
+                                    <i className="ti ti-circle-check" />
+                                    {t}
+                                </li>
+                            ))}
+                        </ul>
                     </div>
-                )}
+                </div>
+            </section>
+
+            {/* ---------- Footer ---------- */}
+            <footer className="lp-footer">
+                <div className="lp2-foot">
+                    <div>
+                        <img src="/Logo.jpg" alt="Alookate" />
+                        <p>
+                            Workforce allocation for teams that handle daily case work, from first
+                            entry to final bill.
+                        </p>
+                    </div>
+                    <div>
+                        <h4>Explore</h4>
+                        <button onClick={() => scrollTo("features")}>Why Alookate</button>
+                        <button onClick={() => scrollTo("switch")}>Spreadsheet vs system</button>
+                        <button onClick={() => setScreensOpen(true)}>A look inside</button>
+                    </div>
+                    <div>
+                        <h4>Get started</h4>
+                        <button onClick={() => setPricingOpen(true)}>Plans and pricing</button>
+                        <button onClick={() => setDemoOpen(true)}>Book a demo</button>
+                        <button onClick={() => navigate("/login")}>Log in</button>
+                    </div>
+                </div>
+                <div className="lp2-foot-bar">
+                    <span>
+                        © {new Date().getFullYear()} Workforce Allocation. All rights reserved.
+                    </span>
+                    <div className="lp-footer-links">
+                        <a href="#">Privacy Policy</a>
+                        <a href="#">Terms of Use</a>
+                    </div>
+                    {SOCIAL_LINKS.length > 0 && (
+                        <div className="lp-footer-social">
+                            {SOCIAL_LINKS.map((s) => (
+                                <a
+                                    key={s.label}
+                                    href={s.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={s.label}
+                                >
+                                    <i className={`ti ${s.icon}`} aria-hidden="true" />
+                                </a>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </footer>
 
             {/* ---------- "A look inside" — now a FULL-PAGE takeover (NEW —

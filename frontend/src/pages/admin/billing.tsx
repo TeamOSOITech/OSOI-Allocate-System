@@ -1,24 +1,54 @@
 // src/pages/admin/billing.tsx
 //
-// Billing — Admin-only overview of every Client and the rates (per
-// service) they're being charged. Reuses GET /api/clients as-is: each
-// client row already comes back with `products` — every service linked
-// to that client via the client_products junction table, each carrying
-// its own `amount`/`currency` (see products.service.js's
-// getProductsForClient / clients.controller.js's toClientResponse).
+// Billing — earnings report + invoice generator (Super Admin only).
+// Styled to match dailywork.tsx (same panels, gradient headers, KPI cards,
+// pills, pagination, modals). Logic is unchanged.
 //
-// This page is READ-ONLY. To actually change a client's services or
-// rates, that still happens on the Clients page's Edit modal — this is
-// just a clean, billing-focused view across every client at once
-// (search, KPI totals, one card per client with a Service/Price table).
+// HOW EARNING IS CALCULATED
+//   earning = (number of billable cases) x (rate for that client + service)
+//   * Rates come from GET /api/clients -> each client's `products`
+//     (the client_products junction: amount + currency per service). They
+//     are still edited on the Clients page's Edit modal.
+//   * Cases come from GET /api/service-cases (same endpoint the Production
+//     Report uses), fetched for the chosen date range with
+//     submissionStatus=SUBMITTED. A case is BILLABLE only when its
+//     submissionType is COMPLETED, DONE_BY_TEAM or DONE_BY_CLIENT. An
+//     unresolved QUERY is not counted until someone marks it completed.
+//   * A case whose client+service pair has no rate is counted separately
+//     as "missing rate" and adds 0 to the earning (never guessed).
+//   * Every line is shown in ITS OWN client's currency (the client's Unit).
+//
+// CURRENCY TOTALS
+//   * If every client in the period uses the same currency, totals are
+//     shown in that currency, exactly as before.
+//   * If the period mixes currencies (INR, USD, ...), a "Show totals in"
+//     dropdown appears. Picking a currency converts the KPI totals, the
+//     service cards and the table total into it.
+//   * Exchange rates come from open.er-api.com (free, no key, updates once
+//     a day) and are cached in localStorage for 12 hours. The invoice PDF is
+//     NOT converted: it is still one invoice per client currency.
+//
+// FLOW
+//   1. Pick a date range -> the TOTAL earning for the period is shown.
+//   2. Narrow it down by Service (dropdown or by clicking a service card),
+//      Client, Employee or Work type -> the FILTERED earning is shown next
+//      to the total.
+//   3. "Generate Invoice" opens a popup with the filtered lines, where the
+//      Bill To / From / tax / notes can be edited, and a Download PDF
+//      button.
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import type { CSSProperties } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { authFetch } from "../../utils/authFetch";
-import { fontSize, fontWeight, radius } from "../../styles/theme";
+import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { useTheme } from "../../context/themecontext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
+const CASE_PAGE_SIZE = 5000;
+const FROM_KEY = "billing.invoice.from";
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -40,68 +70,405 @@ const BRAND = {
     grey: "#9CA3AF",
     amber: "#F59E0B",
 };
-const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
+const GRADIENT = "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))";
 
-// Small injected stylesheet so cards/rows get real :hover states (inline
-// style objects can't express :hover on their own) — same pattern as
-// profile.tsx's getHoverCss.
 const HOVER_CSS = `
-.bl-kpi { transition: transform .18s ease, box-shadow .18s ease; }
-.bl-kpi:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(var(--brand-blue-rgb, 32,66,151), 0.14); }
-.bl-card { transition: box-shadow .18s ease, transform .18s ease; }
-.bl-card:hover { box-shadow: 0 14px 34px rgba(17,24,39,0.09); transform: translateY(-1px); }
-.bl-row { transition: background .15s ease; border-radius: 10px; }
-.bl-row:hover { background: #F7F9FF; }
-.bl-search:focus-within { box-shadow: 0 0 0 3px rgba(var(--brand-blue-rgb, 32,66,151), 0.12); }
+.bl-svc { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; cursor: pointer; }
+.bl-svc:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(var(--brand-blue-rgb, 32,66,151), 0.14); }
+.bl-row { transition: background .15s ease; }
+.bl-row:hover { background: rgba(var(--brand-blue-rgb, 32,66,151), 0.05) !important; }
+.bl-btn:focus-visible, .bl-svc:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
 `;
 
+// ---------- types ----------
+type Product = { id: string | number; product_name: string };
+type Employee = { id: string; name: string };
 type ClientProduct = {
-    id: number;
+    id: number | string;
     product_name: string;
     amount: number | string | null;
     currency: string | null;
 };
-
 type ClientRow = {
-    id: number;
+    id: number | string;
     name: string;
-    country: string | null;
-    status: "Active" | "Inactive";
-    subclients: number;
+    country?: string | null;
     products?: ClientProduct[];
 };
+type SubmissionType = "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | null;
+type CaseRow = {
+    id: string;
+    caseNumber: string;
+    productId: string | number;
+    productName: string | null;
+    clientId: string | number | null;
+    clientName: string | null;
+    workDate: string;
+    assignedEmployeeId: string | null;
+    submissionType: SubmissionType;
+};
 
-function formatMoney(amount: number | string | null, currency: string | null): string {
-    if (amount === null || amount === undefined || amount === "") return "—";
-    const num = Number(amount);
-    if (Number.isNaN(num)) return "—";
-    const symbol =
-        { USD: "$", GBP: "£", EUR: "€", INR: "₹", AUD: "A$", CAD: "C$" }[currency || "USD"] ||
-        `${currency || ""} `;
-    return `${symbol}${num.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+// One case with its resolved rate.
+type PricedCase = {
+    row: CaseRow;
+    rate: number | null; // null = no rate set for this client + service
+    currency: string;
+};
+
+// One line of the earnings table / invoice: same client + service.
+type Group = {
+    key: string;
+    clientId: string;
+    clientName: string;
+    productId: string;
+    productName: string;
+    cases: number;
+    rate: number | null;
+    currency: string;
+    amount: number; // 0 when unpriced
+};
+
+const BILLABLE: SubmissionType[] = ["COMPLETED", "DONE_BY_TEAM", "DONE_BY_CLIENT"];
+
+// ---------- helpers ----------
+function todayStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+function firstOfMonthStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function fmtDate(iso: string) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return y && m && d ? `${d}-${m}-${y}` : iso;
 }
 
+// Screen + PDF use the same formatter so the preview matches the file.
+// PDF fonts (Helvetica) can't draw the rupee sign, so INR is "Rs." and
+// other currencies use their code — only USD gets a symbol.
+function money(amount: number, currency: string): string {
+    const cur = (currency || "USD").toUpperCase();
+    const locale = cur === "INR" ? "en-IN" : "en-US";
+    const num = amount.toLocaleString(locale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    if (cur === "INR") return `Rs. ${num}`;
+    if (cur === "USD") return `$${num}`;
+    return `${cur} ${num}`;
+}
+
+// One line per currency (never adds different currencies together).
+// Returns "—" when nothing is priced.
+function formatTotals(totals: Record<string, number>, sep = "\n"): string {
+    const entries = Object.entries(totals);
+    if (entries.length === 0) return "—";
+    return entries.map(([cur, v]) => money(v, cur)).join(sep);
+}
+
+function addTo(totals: Record<string, number>, currency: string, value: number) {
+    totals[currency] = (totals[currency] || 0) + value;
+}
+
+// Same rule the Edit Client form uses to pick its "Unit" (see clients.tsx):
+// a rate with no saved currency takes the client's country currency.
+const COUNTRY_CURRENCY_MAP: Record<string, string> = {
+    usa: "USD",
+    "united states": "USD",
+    "united states of america": "USD",
+    us: "USD",
+    uk: "GBP",
+    "united kingdom": "GBP",
+    britain: "GBP",
+    "great britain": "GBP",
+    england: "GBP",
+    india: "INR",
+    bharat: "INR",
+    canada: "CAD",
+    australia: "AUD",
+    germany: "EUR",
+    france: "EUR",
+    spain: "EUR",
+    italy: "EUR",
+    netherlands: "EUR",
+    ireland: "EUR",
+    portugal: "EUR",
+    belgium: "EUR",
+    austria: "EUR",
+};
+function currencyForCountry(country: string | null | undefined): string {
+    if (!country) return "USD";
+    return COUNTRY_CURRENCY_MAP[country.trim().toLowerCase()] || "USD";
+}
+
+// ---------- currency conversion ----------
+const FX_URL = "https://open.er-api.com/v6/latest/USD";
+const FX_KEY = "billing.fx.rates";
+const FX_TTL = 12 * 60 * 60 * 1000; // 12 hours
+
+// rates = "1 USD = X <currency>", which is how the API returns them.
+// Returns null when either currency has no known rate.
+function convertAmount(
+    amount: number,
+    from: string,
+    to: string,
+    rates: Record<string, number>
+): number | null {
+    if (from === to) return amount;
+    const a = rates[from];
+    const b = rates[to];
+    if (!a || !b) return null;
+    return (amount / a) * b;
+}
+
+function makeInvoiceNo() {
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+    return `INV-${stamp}-${String(Math.floor(Math.random() * 900) + 100)}`;
+}
+
+// ---------- PDF ----------
+type InvoiceData = {
+    primary: string; // active theme colour (hex) — the PDF follows the app theme
+    invoiceNo: string;
+    invoiceDate: string;
+    from: string;
+    billTo: string;
+    periodFrom: string;
+    periodTo: string;
+    currency: string;
+    showClientCol: boolean;
+    lines: Group[];
+    subtotal: number;
+    taxPct: number;
+    tax: number;
+    total: number;
+    notes: string;
+};
+
+const DEFAULT_PDF_BLUE: [number, number, number] = [32, 66, 151];
+
+// Theme hex -> RGB for jsPDF. Very light themes (e.g. "White") would make
+// the title/header unreadable on white paper, so those fall back to the
+// default dark blue.
+function pdfPrimary(hex: string): [number, number, number] {
+    const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
+    if (!m) return DEFAULT_PDF_BLUE;
+    const n = parseInt(m[1], 16);
+    const rgb: [number, number, number] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    const luminance = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+    return luminance > 0.75 ? DEFAULT_PDF_BLUE : rgb;
+}
+
+function buildInvoicePdf(inv: InvoiceData): jsPDF {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const M = 40;
+    const BLUE = pdfPrimary(inv.primary);
+    const GREY: [number, number, number] = [110, 118, 135];
+
+    // header band
+    doc.setFillColor(...BLUE);
+    doc.rect(0, 0, W, 8, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(26);
+    doc.setTextColor(...BLUE);
+    doc.text("INVOICE", M, 58);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...GREY);
+    doc.text("Invoice No", W - M - 150, 40);
+    doc.text("Invoice Date", W - M - 150, 56);
+    doc.text("Period", W - M - 150, 72);
+    doc.setTextColor(30, 30, 40);
+    doc.setFont("helvetica", "bold");
+    doc.text(inv.invoiceNo, W - M, 40, { align: "right" });
+    doc.text(fmtDate(inv.invoiceDate), W - M, 56, { align: "right" });
+    doc.text(`${fmtDate(inv.periodFrom)} to ${fmtDate(inv.periodTo)}`, W - M, 72, {
+        align: "right",
+    });
+
+    // from / bill to
+    let y = 110;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...GREY);
+    doc.text("FROM", M, y);
+    doc.text("BILL TO", W / 2 + 10, y);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 30, 40);
+    const fromLines = doc.splitTextToSize(inv.from || "-", W / 2 - M - 20);
+    const toLines = doc.splitTextToSize(inv.billTo || "-", W / 2 - M - 10);
+    doc.text(fromLines, M, y + 16);
+    doc.text(toLines, W / 2 + 10, y + 16);
+    y += 16 + Math.max(fromLines.length, toLines.length) * 14 + 16;
+
+    // lines
+    const headLabels = inv.showClientCol
+        ? ["#", "Client", "Service", "Cases", "Rate", "Amount"]
+        : ["#", "Service", "Cases", "Rate", "Amount"];
+    const numCols = inv.showClientCol ? [3, 4, 5] : [2, 3, 4];
+    // header cells need their own alignment or they ignore columnStyles
+    const head = [
+        headLabels.map((label, i) => ({
+            content: label,
+            styles: { halign: numCols.includes(i) ? ("right" as const) : ("left" as const) },
+        })),
+    ];
+    const body = inv.lines.map((l, i) =>
+        inv.showClientCol
+            ? [
+                  String(i + 1),
+                  l.clientName,
+                  l.productName,
+                  String(l.cases),
+                  money(l.rate || 0, inv.currency),
+                  money(l.amount, inv.currency),
+              ]
+            : [
+                  String(i + 1),
+                  l.productName,
+                  String(l.cases),
+                  money(l.rate || 0, inv.currency),
+                  money(l.amount, inv.currency),
+              ]
+    );
+    const colStyles: Record<number, any> = { 0: { cellWidth: 26 } };
+    numCols.forEach((c) => (colStyles[c] = { halign: "right" }));
+
+    autoTable(doc, {
+        startY: y,
+        head,
+        body,
+        theme: "striped",
+        margin: { left: M, right: M },
+        headStyles: { fillColor: BLUE, textColor: 255, fontSize: 9.5 },
+        styles: { fontSize: 9.5, cellPadding: 6, textColor: [30, 30, 40] },
+        alternateRowStyles: { fillColor: [245, 248, 253] },
+        columnStyles: colStyles,
+    });
+
+    // totals
+    let ty = (doc as any).lastAutoTable.finalY + 22;
+    const labelX = W - M - 180;
+    const row = (label: string, value: string, bold = false) => {
+        doc.setFont("helvetica", bold ? "bold" : "normal");
+        doc.setFontSize(bold ? 12 : 10);
+        if (bold) doc.setTextColor(...BLUE);
+        else doc.setTextColor(60, 65, 80);
+        doc.text(label, labelX, ty);
+        doc.text(value, W - M, ty, { align: "right" });
+        ty += bold ? 20 : 16;
+    };
+    row("Subtotal", money(inv.subtotal, inv.currency));
+    if (inv.taxPct > 0) row(`Tax (${inv.taxPct}%)`, money(inv.tax, inv.currency));
+    doc.setDrawColor(200, 210, 230);
+    doc.line(labelX, ty - 8, W - M, ty - 8);
+    ty += 4;
+    row("Total", money(inv.total, inv.currency), true);
+
+    if (inv.notes.trim()) {
+        ty += 14;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(...GREY);
+        doc.text("NOTES", M, ty);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(60, 65, 80);
+        doc.text(doc.splitTextToSize(inv.notes.trim(), W - M * 2), M, ty + 14);
+    }
+
+    const H = doc.internal.pageSize.getHeight();
+    doc.setFontSize(8.5);
+    doc.setTextColor(...GREY);
+    doc.text("This is a computer generated invoice.", W / 2, H - 28, { align: "center" });
+    return doc;
+}
+
+// ======================================================================
 export default function Billing() {
     const isMobile = useIsMobile();
+    const { colors: themeColors } = useTheme();
+
+    // lookups
     const [clients, setClients] = useState<ClientRow[]>([]);
+    const [products, setProducts] = useState<Product[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
+    const [lookupError, setLookupError] = useState("");
+
+    // cases for the chosen period
+    const [cases, setCases] = useState<CaseRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-    const [search, setSearch] = useState("");
 
+    // filters — the date range decides what is fetched (= the "total");
+    // everything else narrows it down client-side, instantly.
+    const [fromDate, setFromDate] = useState(firstOfMonthStr());
+    const [toDate, setToDate] = useState(todayStr());
+    const [productId, setProductId] = useState("");
+    const [clientId, setClientId] = useState("");
+    const [employeeId, setEmployeeId] = useState("");
+    const [workType, setWorkType] = useState("");
+
+    // invoice popup
+    const [invoiceOpen, setInvoiceOpen] = useState(false);
+    const [invoiceNo, setInvoiceNo] = useState("");
+    const [invoiceDate, setInvoiceDate] = useState(todayStr());
+    const [invFrom, setInvFrom] = useState("");
+    const [billTo, setBillTo] = useState("");
+    const [billToEdited, setBillToEdited] = useState(false);
+    const [taxPct, setTaxPct] = useState("0");
+    const [notes, setNotes] = useState("");
+    const [invCurrency, setInvCurrency] = useState("");
+
+    // currency conversion
+    const [rates, setRates] = useState<Record<string, number>>({});
+    const [fxUpdated, setFxUpdated] = useState<number | null>(null);
+    const [fxError, setFxError] = useState(false);
+    const [totalCur, setTotalCur] = useState("");
+
+    // client-wise paging: one client per page
+    const [page, setPage] = useState(0);
+
+    // ---- lookups (rates live on the clients) ----
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            setLoading(true);
-            setError("");
             try {
                 const res = await authFetch(`${API_BASE}/api/clients`);
                 const json = await res.json();
                 if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
                 if (!cancelled) setClients(Array.isArray(json) ? json : json.data || []);
             } catch (err: any) {
-                if (!cancelled) setError(err?.message || "Failed to load billing data.");
-            } finally {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) setLookupError(err?.message || "Failed to load client rates.");
+            }
+        })();
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/products`);
+                const json = await res.json();
+                if (res.ok && !cancelled) setProducts(json.data || []);
+            } catch (err) {
+                console.error("Failed to fetch products:", err);
+            }
+        })();
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/employees`);
+                const json = await res.json();
+                if (res.ok && !cancelled)
+                    setEmployees(Array.isArray(json) ? json : json.data || []);
+            } catch (err) {
+                console.error("Failed to fetch employees:", err);
             }
         })();
         return () => {
@@ -109,328 +476,1387 @@ export default function Billing() {
         };
     }, []);
 
-    const filteredClients = useMemo(() => {
-        const term = search.trim().toLowerCase();
-        if (!term) return clients;
-        return clients.filter(
-            (c) =>
-                c.name.toLowerCase().includes(term) ||
-                (c.products || []).some((p) => p.product_name.toLowerCase().includes(term))
-        );
-    }, [clients, search]);
-
-    // ---- KPI summary across every client ----
-    const kpis = useMemo(() => {
-        const totalClients = clients.length;
-        let pricedServiceLinks = 0;
-        let unpricedServiceLinks = 0;
-        const currencyTotals: Record<string, number> = {};
-
-        clients.forEach((c) => {
-            (c.products || []).forEach((p) => {
-                const num = Number(p.amount);
-                if (
-                    p.amount !== null &&
-                    p.amount !== undefined &&
-                    p.amount !== "" &&
-                    !Number.isNaN(num)
-                ) {
-                    pricedServiceLinks += 1;
-                    const cur = p.currency || "USD";
-                    currencyTotals[cur] = (currencyTotals[cur] || 0) + num;
-                } else {
-                    unpricedServiceLinks += 1;
+    // ---- exchange rates (cached for 12 hours) ----
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const raw = localStorage.getItem(FX_KEY);
+                if (raw) {
+                    const c = JSON.parse(raw);
+                    if (c?.rates) {
+                        setRates(c.rates);
+                        setFxUpdated(c.t);
+                        if (Date.now() - c.t < FX_TTL) return; // fresh enough
+                    }
                 }
+            } catch {
+                /* ignore */
+            }
+            try {
+                // plain fetch on purpose: authFetch would send our login cookie to a third party
+                const res = await fetch(FX_URL);
+                const json = await res.json();
+                if (!res.ok || json.result !== "success" || !json.rates) throw new Error("fx");
+                if (cancelled) return;
+                setRates(json.rates);
+                setFxUpdated(Date.now());
+                setFxError(false);
+                try {
+                    localStorage.setItem(
+                        FX_KEY,
+                        JSON.stringify({ t: Date.now(), rates: json.rates })
+                    );
+                } catch {
+                    /* ignore */
+                }
+            } catch {
+                if (!cancelled) setFxError(true);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // ---- cases for the date range (all pages) ----
+    const fetchCases = useCallback(async () => {
+        setLoading(true);
+        setError("");
+        try {
+            const all: CaseRow[] = [];
+            for (let page = 1; page <= 200; page++) {
+                const params = new URLSearchParams();
+                params.set("page", String(page));
+                params.set("pageSize", String(CASE_PAGE_SIZE));
+                if (fromDate) params.set("workDateFrom", fromDate);
+                if (toDate) params.set("workDateTo", toDate);
+                params.set("submissionStatus", "SUBMITTED");
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json?.message || `HTTP ${res.status}`);
+                const batch: CaseRow[] = json.data || [];
+                all.push(...batch);
+                if (batch.length < CASE_PAGE_SIZE) break;
+            }
+            setCases(all);
+        } catch (err: any) {
+            setError(err?.message || "Failed to load cases.");
+            setCases([]);
+        } finally {
+            setLoading(false);
+        }
+    }, [fromDate, toDate]);
+
+    useEffect(() => {
+        fetchCases();
+    }, [fetchCases]);
+
+    // ---- rate lookup: client + service -> rate ----
+    const rateMap = useMemo(() => {
+        const m = new Map<string, { rate: number | null; currency: string }>();
+        clients.forEach((c) => {
+            // Each rate keeps the currency saved on it. Only a rate with NO saved
+            // currency falls back to the client's Unit (first saved currency on
+            // the client, else the currency of its country), the same way the
+            // Edit Client form picks its Unit dropdown.
+            const unit =
+                (c.products || []).find((pr) => pr.currency)?.currency ||
+                currencyForCountry(c.country);
+            (c.products || []).forEach((p) => {
+                const n = Number(p.amount);
+                const has = p.amount !== null && p.amount !== undefined && p.amount !== "";
+                m.set(`${c.id}:${p.id}`, {
+                    rate: has && !Number.isNaN(n) ? n : null,
+                    currency: p.currency || unit,
+                });
             });
         });
-
-        return { totalClients, pricedServiceLinks, unpricedServiceLinks, currencyTotals };
+        return m;
     }, [clients]);
 
+    // ---- billable cases with their rate attached ----
+    const billable = useMemo<PricedCase[]>(
+        () =>
+            cases
+                .filter((c) => BILLABLE.includes(c.submissionType))
+                .map((row) => {
+                    const r = rateMap.get(`${row.clientId}:${row.productId}`);
+                    return { row, rate: r ? r.rate : null, currency: r?.currency || "USD" };
+                }),
+        [cases, rateMap]
+    );
+
+    const matches = useCallback(
+        (pc: PricedCase, skipProduct = false) => {
+            const r = pc.row;
+            if (!skipProduct && productId && String(r.productId) !== productId) return false;
+            if (clientId && String(r.clientId) !== clientId) return false;
+            if (employeeId && String(r.assignedEmployeeId) !== employeeId) return false;
+            if (workType && r.submissionType !== workType) return false;
+            return true;
+        },
+        [productId, clientId, employeeId, workType]
+    );
+
+    const filtered = useMemo(() => billable.filter((pc) => matches(pc)), [billable, matches]);
+    const forServiceCards = useMemo(
+        () => billable.filter((pc) => matches(pc, true)),
+        [billable, matches]
+    );
+
+    const filtersActive = Boolean(productId || clientId || employeeId || workType);
+
+    const sumOf = (list: PricedCase[]) => {
+        const totals: Record<string, number> = {};
+        let missing = 0;
+        list.forEach((pc) => {
+            if (pc.rate === null) missing += 1;
+            else addTo(totals, pc.currency, pc.rate);
+        });
+        return { totals, missing };
+    };
+
+    const periodSum = useMemo(() => sumOf(billable), [billable]);
+    const filteredSum = useMemo(() => sumOf(filtered), [filtered]);
+
+    // ---- currency conversion for totals ----
+    // Currencies present in this period (priced cases only). One currency =
+    // nothing to convert; more than one = show the "Show totals in" dropdown.
+    const allCurrencies = useMemo(
+        () =>
+            [...new Set(billable.filter((pc) => pc.rate !== null).map((pc) => pc.currency))].sort(),
+        [billable]
+    );
+    const mixed = allCurrencies.length > 1;
+    const targetCur = allCurrencies.includes(totalCur) ? totalCur : allCurrencies[0] || "USD";
+    const fxReady = Object.keys(rates).length > 0;
+    const showConverted = mixed && fxReady;
+
+    // Total of a per-currency map: converted into targetCur when mixed,
+    // otherwise shown per currency exactly as before.
+    const fmtTotals = (totals: Record<string, number>, sep = "\n") => {
+        if (Object.keys(totals).length === 0) return "—";
+        if (!showConverted) return formatTotals(totals, sep);
+        let sum = 0;
+        Object.entries(totals).forEach(([cur, v]) => {
+            const c = convertAmount(v, cur, targetCur, rates);
+            if (c !== null) sum += c;
+        });
+        return money(sum, targetCur);
+    };
+    const noRateCurs = showConverted
+        ? allCurrencies.filter((c) => convertAmount(1, c, targetCur, rates) === null)
+        : [];
+    const rateNotes = showConverted
+        ? allCurrencies
+              .filter((c) => c !== targetCur)
+              .map((c) => {
+                  const r = convertAmount(1, c, targetCur, rates);
+                  return r === null ? null : `1 ${c} = ${r.toFixed(2)} ${targetCur}`;
+              })
+              .filter(Boolean)
+        : [];
+
+    // ---- lines: same client + same service ----
+    const groups = useMemo<Group[]>(() => {
+        const m = new Map<string, Group>();
+        filtered.forEach((pc) => {
+            const r = pc.row;
+            const key = `${r.clientId}:${r.productId}`;
+            let g = m.get(key);
+            if (!g) {
+                g = {
+                    key,
+                    clientId: String(r.clientId ?? ""),
+                    clientName: r.clientName || "No client",
+                    productId: String(r.productId),
+                    productName: r.productName || "Unknown service",
+                    cases: 0,
+                    rate: pc.rate,
+                    currency: pc.currency,
+                    amount: 0,
+                };
+                m.set(key, g);
+            }
+            g.cases += 1;
+            if (pc.rate !== null) g.amount += pc.rate;
+        });
+        return [...m.values()].sort(
+            (a, b) =>
+                a.clientName.localeCompare(b.clientName) ||
+                a.productName.localeCompare(b.productName)
+        );
+    }, [filtered]);
+
+    // ---- client-wise pages: one client per page, with that client's own total ----
+    const clientPages = useMemo(() => {
+        const m = new Map<
+            string,
+            {
+                clientId: string;
+                clientName: string;
+                lines: Group[];
+                cases: number;
+                missing: number;
+                totals: Record<string, number>;
+            }
+        >();
+        groups.forEach((g) => {
+            let c = m.get(g.clientId);
+            if (!c) {
+                c = {
+                    clientId: g.clientId,
+                    clientName: g.clientName,
+                    lines: [],
+                    cases: 0,
+                    missing: 0,
+                    totals: {},
+                };
+                m.set(g.clientId, c);
+            }
+            c.lines.push(g);
+            c.cases += g.cases;
+            if (g.rate === null) c.missing += g.cases;
+            else addTo(c.totals, g.currency, g.amount);
+        });
+        return [...m.values()]; // groups are already sorted by client name
+    }, [groups]);
+
+    // back to the first client whenever the selection changes
+    useEffect(() => {
+        setPage(0);
+    }, [fromDate, toDate, productId, clientId, employeeId, workType]);
+
+    const pageIdx = Math.min(page, Math.max(clientPages.length - 1, 0));
+    const current = clientPages[pageIdx];
+
+    // ---- service cards (click = filter) ----
+    const serviceCards = useMemo(() => {
+        const m = new Map<
+            string,
+            {
+                id: string;
+                name: string;
+                cases: number;
+                totals: Record<string, number>;
+                missing: number;
+            }
+        >();
+        forServiceCards.forEach((pc) => {
+            const id = String(pc.row.productId);
+            let s = m.get(id);
+            if (!s) {
+                s = {
+                    id,
+                    name: pc.row.productName || "Unknown service",
+                    cases: 0,
+                    totals: {},
+                    missing: 0,
+                };
+                m.set(id, s);
+            }
+            s.cases += 1;
+            if (pc.rate === null) s.missing += 1;
+            else addTo(s.totals, pc.currency, pc.rate);
+        });
+        return [...m.values()].sort((a, b) => b.cases - a.cases);
+    }, [forServiceCards]);
+
+    const resetFilters = () => {
+        setProductId("");
+        setClientId("");
+        setEmployeeId("");
+        setWorkType("");
+    };
+
+    // ---- invoice ----
+    const pricedGroups = useMemo(() => groups.filter((g) => g.rate !== null), [groups]);
+    const invoiceCurrencies = useMemo(
+        () => [...new Set(pricedGroups.map((g) => g.currency))],
+        [pricedGroups]
+    );
+    const invoiceLines = useMemo(
+        () => pricedGroups.filter((g) => g.currency === invCurrency),
+        [pricedGroups, invCurrency]
+    );
+    const invoiceClients = useMemo(
+        () => [...new Set(invoiceLines.map((l) => l.clientName))],
+        [invoiceLines]
+    );
+    const subtotal = invoiceLines.reduce((s, l) => s + l.amount, 0);
+    const taxNum = Math.max(0, Number(taxPct) || 0);
+    const tax = Math.round(subtotal * taxNum) / 100;
+    const total = subtotal + tax;
+
+    const openInvoice = () => {
+        const cur = invoiceCurrencies[0] || "";
+        setInvCurrency(cur);
+        setInvoiceNo(makeInvoiceNo());
+        setInvoiceDate(todayStr());
+        setBillToEdited(false);
+        setNotes("");
+        try {
+            setInvFrom(localStorage.getItem(FROM_KEY) || "");
+        } catch {
+            setInvFrom("");
+        }
+        setInvoiceOpen(true);
+    };
+
+    // keep Bill To in sync with the lines until the user types their own
+    useEffect(() => {
+        if (!invoiceOpen || billToEdited) return;
+        setBillTo(invoiceClients.length === 1 ? invoiceClients[0] : "");
+    }, [invoiceOpen, billToEdited, invoiceClients]);
+
+    useEffect(() => {
+        if (!invoiceOpen) return;
+        const onKey = (e: KeyboardEvent) => e.key === "Escape" && setInvoiceOpen(false);
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [invoiceOpen]);
+
+    const downloadPdf = () => {
+        try {
+            localStorage.setItem(FROM_KEY, invFrom);
+        } catch {
+            /* ignore */
+        }
+        const doc = buildInvoicePdf({
+            primary: themeColors.blue,
+            invoiceNo: invoiceNo.trim() || makeInvoiceNo(),
+            invoiceDate,
+            from: invFrom.trim(),
+            billTo: billTo.trim(),
+            periodFrom: fromDate,
+            periodTo: toDate,
+            currency: invCurrency,
+            showClientCol: invoiceClients.length > 1,
+            lines: invoiceLines,
+            subtotal,
+            taxPct: taxNum,
+            tax,
+            total,
+            notes,
+        });
+        doc.save(`${invoiceNo.trim() || "invoice"}.pdf`);
+    };
+
+    const canInvoice = !loading && pricedGroups.length > 0;
+    const totalCases = billable.length;
+
     return (
-        <div style={styles.root}>
+        <div style={isMobile ? styles.rootMobile : styles.root}>
             <style>{HOVER_CSS}</style>
+            {/* Top gradient accent bar */}
             <div style={styles.topBar} />
-            <div
-                style={{
-                    ...styles.contentBody,
-                    padding: isMobile ? "16px" : "20px 24px",
-                }}
-            >
-                <div>
-                    <h2
-                        style={{
-                            ...styles.pageTitle,
-                            fontSize: isMobile ? fontSize["3xl"] : fontSize["5xl"],
-                        }}
-                    >
-                        Billing
-                    </h2>
-                    <p style={styles.headerSubtext}>
-                        Every client, the services they're linked to, and the rate charged for each
-                        — pulled straight from each client's Services setup.
-                    </p>
-                </div>
 
-                {/* ---- KPI cards ---- */}
-                <div style={styles.kpiRow}>
-                    <div className="bl-kpi" style={styles.kpiCard}>
-                        <div style={{ ...styles.kpiAccent, background: "#3B82F6" }} />
-                        <div
-                            style={{ ...styles.kpiIconSquare, background: "rgba(59,130,246,0.1)" }}
-                        >
-                            <i className="ti ti-building-store" style={{ color: "#3B82F6" }} />
-                        </div>
+            <div style={styles.contentBody}>
+                {/* Header row: title + breadcrumb / invoice button */}
+                <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
+                    <div style={styles.headerLeft}>
                         <div>
-                            <div style={styles.kpiValue}>{loading ? "…" : kpis.totalClients}</div>
-                            <div style={styles.kpiLabel}>Total Clients</div>
+                            <h1 style={styles.pageTitle}>Billing</h1>
+                            <p style={styles.headerSubtext}>
+                                Earning = completed cases × the rate set for each client's service.
+                                See the total for a period first, narrow it down by service, client
+                                or employee, then generate an invoice for exactly what's on screen.
+                            </p>
                         </div>
                     </div>
-                    <div className="bl-kpi" style={styles.kpiCard}>
-                        <div style={{ ...styles.kpiAccent, background: BRAND.green }} />
-                        <div
-                            style={{ ...styles.kpiIconSquare, background: "rgba(46,187,168,0.12)" }}
-                        >
-                            <i className="ti ti-receipt-2" style={{ color: BRAND.green }} />
-                        </div>
-                        <div>
-                            <div style={styles.kpiValue}>
-                                {loading ? "…" : kpis.pricedServiceLinks}
-                            </div>
-                            <div style={styles.kpiLabel}>Priced Services</div>
-                        </div>
-                    </div>
-                    <div className="bl-kpi" style={styles.kpiCard}>
-                        <div style={{ ...styles.kpiAccent, background: BRAND.amber }} />
-                        <div
-                            style={{ ...styles.kpiIconSquare, background: "rgba(245,158,11,0.1)" }}
-                        >
-                            <i className="ti ti-alert-triangle" style={{ color: BRAND.amber }} />
-                        </div>
-                        <div>
-                            <div style={styles.kpiValue}>
-                                {loading ? "…" : kpis.unpricedServiceLinks}
-                            </div>
-                            <div style={styles.kpiLabel}>Missing a Price</div>
-                        </div>
-                    </div>
-                    {Object.entries(kpis.currencyTotals).map(([cur, total]) => (
-                        <div className="bl-kpi" style={styles.kpiCard} key={cur}>
-                            <div style={{ ...styles.kpiAccent, background: "#8B5CF6" }} />
-                            <div
-                                style={{
-                                    ...styles.kpiIconSquare,
-                                    background: "rgba(139,92,246,0.1)",
-                                }}
-                            >
-                                <i className="ti ti-coin" style={{ color: "#8B5CF6" }} />
-                            </div>
-                            <div>
-                                <div style={styles.kpiValue}>{formatMoney(total, cur)}</div>
-                                <div style={styles.kpiLabel}>Total Rate Value ({cur})</div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
 
-                {/* ---- Search ---- */}
-                <div className="bl-search" style={styles.searchBar}>
-                    <i className="ti ti-search" style={styles.searchIcon} />
-                    <input
-                        type="text"
-                        placeholder="Search by client or service name…"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        style={styles.searchInput}
-                    />
-                    {search && (
+                    <div style={isMobile ? styles.headerRightMobile : styles.headerRight}>
+                        {!isMobile && (
+                            <div style={styles.breadcrumb}>
+                                <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
+                                <span style={styles.breadcrumbSep}>/</span>
+                                <span style={styles.breadcrumbItem}>Dashboard</span>
+                                <span style={styles.breadcrumbSep}>/</span>
+                                <span style={styles.breadcrumbActive}>Billing</span>
+                            </div>
+                        )}
                         <button
                             type="button"
-                            aria-label="Clear search"
-                            onClick={() => setSearch("")}
-                            style={styles.searchClearBtn}
+                            className="bl-btn"
+                            style={{
+                                ...styles.submitBtn,
+                                marginTop: 0,
+                                padding: "10px 18px",
+                                opacity: canInvoice ? 1 : 0.5,
+                                cursor: canInvoice ? "pointer" : "not-allowed",
+                            }}
+                            disabled={!canInvoice}
+                            onClick={openInvoice}
+                            title={canInvoice ? "" : "No priced cases in the current selection"}
                         >
-                            <i className="ti ti-x" />
+                            <i className="ti ti-file-invoice" style={{ fontSize: fontSize.lg }} />
+                            Generate Invoice
                         </button>
-                    )}
+                    </div>
                 </div>
 
-                {error && <p style={styles.errorText}>{error}</p>}
+                {/* ---- filters ---- */}
+                <div style={styles.panel}>
+                    <div style={styles.panelHeader}>
+                        <i className="ti ti-filter" style={{ fontSize: fontSize.xl }} />
+                        <span style={{ flex: 1 }}>Filters</span>
+                        <button
+                            type="button"
+                            className="bl-btn"
+                            style={{
+                                ...styles.headerGhostBtn,
+                                opacity: filtersActive ? 1 : 0.5,
+                                cursor: filtersActive ? "pointer" : "not-allowed",
+                            }}
+                            onClick={resetFilters}
+                            disabled={!filtersActive}
+                        >
+                            <i className="ti ti-refresh" style={{ fontSize: fontSize.base }} />
+                            Reset filters
+                        </button>
+                    </div>
+                    <div
+                        style={{
+                            ...styles.filterGrid,
+                            gridTemplateColumns: isMobile
+                                ? "1fr 1fr"
+                                : "repeat(auto-fit, minmax(170px, 1fr))",
+                        }}
+                    >
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-calendar" style={styles.labelIcon} />
+                                From
+                            </span>
+                            <input
+                                type="date"
+                                style={styles.input}
+                                value={fromDate}
+                                max={toDate || undefined}
+                                onChange={(e) => setFromDate(e.target.value)}
+                            />
+                        </label>
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-calendar" style={styles.labelIcon} />
+                                To
+                            </span>
+                            <input
+                                type="date"
+                                style={styles.input}
+                                value={toDate}
+                                min={fromDate || undefined}
+                                onChange={(e) => setToDate(e.target.value)}
+                            />
+                        </label>
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-package" style={styles.labelIcon} />
+                                Service
+                            </span>
+                            <select
+                                style={styles.input}
+                                value={productId}
+                                onChange={(e) => setProductId(e.target.value)}
+                            >
+                                <option value="">All Services</option>
+                                {products.map((p) => (
+                                    <option key={p.id} value={String(p.id)}>
+                                        {p.product_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-building" style={styles.labelIcon} />
+                                Client
+                            </span>
+                            <select
+                                style={styles.input}
+                                value={clientId}
+                                onChange={(e) => setClientId(e.target.value)}
+                            >
+                                <option value="">All Clients</option>
+                                {clients.map((c) => (
+                                    <option key={c.id} value={String(c.id)}>
+                                        {c.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-user" style={styles.labelIcon} />
+                                Employee
+                            </span>
+                            <select
+                                style={styles.input}
+                                value={employeeId}
+                                onChange={(e) => setEmployeeId(e.target.value)}
+                            >
+                                <option value="">All Employees</option>
+                                {employees.map((emp) => (
+                                    <option key={emp.id} value={emp.id}>
+                                        {emp.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label style={styles.label}>
+                            <span style={styles.labelText}>
+                                <i className="ti ti-briefcase" style={styles.labelIcon} />
+                                Work type
+                            </span>
+                            <select
+                                style={styles.input}
+                                value={workType}
+                                onChange={(e) => setWorkType(e.target.value)}
+                            >
+                                <option value="">All billable</option>
+                                <option value="COMPLETED">Completed</option>
+                                <option value="DONE_BY_TEAM">Completed by Team</option>
+                                <option value="DONE_BY_CLIENT">Completed by Client</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
 
-                {loading && (
-                    <div style={styles.placeholderCard}>
-                        <p style={styles.placeholderText}>Loading billing data…</p>
+                {(error || lookupError) && (
+                    <div style={styles.formError}>
+                        <i className="ti ti-alert-triangle" style={{ fontSize: fontSize.md }} />
+                        {error || lookupError}
                     </div>
                 )}
 
-                {!loading && !error && filteredClients.length === 0 && (
-                    <div style={styles.placeholderCard}>
-                        <div style={styles.placeholderIconCircle}>
+                {/* ---- currency picker: only when clients use different currencies ---- */}
+                {!loading && mixed && (
+                    <div style={styles.fxBar}>
+                        <i
+                            className="ti ti-currency-dollar"
+                            style={{ fontSize: fontSize.xl, color: "var(--brand-blue)" }}
+                        />
+                        <span style={styles.labelText}>Show totals in</span>
+                        <select
+                            style={{ ...styles.input, minWidth: 110, width: "auto" }}
+                            value={targetCur}
+                            onChange={(e) => setTotalCur(e.target.value)}
+                        >
+                            {allCurrencies.map((c) => (
+                                <option key={c} value={c}>
+                                    {c}
+                                </option>
+                            ))}
+                        </select>
+                        <span style={styles.fxNote}>
+                            {fxReady
+                                ? rateNotes.join("  ·  ")
+                                : fxError
+                                  ? "Live exchange rates could not load, so totals are shown per currency."
+                                  : "Loading exchange rates…"}
+                        </span>
+                        {noRateCurs.length > 0 && (
+                            <span style={{ ...styles.fxNote, color: "#b45309" }}>
+                                No exchange rate for {noRateCurs.join(", ")}. Not included in the
+                                converted total.
+                            </span>
+                        )}
+                        {fxReady && (
+                            <span style={styles.fxNote}>
+                                {fxUpdated
+                                    ? `Updated ${new Date(fxUpdated).toLocaleString()} · `
+                                    : ""}
+                                <a
+                                    href="https://www.exchangerate-api.com"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: "var(--brand-blue)" }}
+                                >
+                                    Rates by ExchangeRate-API
+                                </a>
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* ---- KPIs: total first, then filtered ---- */}
+                <div style={isMobile ? styles.kpiRowMobile : styles.kpiRow}>
+                    <KpiCard
+                        icon="ti ti-coin"
+                        iconBg={GRADIENT}
+                        label="Total Earning"
+                        value={loading ? "…" : fmtTotals(periodSum.totals)}
+                        footer={
+                            loading
+                                ? ""
+                                : `${fmtDate(fromDate)} to ${fmtDate(toDate)} · ${totalCases} case${
+                                      totalCases === 1 ? "" : "s"
+                                  }`
+                        }
+                        dotColor="var(--brand-blue)"
+                    />
+                    <KpiCard
+                        icon="ti ti-filter-dollar"
+                        iconBg="linear-gradient(135deg, #34d399, #059669)"
+                        label={filtersActive ? "Filtered Earning" : "Filtered (no filters)"}
+                        value={loading ? "…" : fmtTotals(filteredSum.totals)}
+                        footer={
+                            loading
+                                ? ""
+                                : `${filtered.length} case${filtered.length === 1 ? "" : "s"} selected`
+                        }
+                        dotColor="#059669"
+                    />
+                    <KpiCard
+                        icon="ti ti-stack-2"
+                        iconBg="linear-gradient(135deg, #c084fc, #9333ea)"
+                        label="Invoice Lines"
+                        value={loading ? "…" : String(pricedGroups.length)}
+                        footer="Client + service combinations"
+                        dotColor="#9333ea"
+                    />
+                    <KpiCard
+                        icon="ti ti-alert-triangle"
+                        iconBg="linear-gradient(135deg, #fbbf24, #d97706)"
+                        label="Missing Rate"
+                        value={loading ? "…" : String(filteredSum.missing)}
+                        footer={filteredSum.missing ? "Not counted in earning" : "All cases priced"}
+                        dotColor="#d97706"
+                    />
+                </div>
+
+                {/* ---- service cards ---- */}
+                {!loading && serviceCards.length > 0 && (
+                    <div style={styles.panel}>
+                        <div style={styles.panelHeader}>
+                            <i className="ti ti-chart-bar" style={{ fontSize: fontSize.xl }} />
+                            <span style={{ flex: 1 }}>Earning by service</span>
+                            <span style={styles.panelHint}>Click a service to filter</span>
+                        </div>
+                        <div style={styles.svcRow}>
+                            {serviceCards.map((s) => {
+                                const active = productId === s.id;
+                                return (
+                                    <div
+                                        key={s.id}
+                                        className="bl-svc"
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-pressed={active}
+                                        onClick={() => setProductId(active ? "" : s.id)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault();
+                                                setProductId(active ? "" : s.id);
+                                            }
+                                        }}
+                                        style={{
+                                            ...styles.svcCard,
+                                            borderColor: active ? "var(--brand-blue)" : "#e2e4f0",
+                                            background: active
+                                                ? "rgba(var(--brand-blue-rgb, 32,66,151), 0.06)"
+                                                : "#fafaff",
+                                        }}
+                                    >
+                                        <div style={styles.svcName}>
+                                            <i
+                                                className="ti ti-package"
+                                                style={{ color: "var(--brand-blue)" }}
+                                            />
+                                            {s.name}
+                                            {active && (
+                                                <i
+                                                    className="ti ti-check"
+                                                    style={{
+                                                        color: "var(--brand-blue)",
+                                                        marginLeft: "auto",
+                                                    }}
+                                                />
+                                            )}
+                                        </div>
+                                        <div style={styles.svcAmount}>{fmtTotals(s.totals)}</div>
+                                        <div style={styles.svcMeta}>
+                                            {s.cases} case{s.cases === 1 ? "" : "s"}
+                                            {s.missing > 0 && (
+                                                <span style={{ color: "#b45309" }}>
+                                                    {" "}
+                                                    · {s.missing} no rate
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* ---- lines table ---- */}
+                {loading ? (
+                    <div style={styles.panel}>
+                        <div style={styles.emptyState}>Calculating earnings…</div>
+                    </div>
+                ) : groups.length === 0 ? (
+                    <div style={styles.panel}>
+                        <div style={styles.emptyState}>
                             <i
                                 className="ti ti-file-invoice"
-                                style={{ fontSize: fontSize["6xl"], color: BRAND.blue }}
+                                style={{
+                                    display: "block",
+                                    fontSize: fontSize["6xl"],
+                                    color: "var(--brand-blue)",
+                                    marginBottom: 6,
+                                }}
                             />
+                            <div style={styles.emptyTitle}>
+                                {filtersActive
+                                    ? "Nothing matches these filters"
+                                    : "No billable cases in this period"}
+                            </div>
+                            {filtersActive
+                                ? "Reset the filters or widen the date range."
+                                : "Only submitted cases (Completed, by Team, by Client) are billed."}
                         </div>
-                        <p style={styles.placeholderTitle}>
-                            {search ? "No matching clients" : "No clients yet"}
-                        </p>
-                        <p style={styles.placeholderText}>
-                            {search
-                                ? "Try a different client or service name."
-                                : "Add a client and link services to see billing rates here."}
-                        </p>
                     </div>
-                )}
-
-                {!loading &&
-                    filteredClients.map((client) => {
-                        const products = client.products || [];
-                        const isActive = client.status === "Active";
-                        const initials = (client.name || "?")
-                            .split(" ")
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map((w) => w[0]?.toUpperCase())
-                            .join("");
-                        return (
-                            <div key={client.id} className="bl-card" style={styles.clientCard}>
-                                <div
-                                    style={{
-                                        ...styles.clientAccentBar,
-                                        background: isActive ? GRADIENT : BRAND.grey,
-                                    }}
-                                />
-                                <div style={styles.clientCardBody}>
-                                    <div style={styles.clientCardHeader}>
-                                        <div style={styles.clientCardHeaderLeft}>
-                                            <div style={styles.clientAvatar}>{initials || "—"}</div>
-                                            <div>
-                                                <div style={styles.clientName}>{client.name}</div>
-                                                <div style={styles.clientSub}>
-                                                    <i
-                                                        className="ti ti-map-pin"
-                                                        style={{ fontSize: fontSize.sm }}
-                                                    />
-                                                    {client.country || "—"}
-                                                    <span style={styles.clientSubDot}>·</span>
-                                                    {client.subclients || 0} subclient
-                                                    {client.subclients === 1 ? "" : "s"}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <span
-                                            style={{
-                                                ...styles.statusPill,
-                                                background: isActive
-                                                    ? "rgba(46,187,168,0.12)"
-                                                    : "rgba(220,38,38,0.08)",
-                                                color: isActive ? BRAND.green : BRAND.red,
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    ...styles.statusDot,
-                                                    background: isActive ? BRAND.green : BRAND.red,
-                                                }}
-                                            />
-                                            {client.status}
+                ) : (
+                    <>
+                        {/* client header: one page per client */}
+                        <div style={styles.clientHead}>
+                            <div>
+                                <div style={styles.clientName}>
+                                    <i
+                                        className="ti ti-building"
+                                        style={{ color: "var(--brand-blue)" }}
+                                    />
+                                    {current.clientName}
+                                </div>
+                                <div style={styles.clientMeta}>
+                                    Client {pageIdx + 1} of {clientPages.length} · {current.cases}{" "}
+                                    case{current.cases === 1 ? "" : "s"}
+                                    {current.missing > 0 && (
+                                        <span style={{ color: "#b45309" }}>
+                                            {" "}
+                                            · {current.missing} no rate
                                         </span>
-                                    </div>
-
-                                    <div style={styles.cardDivider} />
-
-                                    {products.length === 0 ? (
-                                        <p style={styles.noServicesText}>
-                                            No services linked to this client yet.
-                                        </p>
-                                    ) : (
-                                        <div style={styles.serviceTable}>
-                                            <div style={styles.serviceTableHeadRow}>
-                                                <span style={styles.serviceTableHeadCell}>
-                                                    Service
-                                                </span>
-                                                <span style={styles.serviceTableHeadCell}>
-                                                    Price
-                                                </span>
-                                            </div>
-                                            {products.map((p) => {
-                                                const hasPrice = !(
-                                                    p.amount === null ||
-                                                    p.amount === undefined ||
-                                                    p.amount === ""
-                                                );
-                                                return (
-                                                    <div
-                                                        key={p.id}
-                                                        className="bl-row"
-                                                        style={styles.serviceTableRow}
-                                                    >
-                                                        <span style={styles.serviceNameCell}>
-                                                            <span style={styles.serviceIconChip}>
-                                                                <i
-                                                                    className="ti ti-cube"
-                                                                    style={{
-                                                                        fontSize: fontSize.sm,
-                                                                    }}
-                                                                />
-                                                            </span>
-                                                            {p.product_name}
-                                                        </span>
-                                                        <span
-                                                            style={{
-                                                                ...styles.servicePricePill,
-                                                                background: hasPrice
-                                                                    ? "rgba(46,187,168,0.1)"
-                                                                    : "#F3F4F6",
-                                                                color: hasPrice
-                                                                    ? BRAND.green
-                                                                    : BRAND.grey,
-                                                            }}
-                                                        >
-                                                            {formatMoney(p.amount, p.currency)}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
                                     )}
                                 </div>
                             </div>
-                        );
-                    })}
+                            <div style={{ textAlign: "right" }}>
+                                <div style={styles.clientTotal}>
+                                    {formatTotals(current.totals, "  ·  ")}
+                                </div>
+                                <div style={styles.clientMeta}>Client total</div>
+                            </div>
+                        </div>
+
+                        <div style={styles.panel}>
+                            <div style={{ overflowX: "auto" }}>
+                                <table style={styles.table}>
+                                    <thead>
+                                        <tr>
+                                            <th style={styles.th}>Service</th>
+                                            <th style={{ ...styles.th, textAlign: "right" }}>
+                                                Cases
+                                            </th>
+                                            <th style={{ ...styles.th, textAlign: "right" }}>
+                                                Rate
+                                            </th>
+                                            <th style={{ ...styles.th, textAlign: "right" }}>
+                                                Amount
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {current.lines.map((g, idx) => {
+                                            const rowBg = idx % 2 === 0 ? "#fff" : "#fafaff";
+                                            return (
+                                                <tr
+                                                    key={g.key}
+                                                    className="bl-row"
+                                                    style={{ background: rowBg }}
+                                                >
+                                                    <td style={styles.td}>
+                                                        <button
+                                                            type="button"
+                                                            className="bl-btn"
+                                                            style={styles.linkBtn}
+                                                            onClick={() =>
+                                                                setProductId(
+                                                                    productId === g.productId
+                                                                        ? ""
+                                                                        : g.productId
+                                                                )
+                                                            }
+                                                            title="Filter by this service"
+                                                        >
+                                                            {g.productName}
+                                                        </button>
+                                                    </td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        <Pill value={g.cases} tone="blue" />
+                                                    </td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        {g.rate === null ? (
+                                                            <span style={styles.noRatePill}>
+                                                                No rate
+                                                            </span>
+                                                        ) : (
+                                                            money(g.rate, g.currency)
+                                                        )}
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            textAlign: "right",
+                                                            fontWeight: fontWeight.semibold,
+                                                            color: "#1e1b4b",
+                                                        }}
+                                                    >
+                                                        {g.rate === null
+                                                            ? "—"
+                                                            : money(g.amount, g.currency)}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td style={styles.tfootTd}>
+                                                Total · {current.clientName}
+                                            </td>
+                                            <td style={{ ...styles.tfootTd, textAlign: "right" }}>
+                                                {current.cases}
+                                            </td>
+                                            <td style={styles.tfootTd} />
+                                            <td style={{ ...styles.tfootTd, textAlign: "right" }}>
+                                                {formatTotals(current.totals, "  ·  ")}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+
+                            {/* pager: one page per client */}
+                            <div style={styles.tableFooter}>
+                                <span style={styles.tableFooterText}>
+                                    <i
+                                        className="ti ti-info-circle"
+                                        style={{ fontSize: fontSize.base }}
+                                    />
+                                    Showing client {pageIdx + 1} of {clientPages.length}
+                                </span>
+                                <div style={styles.pagination}>
+                                    <button
+                                        type="button"
+                                        className="bl-btn"
+                                        style={styles.pageBtn}
+                                        disabled={pageIdx === 0}
+                                        onClick={() => setPage(pageIdx - 1)}
+                                    >
+                                        <i
+                                            className="ti ti-chevron-left"
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                    </button>
+                                    {clientPages.slice(0, 4).map((c, i) => (
+                                        <button
+                                            key={c.clientId || i}
+                                            type="button"
+                                            className="bl-btn"
+                                            title={c.clientName}
+                                            aria-current={i === pageIdx ? "page" : undefined}
+                                            style={{
+                                                ...styles.pageBtn,
+                                                ...(i === pageIdx ? styles.pageBtnActive : {}),
+                                            }}
+                                            onClick={() => setPage(i)}
+                                        >
+                                            {i + 1}
+                                        </button>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        className="bl-btn"
+                                        style={styles.pageBtn}
+                                        disabled={pageIdx >= clientPages.length - 1}
+                                        onClick={() => setPage(pageIdx + 1)}
+                                    >
+                                        <i
+                                            className="ti ti-chevron-right"
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* client-wise totals for every client (click a row to open its page) */}
+                        {clientPages.length > 1 && (
+                            <div style={styles.panel}>
+                                <div style={styles.panelHeader}>
+                                    <i className="ti ti-users" style={{ fontSize: fontSize.xl }} />
+                                    <span style={{ flex: 1 }}>Totals by client</span>
+                                    <span style={styles.panelHint}>Click a row to open</span>
+                                </div>
+                                <div style={{ overflowX: "auto" }}>
+                                    <table style={styles.table}>
+                                        <thead>
+                                            <tr>
+                                                <th style={styles.th}>Client</th>
+                                                <th style={{ ...styles.th, textAlign: "right" }}>
+                                                    Cases
+                                                </th>
+                                                <th style={{ ...styles.th, textAlign: "right" }}>
+                                                    Total
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {clientPages.map((c, i) => (
+                                                <tr
+                                                    key={c.clientId || i}
+                                                    className="bl-row"
+                                                    style={{
+                                                        cursor: "pointer",
+                                                        background:
+                                                            i % 2 === 0 ? "#fff" : "#fafaff",
+                                                    }}
+                                                    onClick={() => setPage(i)}
+                                                >
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            fontWeight:
+                                                                i === pageIdx
+                                                                    ? fontWeight.semibold
+                                                                    : fontWeight.medium,
+                                                            color: "#312e81",
+                                                        }}
+                                                    >
+                                                        {c.clientName}
+                                                    </td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        <Pill value={c.cases} tone="blue" />
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            ...styles.td,
+                                                            textAlign: "right",
+                                                            fontWeight: fontWeight.semibold,
+                                                            color: "#1e1b4b",
+                                                        }}
+                                                    >
+                                                        {formatTotals(c.totals, "  ·  ")}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+
+            {/* ================= INVOICE POPUP ================= */}
+            {invoiceOpen && (
+                // NOTE: overlay intentionally has no onClick-to-close — an accidental
+                // backdrop click shouldn't discard what was typed. Only ✕ / Cancel /
+                // Escape close it (same rule as the Daily Work popups).
+                <div style={styles.overlay}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Generate invoice"
+                        style={{ ...styles.modal, width: isMobile ? "100%" : 760 }}
+                    >
+                        <div style={styles.modalHeader}>
+                            <h3 style={styles.modalTitle}>Generate Invoice</h3>
+                            <p style={styles.modalSubtitle}>
+                                For the {invoiceLines.reduce((s, l) => s + l.cases, 0)} filtered
+                                case(s), {fmtDate(fromDate)} to {fmtDate(toDate)}
+                            </p>
+                            <button
+                                type="button"
+                                style={styles.closeBtn}
+                                aria-label="Close"
+                                onClick={() => setInvoiceOpen(false)}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={styles.modalBody}>
+                            <div
+                                style={{
+                                    ...styles.formGrid,
+                                    gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                                }}
+                            >
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i
+                                            className="ti ti-building-store"
+                                            style={styles.labelIcon}
+                                        />
+                                        From (your business)
+                                    </span>
+                                    <input
+                                        type="text"
+                                        style={styles.input}
+                                        placeholder="Your company name & address"
+                                        value={invFrom}
+                                        onChange={(e) => setInvFrom(e.target.value)}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-building" style={styles.labelIcon} />
+                                        Bill to
+                                        {invoiceClients.length > 1 && (
+                                            <span
+                                                style={{
+                                                    color: "#b45309",
+                                                    fontWeight: fontWeight.regular,
+                                                }}
+                                            >
+                                                · {invoiceClients.length} clients included
+                                            </span>
+                                        )}
+                                    </span>
+                                    <input
+                                        type="text"
+                                        style={styles.input}
+                                        placeholder="Client name & address"
+                                        value={billTo}
+                                        onChange={(e) => {
+                                            setBillTo(e.target.value);
+                                            setBillToEdited(true);
+                                        }}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-hash" style={styles.labelIcon} />
+                                        Invoice no.
+                                    </span>
+                                    <input
+                                        type="text"
+                                        style={styles.input}
+                                        value={invoiceNo}
+                                        onChange={(e) => setInvoiceNo(e.target.value)}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-calendar" style={styles.labelIcon} />
+                                        Invoice date
+                                    </span>
+                                    <input
+                                        type="date"
+                                        style={styles.input}
+                                        value={invoiceDate}
+                                        onChange={(e) => setInvoiceDate(e.target.value)}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-percentage" style={styles.labelIcon} />
+                                        Tax / GST %
+                                    </span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={100}
+                                        step="0.01"
+                                        style={styles.input}
+                                        value={taxPct}
+                                        onChange={(e) => setTaxPct(e.target.value)}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i
+                                            className="ti ti-currency-dollar"
+                                            style={styles.labelIcon}
+                                        />
+                                        Currency
+                                    </span>
+                                    <select
+                                        style={styles.input}
+                                        value={invCurrency}
+                                        onChange={(e) => {
+                                            setInvCurrency(e.target.value);
+                                            setBillToEdited(false);
+                                        }}
+                                        disabled={invoiceCurrencies.length <= 1}
+                                    >
+                                        {invoiceCurrencies.map((c) => (
+                                            <option key={c} value={c}>
+                                                {c}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                            {invoiceCurrencies.length > 1 && (
+                                <div style={styles.formError}>
+                                    <i
+                                        className="ti ti-alert-triangle"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
+                                    The selection has more than one currency. An invoice can only
+                                    hold one — pick the currency to invoice, then repeat for the
+                                    others.
+                                </div>
+                            )}
+
+                            {/* preview */}
+                            <div style={styles.preview}>
+                                <div style={{ overflowX: "auto" }}>
+                                    <table style={styles.table}>
+                                        <thead>
+                                            <tr>
+                                                {invoiceClients.length > 1 && (
+                                                    <th style={styles.th}>Client</th>
+                                                )}
+                                                <th style={styles.th}>Service</th>
+                                                <th style={{ ...styles.th, textAlign: "right" }}>
+                                                    Cases
+                                                </th>
+                                                <th style={{ ...styles.th, textAlign: "right" }}>
+                                                    Rate
+                                                </th>
+                                                <th style={{ ...styles.th, textAlign: "right" }}>
+                                                    Amount
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {invoiceLines.map((l, idx) => (
+                                                <tr
+                                                    key={l.key}
+                                                    style={{
+                                                        background:
+                                                            idx % 2 === 0 ? "#fff" : "#fafaff",
+                                                    }}
+                                                >
+                                                    {invoiceClients.length > 1 && (
+                                                        <td style={styles.td}>{l.clientName}</td>
+                                                    )}
+                                                    <td style={styles.td}>{l.productName}</td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        {l.cases}
+                                                    </td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        {money(l.rate || 0, invCurrency)}
+                                                    </td>
+                                                    <td
+                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    >
+                                                        {money(l.amount, invCurrency)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style={styles.totals}>
+                                    <div style={styles.totalRow}>
+                                        <span>Subtotal</span>
+                                        <span>{money(subtotal, invCurrency)}</span>
+                                    </div>
+                                    {taxNum > 0 && (
+                                        <div style={styles.totalRow}>
+                                            <span>Tax ({taxNum}%)</span>
+                                            <span>{money(tax, invCurrency)}</span>
+                                        </div>
+                                    )}
+                                    <div style={{ ...styles.totalRow, ...styles.grandRow }}>
+                                        <span>Total</span>
+                                        <span>{money(total, invCurrency)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <label style={styles.label}>
+                                <span style={styles.labelText}>
+                                    <i className="ti ti-notes" style={styles.labelIcon} />
+                                    Notes (optional)
+                                </span>
+                                <textarea
+                                    style={{
+                                        ...styles.input,
+                                        minHeight: 60,
+                                        resize: "vertical",
+                                    }}
+                                    placeholder="Payment terms, bank details…"
+                                    value={notes}
+                                    onChange={(e) => setNotes(e.target.value)}
+                                />
+                            </label>
+                        </div>
+
+                        <div style={styles.modalFoot}>
+                            <button
+                                type="button"
+                                className="bl-btn"
+                                style={styles.cancelBtn}
+                                onClick={() => setInvoiceOpen(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="bl-btn"
+                                style={{
+                                    ...styles.submitBtn,
+                                    marginTop: 0,
+                                    opacity: invoiceLines.length ? 1 : 0.5,
+                                    cursor: invoiceLines.length ? "pointer" : "not-allowed",
+                                }}
+                                disabled={invoiceLines.length === 0}
+                                onClick={downloadPdf}
+                            >
+                                <i className="ti ti-download" style={{ fontSize: fontSize.lg }} />
+                                Download PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function KpiCard({
+    icon,
+    iconBg,
+    label,
+    value,
+    footer,
+    dotColor,
+}: {
+    icon: string;
+    iconBg: string;
+    label: string;
+    value: number | string;
+    footer: string;
+    dotColor: string;
+}) {
+    return (
+        <div style={styles.kpiCard}>
+            <div style={styles.kpiTop}>
+                <div style={{ ...styles.kpiIcon, background: iconBg }}>
+                    <i className={icon} style={{ fontSize: fontSize["3xl"], color: "#fff" }} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                    <div style={styles.kpiLabel}>{label}</div>
+                    <div style={styles.kpiValue}>{value}</div>
+                </div>
+            </div>
+            <div style={styles.kpiFooter}>
+                <span>{footer}</span>
+                <span style={{ ...styles.kpiDot, background: dotColor }}>
+                    <i
+                        className="ti ti-arrow-right"
+                        style={{ fontSize: fontSize.xxs, color: "#fff" }}
+                    />
+                </span>
             </div>
         </div>
     );
 }
 
+const PILL_TONES: Record<string, { bg: string; fg: string }> = {
+    blue: { bg: "#dbeafe", fg: "#1d4ed8" },
+    green: { bg: "#dcfce7", fg: "#15803d" },
+    amber: { bg: "#fef3c7", fg: "#b45309" },
+    teal: { bg: "#ccfbf1", fg: "#0f766e" },
+};
+
+function Pill({ value, tone }: { value: number; tone: keyof typeof PILL_TONES }) {
+    const t = PILL_TONES[tone];
+    return (
+        <span
+            style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minWidth: 28,
+                padding: "3px 9px",
+                borderRadius: radius.pill,
+                background: t.bg,
+                color: t.fg,
+                fontSize: fontSize.sm,
+                fontWeight: fontWeight.semibold,
+            }}
+        >
+            {value}
+        </span>
+    );
+}
+
 const styles: Record<string, CSSProperties> = {
-    // Explicit opaque light background so the page never shows the OS/
-    // browser's dark <html> background (see index.css's
-    // `prefers-color-scheme: dark` rule) bleeding through in the gaps
-    // around the white cards — matches employees.tsx / productionreports.tsx.
+    // the app's global CSS centres text; keep this page left-aligned
     root: {
-        display: "flex",
-        flexDirection: "column",
         width: "100%",
         flex: 1,
         minHeight: "100%",
-        background: "#eff4fa",
+        background: "#f4f5fb",
+        fontFamily: fontFamily.base,
+        textAlign: "left",
+    },
+    rootMobile: {
+        width: "100%",
+        flex: 1,
+        minHeight: "100%",
+        background: "#f0f0f5",
+        fontFamily: fontFamily.base,
+        textAlign: "left",
     },
     topBar: {
-        height: 4,
-        background: GRADIENT,
-        borderRadius: `${radius.lg}px ${radius.lg}px 0 0`,
+        height: "4px",
+        width: "100%",
+        background: "linear-gradient(90deg, var(--brand-blue), var(--brand-light-blue), #2EBBA8)",
     },
     contentBody: {
-        padding: "20px 24px",
         display: "flex",
         flexDirection: "column",
-        gap: 16,
-        width: "100%",
-        boxSizing: "border-box",
-        flex: 1,
-        minHeight: 0,
+        gap: "18px",
+        padding: "20px 24px 28px",
     },
+
+    headerRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: 16,
+    },
+    headerRowMobile: { display: "flex", flexDirection: "column", gap: "10px" },
+    headerLeft: { display: "flex", gap: "14px", alignItems: "flex-start" },
+    headerRight: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 10,
+        flexShrink: 0,
+    },
+    headerRightMobile: { display: "flex", flexDirection: "column", gap: 10 },
     pageTitle: {
         margin: 0,
         fontSize: fontSize["5xl"],
@@ -442,225 +1868,433 @@ const styles: Record<string, CSSProperties> = {
         margin: "4px 0 0",
         fontSize: fontSize.base,
         color: "#767F92",
-        maxWidth: 640,
         textAlign: "left",
+        maxWidth: 680,
     },
-
-    kpiRow: { display: "flex", gap: 14, flexWrap: "wrap" },
-    kpiCard: {
-        position: "relative",
+    breadcrumb: {
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: "6px",
+        fontSize: fontSize.sm,
+        color: "#64748b",
+        marginTop: "6px",
+    },
+    breadcrumbSep: { color: "#c7cbe0" },
+    breadcrumbItem: { color: "#64748b" },
+    breadcrumbActive: { color: "var(--brand-blue)", fontWeight: fontWeight.semibold },
+
+    // generic white panel + gradient header (same as Daily Work's form/list panels)
+    panel: {
         background: "#fff",
         borderRadius: radius.lg,
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: "16px 18px",
-        flex: "1 1 200px",
-        minWidth: 200,
-        boxSizing: "border-box",
         overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
     },
-    kpiAccent: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 3,
-    },
-    kpiIconSquare: {
-        width: 42,
-        height: 42,
-        borderRadius: radius.sm,
+    panelHeader: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        fontSize: fontSize["2xl"],
-        flexShrink: 0,
+        gap: "8px",
+        padding: "14px 18px",
+        background: GRADIENT,
+        color: "#fff",
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
     },
-    kpiValue: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, color: "#17181C" },
-    kpiLabel: { fontSize: fontSize.xs, color: "#9ca3af", fontWeight: fontWeight.medium },
-
-    searchBar: {
+    panelHint: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#e0e7ff" },
+    headerGhostBtn: {
         display: "flex",
-        alignItems: "center",
-        gap: 10,
-        background: "#fff",
-        borderRadius: radius.pill,
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        padding: "11px 18px",
-        maxWidth: 420,
-    },
-    searchIcon: { color: "#9ca3af", fontSize: fontSize.xl, flexShrink: 0 },
-    searchInput: {
-        border: "none",
-        outline: "none",
-        background: "transparent",
-        fontSize: fontSize.base,
-        color: "#17181C",
-        width: "100%",
-    },
-    searchClearBtn: {
-        border: "none",
-        background: "#F3F4F6",
-        color: "#9ca3af",
-        width: 22,
-        height: 22,
-        borderRadius: "50%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        cursor: "pointer",
-        fontSize: fontSize.sm,
-    },
-
-    errorText: {
-        color: BRAND.red,
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.medium,
-        margin: 0,
-    },
-
-    placeholderCard: {
-        display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        padding: "48px 20px",
-        borderRadius: radius.lg,
-        background: "#fff",
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        flex: 1,
-        minHeight: 240,
+        height: 30,
+        padding: "0 12px",
+        borderRadius: radius.sm,
+        border: "1px solid rgba(255,255,255,0.5)",
+        background: "rgba(255,255,255,0.12)",
+        color: "#fff",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+    },
+
+    filterGrid: { display: "grid", gap: "14px", padding: "18px" },
+    label: { display: "flex", flexDirection: "column", gap: "6px" },
+    labelText: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: "#374151",
+    },
+    labelIcon: { fontSize: fontSize.base, color: "var(--brand-blue)" },
+    input: {
+        border: "1px solid #e2e4f0",
+        borderRadius: radius.sm,
+        padding: "9px 12px",
+        fontSize: fontSize.base,
+        color: "#1e1b4b",
+        outline: "none",
+        fontFamily: "inherit",
+        background: "#fafaff",
         width: "100%",
         boxSizing: "border-box",
     },
-    placeholderIconCircle: {
-        width: 56,
-        height: 56,
-        borderRadius: "50%",
-        background: "rgba(59,130,246,0.1)",
+    formError: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        background: "#fef3e2",
+        border: "1px solid #fde3b0",
+        color: "#b45309",
+        fontSize: fontSize.sm,
+        padding: "9px 10px",
+        borderRadius: radius.sm,
+    },
+    submitBtn: {
+        marginTop: "4px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 6,
-    },
-    placeholderTitle: {
-        margin: 0,
+        gap: "8px",
+        background: GRADIENT,
+        color: "#fff",
+        border: "none",
+        borderRadius: radius.sm,
+        padding: "11px 14px",
         fontSize: fontSize.base,
         fontWeight: fontWeight.semibold,
-        color: "#17181C",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
     },
-    placeholderText: { margin: 0, fontSize: fontSize.sm, color: "#9ca3af" },
+    cancelBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "11px 18px",
+        borderRadius: radius.sm,
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: "#374151",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+    },
 
-    clientCard: {
+    // currency picker bar (shown only when clients use different currencies)
+    fxBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
         background: "#fff",
         borderRadius: radius.lg,
-        boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        width: "100%",
-        boxSizing: "border-box",
-        overflow: "hidden",
+        padding: "12px 18px",
+        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
     },
-    clientAccentBar: { height: 4, width: "100%" },
-    clientCardBody: {
-        padding: "18px 22px",
+    fxNote: { fontSize: fontSize.xs, color: "#94a3b8" },
+
+    // KPI cards (same as Daily Work)
+    kpiRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" },
+    kpiRowMobile: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" },
+    kpiCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "16px",
+        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
         display: "flex",
         flexDirection: "column",
-        gap: 14,
+        gap: "14px",
+        minWidth: 0,
     },
-    clientCardHeader: {
+    kpiTop: { display: "flex", alignItems: "center", gap: "12px" },
+    kpiIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+    },
+    kpiLabel: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, color: "var(--brand-blue)" },
+    kpiValue: {
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.bold,
+        color: "#1e1b4b",
+        whiteSpace: "pre-line",
+        lineHeight: 1.25,
+        wordBreak: "break-word",
+    },
+    kpiFooter: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.xs,
+        color: "#94a3b8",
+        borderTop: "1px solid #f1f1f7",
+        paddingTop: "10px",
+    },
+    kpiDot: {
+        width: 18,
+        height: 18,
+        borderRadius: radius.circle,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+    },
+
+    // service cards
+    svcRow: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+        gap: 12,
+        padding: "18px",
+    },
+    svcCard: {
+        boxSizing: "border-box",
+        borderRadius: radius.md,
+        border: "1.5px solid #e2e4f0",
+        padding: "14px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+    },
+    svcName: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#312e81",
+    },
+    svcAmount: {
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.bold,
+        color: "#1e1b4b",
+        whiteSpace: "pre-line",
+        lineHeight: 1.25,
+    },
+    svcMeta: { fontSize: fontSize.sm, color: "#94a3b8" },
+
+    // client-wise pages
+    clientHead: {
+        display: "flex",
+        alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
         flexWrap: "wrap",
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "14px 18px",
+        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
+        borderLeft: "4px solid var(--brand-blue)",
     },
-    clientCardHeaderLeft: { display: "flex", alignItems: "center", gap: 12 },
-    clientAvatar: {
-        width: 42,
-        height: 42,
-        borderRadius: radius.pill,
-        background: GRADIENT,
-        color: "#fff",
+    clientName: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        fontSize: fontSize.md,
+        gap: 8,
+        fontSize: fontSize["2xl"],
         fontWeight: fontWeight.bold,
-        flexShrink: 0,
+        color: "#1e1b4b",
     },
-    clientName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: "#17181C" },
-    clientSub: {
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        fontSize: fontSize.sm,
-        color: "#767F92",
-        marginTop: 2,
+    clientMeta: { fontSize: fontSize.sm, color: "#94a3b8", marginTop: 2 },
+    clientTotal: {
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.bold,
+        color: "var(--brand-blue)",
+        whiteSpace: "pre-line",
     },
-    clientSubDot: { margin: "0 2px", color: "#d1d5db" },
-    statusPill: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "6px 14px",
-        borderRadius: radius.pill,
+
+    // tables (gradient header, striped rows)
+    table: { width: "100%", borderCollapse: "collapse", minWidth: 480 },
+    th: {
+        textAlign: "left",
+        padding: "10px 18px",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        height: "fit-content",
+        color: "#e0e7ff",
+        background: GRADIENT,
         whiteSpace: "nowrap",
     },
-    statusDot: { width: 6, height: 6, borderRadius: "50%", flexShrink: 0 },
-    cardDivider: { height: 1, background: "#f1f1f1", width: "100%" },
-
-    noServicesText: { margin: 0, fontSize: fontSize.sm, color: "#9ca3af", fontStyle: "italic" },
-
-    serviceTable: { display: "flex", flexDirection: "column", width: "100%" },
-    serviceTableHeadRow: {
-        display: "flex",
-        justifyContent: "space-between",
-        padding: "0 8px 8px",
-        borderBottom: "1px solid #f1f1f1",
-    },
-    serviceTableHeadCell: {
-        fontSize: fontSize.xxs,
-        fontWeight: fontWeight.semibold,
-        color: "#9ca3af",
-        textTransform: "uppercase",
-        letterSpacing: "0.03em",
-    },
-    serviceTableRow: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "8px",
-    },
-    serviceNameCell: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
+    td: {
+        padding: "10px 18px",
         fontSize: fontSize.base,
-        fontWeight: fontWeight.medium,
-        color: "#17181C",
+        color: "#374151",
+        borderBottom: "1px solid #f1f1f7",
     },
-    serviceIconChip: {
-        width: 26,
-        height: 26,
+    tfootTd: {
+        padding: "12px 18px",
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+        color: "var(--brand-blue)",
+        background: "#eef2ff",
+    },
+    linkBtn: {
+        border: "none",
+        background: "none",
+        padding: 0,
+        font: "inherit",
+        fontWeight: fontWeight.medium,
+        color: "#312e81",
+        cursor: "pointer",
+        textAlign: "left",
+    },
+    noRatePill: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        padding: "3px 10px",
+        borderRadius: radius.pill,
+        background: "#fef3c7",
+        color: "#b45309",
+    },
+    emptyState: {
+        padding: "32px 24px",
+        textAlign: "center",
+        color: "#999",
+        fontSize: fontSize.sm,
+    },
+    emptyTitle: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#1e1b4b",
+        marginBottom: 4,
+    },
+
+    tableFooter: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "12px 18px",
+        borderTop: "1px solid #f1f1f7",
+        flexWrap: "wrap",
+        gap: "10px",
+    },
+    tableFooterText: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        fontSize: fontSize.xs,
+        color: "#94a3b8",
+    },
+    pagination: { display: "flex", gap: "6px" },
+    pageBtn: {
+        width: 28,
+        height: 28,
         borderRadius: radius.sm,
-        background: "rgba(20,184,166,0.1)",
-        color: "#14B8A6",
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: "var(--brand-blue)",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+    },
+    pageBtnActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "none",
+    },
+
+    // ---- invoice popup ----
+    overlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        zIndex: 40,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+    },
+    modal: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        maxWidth: "92vw",
+        maxHeight: "88vh",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+    },
+    modalHeader: {
+        position: "relative",
+        textAlign: "center",
+        padding: "24px 28px 16px",
+        borderBottom: "1px solid #f0f0f0",
         flexShrink: 0,
     },
-    servicePricePill: {
-        fontSize: fontSize.sm,
+    modalTitle: {
+        margin: 0,
+        fontSize: fontSize["3xl"],
         fontWeight: fontWeight.semibold,
-        padding: "4px 12px",
-        borderRadius: radius.pill,
-        whiteSpace: "nowrap",
+        color: "var(--brand-blue)",
+    },
+    modalSubtitle: { margin: "4px 0 0", fontSize: fontSize.base, color: "#767F92" },
+    closeBtn: {
+        position: "absolute",
+        top: 20,
+        right: 24,
+        border: "none",
+        background: "#f3f4f6",
+        borderRadius: radius.circle,
+        width: 28,
+        height: 28,
+        fontSize: fontSize.md,
+        cursor: "pointer",
+        color: "#6b7280",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    modalBody: {
+        padding: "18px 22px",
+        overflowY: "auto",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+    },
+    modalFoot: {
+        display: "flex",
+        justifyContent: "flex-end",
+        gap: 10,
+        padding: "14px 22px",
+        borderTop: "1px solid #f1f1f7",
+        flexShrink: 0,
+    },
+    formGrid: { display: "grid", gap: 14 },
+    preview: {
+        border: "1px solid #e2e4f0",
+        borderRadius: radius.md,
+        overflow: "hidden",
+    },
+    totals: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: "12px 16px",
+        alignItems: "flex-end",
+        background: "#fafaff",
+    },
+    totalRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 40,
+        minWidth: 240,
+        fontSize: fontSize.base,
+        color: "#374151",
+    },
+    grandRow: {
+        fontSize: fontSize.xl,
+        fontWeight: fontWeight.bold,
+        color: "var(--brand-blue)",
+        borderTop: "1px solid #e2e4f0",
+        paddingTop: 8,
+        marginTop: 2,
     },
 };
