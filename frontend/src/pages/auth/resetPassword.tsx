@@ -18,9 +18,32 @@ const ResetPassword = () => {
     const [success, setSuccess] = useState(false);
     const [ready, setReady] = useState(false);
     const [verifyError, setVerifyError] = useState("");
+    // Emailed links now look like /reset-password?token_hash=...&type=recovery.
+    // The token is NOT spent on page load (mail scanners / link prefetchers
+    // load pages too) — only when the person presses "Continue".
+    const [tokenHash] = useState<string | null>(() =>
+        new URLSearchParams(window.location.search).get("token_hash")
+    );
+    const [confirming, setConfirming] = useState(false);
 
     useEffect(() => {
         let settled = false;
+
+        // Supabase reports a dead link in the URL hash, e.g.
+        // #error=access_denied&error_code=otp_expired. Show it right away
+        // instead of waiting 8s for the fallback timer.
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        if (hashParams.get("error_code") || hashParams.get("error")) {
+            settled = true;
+            setVerifyError("This reset link is invalid or has expired. Please request a new one.");
+            return;
+        }
+
+        // New-style link: wait for the person to press "Continue".
+        if (tokenHash) {
+            settled = true;
+            return;
+        }
 
         const markReady = () => {
             if (!settled) {
@@ -83,6 +106,24 @@ const ResetPassword = () => {
             clearTimeout(timeout);
         };
     }, []);
+
+    const handleContinue = async () => {
+        if (!tokenHash) return;
+        setConfirming(true);
+        const { error } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: "recovery",
+        });
+        setConfirming(false);
+        if (error) {
+            console.error("verifyOtp failed:", error);
+            setVerifyError("This reset link is invalid or has expired. Please request a new one.");
+            return;
+        }
+        // token is spent — drop it from the URL so a refresh doesn't reuse it
+        window.history.replaceState({}, "", window.location.pathname);
+        setReady(true);
+    };
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -185,6 +226,50 @@ const ResetPassword = () => {
                         }}
                     >
                         ⚠️ {verifyError}
+                        <button
+                            type="button"
+                            onClick={() => navigate("/forgot-password")}
+                            style={{
+                                display: "block",
+                                width: "100%",
+                                marginTop: 12,
+                                padding: 12,
+                                background: "linear-gradient(135deg, #08A1CE, #204297)",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 24,
+                                fontSize: fontSize.base,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                            }}
+                        >
+                            Request a new link
+                        </button>
+                    </div>
+                ) : !ready && tokenHash ? (
+                    <div>
+                        <p style={{ color: "#8a93a8", fontSize: fontSize.base, marginBottom: 20 }}>
+                            Click below to continue and set your new password.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={handleContinue}
+                            disabled={confirming}
+                            style={{
+                                width: "100%",
+                                padding: 14,
+                                background: "linear-gradient(135deg, #08A1CE, #204297)",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 24,
+                                fontSize: fontSize.lg,
+                                fontWeight: 700,
+                                cursor: confirming ? "not-allowed" : "pointer",
+                                boxShadow: "0 6px 16px rgba(32,66,151,0.3)",
+                            }}
+                        >
+                            {confirming ? "Verifying..." : "Continue"}
+                        </button>
                     </div>
                 ) : !ready ? (
                     <p style={{ color: "#8a93a8", fontSize: fontSize.base }}>
