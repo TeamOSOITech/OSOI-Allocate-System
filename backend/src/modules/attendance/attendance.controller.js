@@ -10,6 +10,7 @@
 // attendance.service.js. Every query is scoped to req.user.organizationId —
 // same tenant pattern as every other module in this codebase.
 
+const { sendError } = require("../../utils/response");
 const attendanceService = require("./attendance.service");
 
 // ------------------------------------------------------------
@@ -31,7 +32,7 @@ async function listAttendance(req, res) {
 
     res.json({ success: true, data: data.map(attendanceService.mapRow) });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -46,7 +47,7 @@ async function listAttendance(req, res) {
 async function bulkMarkAttendance(req, res) {
   try {
     const { date, records } = req.body;
-    const validStatuses = ["PRESENT", "ABSENT", "LEAVE"];
+    const validStatuses = ["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"];
 
     if (!date || !Array.isArray(records) || records.length === 0) {
       return res.status(400).json({
@@ -78,7 +79,7 @@ async function bulkMarkAttendance(req, res) {
       .status(201)
       .json({ success: true, data: data.map(attendanceService.mapRow) });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 

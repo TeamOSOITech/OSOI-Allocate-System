@@ -1,3 +1,4 @@
+const { sendError, errorDetail } = require("../../utils/response");
 const fs = require("fs");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
@@ -113,7 +114,7 @@ const getAllProducts = async (req, res) => {
     const scoped = await scopeProductsForVerticalHead(withPending, req);
     return res.status(200).json({ success: true, data: scoped });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -133,7 +134,7 @@ const getProductById = async (req, res) => {
 
     return res.status(200).json({ success: true, data: product });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -176,7 +177,7 @@ const createProduct = async (req, res) => {
 
     return res.status(201).json({ success: true, data: product });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -338,11 +339,13 @@ async function processProductBulkRows(rows, orgId) {
       results.push({ identifier, row: rowNumber, success: true });
       createdCount++;
     } catch (err) {
+      console.error(`Bulk product row ${rowNumber} failed:`, err);
       results.push({
         identifier,
         row: rowNumber,
         success: false,
-        message: err.message,
+        message: "Row could not be imported. Please check the data.",
+        ...errorDetail(err),
       });
       failedCount++;
     }
@@ -397,7 +400,7 @@ const bulkUploadProducts = async (req, res) => {
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -442,7 +445,7 @@ const updateProduct = async (req, res) => {
 
     return res.status(200).json({ success: true, data: product });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -484,7 +487,7 @@ const deleteProduct = async (req, res) => {
           "This service can't be deleted because it already has Daily Work logged against it. Delete or reassign those entries first.",
       });
     }
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 

@@ -8,6 +8,7 @@
 // Req/res handling only — all Supabase/DB access lives in
 // dailywork.service.js. Wired up by dailywork.routes.js.
 
+const { sendError } = require("../../utils/response");
 const dailyWorkService = require("./dailywork.service");
 
 // ------------------------------------------------------------
@@ -51,7 +52,7 @@ async function listDailyWork(req, res) {
 
     res.json({ success: true, data });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -84,7 +85,7 @@ async function getDailyWorkById(req, res) {
       }),
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -147,7 +148,7 @@ async function createDailyWork(req, res) {
       }),
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -228,7 +229,7 @@ async function updateDailyWork(req, res) {
       }),
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -253,7 +254,7 @@ async function deleteDailyWork(req, res) {
 
     res.json({ success: true, message: "Daily work batch deleted" });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -361,7 +362,7 @@ async function seedDummyCases(req, res) {
       attendanceSeeded,
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -511,7 +512,7 @@ async function bulkCreateDailyWork(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 

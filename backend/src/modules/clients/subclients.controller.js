@@ -7,6 +7,7 @@
 
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
+const { sendError } = require("../../utils/response");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const subclientsService = require("./subclients.service");
@@ -222,9 +223,7 @@ async function createSubclient(req, res) {
     });
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to create subclient", detail: err.message });
+    sendError(res, err, 500, "Failed to create subclient");
   }
 }
 
@@ -616,9 +615,7 @@ async function updateSubclient(req, res) {
     });
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to update subclient", detail: err.message });
+    sendError(res, err, 500, "Failed to update subclient");
   }
 }
 

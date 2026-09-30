@@ -8,7 +8,9 @@
 // Table:
 //   attendance(id, organization_id, employee_id, attendance_date, status,
 //              marked_by, created_at)
-// status is one of: PRESENT | ABSENT | LEAVE
+// status is one of: PRESENT | ABSENT | LEAVE | HALF_DAY
+// HALF_DAY counts as half a unit (0.5) wherever Smart Allocation weighs
+// employees — see allocations.controller.js and servicecases.controller.js.
 // Unique on (employee_id, attendance_date) so marking twice for the same
 // day updates the same row instead of creating duplicates.
 

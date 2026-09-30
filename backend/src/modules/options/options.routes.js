@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const express = require("express");
 const router = express.Router();
 const supabase = require("../../config/supabaseClient");
@@ -221,9 +222,7 @@ router.post("/", async (req, res) => {
     res.status(201).json({ id: data.id, name: data.name });
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to add option", detail: err.message });
+    sendError(res, err, 500, "Failed to add option");
   }
 });
 

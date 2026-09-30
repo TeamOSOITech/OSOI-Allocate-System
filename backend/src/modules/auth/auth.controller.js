@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const { login, forgotPassword, refreshSession } = require("./auth.service");
 const {
   setAuthCookies,
@@ -45,10 +46,7 @@ const loginHandler = async (req, res) => {
   } catch (err) {
     console.error("LOGIN ERROR:", err);
 
-    return res.status(401).json({
-      success: false,
-      message: err.message || "Invalid email or password",
-    });
+    return sendError(res, err, 401, "Invalid email or password");
   }
 };
 
@@ -104,10 +102,7 @@ const refreshHandler = async (req, res) => {
     });
   } catch (err) {
     clearAuthCookies(res);
-    return res.status(401).json({
-      success: false,
-      message: err.message || "Session expired. Please log in again.",
-    });
+    return sendError(res, err, 401, "Session expired. Please log in again.");
   }
 };
 

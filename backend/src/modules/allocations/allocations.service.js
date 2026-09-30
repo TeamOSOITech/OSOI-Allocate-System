@@ -198,13 +198,17 @@ async function hasAnyAllocations(dailyWorkId) {
 // Deterministic order (employee #1, #2, #3...) — by employee_id so
 // re-running against the same attendance list always gives the same
 // people the +1, rather than depending on DB row order.
+//
+// Includes HALF_DAY alongside PRESENT — callers weigh HALF_DAY rows as
+// half a unit (see `status` on each returned row) so a half-day
+// employee ends up with roughly half the qty of a full-day one.
 async function fetchPresentEmployees(orgId, workDate) {
   const { data, error } = await supabase
     .from("attendance")
-    .select("employee_id")
+    .select("employee_id, status")
     .eq("organization_id", orgId)
     .eq("attendance_date", workDate)
-    .eq("status", "PRESENT")
+    .in("status", ["PRESENT", "HALF_DAY"])
     .order("employee_id", { ascending: true });
   if (error) throw error;
   return data || [];

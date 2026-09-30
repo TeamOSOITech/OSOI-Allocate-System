@@ -20,6 +20,18 @@ const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust
 // this was the one remaining spot still doing it the broken way.
 const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
+// FIX ("link expired" on click): Supabase's action_link is single-use and
+// gets consumed by mail scanners / click tracking before the person clicks.
+// Email a link to OUR /reset-password page with the hashed token instead;
+// the token is only spent when the person presses "Continue" there.
+const buildResetPageLink = (linkData) => {
+  const props = linkData?.properties;
+  if (!props?.hashed_token) return props?.action_link || null;
+  return `${getPrimaryFrontendUrl()}/reset-password?token_hash=${encodeURIComponent(
+    props.hashed_token,
+  )}&type=recovery`;
+};
+
 const login = async (email, password) => {
   const { data: candidates, error: candidatesError } = await supabase
     .from("user_master")
@@ -197,7 +209,7 @@ const forgotPassword = async (email) => {
 
         if (linkError) throw linkError;
 
-        const actionLink = linkData?.properties?.action_link;
+        const actionLink = buildResetPageLink(linkData);
         if (!actionLink) throw new Error("No action_link returned.");
 
         const mailStart = Date.now();

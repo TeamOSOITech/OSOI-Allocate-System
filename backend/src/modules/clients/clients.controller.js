@@ -8,6 +8,7 @@
 
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
+const { sendError } = require("../../utils/response");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const clientsService = require("./clients.service");
@@ -213,7 +214,7 @@ async function listAllSubclients(req, res) {
     );
   } catch (err) {
     console.error("listAllSubclients error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -300,9 +301,7 @@ async function createClient(req, res) {
     if (friendly) {
       return res.status(409).json({ message: friendly });
     }
-    res
-      .status(500)
-      .json({ message: "Failed to create client", detail: err.message });
+    sendError(res, err, 500, "Failed to create client");
   }
 }
 
@@ -712,9 +711,7 @@ async function updateClient(req, res) {
     if (friendly) {
       return res.status(409).json({ message: friendly });
     }
-    res
-      .status(500)
-      .json({ message: "Failed to update client", detail: err.message });
+    sendError(res, err, 500, "Failed to update client");
   }
 }
 

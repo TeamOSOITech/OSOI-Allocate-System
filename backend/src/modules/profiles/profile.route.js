@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const router = require("express").Router();
 const multer = require("multer");
 const supabase = require("../../config/supabaseClient");
@@ -104,10 +105,7 @@ router.get("/profile", authenticate, async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(400).json({
-      success: false,
-      message: err.message,
-    });
+    sendError(res, err, 400);
   }
 });
 
@@ -180,10 +178,7 @@ router.patch("/profile", authenticate, async (req, res) => {
 
     res.json({ success: true, data });
   } catch (err) {
-    res.status(400).json({
-      success: false,
-      message: err.message,
-    });
+    sendError(res, err, 400);
   }
 });
 
@@ -267,10 +262,7 @@ router.patch(
 
       res.json({ success: true, data: { photoUrl } });
     } catch (err) {
-      res.status(400).json({
-        success: false,
-        message: err.message,
-      });
+      sendError(res, err, 400);
     }
   },
 );

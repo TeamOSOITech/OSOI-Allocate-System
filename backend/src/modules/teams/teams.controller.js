@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const teamService = require("./teams.service");
 
 const getAllTeams = async (req, res) => {
@@ -5,7 +6,7 @@ const getAllTeams = async (req, res) => {
     const teams = await teamService.getAllTeams(req.user.organizationId);
     return res.status(200).json({ success: true, data: teams });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -22,7 +23,7 @@ const getTeamById = async (req, res) => {
 
     return res.status(200).json({ success: true, data: team });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -43,7 +44,7 @@ const createTeam = async (req, res) => {
 
     return res.status(201).json({ success: true, data: team });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -66,7 +67,7 @@ const updateTeam = async (req, res) => {
 
     return res.status(200).json({ success: true, data: team });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 
@@ -77,7 +78,7 @@ const deleteTeam = async (req, res) => {
 
     return res.status(200).json({ success: true, data: team });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return sendError(res, error, 500);
   }
 };
 

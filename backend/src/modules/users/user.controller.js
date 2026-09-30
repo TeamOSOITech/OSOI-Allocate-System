@@ -5,6 +5,7 @@
 // file just orchestrates: read the request, call the service, shape the
 // response. Wired up by user.routes.js.
 
+const { sendError } = require("../../utils/response");
 const userService = require("./user.service");
 
 // ---------------------------------------------------------------------------
@@ -29,9 +30,7 @@ async function addUser(req, res) {
     return res.status(result.statusCode).json(result.body);
   } catch (err) {
     console.error("add-user error:", err);
-    return res
-      .status(500)
-      .json({ message: err.message || "Failed to create user." });
+    return sendError(res, err, 500, "Failed to create user.");
   }
 }
 
@@ -64,9 +63,7 @@ async function bulkAddUser(req, res) {
     return res.status(200).json({ results });
   } catch (err) {
     console.error("bulk-add-user error:", err);
-    return res
-      .status(500)
-      .json({ message: err.message || "Bulk upload failed." });
+    return sendError(res, err, 500, "Bulk upload failed.");
   }
 }
 

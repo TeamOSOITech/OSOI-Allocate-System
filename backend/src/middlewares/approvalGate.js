@@ -16,6 +16,7 @@
 // create/update/delete on Services/Clients/Subclients still take effect
 // immediately; only Process Lead's get gated (per APPROVAL_RULES).
 
+const { sendError } = require("../utils/response");
 const fs = require("fs");
 const supabase = require("../config/supabaseClient");
 const { APPROVAL_RULES } = require("../config/permissions");
@@ -158,7 +159,7 @@ function approvalGate(
         data,
       });
     } catch (err) {
-      return res.status(500).json({ success: false, message: err.message });
+      return sendError(res, err, 500);
     }
   };
 }
@@ -265,7 +266,7 @@ function bulkApprovalGate(type, parseRows) {
         data,
       });
     } catch (err) {
-      return res.status(500).json({ success: false, message: err.message });
+      return sendError(res, err, 500);
     }
   };
 }

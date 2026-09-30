@@ -22,6 +22,7 @@
 //     unique (organization_id, role)
 //   );
 
+const { sendError } = require("../../utils/response");
 const express = require("express");
 const router = express.Router();
 const supabase = require("../../config/supabaseClient");
@@ -163,9 +164,7 @@ router.post("/", authorize("SUPER_ADMIN", "OPS_MANAGER"), async (req, res) => {
     res.status(200).json({ role: data.role, label: data.label });
   } catch (err) {
     console.error("POST /api/role-labels failed:", err);
-    res
-      .status(500)
-      .json({ message: "Failed to save role label", detail: err.message });
+    sendError(res, err, 500, "Failed to save role label");
   }
 });
 

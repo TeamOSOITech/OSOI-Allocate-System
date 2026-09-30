@@ -25,6 +25,18 @@ const supabase = require("../../config/supabaseClient");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer");
 const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
 
+// FIX ("link expired" on click): Supabase's action_link is single-use and
+// gets consumed by mail scanners / click tracking before the person clicks.
+// Email a link to OUR /reset-password page with the hashed token instead;
+// the token is only spent when the person presses "Continue" there.
+const buildResetPageLink = (linkData) => {
+  const props = linkData?.properties;
+  if (!props?.hashed_token) return props?.action_link || null;
+  return `${getPrimaryFrontendUrl()}/reset-password?token_hash=${encodeURIComponent(
+    props.hashed_token,
+  )}&type=recovery`;
+};
+
 // POST /api/auth/register-organization
 // body: { organizationName, email }
 const registerOrganizationHandler = async (req, res) => {
@@ -118,7 +130,7 @@ const registerOrganizationHandler = async (req, res) => {
 
     if (linkError) throw linkError;
 
-    const actionLink = linkData?.properties?.action_link;
+    const actionLink = buildResetPageLink(linkData);
     if (!actionLink) throw new Error("No action_link returned.");
 
     await sendMail({

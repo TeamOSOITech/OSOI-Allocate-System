@@ -19,6 +19,7 @@
 //                      payload jsonb, status, approved_by, decided_at,
 //                      created_at, organization_id)
 
+const { sendError } = require("../../utils/response");
 const supabase = require("../../config/supabaseClient");
 const { APPROVAL_RULES } = require("../../config/permissions");
 const productsService = require("../products/products.service");
@@ -80,7 +81,7 @@ async function createRequest(req, res) {
     if (error) throw error;
     res.status(201).json({ success: true, data });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -164,7 +165,7 @@ async function listRequests(req, res) {
     const enriched = await visibleRequestsFor(req, ["PENDING"]);
     res.json({ success: true, data: enriched });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -188,7 +189,7 @@ async function listHistory(req, res) {
     );
     res.json({ success: true, data: enriched, counts });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -281,7 +282,7 @@ async function decideRequest(req, res) {
 
     res.json({ success: true, data: updated });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 

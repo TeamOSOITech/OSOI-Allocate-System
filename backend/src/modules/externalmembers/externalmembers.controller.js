@@ -4,6 +4,7 @@
 // Supabase queries. Every query is scoped to req.user.organizationId,
 // same tenant pattern as every other module in this codebase.
 
+const { sendError } = require("../../utils/response");
 const externalMembersService = require("./externalmembers.service");
 
 // ------------------------------------------------------------
@@ -27,7 +28,7 @@ async function listExternalMembers(req, res) {
 
     res.json({ success: true, data: employeeIds });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -59,7 +60,7 @@ async function saveExternalMembers(req, res) {
 
     res.json({ success: true, data: saved });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 

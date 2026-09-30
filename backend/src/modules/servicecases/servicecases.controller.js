@@ -17,7 +17,9 @@
 // dailywork.controller.js — Daily Work's own batches/allocations are
 // untouched by any of this.
 
+const { sendError } = require("../../utils/response");
 const supabase = require("../../config/supabaseClient");
+const attendanceService = require("../attendance/attendance.service");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
@@ -699,7 +701,7 @@ async function listServiceCases(req, res) {
     });
   } catch (err) {
     console.error("listServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -857,7 +859,7 @@ async function createServiceCases(req, res) {
     });
   } catch (err) {
     console.error("createServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1207,7 +1209,7 @@ async function uploadCustomServiceCases(req, res) {
     });
   } catch (err) {
     console.error("uploadCustomServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1425,7 +1427,7 @@ async function manualCreateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("manualCreateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1458,7 +1460,7 @@ async function deleteServiceCase(req, res) {
     res.json({ success: true, message: `${data.case_number} deleted.` });
   } catch (err) {
     console.error("deleteServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1590,7 +1592,7 @@ async function allocateServiceCase(req, res) {
     });
   } catch (err) {
     console.error("allocateServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1671,7 +1673,7 @@ async function listAllocationClearLog(req, res) {
     });
   } catch (err) {
     console.error("listAllocationClearLog error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1680,11 +1682,13 @@ async function listAllocationClearLog(req, res) {
 // body: { productId, workDate, employeeIds: [...] }
 //
 // "Smart Allocation" for the Cases tab: takes every still-PENDING case
-// for the given service+date and works out an even, round-robin split
-// across the given employee list — the same people marked PRESENT on
-// the Employees tab. Case #1 to employee #1, #2 to #2, ... wrapping
-// back to #1 once the employee list is exhausted, so counts differ by
-// at most 1 across employees.
+// for the given service+date and works out a weighted round-robin split
+// across the given employee list — the same people marked PRESENT (or
+// Half Day) on the Employees tab. Case #1 to employee #1, #2 to #2, ...
+// wrapping back to #1 once the employee list is exhausted, so counts
+// differ by at most 1 across employees of the same weight. Anyone
+// marked Half Day counts as weight 1 against everyone else's weight 2,
+// so they end up with roughly half as many cases.
 //
 // IMPORTANT: this is a PREVIEW only — it does NOT write anything to
 // the database. It just returns the computed case -> employee split so
@@ -1696,6 +1700,31 @@ async function listAllocationClearLog(req, res) {
 // single write path for allocation instead of two, and means clicking
 // "Smart Allocation" by itself can never change a case's status.
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// Smooth weighted round-robin (same algorithm nginx uses for weighted
+// load balancing): picks the next employee by running weight totals
+// instead of a plain idx % n, so higher-weight employees get more
+// cases while everyone's turns stay evenly spread out rather than
+// clumped at the start. weight 2 = full day, weight 1 = Half Day, so
+// a Half Day employee ends up with roughly half as many cases.
+// ------------------------------------------------------------
+function weightedRoundRobinAssign(itemCount, weightedEmployees) {
+  const n = weightedEmployees.length;
+  const totalWeight = weightedEmployees.reduce((s, e) => s + e.weight, 0);
+  const current = new Array(n).fill(0);
+  const assignments = [];
+  for (let i = 0; i < itemCount; i++) {
+    let maxIdx = 0;
+    for (let j = 0; j < n; j++) {
+      current[j] += weightedEmployees[j].weight;
+      if (current[j] > current[maxIdx]) maxIdx = j;
+    }
+    current[maxIdx] -= totalWeight;
+    assignments.push(weightedEmployees[maxIdx].id);
+  }
+  return assignments;
+}
+
 async function autoAllocateServiceCases(req, res) {
   try {
     const { productId, workDate } = req.body;
@@ -1715,6 +1744,24 @@ async function autoAllocateServiceCases(req, res) {
         message: "No employees found to allocate to.",
       });
     }
+
+    // Half Day counts as half a unit here too — weight 1 vs weight 2 for
+    // everyone else (Present, or nobody explicitly marked). Attendance is
+    // re-fetched here rather than trusted from the client so this can't
+    // be spoofed by whatever employeeIds the frontend happens to send.
+    const attendanceRows = await attendanceService.fetchAttendanceForDate(
+      req.user.organizationId,
+      workDate,
+    );
+    const halfDayIds = new Set(
+      attendanceRows
+        .filter((a) => a.status === "HALF_DAY")
+        .map((a) => a.employee_id),
+    );
+    const weightedEmployees = employeeIds.map((id) => ({
+      id,
+      weight: halfDayIds.has(id) ? 1 : 2,
+    }));
 
     const { data: pendingCases, error } = await supabase
       .from("service_cases")
@@ -1741,10 +1788,14 @@ async function autoAllocateServiceCases(req, res) {
 
     // NOTE: preview only — no DB write here. Cases stay PENDING until
     // the frontend's "Allocate" button saves them via allocateServiceCase.
+    const assignedEmployeeIds = weightedRoundRobinAssign(
+      pendingCases.length,
+      weightedEmployees,
+    );
     const updates = pendingCases.map((c, idx) => ({
       id: c.id,
       caseNumber: c.case_number,
-      employeeId: employeeIds[idx % employeeIds.length],
+      employeeId: assignedEmployeeIds[idx],
     }));
 
     const employeeMap = await getEmployeeNameMap(
@@ -1782,7 +1833,7 @@ async function autoAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("autoAllocateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1834,7 +1885,7 @@ async function updateServiceCaseProfile(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseProfile error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -1953,7 +2004,7 @@ async function updateServiceCaseClient(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseClient error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2036,7 +2087,7 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
     });
   } catch (err) {
     console.error("bulkUpdateServiceCaseProfiles error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2140,7 +2191,7 @@ async function submitServiceCase(req, res) {
     });
   } catch (err) {
     console.error("submitServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2228,7 +2279,7 @@ async function resolveQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("resolveQueryServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2311,7 +2362,7 @@ async function completeQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("completeQueryServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2400,7 +2451,7 @@ async function updateServiceCaseQc(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseQc error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2498,7 +2549,7 @@ async function updateServiceCaseAudit(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseAudit error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2573,7 +2624,7 @@ async function bulkSubmitServiceCases(req, res) {
     });
   } catch (err) {
     console.error("bulkSubmitServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -2659,7 +2710,7 @@ async function selfAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("selfAllocateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 

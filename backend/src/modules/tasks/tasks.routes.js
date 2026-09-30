@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const router = require("express").Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
@@ -42,7 +43,7 @@ router.get("/my", async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 });
 
@@ -80,7 +81,7 @@ router.post(
       if (error) throw error;
       res.status(201).json({ success: true, data: data[0] });
     } catch (err) {
-      res.status(400).json({ success: false, message: err.message });
+      sendError(res, err, 400);
     }
   },
 );
@@ -131,7 +132,7 @@ router.patch("/:id/status", async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data: data[0] });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 });
 

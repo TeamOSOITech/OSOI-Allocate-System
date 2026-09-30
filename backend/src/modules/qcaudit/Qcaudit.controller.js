@@ -219,12 +219,31 @@ async function listAuditManagers(req, res) {
 async function getSummary(req, res) {
   try {
     const orgId = req.user.organizationId;
+
+    // NEW: optional ?from=YYYY-MM-DD&to=YYYY-MM-DD, scoped to work_date —
+    // same convention the Production "Compare" panel on the Manager
+    // dashboard already uses for daily_work. When present, every count/
+    // average below is scoped to that window instead of being org-wide
+    // all-time, which is what lets the Quality Manager dashboard offer
+    // the same "this month vs last month" / "this year vs last year"
+    // compare feature the Manager view already has for Production —
+    // now for Cases Processed (productivity) and QC+Audit Pass Rate
+    // (performance) too. Omitting both params keeps the old org-wide,
+    // all-time behaviour exactly as before.
+    const { from, to } = req.query;
+    const scoped = (q) => {
+      if (from) q = q.gte("work_date", from);
+      if (to) q = q.lte("work_date", to);
+      return q;
+    };
+
     const countWhere = async (col, val, extra) => {
       let q = supabase
         .from("service_cases")
         .select("*", { count: "exact", head: true })
         .eq("organization_id", orgId);
       q = val === null ? q.is(col, null) : q.eq(col, val);
+      q = scoped(q);
       if (extra) q = extra(q);
       const { count, error } = await q;
       if (error) throw error;
@@ -242,16 +261,17 @@ async function getSummary(req, res) {
       auditFail,
     ] = await Promise.all([
       countWhere("submission_status", "SUBMITTED"),
-      supabase
-        .from("service_cases")
-        .select("*", { count: "exact", head: true })
-        .eq("organization_id", orgId)
-        .eq("submission_status", "SUBMITTED")
-        .is("qc_status", null)
-        .then((r) => {
-          if (r.error) throw r.error;
-          return r.count || 0;
-        }),
+      scoped(
+        supabase
+          .from("service_cases")
+          .select("*", { count: "exact", head: true })
+          .eq("organization_id", orgId)
+          .eq("submission_status", "SUBMITTED")
+          .is("qc_status", null),
+      ).then((r) => {
+        if (r.error) throw r.error;
+        return r.count || 0;
+      }),
       // BUG FIX: this was counting qc_status = "PENDING"/"PASSED"/"FAILED",
       // but assignQc()/recordQcResult() below actually write
       // "QC_PENDING"/"QC_PASS"/"QC_FAIL" to this column — the mismatched
@@ -269,17 +289,21 @@ async function getSummary(req, res) {
     // Average marks, computed client-side from the small set of
     // decided rows (org-wide QC/Audit volume is not expected to be
     // huge enough to need a DB-side aggregate for this).
-    const { data: qcMarksRows, error: qcMarksErr } = await supabase
-      .from("service_cases")
-      .select("qc_marks")
-      .eq("organization_id", orgId)
-      .not("qc_marks", "is", null);
+    const { data: qcMarksRows, error: qcMarksErr } = await scoped(
+      supabase
+        .from("service_cases")
+        .select("qc_marks")
+        .eq("organization_id", orgId)
+        .not("qc_marks", "is", null),
+    );
     if (qcMarksErr) throw qcMarksErr;
-    const { data: auditMarksRows, error: auditMarksErr } = await supabase
-      .from("service_cases")
-      .select("audit_marks")
-      .eq("organization_id", orgId)
-      .not("audit_marks", "is", null);
+    const { data: auditMarksRows, error: auditMarksErr } = await scoped(
+      supabase
+        .from("service_cases")
+        .select("audit_marks")
+        .eq("organization_id", orgId)
+        .not("audit_marks", "is", null),
+    );
     if (auditMarksErr) throw auditMarksErr;
 
     const avg = (rows, key) =>
@@ -289,6 +313,16 @@ async function getSummary(req, res) {
               10,
           ) / 10
         : null;
+
+    // NEW: combined QC+Audit pass rate for the window — the "did
+    // performance/accuracy go up or down" number the Quality Manager
+    // compare panel plots. Only counts decided cases (pass+fail) as the
+    // denominator, same reasoning as qcAvgMarks/auditAvgMarks above —
+    // still-pending cases shouldn't drag the rate down.
+    const decided = qcPass + qcFail + auditPass + auditFail;
+    const passRatePct = decided
+      ? Math.round(((qcPass + auditPass) / decided) * 1000) / 10
+      : null;
 
     res.json({
       success: true,
@@ -303,6 +337,7 @@ async function getSummary(req, res) {
         auditPass,
         auditFail,
         auditAvgMarks: avg(auditMarksRows || [], "audit_marks"),
+        passRatePct,
       },
     });
   } catch (err) {

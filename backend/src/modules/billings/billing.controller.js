@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const crypto = require("crypto");
 
 const supabase = require("../../config/supabaseClient");
@@ -49,7 +50,7 @@ const createOrderHandler = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(400).json({ success: false, message: err.message });
+    return sendError(res, err, 400);
   }
 };
 
@@ -125,7 +126,7 @@ const mockCheckoutHandler = async (req, res) => {
       data: { signupToken: record.signup_token },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 
@@ -193,7 +194,7 @@ const verifyPaymentHandler = async (req, res) => {
       data: { signupToken: record.signup_token },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 
@@ -275,7 +276,7 @@ const getSignupStatusHandler = async (req, res) => {
       data: { email: data.email, plan: data.plan },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 
@@ -312,7 +313,7 @@ const getMySubscriptionHandler = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 
@@ -347,7 +348,7 @@ const createUpgradeOrderHandler = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(400).json({ success: false, message: err.message });
+    return sendError(res, err, 400);
   }
 };
 
@@ -429,7 +430,7 @@ const verifyUpgradePaymentHandler = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 
@@ -494,7 +495,7 @@ const mockUpgradeHandler = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 

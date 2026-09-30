@@ -11,6 +11,7 @@
 // the actual multi-tenant enforcement point, enforced inside the
 // service's queries.
 
+const { sendError } = require("../../utils/response");
 const { hasPermission } = require("../../config/permissions");
 const allocationsService = require("./allocations.service");
 
@@ -160,7 +161,7 @@ async function getAllocationHistory(req, res) {
       meta: { truncated, totalMatched },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -212,7 +213,7 @@ async function listAllocations(req, res) {
 
     res.json({ success: true, data: enriched });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -277,8 +278,38 @@ async function autoAllocate(req, res) {
       });
     }
 
-    const baseQty = Math.floor(dailyWork.total_qty / presentCount);
-    const remainder = dailyWork.total_qty - baseQty * presentCount;
+    // ---- weighted split (PRESENT = 1 unit, HALF_DAY = 0.5 unit) ----
+    // Largest-remainder method: give everyone floor(their share) first,
+    // then hand out the few leftover units (total_qty is an integer, the
+    // floors below might sum a little short of it) to whoever's raw
+    // share had the biggest fractional part — so a Half Day employee
+    // ends up with ~half of what a full-day Present employee gets, and
+    // the batch still always adds up to exactly total_qty.
+    const weights = presentRows.map((p) => (p.status === "HALF_DAY" ? 0.5 : 1));
+    const totalWeight = weights.reduce((s, w) => s + w, 0);
+    const rawShares = weights.map(
+      (w) => (dailyWork.total_qty * w) / totalWeight,
+    );
+    const flooredShares = rawShares.map((s) => Math.floor(s));
+    const flooredSum = flooredShares.reduce((s, v) => s + v, 0);
+    const remainder = dailyWork.total_qty - flooredSum;
+
+    // Stable sort by biggest fractional remainder first — ties (e.g. all
+    // full-day, equal weight) keep the original employee_id order, same
+    // as the old "first `remainder` employees" behaviour.
+    const extraUnitIndexes = new Set(
+      rawShares
+        .map((s, idx) => ({ idx, frac: s - flooredShares[idx] }))
+        .sort((a, b) => b.frac - a.frac)
+        .slice(0, remainder)
+        .map((x) => x.idx),
+    );
+    // Full-day baseline for the summary below — same number a weight-1
+    // employee's floored share works out to, independent of list order.
+    const baseQty = Math.floor(dailyWork.total_qty / totalWeight);
+    const halfDayCount = presentRows.filter(
+      (p) => p.status === "HALF_DAY",
+    ).length;
 
     // ---- Carry forward yesterday's (or any earlier day's) leftover
     // pending qty for the SAME product, for whichever of today's
@@ -325,9 +356,12 @@ async function autoAllocate(req, res) {
         organization_id: req.user.organizationId,
         daily_work_id: dailyWorkId,
         employee_id: p.employee_id,
-        // First `remainder` employees (index 0, 1, 2...) get +1, plus
-        // any backlog they're still owed on this product.
-        allocated_qty: baseQty + (index < remainder ? 1 : 0) + carriedInQty,
+        // Weighted floor share, +1 for whoever's in the leftover-units
+        // set above, plus any backlog they're still owed on this product.
+        allocated_qty:
+          flooredShares[index] +
+          (extraUnitIndexes.has(index) ? 1 : 0) +
+          carriedInQty,
         allocation_type: "AUTO",
         status: "ASSIGNED",
         created_by: req.user.userId,
@@ -356,6 +390,7 @@ async function autoAllocate(req, res) {
         summary: {
           totalQty: dailyWork.total_qty,
           presentCount,
+          halfDayCount,
           baseQtyPerEmployee: baseQty,
           employeesWithExtraUnit: remainder,
           allocatedQty: dailyWork.total_qty, // always fully allocated now
@@ -365,7 +400,7 @@ async function autoAllocate(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -451,7 +486,7 @@ async function manualAllocate(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -498,7 +533,7 @@ async function updateAllocationStatus(req, res) {
 
     res.json({ success: true, data: data[0] });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -517,7 +552,7 @@ async function clearAllocationsForBatch(req, res) {
 
     res.json({ success: true, message: "Allocations cleared for this batch" });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -600,7 +635,7 @@ async function transferAllocation(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -702,7 +737,7 @@ async function bulkUpsertAllocations(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -770,7 +805,7 @@ async function submitAllocationWork(req, res) {
 
     res.json({ success: true, data: data[0] });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -891,7 +926,7 @@ async function bulkSubmitAllocationWork(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 
@@ -1012,7 +1047,7 @@ async function selfAllocate(req, res) {
       },
     });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 }
 

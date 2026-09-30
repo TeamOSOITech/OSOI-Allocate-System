@@ -22,6 +22,7 @@
 //      exactly — same accessToken/refreshToken/user shape Landing.tsx
 //      and every other page already expect.
 
+const { sendError } = require("../../utils/response");
 const supabase = require("../../config/supabaseClient");
 // signInWithPassword() mutates the calling client's internal session
 // state, so it must run on the isolated auth client, never on the
@@ -215,7 +216,7 @@ const registerWithPaymentHandler = async (req, res) => {
     });
   } catch (err) {
     console.error("REGISTER WITH PAYMENT ERROR:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return sendError(res, err, 500);
   }
 };
 

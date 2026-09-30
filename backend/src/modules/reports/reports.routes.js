@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const router = require("express").Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
@@ -37,7 +38,7 @@ router.post("/daily", async (req, res) => {
     if (error) throw error;
     res.status(201).json({ success: true, data: data[0] });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 });
 
@@ -55,7 +56,7 @@ router.get("/my-history", async (req, res) => {
     if (error) throw error;
     res.json({ success: true, data });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 });
 
@@ -80,7 +81,7 @@ router.get(
       if (error) throw error;
       res.json({ success: true, data });
     } catch (err) {
-      res.status(400).json({ success: false, message: err.message });
+      sendError(res, err, 400);
     }
   },
 );

@@ -15,6 +15,7 @@
 // qc.service.js. Every query is scoped to req.user.organizationId, same
 // multi-tenant pattern as allocations.controller.js / dailywork.controller.js.
 
+const { sendError } = require("../../utils/response");
 const qcService = require("./qc.service");
 
 // ------------------------------------------------------------
@@ -51,7 +52,7 @@ async function listQcChecks(req, res) {
     res.json({ success: true, data: enriched });
   } catch (err) {
     console.error("listQcChecks error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 
@@ -142,7 +143,7 @@ async function createQcCheck(req, res) {
     });
   } catch (err) {
     console.error("createQcCheck error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    sendError(res, err, 500);
   }
 }
 

@@ -1,3 +1,4 @@
+const { sendError } = require("../../utils/response");
 const router = require("express").Router();
 const multer = require("multer");
 const supabase = require("../../config/supabaseClient");
@@ -52,7 +53,7 @@ router.get("/organization/logo", authenticate, async (req, res) => {
 
     res.json({ success: true, data: { logoUrl: data?.logo_url || null } });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    sendError(res, err, 400);
   }
 });
 
@@ -118,7 +119,7 @@ router.patch(
 
       res.json({ success: true, data: { logoUrl } });
     } catch (err) {
-      res.status(400).json({ success: false, message: err.message });
+      sendError(res, err, 400);
     }
   },
 );
