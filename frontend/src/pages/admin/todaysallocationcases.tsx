@@ -1,17 +1,38 @@
 // src/pages/admin/todaysallocationcases.tsx
 //
 // "Cases" tab on the Today's Allocation page (see manualallocation.tsx).
-// Shows every case (from the Case Register / service_cases table) for a
-// chosen service + date, with a per-row dropdown to MANUALLY allocate a
-// case to one employee, plus a "Smart Allocation" button that AUTO
-// allocates every still-pending case for that service/date as evenly as
-// possible across whoever was marked Present on the Employees tab
-// (todaysallocationemployees.tsx) — same `attendance` table Daily Work's
-// own Smart Allocation already reads.
 //
-// Completely separate from the original quantity-based "Allocate" tab
-// in manualallocation.tsx — nothing here touches daily_work batches or
-// the existing `allocations` table.
+// Handles BOTH kinds of work:
+//  A) Cases WITH case numbers (service_cases) — per-row dropdown + Smart Allocation
+//  B) COUNT-ONLY entries (service_case_counts) — shown as "N cases pending" rows,
+//     with per-employee quantity boxes + Smart Allocation (even split, extras
+//     rotate to whoever got the least work in the last 30 days).
+//
+// Nothing is saved until the user presses the bottom "Allocate" button.
+//
+// MODIFIED in this version:
+//   - NEW (8h WARNING): when the Allocate button is pressed and any employee
+//     would end up with MORE THAN 8 HOURS of work, a warning popup opens first
+//     ("Some employees got more than 8 hours of work") with a button to see
+//     all those employees. "Yes, Continue" then allocates; "Cancel" saves nothing.
+//   - NEW (NOTIFY): as soon as work is allocated, every employee who got NEW
+//     work receives ONE message: "Your work has been allocated. Please login
+//     to check." The message never contains how many cases they got, and an
+//     employee is messaged only once per Allocate press (even if they got
+//     many cases). The message is sent by the backend endpoint
+//     POST /api/service-cases/notify-allocation (see notifyEmployees below).
+//   - Summary strip: TOTAL still to allocate = today's pending + carried-over
+//     pending (e.g. 10 today + 5 from yesterday = 15).
+//   - MONTH-WISE: carry-over only comes from the same month as the selected
+//     date. On the 1st everything starts fresh; older months stay in history.
+//   - OLDEST FIRST: rows are listed oldest date first, so carried-over work
+//     is at the top and gets allocated before the new work. Carried-over rows
+//     are tagged "Carry-over".
+//   - TIME: every service has an AMP (time per case = time_taken + time_unit
+//     on the service). While allocating, the page shows a per-employee
+//     "Allocation Time" strip, a "Time" column on every case row, the total
+//     time next to every count row, and the employee's current time next to
+//     their name in the dropdowns.
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
@@ -21,6 +42,11 @@ import { fontSize, fontWeight, radius } from "../../styles/theme";
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 10;
 const MOBILE_BREAKPOINT = 768;
+// Sent to each employee after allocation. Intentionally has NO numbers.
+const ALLOC_MESSAGE = "Your work has been allocated. Please login to check.";
+// NEW (8h WARNING): an employee getting more than this many minutes of work
+// triggers the warning popup when Allocate is pressed.
+const MAX_WORK_MINUTES = 8 * 60;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -44,7 +70,14 @@ const BRAND = {
 };
 const GRADIENT = `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`;
 
-type Product = { id: string; product_name: string; teams?: string[] };
+type Product = {
+    id: string;
+    product_name: string;
+    teams?: string[];
+    // AMP — time per case
+    time_taken?: number | string | null;
+    time_unit?: "minutes" | "hours" | string | null;
+};
 type Employee = {
     id: string;
     name: string;
@@ -63,12 +96,52 @@ type ServiceCase = {
     assignedEmployeeName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
 };
+// Light version of a case — used only to work out each employee's
+// total time across ALL pages (not just the 10 rows on screen).
+type LightCase = {
+    id: string;
+    productId: string;
+    assignedEmployeeId: string | null;
+};
+// Count-only entry with its current allocations
+type CountRow = {
+    id: string;
+    productId: string;
+    productName: string | null;
+    clientName: string | null;
+    subclientName: string | null;
+    workDate: string;
+    quantity: number;
+    fulfilledCount: number;
+    pendingCount: number;
+    allocatedTotal: number;
+    unallocated: number;
+    allocations: {
+        employeeId: string;
+        employeeName: string | null;
+        quantity: number;
+        fulfilledQuantity: number;
+    }[];
+};
 
-function todayStr() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate()
-    ).padStart(2, "0")}`;
+function formatDisplayDate(iso: string) {
+    const [y, m, d] = (iso || "").split("-");
+    if (!y || !m || !d) return iso;
+    return `${d}-${m}-${y}`;
+}
+
+// First day of the month of the given YYYY-MM-DD date. The pending backlog
+// only carries over inside this month — on the 1st it starts fresh.
+function monthStartOf(iso: string) {
+    return /^\d{4}-\d{2}/.test(iso || "") ? `${iso.slice(0, 7)}-01` : "";
+}
+
+// minutes -> "2h 30m"
+function formatMinutes(mins: number) {
+    const total = Math.round(mins);
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return h === 0 ? `${m}m` : `${h}h ${m}m`;
 }
 
 type Props = {
@@ -76,20 +149,7 @@ type Props = {
     onChangeProductId: (id: string) => void;
     workDate: string;
     onChangeWorkDate: (date: string) => void;
-    // NEW: when true, hides this component's own title/subtext, its
-    // Service/Date/Status filter row (incl. Smart Allocation + Clear
-    // buttons), and the eligibility hint — used when this component is
-    // embedded under another page's header/filters (see manualallocation
-    // tsx's merged "Allocate" tab) so there's only one filter bar on
-    // screen. Defaults to false so nothing changes for any other caller.
     hideHeader?: boolean;
-    // NEW: fired after any action that changes a case's allocation
-    // status (manual allocate, bulk "Allocate" button, Smart
-    // Allocation, or Clear) — lets an embedding page (manualallocation
-    // tsx's KPI cards, which count cases separately from this
-    // component's own list) refetch its own counts instead of going
-    // stale until the next productId/date change. Optional so nothing
-    // breaks for any other caller.
     onCasesChanged?: () => void;
 };
 
@@ -102,15 +162,9 @@ export default function TodaysAllocationCases({
     onCasesChanged,
 }: Props) {
     const isMobile = useIsMobile();
+    const monthStart = monthStartOf(workDate);
     const [products, setProducts] = useState<Product[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
-    // NEW: attendance for the selected date, fetched once here (not just
-    // inline inside handleAutoAllocate) so eligibleEmployees below can
-    // also use it — needed so anyone marked Present on the Employees tab
-    // as an "External Member" (someone whose own Team isn't linked to
-    // this service) still shows up here for both the manual per-case
-    // dropdown AND Smart Allocation, not just employees whose Team
-    // happens to match this service.
     const [attendanceByEmployee, setAttendanceByEmployee] = useState<
         Record<string, "PRESENT" | "ABSENT" | "LEAVE" | "HALF_DAY">
     >({});
@@ -134,12 +188,6 @@ export default function TodaysAllocationCases({
         fetchAttendance();
     }, [fetchAttendance]);
 
-    // NEW: the persisted External Members list (external_service_members
-    // table) for this exact service+date — same data source
-    // todaysallocationemployees.tsx now saves to. Anyone on this list is
-    // eligible here even before attendance has been explicitly saved for
-    // them (attendance still wins if it explicitly marks someone
-    // ABSENT/LEAVE — see eligibleEmployees below).
     const [externalMemberIds, setExternalMemberIds] = useState<Set<string>>(new Set());
     const fetchExternalMembers = useCallback(async () => {
         if (!productId) {
@@ -161,21 +209,29 @@ export default function TodaysAllocationCases({
     }, [fetchExternalMembers]);
 
     const [cases, setCases] = useState<ServiceCase[]>([]);
+    // every case of this service for the month (all pages) — light rows
+    const [allCases, setAllCases] = useState<LightCase[]>([]);
+    // count-only rows (backlog included) + the unsaved per-employee quantities
+    const [countRows, setCountRows] = useState<CountRow[]>([]);
+    const [countsLoading, setCountsLoading] = useState(true);
+    // countDraft[countId][employeeId] = TOTAL quantity typed for that employee (unsaved)
+    const [countDraft, setCountDraft] = useState<Record<string, Record<string, number>>>({});
+    // totals of case-number cases still pending (this month up to the
+    // selected date, and on the selected date alone) for the summary strip.
+    const [caseSummary, setCaseSummary] = useState({ monthPending: 0, todayPending: 0 });
 
-    // Each row's own "Allocate To" dropdown must go by THAT CASE's
-    // service — not whichever service happens to be selected in the top
-    // filter (which is often "All Services", i.e. no filter at all).
-    // Without this, picking "All Services" made every row fall back to
-    // productTeams = [] below, which reads as "no team restriction" and
-    // wrongly shows every employee in every row's dropdown. Fetch each
-    // distinct service's External Members once (keyed by productId) so
-    // the per-row calculation below has what it needs regardless of the
-    // top filter.
     const [externalMembersByProduct, setExternalMembersByProduct] = useState<
         Record<string, Set<string>>
     >({});
     useEffect(() => {
-        const distinctProductIds = [...new Set(cases.map((c) => c.productId).filter(Boolean))];
+        // include product ids of count rows too, not just cases
+        const distinctProductIds = [
+            ...new Set(
+                [...cases.map((c) => c.productId), ...countRows.map((c) => c.productId)].filter(
+                    Boolean
+                )
+            ),
+        ];
         if (distinctProductIds.length === 0) return;
         let cancelled = false;
         (async () => {
@@ -203,21 +259,21 @@ export default function TodaysAllocationCases({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cases, workDate]);
+    }, [cases, countRows, workDate]);
 
-    // Same eligibility rule as eligibleEmployees below (team match, or
-    // explicit Present/Half Day, or External Member for THIS service),
-    // but parameterised by product id so each case row can use its own
-    // service instead of the top filter's.
-    //
-    // STRICT team-based eligibility: unlike eligibleEmployees below (used
-    // for the top summary / Smart Allocation), this does NOT let "marked
-    // Present today" alone add someone whose Team isn't linked to this
-    // service — that was exactly why the dropdown kept showing every
-    // Present employee regardless of service. Only that service's own
-    // linked Teams, or someone explicitly added as an External Member
-    // for that exact service+date, are eligible here. Attendance still
-    // vetoes: ABSENT/LEAVE always drops a person even if team-matched.
+    // service AMP in MINUTES (time_taken, converted if the unit is hours)
+    const ampOf = useCallback(
+        (pid: string | null | undefined) => {
+            if (!pid) return 0;
+            const p = products.find((x) => String(x.id) === String(pid));
+            const t = Number(p?.time_taken);
+            if (!t || Number.isNaN(t)) return 0;
+            return p?.time_unit === "hours" ? t * 60 : t;
+        },
+        [products]
+    );
+
+    // Strict team-based eligibility per service (same as before).
     const getEligibleEmployeesForProduct = useCallback(
         (pid: string) => {
             const product = products.find((p) => String(p.id) === String(pid)) || null;
@@ -247,10 +303,10 @@ export default function TodaysAllocationCases({
     const [error, setError] = useState("");
     const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">("");
     const [page, setPage] = useState(1);
-    // NEW: search box for the Smart Allocation/Clear row — matches Case
-    // #, Client, Sub-client, Service, Date, and Status (same `search`
-    // param the Case Register page already sends). Debounced so every
-    // keystroke doesn't fire a request.
+    // like Case Register — "Counts" and "Cases" are separate views,
+    // only the selected one shows.
+    const [view, setView] = useState<"counts" | "cases">("cases");
+    const [totalCases, setTotalCases] = useState(0);
     const [searchInput, setSearchInput] = useState("");
     const [searchText, setSearchText] = useState("");
     useEffect(() => {
@@ -259,38 +315,25 @@ export default function TodaysAllocationCases({
     }, [searchInput]);
 
     const [allocatingId, setAllocatingId] = useState<string | null>(null);
-    // NEW: dropdown picks an employee but does NOT allocate immediately —
-    // it's held here per case until the row's "Allocate" button is
-    // clicked, so a stray/accidental dropdown click can't reassign a
-    // case. Seeded from each case's current assignment when cases load
-    // (see the sync effect below), so the dropdown shows the right value
-    // even before anyone touches it.
     const [pendingSelection, setPendingSelection] = useState<Record<string, string>>({});
     const [autoRunning, setAutoRunning] = useState(false);
     const [autoResult, setAutoResult] = useState<{
         allocatedCount: number;
         perEmployee: { employeeId: string; employeeName: string | null; caseCount: number }[];
     } | null>(null);
+    // preview summary for the count-only split
+    const [countAutoResult, setCountAutoResult] = useState<{
+        allocatedCount: number;
+        perEmployee: { employeeId: string; quantity: number }[];
+    } | null>(null);
     const [toast, setToast] = useState("");
-    // NEW: "Clear" button — unassigns every currently-ALLOCATED case for
-    // the selected service+date back to Pending, so a bad Smart
-    // Allocation run (e.g. wrong team, wrong day) can be undone right
-    // here instead of hunting it down on the History tab.
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [clearing, setClearing] = useState(false);
-    // NEW: Smart Allocation no longer allocates anything by itself — it
-    // only computes a suggested case -> employee split and drops each
-    // suggestion into that row's dropdown (via pendingSelection above).
-    // This tracks which case IDs came from that preview specifically —
-    // including ones on a page not currently loaded/visible — so the
-    // bottom "Allocate" button can save ALL of them (not just whatever
-    // happens to be on the current page) when pressed, and so the
-    // success popup can tell the person how many were actually saved.
     const [autoPreviewCaseIds, setAutoPreviewCaseIds] = useState<string[]>([]);
-    // NEW: success popup shown after the bottom "Allocate" button
-    // actually saves something — replaces relying on the toast alone so
-    // it's unmistakable that cases were saved (vs. just previewed).
     const [successPopup, setSuccessPopup] = useState<{ count: number } | null>(null);
+    // NEW (8h WARNING): popup state
+    const [overloadOpen, setOverloadOpen] = useState(false);
+    const [showOverloadList, setShowOverloadList] = useState(false);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -327,10 +370,9 @@ export default function TodaysAllocationCases({
             params.set("pageSize", String(PAGE_SIZE));
             if (productId) params.set("productId", productId);
             if (workDate) params.set("workDate", workDate);
-            // NEW: carry forward any case still PENDING from an earlier
-            // date instead of it disappearing once its day passes — see
-            // backend applyFilters' includeBacklog comment.
             params.set("includeBacklog", "true");
+            // backlog only from the same month (new month = fresh start)
+            if (monthStart) params.set("workDateFrom", monthStart);
             if (statusFilter) params.set("allocationStatus", statusFilter);
             if (searchText) params.set("search", searchText);
 
@@ -339,11 +381,7 @@ export default function TodaysAllocationCases({
             if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
             const rows: ServiceCase[] = json.data || [];
             setCases(rows);
-            // Seed the pending dropdown value from each row's current
-            // assignment — only for rows not already tracked, so an
-            // in-progress unsaved selection on a row already on screen
-            // isn't clobbered by a refetch (e.g. after allocating a
-            // different row).
+            setTotalCases(json.pagination?.total ?? rows.length);
             setPendingSelection((prev) => {
                 const next = { ...prev };
                 rows.forEach((c) => {
@@ -356,29 +394,112 @@ export default function TodaysAllocationCases({
         } finally {
             setLoading(false);
         }
-    }, [page, productId, workDate, statusFilter, searchText]);
+    }, [page, productId, workDate, monthStart, statusFilter, searchText]);
+
+    // loads EVERY case of this service for the month (all pages, light
+    // fields only) so each employee's time is correct even for cases that
+    // are not on the page currently on screen.
+    const fetchAllCases = useCallback(async () => {
+        if (!productId || !workDate) {
+            setAllCases([]);
+            return;
+        }
+        try {
+            const out: LightCase[] = [];
+            for (let p = 1; p <= 30; p++) {
+                const params = new URLSearchParams();
+                params.set("page", String(p));
+                params.set("pageSize", "100");
+                params.set("productId", productId);
+                params.set("workDate", workDate);
+                params.set("includeBacklog", "true");
+                if (monthStart) params.set("workDateFrom", monthStart);
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success) break;
+                const rows: any[] = json.data || [];
+                rows.forEach((r) =>
+                    out.push({
+                        id: r.id,
+                        productId: String(r.productId),
+                        assignedEmployeeId: r.assignedEmployeeId || null,
+                    })
+                );
+                const totalPages = json.pagination?.totalPages ?? 1;
+                if (p >= totalPages || rows.length === 0) break;
+            }
+            setAllCases(out);
+        } catch {
+            setAllCases([]);
+        }
+    }, [productId, workDate, monthStart]);
+
+    // how many case-number cases are still PENDING — this month up to the
+    // selected date, and on the selected date alone. Only the totals are
+    // needed, so pageSize=1 and we read pagination.total.
+    const fetchCaseSummary = useCallback(async () => {
+        if (!productId || !workDate) return;
+        const build = (extra: Record<string, string>) => {
+            const p = new URLSearchParams();
+            p.set("page", "1");
+            p.set("pageSize", "1");
+            p.set("productId", productId);
+            p.set("allocationStatus", "PENDING");
+            Object.entries(extra).forEach(([k, v]) => p.set(k, v));
+            return p.toString();
+        };
+        try {
+            const [monthRes, todayRes] = await Promise.all([
+                authFetch(
+                    `${API_BASE}/api/service-cases?${build({
+                        workDateFrom: monthStart,
+                        workDateTo: workDate,
+                    })}`
+                ),
+                authFetch(`${API_BASE}/api/service-cases?${build({ workDate })}`),
+            ]);
+            const [monthJson, todayJson] = await Promise.all([monthRes.json(), todayRes.json()]);
+            setCaseSummary({
+                monthPending: monthJson?.success ? (monthJson.pagination?.total ?? 0) : 0,
+                todayPending: todayJson?.success ? (todayJson.pagination?.total ?? 0) : 0,
+            });
+        } catch {
+            setCaseSummary({ monthPending: 0, todayPending: 0 });
+        }
+    }, [productId, workDate, monthStart]);
+
+    // count-only rows for this service/date (+ older unfinished ones of
+    // the SAME month), oldest first.
+    const fetchCounts = useCallback(async () => {
+        setCountsLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (productId) params.set("productId", productId);
+            if (workDate) params.set("workDate", workDate);
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/count-allocations?${params.toString()}`
+            );
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
+            const rows: CountRow[] = (json.data || [])
+                .filter((c: CountRow) => !monthStart || c.workDate >= monthStart)
+                .sort((a: CountRow, b: CountRow) => a.workDate.localeCompare(b.workDate));
+            setCountRows(rows);
+        } catch (err) {
+            console.error("Failed to fetch count entries:", err);
+            setCountRows([]);
+        } finally {
+            setCountsLoading(false);
+        }
+    }, [productId, workDate, monthStart]);
 
     useEffect(() => {
         fetchProducts();
         fetchEmployees();
     }, [fetchProducts, fetchEmployees]);
 
-    // PERF FIX: when nothing's selected yet, the effect below auto-picks
-    // the first service the moment `products` loads (see further down).
-    // That counts as `productId` "changing", which used to also trigger
-    // the refetch effect right after it — firing Products/Employees a
-    // second time on every single first load, back-to-back with the
-    // mount fetch above. This ref lets the auto-select mark that one
-    // specific change as "already fresh, don't refetch" so it only fires
-    // for an actual user-driven service switch.
     const autoSelectedRef = useRef(false);
 
-    // FIX: re-fetch Products (with their Teams) and Employees whenever
-    // the person switches the Service dropdown — not just once when this
-    // tab first mounts. Without this, linking a Team to a service on the
-    // Products/Services page mid-session wouldn't show up here until a
-    // full page reload or a manual "Refresh" click, even after picking
-    // that exact service again.
     useEffect(() => {
         if (autoSelectedRef.current) {
             autoSelectedRef.current = false;
@@ -402,19 +523,19 @@ export default function TodaysAllocationCases({
         fetchCases();
     }, [fetchCases]);
 
-    // Only employees whose Team is linked to the selected service
-    // (Products/Services -> Teams multi-select) are eligible here — same
-    // narrowing as the Employees tab. Falls back to every employee ONLY
-    // when the service has no teams linked at all — if teams ARE linked
-    // but zero employees currently have a matching Team, the list is
-    // meant to come up empty rather than silently allocating to everyone
-    // present.
-    // FIX: match on String(p.id) === String(productId) — productId can
-    // arrive here as a string from the <select>'s value while p.id (from
-    // the API) may not always be, so a strict `===` could silently fail
-    // to find the product and fall back to showing every employee even
-    // though Teams ARE linked. Same defensive pattern already used for
-    // this exact lookup in manualallocation.tsx.
+    useEffect(() => {
+        fetchCaseSummary();
+    }, [fetchCaseSummary]);
+
+    useEffect(() => {
+        fetchAllCases();
+    }, [fetchAllCases]);
+
+    useEffect(() => {
+        if (!productId) return;
+        fetchCounts();
+    }, [fetchCounts, productId]);
+
     const selectedProduct = useMemo(
         () => products.find((p) => String(p.id) === String(productId)) || null,
         [products, productId]
@@ -430,16 +551,7 @@ export default function TodaysAllocationCases({
                       const allowed = new Set(productTeams.map((t) => t.toLowerCase()));
                       return e.team && allowed.has(e.team.trim().toLowerCase());
                   });
-        // NEW: also include anyone explicitly marked PRESENT in attendance
-        // for this date, OR persisted as an External Member for this
-        // exact service+date, even if their own Team doesn't match this
-        // service — this is exactly what "External Members" on the
-        // Employees tab does (borrowing someone from another team for
-        // just this service/date), so they need to be selectable here
-        // for manual allocation and counted in Smart Allocation too.
-        // Explicit ABSENT/LEAVE always wins and drops someone even if
-        // they'd otherwise be team-matched or externally added.
-        const combined = employees.filter((e) => {
+        return employees.filter((e) => {
             const att = attendanceByEmployee[e.id];
             if (att === "ABSENT" || att === "LEAVE") return false;
             const isTeamMatched = teamMatched.some((t) => t.id === e.id);
@@ -447,17 +559,173 @@ export default function TodaysAllocationCases({
             const isExternalMember = externalMemberIds.has(e.id);
             return isTeamMatched || isExplicitlyPresent || isExternalMember;
         });
-        return combined;
     }, [employees, selectedProduct, attendanceByEmployee, externalMemberIds]);
 
     useEffect(() => {
         setPage(1);
         setAutoResult(null);
-        // A preview from a different service/date no longer applies —
-        // drop it so a stray "Allocate" click after switching filters
-        // can't save leftover suggestions for the wrong service/date.
+        setCountAutoResult(null);
         setAutoPreviewCaseIds([]);
     }, [productId, workDate, statusFilter, searchText]);
+
+    // Unsaved count quantities belong to the service/date they were typed for.
+    useEffect(() => {
+        setCountDraft({});
+    }, [productId, workDate]);
+
+    // ---- count helpers ----
+    const savedQty = (c: CountRow, empId: string) =>
+        c.allocations.find((a) => a.employeeId === empId)?.quantity || 0;
+    const fulfilledQty = (c: CountRow, empId: string) =>
+        c.allocations.find((a) => a.employeeId === empId)?.fulfilledQuantity || 0;
+    const draftQty = (c: CountRow, empId: string) =>
+        countDraft[c.id]?.[empId] ?? savedQty(c, empId);
+
+    // Employees shown for a count row: eligible ones + anyone already allocated.
+    const employeesForCount = (c: CountRow): Employee[] => {
+        const eligible = getEligibleEmployeesForProduct(c.productId);
+        const extra = c.allocations
+            .filter((a) => !eligible.some((e) => e.id === a.employeeId))
+            .map((a) => employees.find((e) => e.id === a.employeeId))
+            .filter(Boolean) as Employee[];
+        return [...extra, ...eligible];
+    };
+    const draftTotal = (c: CountRow) => {
+        const ids = new Set<string>([
+            ...c.allocations.map((a) => a.employeeId),
+            ...Object.keys(countDraft[c.id] || {}),
+        ]);
+        let t = 0;
+        ids.forEach((id) => (t += draftQty(c, id)));
+        return t;
+    };
+
+    // everything whose typed quantity differs from what's saved
+    const changedCountItems = useMemo(() => {
+        const items: { countId: string; employeeId: string; quantity: number }[] = [];
+        countRows.forEach((c) => {
+            const ids = new Set<string>([
+                ...c.allocations.map((a) => a.employeeId),
+                ...Object.keys(countDraft[c.id] || {}),
+            ]);
+            ids.forEach((empId) => {
+                const d = countDraft[c.id]?.[empId];
+                if (d !== undefined && d !== savedQty(c, empId)) {
+                    items.push({ countId: c.id, employeeId: empId, quantity: d });
+                }
+            });
+        });
+        return items;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [countRows, countDraft]);
+
+    // search + status filter for count rows (client-side)
+    const visibleCountRows = useMemo(() => {
+        const q = searchText.toLowerCase();
+        return countRows.filter((c) => {
+            if (statusFilter === "PENDING" && c.unallocated <= 0) return false;
+            if (statusFilter === "ALLOCATED" && c.allocatedTotal <= 0) return false;
+            if (!q) return true;
+            return [
+                c.productName,
+                c.clientName,
+                c.subclientName,
+                c.workDate,
+                formatDisplayDate(c.workDate),
+                "count",
+            ]
+                .filter(Boolean)
+                .some((v) => String(v).toLowerCase().includes(q));
+        });
+    }, [countRows, searchText, statusFilter]);
+
+    // oldest date first (then by case number) so carried-over cases sit
+    // at the top and are allocated before the new ones.
+    const sortedCases = useMemo(
+        () =>
+            [...cases].sort(
+                (a, b) =>
+                    a.workDate.localeCompare(b.workDate) ||
+                    a.caseNumber.localeCompare(b.caseNumber, undefined, { numeric: true })
+            ),
+        [cases]
+    );
+
+    // live time per employee (minutes) = case-number cases x AMP
+    //      + count quantities x AMP. Uses the unsaved dropdown picks
+    //      (pendingSelection) and unsaved count boxes (countDraft), so it
+    //      changes as the manager allocates / runs Smart Allocation.
+    const employeeLoad = useMemo(() => {
+        const map: Record<string, { cases: number; counts: number; mins: number }> = {};
+        const add = (empId: string, cases: number, counts: number, mins: number) => {
+            if (!empId) return;
+            const cur = map[empId] || { cases: 0, counts: 0, mins: 0 };
+            cur.cases += cases;
+            cur.counts += counts;
+            cur.mins += mins;
+            map[empId] = cur;
+        };
+
+        allCases.forEach((c) => {
+            const emp =
+                c.id in pendingSelection ? pendingSelection[c.id] : c.assignedEmployeeId || "";
+            if (emp) add(emp, 1, 0, ampOf(c.productId));
+        });
+
+        countRows.forEach((c) => {
+            const ids = new Set<string>([
+                ...c.allocations.map((a) => a.employeeId),
+                ...Object.keys(countDraft[c.id] || {}),
+            ]);
+            ids.forEach((empId) => {
+                const q = countDraft[c.id]?.[empId] ?? savedQty(c, empId);
+                if (q > 0) add(empId, 0, q, q * ampOf(c.productId));
+            });
+        });
+        return map;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allCases, pendingSelection, countRows, countDraft, ampOf]);
+
+    const loadLabel = (empId: string) => {
+        const l = employeeLoad[empId];
+        return l && l.mins > 0 ? ` (${formatMinutes(l.mins)})` : "";
+    };
+
+    // NEW (8h WARNING): employees whose live time (incl. unsaved picks)
+    // is above 8 hours, highest first.
+    const overloadedEmployees = useMemo(
+        () =>
+            employees
+                .filter((e) => (employeeLoad[e.id]?.mins || 0) > MAX_WORK_MINUTES)
+                .map((e) => ({
+                    id: e.id,
+                    name: e.name,
+                    mins: employeeLoad[e.id].mins,
+                    total: employeeLoad[e.id].cases + employeeLoad[e.id].counts,
+                }))
+                .sort((a, b) => b.mins - a.mins),
+        [employees, employeeLoad]
+    );
+
+    // summary strip numbers — everything still to allocate, split into
+    // today (selected date) and carried-over (earlier days of the month).
+    const summary = useMemo(() => {
+        const countsAll = countRows.reduce((s, c) => s + Math.max(0, c.unallocated), 0);
+        const countsToday = countRows
+            .filter((c) => c.workDate === workDate)
+            .reduce((s, c) => s + Math.max(0, c.unallocated), 0);
+        const casesToday = caseSummary.todayPending;
+        const casesCarry = Math.max(0, caseSummary.monthPending - caseSummary.todayPending);
+        const countsCarry = Math.max(0, countsAll - countsToday);
+        const total = casesToday + countsToday + casesCarry + countsCarry;
+        return {
+            today: casesToday + countsToday,
+            carry: casesCarry + countsCarry,
+            total,
+            // time still to allocate (all of it belongs to the selected service)
+            totalMins: total * ampOf(productId),
+        };
+    }, [countRows, caseSummary, workDate, ampOf, productId]);
 
     const handleManualAllocate = async (caseId: string, employeeId: string) => {
         setAllocatingId(caseId);
@@ -495,12 +763,6 @@ export default function TodaysAllocationCases({
         }
     };
 
-    // NEW: single bottom "Allocate" button for the whole page — instead
-    // of one button per row, it saves every row whose dropdown selection
-    // actually changed from what's saved, in one click. Also picks up
-    // any case IDs staged by a Smart Allocation preview even if they're
-    // sitting on a page that isn't currently loaded, so a preview that
-    // spans more cases than fit on one page still gets saved in full.
     const [bulkSaving, setBulkSaving] = useState(false);
     const changedOnPage = cases
         .filter((c) => {
@@ -509,25 +771,138 @@ export default function TodaysAllocationCases({
         })
         .map((c) => c.id);
     const changedCaseIds = Array.from(new Set([...changedOnPage, ...autoPreviewCaseIds]));
+    const changedCountTotal = changedCountItems.length;
+    const totalChanged = changedCaseIds.length + changedCountTotal;
+
+    // NEW: sends the "work allocated" message. Only employee ids go to the
+    // server (no case counts / details) and every employee appears ONCE, so
+    // an employee who got many cases still receives a single message.
+    const notifyEmployees = async (employeeIds: string[]) => {
+        const unique = [...new Set(employeeIds.filter(Boolean))];
+        if (unique.length === 0) return;
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/notify-allocation`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    employeeIds: unique,
+                    workDate,
+                    message: ALLOC_MESSAGE,
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "failed");
+        } catch {
+            showToast("Allocated, but the message could not be sent.");
+        }
+    };
+
+    // NEW (8h WARNING): the Allocate button calls this first. If anyone is
+    // above 8 hours the warning popup opens; otherwise it allocates directly.
+    const handleAllocateClick = () => {
+        if (totalChanged === 0) return;
+        if (overloadedEmployees.length > 0) {
+            setShowOverloadList(false);
+            setOverloadOpen(true);
+            return;
+        }
+        handleAllocateAll();
+    };
 
     const handleAllocateAll = async () => {
-        if (changedCaseIds.length === 0) return;
+        if (totalChanged === 0) return;
+
+        // validate the count totals BEFORE saving anything.
+        // Before, the case-number allocations were saved first and this
+        // check ran afterwards — so a failed check left a half-saved state
+        // (cases allocated, counts not).
+        for (const c of countRows) {
+            if (draftTotal(c) > c.quantity) {
+                showToast(
+                    `${c.productName || "Service"}: allocated ${draftTotal(c)} is more than ${c.quantity}.`
+                );
+                return;
+            }
+        }
+
         setBulkSaving(true);
         try {
-            // Parallel — pehle ye ek-ek karke (sequential) allocate ho raha
-            // tha, isliye N cases x per-request latency time lag raha tha.
-            const results = await Promise.all(
-                changedCaseIds.map((caseId) =>
-                    handleManualAllocate(caseId, pendingSelection[caseId] ?? "")
-                )
-            );
-            const okCount = results.filter(Boolean).length;
+            let okCount = 0;
+            // employees who got NEW work in this press (a Set = one message each)
+            const notifyIds = new Set<string>();
+
+            // A) cases with case numbers
+            if (changedCaseIds.length > 0) {
+                const results = await Promise.all(
+                    changedCaseIds.map((caseId) =>
+                        handleManualAllocate(caseId, pendingSelection[caseId] ?? "")
+                    )
+                );
+                okCount += results.filter(Boolean).length;
+
+                // message only those who newly got a case (failed saves are skipped)
+                changedCaseIds.forEach((id, i) => {
+                    if (!results[i]) return;
+                    const emp = pendingSelection[id];
+                    const before = cases.find((c) => c.id === id)?.assignedEmployeeId || "";
+                    if (emp && emp !== before) notifyIds.add(emp);
+                });
+            }
+
+            // B) count-only entries
+            if (changedCountItems.length > 0) {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/count-allocations/save`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ items: changedCountItems }),
+                    }
+                );
+                const json = await res.json();
+                if (!res.ok || !json.success) {
+                    showToast(json?.message || "Failed to save count allocations.");
+                } else {
+                    const countSavedUnits = changedCountItems.reduce(
+                        (s, i) =>
+                            s +
+                            Math.max(
+                                0,
+                                i.quantity -
+                                    savedQty(
+                                        countRows.find((c) => c.id === i.countId)!,
+                                        i.employeeId
+                                    )
+                            ),
+                        0
+                    );
+                    okCount += countSavedUnits;
+
+                    // message those whose quantity went UP
+                    changedCountItems.forEach((i) => {
+                        const row = countRows.find((c) => c.id === i.countId);
+                        if (row && i.quantity > savedQty(row, i.employeeId)) {
+                            notifyIds.add(i.employeeId);
+                        }
+                    });
+
+                    setCountDraft({});
+                    fetchCounts();
+                }
+            }
+
+            // one message per employee, right after the allocation is saved
+            void notifyEmployees([...notifyIds]);
+
             setAutoPreviewCaseIds([]);
             setAutoResult(null);
+            setCountAutoResult(null);
             if (okCount > 0) {
                 showToast(`${okCount} case(s) allocated.`);
                 setSuccessPopup({ count: okCount });
                 fetchCases();
+                fetchCaseSummary();
+                fetchAllCases();
                 onCasesChanged?.();
             }
         } finally {
@@ -542,12 +917,8 @@ export default function TodaysAllocationCases({
         }
         setAutoRunning(true);
         setAutoResult(null);
+        setCountAutoResult(null);
         try {
-            // Present is the default for everyone — only skip an employee
-            // if attendance for this date explicitly marks them ABSENT or
-            // LEAVE. Nobody needs to be actively marked Present on the
-            // Employees tab first; Smart Allocation just needs to know
-            // who's NOT available.
             const attRes = await authFetch(`${API_BASE}/api/attendance?date=${workDate}`);
             const attJson = await attRes.json();
             if (!attRes.ok || !attJson.success)
@@ -566,39 +937,91 @@ export default function TodaysAllocationCases({
                 return;
             }
 
-            // This call only computes a suggested split — it does NOT
-            // allocate anything on the server. See the backend
-            // controller's comment on autoAllocateServiceCases for why.
-            const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId, workDate, employeeIds: presentIds }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success)
-                throw new Error(json?.message || "Auto allocation failed");
-            setAutoResult(json.data);
+            let casesMsg = "";
+            // what the case-number preview just gave each person — sent to the
+            // count preview so the "extra" doesn't land on the same person twice
+            const extraLoad: Record<string, number> = {};
+            let casePreviewed = 0;
+            let countPreviewed = 0;
 
-            // Drop the suggested employee straight into each case's
-            // dropdown (pendingSelection) WITHOUT saving anything yet —
-            // and remember which case IDs came from this preview so the
-            // bottom "Allocate" button can save all of them, even ones
-            // on a page that isn't loaded right now.
-            const assignments: { caseId: string; employeeId: string }[] =
-                json.data?.assignments || [];
-            setPendingSelection((prev) => {
-                const next = { ...prev };
-                assignments.forEach((a) => {
-                    next[a.caseId] = a.employeeId;
+            // A) cases with case numbers (preview only)
+            try {
+                const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ productId, workDate, employeeIds: presentIds }),
                 });
-                return next;
-            });
-            setAutoPreviewCaseIds(assignments.map((a) => a.caseId));
+                const json = await res.json();
+                if (res.ok && json.success) {
+                    setAutoResult(json.data);
+                    (json.data?.perEmployee || []).forEach((p: any) => {
+                        extraLoad[p.employeeId] = p.caseCount || 0;
+                    });
+                    const assignments: { caseId: string; employeeId: string }[] =
+                        json.data?.assignments || [];
+                    setPendingSelection((prev) => {
+                        const next = { ...prev };
+                        assignments.forEach((a) => {
+                            next[a.caseId] = a.employeeId;
+                        });
+                        return next;
+                    });
+                    setAutoPreviewCaseIds(assignments.map((a) => a.caseId));
+                    casePreviewed = assignments.length;
+                    casesMsg = json.message || "";
+                } else if (countRows.length === 0) {
+                    throw new Error(json?.message || "Auto allocation failed");
+                }
+            } catch (e) {
+                if (countRows.length === 0) throw e;
+            }
 
-            showToast(
-                json.message ||
-                    "Cases distributed — review the dropdowns and press Allocate to confirm."
+            // B) count-only entries (preview only) — fills the quantity boxes
+            const cRes = await authFetch(
+                `${API_BASE}/api/service-cases/count-allocations/auto-preview`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        productId,
+                        workDate,
+                        employeeIds: presentIds,
+                        extraLoad,
+                    }),
+                }
             );
+            const cJson = await cRes.json();
+            if (cRes.ok && cJson.success) {
+                // only rows of the current month are on screen — ignore any
+                // preview row for an older month's count entry
+                const shownCountIds = new Set(countRows.map((c) => c.id));
+                const assignments: { countId: string; employeeId: string; quantity: number }[] = (
+                    cJson.data?.assignments || []
+                ).filter((a: any) => shownCountIds.has(a.countId));
+                setCountDraft((prev) => {
+                    const next = { ...prev };
+                    assignments.forEach((a) => {
+                        next[a.countId] = {
+                            ...(next[a.countId] || {}),
+                            [a.employeeId]: a.quantity,
+                        };
+                    });
+                    return next;
+                });
+                setCountAutoResult({
+                    allocatedCount: cJson.data?.allocatedCount || 0,
+                    perEmployee: cJson.data?.perEmployee || [],
+                });
+                countPreviewed = cJson.data?.allocatedCount || 0;
+            }
+
+            if (casePreviewed === 0 && countPreviewed === 0) {
+                showToast("Nothing pending to allocate.");
+            } else {
+                showToast(
+                    casesMsg || "Distributed — review the boxes and press Allocate to confirm."
+                );
+            }
         } catch (err: any) {
             showToast(err?.message || "Auto allocation failed.");
         } finally {
@@ -606,9 +1029,6 @@ export default function TodaysAllocationCases({
         }
     };
 
-    // Fetches every ALLOCATED case for the current service+date (looping
-    // pages if there are more than fit in one, since the list endpoint
-    // caps pageSize at 100) and unassigns each one back to Pending.
     const handleClearAllocations = async () => {
         setClearConfirmOpen(false);
         setClearing(true);
@@ -634,26 +1054,45 @@ export default function TodaysAllocationCases({
                 fetchPage += 1;
             }
 
-            if (allocatedIds.length === 0) {
+            if (allocatedIds.length > 0) {
+                await Promise.all(
+                    allocatedIds.map((id) =>
+                        authFetch(`${API_BASE}/api/service-cases/${id}/allocate`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ employeeId: null }),
+                        })
+                    )
+                );
+            }
+
+            // clear count allocations too (logged on the server)
+            let clearedCounts = 0;
+            const cRes = await authFetch(`${API_BASE}/api/service-cases/count-allocations/clear`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productId, workDate }),
+            });
+            const cJson = await cRes.json();
+            if (cRes.ok && cJson.success) clearedCounts = cJson.data?.cleared || 0;
+
+            if (allocatedIds.length === 0 && clearedCounts === 0) {
                 showToast("Nothing allocated for this service/date.");
                 return;
             }
 
-            await Promise.all(
-                allocatedIds.map((id) =>
-                    authFetch(`${API_BASE}/api/service-cases/${id}/allocate`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ employeeId: null }),
-                    })
-                )
+            showToast(
+                `Cleared ${allocatedIds.length} case(s) and ${clearedCounts} count allocation(s).`
             );
-
-            showToast(`Cleared ${allocatedIds.length} allocation(s) — back to Pending.`);
             setAutoResult(null);
+            setCountAutoResult(null);
             setPendingSelection({});
+            setCountDraft({});
             setPage(1);
             fetchCases();
+            fetchCaseSummary();
+            fetchAllCases();
+            fetchCounts();
             onCasesChanged?.();
         } catch (err: any) {
             showToast(err?.message || "Failed to clear allocations.");
@@ -663,10 +1102,6 @@ export default function TodaysAllocationCases({
     };
 
     const [refreshingLookups, setRefreshingLookups] = useState(false);
-    // Manual refresh — Products/Employees are only fetched once when this
-    // tab mounts, so editing a service's Teams (or an employee's Team) on
-    // another page/tab while this one is still open won't show up until
-    // this runs again. Lets that be a click instead of a full page reload.
     const refreshLookups = async () => {
         setRefreshingLookups(true);
         try {
@@ -677,8 +1112,123 @@ export default function TodaysAllocationCases({
         }
     };
 
-    const pendingCount = cases.filter((c) => c.allocationStatus === "PENDING").length;
-    const allocatedCount = cases.filter((c) => c.allocationStatus === "ALLOCATED").length;
+    const pendingCount =
+        cases.filter((c) => c.allocationStatus === "PENDING").length +
+        countRows.reduce((s, c) => s + Math.max(0, c.unallocated), 0);
+    const allocatedCount =
+        cases.filter((c) => c.allocationStatus === "ALLOCATED").length +
+        countRows.reduce((s, c) => s + c.allocatedTotal, 0);
+
+    const nameOf = (id: string) => employees.find((e) => e.id === id)?.name || "Unknown";
+
+    const pendingCountsTotal = countRows.reduce((s, c) => s + c.pendingCount, 0);
+
+    // employees shown in the time strip — everyone eligible for this
+    // service plus anyone who already has work (even if not eligible now).
+    const timeStripEmployees = useMemo(() => {
+        const ids = new Set<string>(eligibleEmployees.map((e) => e.id));
+        Object.keys(employeeLoad).forEach((id) => {
+            if (employeeLoad[id].mins > 0 || employeeLoad[id].cases + employeeLoad[id].counts > 0)
+                ids.add(id);
+        });
+        return employees
+            .filter((e) => ids.has(e.id))
+            .sort((a, b) => (employeeLoad[b.id]?.mins || 0) - (employeeLoad[a.id]?.mins || 0));
+    }, [eligibleEmployees, employeeLoad, employees]);
+
+    // One "Allocate" button, shown under whichever view (Counts / Cases) is open.
+    // It saves BOTH the case dropdown picks and the count quantities.
+    const allocateBar = (
+        <div style={styles.bulkAllocateRow}>
+            <button
+                type="button"
+                style={{
+                    ...styles.allocateAllBtn,
+                    opacity: bulkSaving || totalChanged === 0 ? 0.6 : 1,
+                }}
+                disabled={bulkSaving || totalChanged === 0}
+                onClick={handleAllocateClick}
+            >
+                <i className="ti ti-check" />
+                {bulkSaving
+                    ? "Allocating…"
+                    : totalChanged > 0
+                      ? `Allocate (${totalChanged})`
+                      : "Allocate"}
+            </button>
+        </div>
+    );
+
+    const actionButtons = (
+        <>
+            <button
+                type="button"
+                style={{
+                    ...styles.autoBtn,
+                    opacity: autoRunning || pendingCount === 0 ? 0.6 : 1,
+                }}
+                disabled={autoRunning || pendingCount === 0}
+                onClick={handleAutoAllocate}
+                title={pendingCount === 0 ? "Nothing pending" : "Smart Allocation"}
+            >
+                <i className="ti ti-bolt" />
+                {autoRunning ? "Allocating…" : "Smart Allocation"}
+            </button>
+            <button
+                type="button"
+                style={{
+                    ...styles.clearAllocBtn,
+                    opacity: clearing || allocatedCount === 0 ? 0.6 : 1,
+                    cursor: clearing || allocatedCount === 0 ? "not-allowed" : "pointer",
+                }}
+                disabled={clearing || allocatedCount === 0}
+                onClick={() => setClearConfirmOpen(true)}
+                title={
+                    allocatedCount === 0
+                        ? "Nothing allocated"
+                        : "Unassign every allocated case/count for this service/date"
+                }
+            >
+                <i className="ti ti-eraser" />
+                {clearing ? "Clearing…" : "Clear"}
+            </button>
+            <div style={{ marginLeft: "auto", minWidth: 220 }}>
+                <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search case, client, service, date, status…"
+                    style={styles.select}
+                />
+            </div>
+        </>
+    );
+
+    const previewBox = (extraStyle?: CSSProperties) =>
+        (autoResult || countAutoResult) && (
+            <div style={{ ...styles.autoSummary, ...extraStyle }}>
+                <strong>Preview:</strong>{" "}
+                {autoResult && (
+                    <>
+                        <strong>{autoResult.allocatedCount}</strong> case(s) →{" "}
+                        {autoResult.perEmployee
+                            .map((e) => `${e.employeeName || "Unknown"} (${e.caseCount})`)
+                            .join(", ")}
+                        .{" "}
+                    </>
+                )}
+                {countAutoResult && countAutoResult.allocatedCount > 0 && (
+                    <>
+                        <strong>{countAutoResult.allocatedCount}</strong> count case(s) →{" "}
+                        {countAutoResult.perEmployee
+                            .map((e) => `${nameOf(e.employeeId)} (${e.quantity})`)
+                            .join(", ")}
+                        .{" "}
+                    </>
+                )}
+                Nothing is saved yet — review below and press <strong>Allocate</strong> to confirm.
+            </div>
+        );
 
     return (
         <div style={styles.root}>
@@ -703,12 +1253,17 @@ export default function TodaysAllocationCases({
                                         Cases
                                     </h2>
                                     <p style={styles.headerSubtext}>
-                                        Every logged case for the selected service/date — allocate
-                                        each one manually below, or run Smart Allocation to preview
-                                        an equal split of all pending cases across every employee
-                                        (except anyone marked Absent or Leave on the Employees tab).
-                                        Smart Allocation only fills in the dropdowns below — nothing
-                                        is saved until you press Allocate.
+                                        Cases with a case number are allocated one by one. Entries
+                                        logged as a count only ("20 cases pending") are split by
+                                        quantity. Pending work from earlier days of the month is
+                                        carried over and shown first — a new month starts fresh.
+                                        Smart Allocation previews an even split across available
+                                        employees — the extra case rotates, so whoever got it
+                                        yesterday is last in line today. Every employee's time
+                                        (cases × the service's AMP) is shown live while you
+                                        allocate. Nothing is saved until you press Allocate, and
+                                        then each employee who got new work is told once to login
+                                        and check.
                                     </p>
                                 </div>
                             </div>
@@ -750,67 +1305,9 @@ export default function TodaysAllocationCases({
                                     <option value="ALLOCATED">Allocated</option>
                                 </select>
                             </div>
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.autoBtn,
-                                    opacity: autoRunning || pendingCount === 0 ? 0.6 : 1,
-                                }}
-                                disabled={autoRunning || pendingCount === 0}
-                                onClick={handleAutoAllocate}
-                                title={
-                                    pendingCount === 0
-                                        ? "No pending cases on this page"
-                                        : "Smart Allocation"
-                                }
-                            >
-                                <i className="ti ti-bolt" />
-                                {autoRunning ? "Allocating…" : "Smart Allocation"}
-                            </button>
-                            {/* NEW: unassigns every ALLOCATED case for this
-                                service+date back to Pending — undo a bad Smart
-                                Allocation run without going to the History tab. */}
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.clearAllocBtn,
-                                    opacity: clearing || allocatedCount === 0 ? 0.6 : 1,
-                                    cursor:
-                                        clearing || allocatedCount === 0
-                                            ? "not-allowed"
-                                            : "pointer",
-                                }}
-                                disabled={clearing || allocatedCount === 0}
-                                onClick={() => setClearConfirmOpen(true)}
-                                title={
-                                    allocatedCount === 0
-                                        ? "Nothing allocated on this page"
-                                        : "Unassign every allocated case for this service/date"
-                                }
-                            >
-                                <i className="ti ti-eraser" />
-                                {clearing ? "Clearing…" : "Clear"}
-                            </button>
-                            {/* NEW: same search as the embedded (hideHeader)
-                                action row — Case #, Client, Sub-client,
-                                Service, Date, or Status. */}
-                            <div style={{ marginLeft: "auto", minWidth: 220 }}>
-                                <input
-                                    type="text"
-                                    value={searchInput}
-                                    onChange={(e) => setSearchInput(e.target.value)}
-                                    placeholder="Search case, client, service, date, status…"
-                                    style={styles.select}
-                                />
-                            </div>
+                            {actionButtons}
                         </div>
 
-                        {/* Eligibility hint — shows exactly who Smart Allocation
-                            (and the manual dropdown) will consider for the
-                            selected service, based on that service's linked
-                            Teams. If this list doesn't match expectations, the
-                            mismatch is in Team names on the Employees/Products
-                            pages, not in this page's filtering logic. */}
                         <p style={styles.eligibilityHint}>
                             {selectedProduct &&
                             (selectedProduct.teams || []).filter(Boolean).length > 0 ? (
@@ -835,242 +1332,409 @@ export default function TodaysAllocationCases({
                                 onClick={refreshLookups}
                                 disabled={refreshingLookups}
                                 style={styles.refreshLink}
-                                title="Just changed a service's Teams or an employee's Team elsewhere? Refresh here instead of reloading the page."
                             >
                                 <i
                                     className="ti ti-refresh"
-                                    style={{
-                                        fontSize: fontSize.xs,
-                                        display: "inline-block",
-                                    }}
+                                    style={{ fontSize: fontSize.xs, display: "inline-block" }}
                                 />
                                 {refreshingLookups ? "Refreshing…" : "Refresh"}
                             </button>
                         </p>
 
-                        {autoResult && (
-                            <div style={styles.autoSummary}>
-                                <strong>Preview:</strong>{" "}
-                                <strong>{autoResult.allocatedCount}</strong> case(s) would be split
-                                across {autoResult.perEmployee.length} employee(s):{" "}
-                                {autoResult.perEmployee
-                                    .map((e) => `${e.employeeName || "Unknown"} (${e.caseCount})`)
-                                    .join(", ")}
-                                . Nothing is saved yet — review the dropdowns below and press{" "}
-                                <strong>Allocate</strong> to confirm.
-                            </div>
-                        )}
+                        {previewBox()}
                     </>
                 )}
 
-                {/* NEW: when the full header/filter row is hidden (embedded
-                    under another page's own filters), still surface Smart
-                    Allocation + Clear as a slim action row of their own —
-                    same handlers/state as the full filter bar above, just
-                    without the duplicate Service/Date/Status dropdowns. */}
                 {hideHeader && (
                     <div style={{ ...styles.filterBar, marginBottom: 12 }}>
-                        <button
-                            type="button"
-                            style={{
-                                ...styles.autoBtn,
-                                opacity: autoRunning || pendingCount === 0 ? 0.6 : 1,
-                            }}
-                            disabled={autoRunning || pendingCount === 0}
-                            onClick={handleAutoAllocate}
-                            title={
-                                pendingCount === 0
-                                    ? "No pending cases on this page"
-                                    : "Smart Allocation"
-                            }
-                        >
-                            <i className="ti ti-bolt" />
-                            {autoRunning ? "Allocating…" : "Smart Allocation"}
-                        </button>
-                        <button
-                            type="button"
-                            style={{
-                                ...styles.clearAllocBtn,
-                                opacity: clearing || allocatedCount === 0 ? 0.6 : 1,
-                                cursor:
-                                    clearing || allocatedCount === 0 ? "not-allowed" : "pointer",
-                            }}
-                            disabled={clearing || allocatedCount === 0}
-                            onClick={() => setClearConfirmOpen(true)}
-                            title={
-                                allocatedCount === 0
-                                    ? "Nothing allocated on this page"
-                                    : "Unassign every allocated case for this service/date"
-                            }
-                        >
-                            <i className="ti ti-eraser" />
-                            {clearing ? "Clearing…" : "Clear"}
-                        </button>
-                        {/* NEW: right-aligned search — matches Case #, Client,
-                            Sub-client, Service, Date, or Status (type
-                            "pending"/"allocated") in one box. */}
-                        <div style={{ marginLeft: "auto", minWidth: 220 }}>
-                            <input
-                                type="text"
-                                value={searchInput}
-                                onChange={(e) => setSearchInput(e.target.value)}
-                                placeholder="Search case, client, service, date, status…"
-                                style={styles.select}
-                            />
-                        </div>
-                        {autoResult && (
-                            <div style={{ ...styles.autoSummary, width: "100%" }}>
-                                <strong>Preview:</strong>{" "}
-                                <strong>{autoResult.allocatedCount}</strong> case(s) would be split
-                                across {autoResult.perEmployee.length} employee(s):{" "}
-                                {autoResult.perEmployee
-                                    .map((e) => `${e.employeeName || "Unknown"} (${e.caseCount})`)
-                                    .join(", ")}
-                                . Nothing is saved yet — review the dropdowns below and press{" "}
-                                <strong>Allocate</strong> to confirm.
-                            </div>
-                        )}
+                        {actionButtons}
+                        {previewBox({ width: "100%" })}
                     </div>
                 )}
 
                 {error && <p style={styles.errorText}>{error}</p>}
 
-                <div style={styles.tableCard}>
-                    <div style={styles.tableScroll}>
-                        <div style={styles.tableHeadRow}>
-                            <span style={styles.colCase}>Case #</span>
-                            <span style={styles.colClient}>Client</span>
-                            <span style={styles.colSubclient}>Sub-Client</span>
-                            <span style={styles.colService}>Service</span>
-                            <span style={styles.colDate}>Date</span>
-                            <span style={styles.colStatus}>Status</span>
-                            <span style={styles.colAssign}>Allocate to</span>
-                        </div>
-                        {loading ? (
-                            <div style={styles.emptyNote}>Loading cases…</div>
-                        ) : cases.length === 0 ? (
-                            <div style={styles.emptyNote}>No cases found for this filter.</div>
-                        ) : (
-                            cases.map((c) => (
-                                <div key={c.id} style={styles.tableRow}>
-                                    <span style={styles.colCase}>{c.caseNumber}</span>
-                                    <span style={styles.colClient}>{c.clientName || "—"}</span>
-                                    <span style={styles.colSubclient}>
-                                        {c.subclientName || "—"}
-                                    </span>
-                                    <span style={styles.colService}>{c.productName || "—"}</span>
-                                    <span style={styles.colDate}>{c.workDate}</span>
-                                    <span style={styles.colStatus}>
-                                        <span
-                                            style={{
-                                                ...styles.statusPill,
-                                                background:
-                                                    c.allocationStatus === "ALLOCATED"
-                                                        ? "rgba(var(--brand-green-rgb),0.12)"
-                                                        : "rgba(156,163,175,0.15)",
-                                                color:
-                                                    c.allocationStatus === "ALLOCATED"
-                                                        ? BRAND.green
-                                                        : BRAND.grey,
-                                            }}
-                                        >
-                                            {c.allocationStatus === "ALLOCATED"
-                                                ? "Allocated"
-                                                : "Pending"}
-                                        </span>
-                                    </span>
-                                    <span style={styles.colAssign}>
-                                        <select
-                                            style={styles.assignSelect}
-                                            value={
-                                                pendingSelection[c.id] ??
-                                                (c.assignedEmployeeId || "")
-                                            }
-                                            disabled={allocatingId === c.id || bulkSaving}
-                                            onChange={(e) =>
-                                                setPendingSelection((prev) => ({
-                                                    ...prev,
-                                                    [c.id]: e.target.value,
-                                                }))
-                                            }
-                                        >
-                                            <option value="">Unallocated</option>
-                                            {(() => {
-                                                // This row's own service — not the top
-                                                // filter's — decides who's selectable.
-                                                const rowEligible = getEligibleEmployeesForProduct(
-                                                    c.productId
-                                                );
-                                                const list = rowEligible.some(
-                                                    (e) => e.id === c.assignedEmployeeId
-                                                )
-                                                    ? rowEligible
-                                                    : [
-                                                          ...(c.assignedEmployeeId
-                                                              ? employees.filter(
-                                                                    (e) =>
-                                                                        e.id ===
-                                                                        c.assignedEmployeeId
-                                                                )
-                                                              : []),
-                                                          ...rowEligible,
-                                                      ];
-                                                return list.map((emp) => (
-                                                    <option key={emp.id} value={emp.id}>
-                                                        {emp.name}
-                                                    </option>
-                                                ));
-                                            })()}
-                                        </select>
-                                    </span>
-                                </div>
-                            ))
+                {/* total still to allocate = today's pending + carried-over pending */}
+                <div style={styles.summaryBar}>
+                    <div style={styles.summaryItemMain}>
+                        <div style={styles.summaryNumMain}>{summary.total}</div>
+                        <div style={styles.summaryLbl}>Total to allocate</div>
+                        {summary.totalMins > 0 && (
+                            <div style={styles.summaryTime}>{formatMinutes(summary.totalMins)}</div>
                         )}
                     </div>
-                    {!loading && cases.length > 0 && (
-                        <div style={styles.bulkAllocateRow}>
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.allocateAllBtn,
-                                    opacity: bulkSaving || changedCaseIds.length === 0 ? 0.6 : 1,
-                                }}
-                                disabled={bulkSaving || changedCaseIds.length === 0}
-                                onClick={handleAllocateAll}
-                            >
-                                <i className="ti ti-check" />
-                                {bulkSaving
-                                    ? "Allocating…"
-                                    : changedCaseIds.length > 0
-                                      ? `Allocate (${changedCaseIds.length})`
-                                      : "Allocate"}
-                            </button>
+                    <div style={styles.summaryEquals}>=</div>
+                    <div style={styles.summaryItem}>
+                        <div style={styles.summaryNum}>{summary.today}</div>
+                        <div style={styles.summaryLbl}>Today ({formatDisplayDate(workDate)})</div>
+                    </div>
+                    <div style={styles.summaryEquals}>+</div>
+                    <div style={styles.summaryItem}>
+                        <div style={{ ...styles.summaryNum, color: BRAND.amber }}>
+                            {summary.carry}
                         </div>
-                    )}
-                    <div style={styles.paginationRow}>
-                        <button
-                            type="button"
-                            style={styles.pageBtn}
-                            disabled={page <= 1}
-                            onClick={() => setPage((p) => Math.max(1, p - 1))}
-                        >
-                            <i className="ti ti-chevron-left" />
-                        </button>
-                        <span style={styles.pageIndicator}>Page {page}</span>
-                        <button
-                            type="button"
-                            style={styles.pageBtn}
-                            disabled={cases.length < PAGE_SIZE}
-                            onClick={() => setPage((p) => p + 1)}
-                        >
-                            <i className="ti ti-chevron-right" />
-                        </button>
+                        <div style={styles.summaryLbl}>Carried over (older, this month)</div>
+                    </div>
+                    <div style={styles.summaryNote}>
+                        Month-wise: counting from {formatDisplayDate(monthStart)}. A new month
+                        starts fresh — older months stay in history.
                     </div>
                 </div>
+
+                {/* live per-employee allocation time (cases x service AMP) */}
+                <div style={styles.timeCard}>
+                    <div style={styles.timeCardHeader}>
+                        <span style={styles.sectionTitle}>
+                            <i className="ti ti-clock" style={{ marginRight: 6 }} />
+                            Allocation Time per Employee
+                        </span>
+                        <span style={styles.smallMutedText}>
+                            {ampOf(productId) > 0
+                                ? `AMP: ${formatMinutes(ampOf(productId))} per case · updates live before you press Allocate`
+                                : "This service has no AMP (time per case) set, so time can't be calculated."}
+                        </span>
+                    </div>
+                    {timeStripEmployees.length === 0 ? (
+                        <div style={styles.emptyNote}>No employees to show yet.</div>
+                    ) : (
+                        <div style={styles.timeGrid}>
+                            {timeStripEmployees.map((emp) => {
+                                const l = employeeLoad[emp.id] || { cases: 0, counts: 0, mins: 0 };
+                                const total = l.cases + l.counts;
+                                return (
+                                    <div key={emp.id} style={styles.timeItem}>
+                                        <div style={styles.timeEmpName}>{emp.name}</div>
+                                        <div
+                                            style={{
+                                                ...styles.timeValue,
+                                                color: l.mins > 0 ? BRAND.blue : BRAND.grey,
+                                            }}
+                                        >
+                                            {l.mins > 0 ? formatMinutes(l.mins) : "0m"}
+                                        </div>
+                                        <div style={styles.smallMutedText}>
+                                            {total} case{total === 1 ? "" : "s"}
+                                            {l.counts > 0 && l.cases > 0
+                                                ? ` (${l.cases} + ${l.counts} count)`
+                                                : l.counts > 0
+                                                  ? " (count)"
+                                                  : ""}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                {/* Counts / Cases toggle — only the selected view shows */}
+                <div style={styles.viewToggleRow}>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.viewToggleBtn,
+                            ...(view === "counts" ? styles.viewToggleBtnActive : {}),
+                        }}
+                        onClick={() => setView("counts")}
+                    >
+                        Counts ({pendingCountsTotal})
+                    </button>
+                    <button
+                        type="button"
+                        style={{
+                            ...styles.viewToggleBtn,
+                            ...(view === "cases" ? styles.viewToggleBtnActive : {}),
+                        }}
+                        onClick={() => setView("cases")}
+                    >
+                        Cases ({totalCases})
+                    </button>
+                </div>
+
+                {/* ============ B) COUNT-ONLY ENTRIES ============ */}
+                {view === "counts" && (
+                    <div style={styles.tableCard}>
+                        <div style={styles.sectionTitleRow}>
+                            <span style={styles.sectionTitle}>
+                                Counts (no case number yet) — allocate by quantity
+                            </span>
+                            <span style={styles.countPill}>
+                                {visibleCountRows.reduce((s, c) => s + c.pendingCount, 0)} pending
+                            </span>
+                        </div>
+                        <div style={styles.tableScroll}>
+                            <div style={styles.tableHeadRow}>
+                                <span style={styles.colCase}>Case #</span>
+                                <span style={styles.colClient}>Client</span>
+                                <span style={styles.colSubclient}>Sub-Client</span>
+                                <span style={styles.colService}>Service</span>
+                                <span style={styles.colDate}>Date</span>
+                                <span style={styles.colStatus}>Status</span>
+                                <span style={styles.colAssign}>Allocate to (qty)</span>
+                            </div>
+                            {countsLoading ? (
+                                <div style={styles.emptyNote}>Loading counts…</div>
+                            ) : visibleCountRows.length === 0 ? (
+                                <div style={styles.emptyNote}>
+                                    No pending counts for this filter.
+                                </div>
+                            ) : null}
+                            {visibleCountRows.map((c) => {
+                                const total = draftTotal(c);
+                                const left = c.quantity - total;
+                                const over = left < 0;
+                                const rowAmp = ampOf(c.productId);
+                                return (
+                                    <div key={c.id} style={styles.countBlock}>
+                                        <div style={styles.countRowTop}>
+                                            <span style={{ ...styles.colCase, color: BRAND.blue }}>
+                                                {c.pendingCount} cases
+                                                {rowAmp > 0 && (
+                                                    <span style={styles.carryTag}>
+                                                        {formatMinutes(c.pendingCount * rowAmp)}
+                                                    </span>
+                                                )}
+                                            </span>
+                                            <span style={styles.colClient}>
+                                                {c.clientName || "—"}
+                                            </span>
+                                            <span style={styles.colSubclient}>
+                                                {c.subclientName || "—"}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {c.productName || "—"}
+                                            </span>
+                                            <span style={styles.colDate}>
+                                                {c.workDate}
+                                                {c.workDate < workDate && (
+                                                    <span style={styles.carryTag}>Carry-over</span>
+                                                )}
+                                            </span>
+                                            <span style={styles.colStatus}>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background:
+                                                            left === 0
+                                                                ? "rgba(var(--brand-green-rgb),0.12)"
+                                                                : "rgba(156,163,175,0.15)",
+                                                        color:
+                                                            left === 0 ? BRAND.green : BRAND.grey,
+                                                    }}
+                                                >
+                                                    {left === 0 ? "Allocated" : `${left} left`}
+                                                </span>
+                                            </span>
+                                            <span
+                                                style={{
+                                                    ...styles.colAssign,
+                                                    fontSize: fontSize.sm,
+                                                    color: over ? BRAND.red : "#767F92",
+                                                }}
+                                            >
+                                                {total} / {c.quantity} allocated
+                                                {rowAmp > 0 &&
+                                                    ` · ${formatMinutes(total * rowAmp)}`}
+                                                {c.fulfilledCount > 0 &&
+                                                    ` · ${c.fulfilledCount} submitted`}
+                                            </span>
+                                        </div>
+                                        <div style={styles.countEmpGrid}>
+                                            {employeesForCount(c).map((emp) => {
+                                                const done = fulfilledQty(c, emp.id);
+                                                const qty = draftQty(c, emp.id);
+                                                return (
+                                                    <label key={emp.id} style={styles.countEmpItem}>
+                                                        <span style={styles.countEmpName}>
+                                                            {emp.name}
+                                                        </span>
+                                                        <input
+                                                            type="number"
+                                                            min={done}
+                                                            max={c.quantity}
+                                                            style={styles.qtyInput}
+                                                            disabled={bulkSaving}
+                                                            value={qty}
+                                                            title={
+                                                                done > 0
+                                                                    ? `${done} already submitted`
+                                                                    : undefined
+                                                            }
+                                                            onChange={(e) => {
+                                                                const v = Math.max(
+                                                                    done,
+                                                                    Math.floor(
+                                                                        Number(e.target.value) || 0
+                                                                    )
+                                                                );
+                                                                setCountDraft((prev) => ({
+                                                                    ...prev,
+                                                                    [c.id]: {
+                                                                        ...(prev[c.id] || {}),
+                                                                        [emp.id]: v,
+                                                                    },
+                                                                }));
+                                                            }}
+                                                        />
+                                                        {rowAmp > 0 && qty > 0 && (
+                                                            <span style={styles.qtyTime}>
+                                                                = {formatMinutes(qty * rowAmp)}
+                                                            </span>
+                                                        )}
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                        {over && (
+                                            <p style={{ ...styles.errorText, margin: "4px 0 0" }}>
+                                                Allocated is {-left} more than the pending count.
+                                            </p>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {allocateBar}
+                    </div>
+                )}
+
+                {/* ============ A) CASES WITH CASE NUMBERS ============ */}
+                {view === "cases" && (
+                    <div style={styles.tableCard}>
+                        <div style={styles.tableScroll}>
+                            <div style={styles.tableHeadRow}>
+                                <span style={styles.colCase}>Case #</span>
+                                <span style={styles.colClient}>Client</span>
+                                <span style={styles.colSubclient}>Sub-Client</span>
+                                <span style={styles.colService}>Service</span>
+                                <span style={styles.colDate}>Date</span>
+                                <span style={styles.colTime}>Time</span>
+                                <span style={styles.colStatus}>Status</span>
+                                <span style={styles.colAssign}>Allocate to</span>
+                            </div>
+                            {loading ? (
+                                <div style={styles.emptyNote}>Loading cases…</div>
+                            ) : sortedCases.length === 0 ? (
+                                <div style={styles.emptyNote}>No cases found for this filter.</div>
+                            ) : (
+                                sortedCases.map((c) => {
+                                    const rowAmp = ampOf(c.productId);
+                                    return (
+                                        <div key={c.id} style={styles.tableRow}>
+                                            <span style={styles.colCase}>{c.caseNumber}</span>
+                                            <span style={styles.colClient}>
+                                                {c.clientName || "—"}
+                                            </span>
+                                            <span style={styles.colSubclient}>
+                                                {c.subclientName || "—"}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {c.productName || "—"}
+                                            </span>
+                                            <span style={styles.colDate}>
+                                                {c.workDate}
+                                                {c.workDate < workDate && (
+                                                    <span style={styles.carryTag}>Carry-over</span>
+                                                )}
+                                            </span>
+                                            <span style={styles.colTime}>
+                                                {rowAmp > 0 ? formatMinutes(rowAmp) : "—"}
+                                            </span>
+                                            <span style={styles.colStatus}>
+                                                <span
+                                                    style={{
+                                                        ...styles.statusPill,
+                                                        background:
+                                                            c.allocationStatus === "ALLOCATED"
+                                                                ? "rgba(var(--brand-green-rgb),0.12)"
+                                                                : "rgba(156,163,175,0.15)",
+                                                        color:
+                                                            c.allocationStatus === "ALLOCATED"
+                                                                ? BRAND.green
+                                                                : BRAND.grey,
+                                                    }}
+                                                >
+                                                    {c.allocationStatus === "ALLOCATED"
+                                                        ? "Allocated"
+                                                        : "Pending"}
+                                                </span>
+                                            </span>
+                                            <span style={styles.colAssign}>
+                                                <select
+                                                    style={styles.assignSelect}
+                                                    value={
+                                                        pendingSelection[c.id] ??
+                                                        (c.assignedEmployeeId || "")
+                                                    }
+                                                    disabled={allocatingId === c.id || bulkSaving}
+                                                    onChange={(e) =>
+                                                        setPendingSelection((prev) => ({
+                                                            ...prev,
+                                                            [c.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                >
+                                                    <option value="">Unallocated</option>
+                                                    {(() => {
+                                                        const rowEligible =
+                                                            getEligibleEmployeesForProduct(
+                                                                c.productId
+                                                            );
+                                                        const list = rowEligible.some(
+                                                            (e) => e.id === c.assignedEmployeeId
+                                                        )
+                                                            ? rowEligible
+                                                            : [
+                                                                  ...(c.assignedEmployeeId
+                                                                      ? employees.filter(
+                                                                            (e) =>
+                                                                                e.id ===
+                                                                                c.assignedEmployeeId
+                                                                        )
+                                                                      : []),
+                                                                  ...rowEligible,
+                                                              ];
+                                                        return list.map((emp) => (
+                                                            <option key={emp.id} value={emp.id}>
+                                                                {emp.name}
+                                                                {loadLabel(emp.id)}
+                                                            </option>
+                                                        ));
+                                                    })()}
+                                                </select>
+                                            </span>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                        {!loading && cases.length > 0 && allocateBar}
+                        <div style={styles.paginationRow}>
+                            <button
+                                type="button"
+                                style={styles.pageBtn}
+                                disabled={page <= 1}
+                                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            >
+                                <i className="ti ti-chevron-left" />
+                            </button>
+                            <span style={styles.pageIndicator}>Page {page}</span>
+                            {/* uses totalCases, so the next button is disabled correctly on the
+                                last page (before it relied on "fewer than PAGE_SIZE rows" and
+                                opened an empty page when the total was an exact multiple of 10). */}
+                            <button
+                                type="button"
+                                style={styles.pageBtn}
+                                disabled={page * PAGE_SIZE >= totalCases}
+                                onClick={() => setPage((p) => p + 1)}
+                            >
+                                <i className="ti ti-chevron-right" />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {/* Confirmation popup for "Clear" — same overlay/modal pattern
-                as the History tab's delete confirmation. */}
             {clearConfirmOpen && (
                 <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -1088,9 +1752,10 @@ export default function TodaysAllocationCases({
                         <div style={styles.modalDivider} />
                         <p style={styles.modalBody}>
                             This unassigns all <strong>{allocatedCount}</strong> allocated case(s)
-                            for <strong>{selectedProduct?.product_name || "this service"}</strong>{" "}
-                            on {workDate} back to Pending. You can reassign them manually or re-run
-                            Smart Allocation afterwards.
+                            (case-number cases and counts) for{" "}
+                            <strong>{selectedProduct?.product_name || "this service"}</strong> on{" "}
+                            {workDate} back to Pending. Count cases the employee has already
+                            submitted stay with them. The clear is logged.
                         </p>
                         <div style={styles.modalActions}>
                             <button
@@ -1112,11 +1777,108 @@ export default function TodaysAllocationCases({
                 </div>
             )}
 
-            {/* Success popup — shown after the bottom "Allocate" button
-                actually saves cases (manual picks and/or a Smart
-                Allocation preview). This is the only point cases are
-                really written to the server, so this is the only place
-                a "success" popup is shown. */}
+            {/* NEW (8h WARNING): shown when Allocate is pressed and someone has > 8 hours */}
+            {overloadOpen && (
+                <div style={styles.overlay}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>Heavy workload warning</h2>
+                            <button
+                                type="button"
+                                style={styles.modalCloseBtn}
+                                onClick={() => setOverloadOpen(false)}
+                                aria-label="Close"
+                            >
+                                <i className="ti ti-x" style={{ fontSize: fontSize.md }} />
+                            </button>
+                        </div>
+                        <div style={styles.modalDivider} />
+                        <p style={styles.modalBody}>
+                            <i
+                                className="ti ti-alert-triangle"
+                                style={{
+                                    fontSize: 40,
+                                    color: BRAND.amber,
+                                    display: "block",
+                                    marginBottom: 8,
+                                }}
+                            />
+                            <strong>{overloadedEmployees.length}</strong> employee
+                            {overloadedEmployees.length === 1 ? "" : "s"} got more than 8 hours of
+                            work.
+                            <br />
+                            <button
+                                type="button"
+                                style={styles.refreshLink}
+                                onClick={() => setShowOverloadList((v) => !v)}
+                            >
+                                {showOverloadList
+                                    ? "Hide employees"
+                                    : "See all employees who got more than 8 hours"}
+                            </button>
+                        </p>
+
+                        {showOverloadList && (
+                            <div
+                                style={{
+                                    padding: "0 22px 12px",
+                                    maxHeight: 220,
+                                    overflowY: "auto",
+                                }}
+                            >
+                                {overloadedEmployees.map((e) => (
+                                    <div
+                                        key={e.id}
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            padding: "8px 0",
+                                            borderTop: "1px solid #f1f1f1",
+                                            fontSize: fontSize.sm,
+                                        }}
+                                    >
+                                        <span>{e.name}</span>
+                                        <span
+                                            style={{
+                                                color: BRAND.red,
+                                                fontWeight: fontWeight.semibold,
+                                            }}
+                                        >
+                                            {formatMinutes(e.mins)} · {e.total} case
+                                            {e.total === 1 ? "" : "s"}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div style={styles.modalActions}>
+                            <button
+                                type="button"
+                                style={styles.modalCancelBtn}
+                                onClick={() => setOverloadOpen(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.modalClearBtn,
+                                    background: GRADIENT,
+                                    boxShadow: "none",
+                                }}
+                                onClick={() => {
+                                    setOverloadOpen(false);
+                                    handleAllocateAll();
+                                }}
+                            >
+                                Yes, Continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {successPopup && (
                 <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -1201,10 +1963,6 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
-        // FIX: background was hardcoded light but color was never set,
-        // so text fell back to the browser default — invisible in
-        // system dark theme (same bug fixed in
-        // todaysallocationemployees.tsx's styles.select).
         color: "#17181C",
         minWidth: 170,
     },
@@ -1259,7 +2017,6 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         padding: 0,
     },
-    // Confirmation popup (Clear allocations)
     overlay: {
         position: "fixed",
         inset: 0,
@@ -1314,11 +2071,7 @@ const styles: Record<string, CSSProperties> = {
         textAlign: "center",
         lineHeight: 1.6,
     },
-    modalActions: {
-        display: "flex",
-        gap: 12,
-        padding: "0 20px 20px",
-    },
+    modalActions: { display: "flex", gap: 12, padding: "0 20px 20px" },
     modalCancelBtn: {
         flex: 1,
         padding: "12px 16px",
@@ -1348,25 +2101,111 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.medium,
         margin: 0,
     },
+
+    // ---- total-to-allocate summary strip ----
+    summaryBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        flexWrap: "wrap",
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "12px 18px",
+        boxShadow: "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
+        border: "1px solid #e5e9f0",
+        borderLeft: "4px solid var(--brand-blue)",
+    },
+    summaryItemMain: {
+        textAlign: "center",
+        background: "rgba(var(--brand-blue-rgb),0.07)",
+        borderRadius: radius.md,
+        padding: "6px 16px",
+        minWidth: 110,
+    },
+    summaryItem: { textAlign: "center", minWidth: 90 },
+    summaryNumMain: {
+        fontSize: fontSize["4xl"],
+        fontWeight: fontWeight.bold,
+        color: BRAND.blue,
+        lineHeight: 1.1,
+    },
+    summaryNum: {
+        fontSize: fontSize["3xl"],
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+        lineHeight: 1.1,
+    },
+    summaryLbl: { fontSize: fontSize.xs, color: "#767F92", marginTop: 2 },
+    summaryTime: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        marginTop: 2,
+    },
+    summaryEquals: { fontSize: fontSize.xl, color: "#9CA3AF", fontWeight: fontWeight.medium },
+    summaryNote: {
+        marginLeft: "auto",
+        fontSize: fontSize.xs,
+        color: "#9CA3AF",
+        maxWidth: 280,
+        textAlign: "right",
+    },
+    carryTag: {
+        display: "block",
+        marginTop: 2,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#92400E",
+    },
+
+    // ---- per-employee allocation time strip (compact) ----
+    timeCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "8px 14px",
+        boxShadow: "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
+        border: "1px solid #e5e9f0",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+    },
+    timeCardHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+    },
+    timeGrid: { display: "flex", flexWrap: "wrap", gap: 8 },
+    timeItem: {
+        minWidth: 110,
+        padding: "5px 10px",
+        border: "1px solid #ececf5",
+        borderRadius: radius.md,
+        background: "#FAFBFF",
+        textAlign: "left",
+    },
+    timeEmpName: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#17181C",
+    },
+    timeValue: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        lineHeight: 1.2,
+    },
+    smallMutedText: { fontSize: fontSize.xs, color: "#9099AC" },
+
     tableCard: {
         background: "#fff",
         borderRadius: radius.lg,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
         overflow: "hidden",
-        // Slightly wider than the filter/stat cards above — bleeds a
-        // touch past the content padding on both sides.
         width: "calc(100% + 16px)",
         marginLeft: -8,
         marginRight: -8,
     },
-    // FIX: the table's columns have fixed pixel widths totalling well
-    // over 1000px (Case #, Client, Sub-Client, Service, Date, Status,
-    // Allocate-to) — on a narrow/mobile screen, tableCard's
-    // overflow:hidden above was silently CLIPPING every column past
-    // what fit on screen instead of letting the person scroll to see
-    // them. This inner wrapper scrolls horizontally on its own — the
-    // outer card still clips at its own (rounded) edges, but this
-    // scrollable region inside it stays fully reachable.
     tableScroll: { overflowX: "auto" },
     tableHeadRow: {
         display: "flex",
@@ -1395,6 +2234,7 @@ const styles: Record<string, CSSProperties> = {
     colSubclient: { width: 150, flexShrink: 0 },
     colService: { width: 140, flexShrink: 0 },
     colDate: { width: 100, flexShrink: 0 },
+    colTime: { width: 70, flexShrink: 0 },
     colStatus: { width: 110, flexShrink: 0 },
     colAssign: { width: 220, flexShrink: 0, textAlign: "right", marginLeft: "auto" },
     statusPill: {
@@ -1411,13 +2251,90 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
-        // FIX: missing color made this dropdown's text invisible in
-        // system dark theme.
         color: "#17181C",
     },
-    // Single "Allocate" button below the whole list — saves every row
-    // whose dropdown selection differs from what's saved, in one click,
-    // instead of a button per row.
+    // ---- count-only block ----
+    sectionTitleRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "14px 20px 6px",
+    },
+    sectionTitle: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    countPill: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        background: "rgba(var(--brand-blue-rgb),0.08)",
+        borderRadius: radius.pill,
+        padding: "2px 10px",
+    },
+    viewToggleRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+    viewToggleBtn: {
+        minWidth: 130,
+        padding: "9px 18px",
+        borderRadius: radius.md,
+        border: "1px solid #e4e9f2",
+        background: "#fff",
+        color: "#3b4a63",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+    },
+    viewToggleBtnActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
+    },
+    countBlock: {
+        borderTop: "1px solid #f1f1f1",
+        padding: "10px 20px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        minWidth: 900,
+    },
+    countRowTop: {
+        display: "flex",
+        alignItems: "center",
+        gap: 28,
+        fontSize: fontSize.base,
+        color: "#17181C",
+    },
+    countEmpGrid: { display: "flex", flexWrap: "wrap", gap: 10 },
+    countEmpItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        border: "1px solid #ececf5",
+        borderRadius: radius.sm,
+        background: "#fafafa",
+        fontSize: fontSize.sm,
+        color: "#17181C",
+    },
+    countEmpName: { minWidth: 90 },
+    qtyInput: {
+        width: 64,
+        padding: "5px 8px",
+        borderRadius: radius.sm,
+        border: "1px solid #dfe3ee",
+        fontSize: fontSize.sm,
+        background: "#fff",
+        color: "#17181C",
+    },
+    qtyTime: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        whiteSpace: "nowrap",
+    },
     bulkAllocateRow: {
         display: "flex",
         justifyContent: "flex-end",

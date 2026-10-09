@@ -1225,7 +1225,6 @@ const Products = () => {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
-
                         {/* CHANGED: was a separate My Team / Organisation
                             pill-toggle sitting on its own row above the
                             search bar — moved to a dropdown right next to
@@ -1242,10 +1241,10 @@ const Products = () => {
                                     : undefined
                             }
                         >
-                            <option value="team">My Team</option>
+                            <option value="team">My Services</option>
                             <option value="org">Organisation</option>
-                        </select>
-
+                        </select>{" "}
+                        v
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every row/card
                             all the time. Tapping it again exits select mode and clears
@@ -1266,7 +1265,6 @@ const Products = () => {
                                 {isSelectMode ? "Cancel" : "Select"}
                             </button>
                         )}
-
                         {!isMobile && (
                             <div style={styles.viewToggle}>
                                 <button

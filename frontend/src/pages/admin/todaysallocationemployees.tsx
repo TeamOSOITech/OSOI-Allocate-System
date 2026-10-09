@@ -3,7 +3,7 @@
 // "Employees" tab on the Today's Allocation page (see manualallocation.tsx).
 // Pick a service, narrow down to only the employees whose Team is linked to
 // that service (Products/Services -> Teams multi-select), then mark each
-// one Present / Absent / Leave for the day and save.
+// one Present / Leave / Half Day for the day and save.
 //
 // Saves straight into the existing `attendance` table via the existing
 // GET/POST /api/attendance endpoints (backend/src/modules/attendance) —
@@ -12,6 +12,11 @@
 // the chosen date before splitting cases — a Half Day employee counts as
 // half a unit, so they end up with roughly half the work of a full-day
 // Present employee.
+//
+// NEW: Leave Periods — mark an employee on leave from a FROM date to a TO
+// date once (POST /api/employee-leaves). On any date inside that period the
+// employee shows as Leave by default, no daily marking needed. A status
+// saved manually for a specific day still wins over the leave period.
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
@@ -58,6 +63,15 @@ type AttStatus = "PRESENT" | "ABSENT" | "LEAVE" | "HALF_DAY";
 // fetchAttendance below) and is no longer a status the buttons can set.
 type SelectableStatus = "PRESENT" | "LEAVE" | "HALF_DAY";
 
+// NEW: one leave period (from -> to, inclusive) for one employee.
+type LeavePeriod = {
+    id: string;
+    employeeId: string;
+    fromDate: string;
+    toDate: string;
+    reason: string;
+};
+
 const STATUS_META: Record<SelectableStatus, { label: string; color: string; icon: string }> = {
     PRESENT: { label: "Present", color: BRAND.green, icon: "ti-circle-check" },
     LEAVE: { label: "Leave", color: BRAND.grey, icon: "ti-calendar-off" },
@@ -72,6 +86,13 @@ function initials(name: string) {
     if (parts.length === 0) return "?";
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+// YYYY-MM-DD -> DD-MM-YYYY (same display format as the Case Register).
+function fmtDate(iso: string) {
+    const [y, m, d] = (iso || "").split("-");
+    if (!y || !m || !d) return iso;
+    return `${d}-${m}-${y}`;
 }
 
 type Props = {
@@ -92,9 +113,6 @@ export default function TodaysAllocationEmployees({
     // NEW: "External Members" — lets an admin pull in employees whose own
     // Team ISN'T linked to the selected service, for just this one
     // service/date (e.g. borrowing someone to help clear a backlog).
-    // Chosen via the multi-select next to Search; reset whenever the
-    // service changes since "external" only means anything relative to
-    // whichever service is currently selected.
     const [externalIds, setExternalIds] = useState<Set<string>>(new Set());
     const [externalMenuOpen, setExternalMenuOpen] = useState(false);
     const [externalSearch, setExternalSearch] = useState("");
@@ -103,10 +121,28 @@ export default function TodaysAllocationEmployees({
     // "External" (only the manually added ones).
     const [viewScope, setViewScope] = useState<"all" | "team" | "external">("all");
 
+    // Only holds statuses that were SAVED for this date (or clicked just
+    // now). Anyone missing from here is "default" — Present, or Leave if
+    // they're inside a leave period (see effectiveStatus below).
     const [statusByEmployee, setStatusByEmployee] = useState<Record<string, SelectableStatus>>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState("");
+
+    // NEW: leave periods covering the selected date (drives the default
+    // Leave status + the "On leave" tag) and the current/upcoming list
+    // shown inside the Leave Period popup.
+    const [dayLeaves, setDayLeaves] = useState<LeavePeriod[]>([]);
+    const [upcomingLeaves, setUpcomingLeaves] = useState<LeavePeriod[]>([]);
+    const [leaveModalOpen, setLeaveModalOpen] = useState(false);
+    const [leaveEmpIds, setLeaveEmpIds] = useState<Set<string>>(new Set());
+    const [leaveFrom, setLeaveFrom] = useState(workDate);
+    const [leaveTo, setLeaveTo] = useState(workDate);
+    const [leaveReason, setLeaveReason] = useState("");
+    const [leaveSearch, setLeaveSearch] = useState("");
+    const [leaveError, setLeaveError] = useState("");
+    const [savingLeave, setSavingLeave] = useState(false);
+    const [deletingLeaveId, setDeletingLeaveId] = useState<string | null>(null);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -142,6 +178,9 @@ export default function TodaysAllocationEmployees({
             if (!res.ok || !json.success) return;
             const next: Record<string, SelectableStatus> = {};
             (json.data || []).forEach((a: any) => {
+                // Virtual rows coming from a leave period aren't manually saved
+                // statuses — the leave-period logic below already covers them.
+                if (a.fromLeavePeriod) return;
                 if (["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"].includes(a.status)) {
                     // Absent is folded into Leave on this page — see note by
                     // SelectableStatus above.
@@ -156,6 +195,30 @@ export default function TodaysAllocationEmployees({
         }
     }, [workDate]);
 
+    // NEW: leave periods that cover the selected date.
+    const fetchDayLeaves = useCallback(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/employee-leaves?date=${workDate}`);
+            const json = await res.json();
+            setDayLeaves(res.ok && json.success ? json.data || [] : []);
+        } catch (err) {
+            console.error("Failed to fetch leave periods:", err);
+            setDayLeaves([]);
+        }
+    }, [workDate]);
+
+    // NEW: every current/upcoming leave period (for the popup's list).
+    const fetchUpcomingLeaves = useCallback(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/employee-leaves`);
+            const json = await res.json();
+            setUpcomingLeaves(res.ok && json.success ? json.data || [] : []);
+        } catch (err) {
+            console.error("Failed to fetch upcoming leaves:", err);
+            setUpcomingLeaves([]);
+        }
+    }, []);
+
     useEffect(() => {
         fetchProducts();
         fetchEmployees();
@@ -168,6 +231,35 @@ export default function TodaysAllocationEmployees({
     useEffect(() => {
         fetchAttendance();
     }, [fetchAttendance]);
+
+    useEffect(() => {
+        fetchDayLeaves();
+    }, [fetchDayLeaves]);
+
+    // employeeId -> the leave period covering the selected date.
+    const leaveByEmployee = useMemo(() => {
+        const map: Record<string, LeavePeriod> = {};
+        dayLeaves.forEach((l) => {
+            map[l.employeeId] = l;
+        });
+        return map;
+    }, [dayLeaves]);
+
+    // What the row actually shows: a manually saved/clicked status for this
+    // date wins; otherwise Leave if inside a leave period; otherwise Present.
+    const effectiveStatus = useCallback(
+        (employeeId: string): SelectableStatus =>
+            statusByEmployee[employeeId] || (leaveByEmployee[employeeId] ? "LEAVE" : "PRESENT"),
+        [statusByEmployee, leaveByEmployee]
+    );
+
+    const employeeNameById = useMemo(() => {
+        const map: Record<string, string> = {};
+        employees.forEach((e) => {
+            map[e.id] = e.name;
+        });
+        return map;
+    }, [employees]);
 
     const selectedProduct = useMemo(
         () => products.find((p) => String(p.id) === String(productId)) || null,
@@ -194,10 +286,7 @@ export default function TodaysAllocationEmployees({
     );
 
     // NEW: read-only label showing which team(s) the SELECTED SERVICE is
-    // aligned to (Products/Services -> Teams multi-select) — same pattern
-    // as manualallocation.tsx's Team field. Not a filter control; the
-    // table below is already narrowed to just these teams' employees via
-    // serviceMatched above.
+    // aligned to (Products/Services -> Teams multi-select).
     const alignedTeamsLabel = useMemo(() => {
         if (!productId) return "All teams";
         const productTeams = (selectedProduct?.teams || []).filter(Boolean);
@@ -205,12 +294,8 @@ export default function TodaysAllocationEmployees({
         return productTeams.join(", ");
     }, [productId, selectedProduct]);
 
-    // NEW: reset the External picks whenever the selected service changes
-    // — an employee "external" to Service A isn't necessarily external
-    // to Service B, so carrying the selection over would be misleading.
     // Persisted server-side (external_service_members table) so the same
-    // picks come back automatically next time this service+date is
-    // opened, instead of resetting on every reload.
+    // picks come back automatically next time this service+date is opened.
     const fetchExternalMembers = useCallback(async () => {
         if (!productId) {
             setExternalIds(new Set());
@@ -232,10 +317,7 @@ export default function TodaysAllocationEmployees({
     }, [fetchExternalMembers]);
 
     // Saves the FULL external set for this service+date right away on
-    // every toggle — no separate "save" step needed, and it means the
-    // Cases tab (which now also reads attendance + external status for
-    // Smart/Manual allocation) sees an up-to-date list as soon as
-    // someone's added or removed here.
+    // every toggle — no separate "save" step needed.
     const persistExternalMembers = useCallback(
         async (ids: Set<string>) => {
             if (!productId) return;
@@ -282,9 +364,7 @@ export default function TodaysAllocationEmployees({
         });
     };
 
-    // Team-matched employees + whichever externals were manually added —
-    // this is what the "All" scope (and the base for Team/External below)
-    // is built from.
+    // Team-matched employees + whichever externals were manually added.
     const combinedList = useMemo(() => {
         if (viewScope === "team") return serviceMatched;
         if (viewScope === "external") return employees.filter((e) => externalIds.has(e.id));
@@ -310,10 +390,14 @@ export default function TodaysAllocationEmployees({
     const setStatus = (employeeId: string, status: SelectableStatus) => {
         setStatusByEmployee((prev) => ({ ...prev, [employeeId]: status }));
     };
+    // Employees inside a leave period are skipped here — "Mark all
+    // Present" shouldn't silently cancel someone's planned leave. Click
+    // Present on that row if they're actually back.
     const markAllPresent = () => {
         setStatusByEmployee((prev) => {
             const next = { ...prev };
             filteredEmployees.forEach((e) => {
+                if (leaveByEmployee[e.id] && !prev[e.id]) return;
                 next[e.id] = "PRESENT";
             });
             return next;
@@ -325,21 +409,26 @@ export default function TodaysAllocationEmployees({
             leave = 0,
             halfDay = 0;
         filteredEmployees.forEach((e) => {
-            const s = statusByEmployee[e.id] || "PRESENT";
+            const s = effectiveStatus(e.id);
             if (s === "PRESENT") present++;
             else if (s === "HALF_DAY") halfDay++;
             else leave++;
         });
         return { present, leave, halfDay };
-    }, [filteredEmployees, statusByEmployee]);
+    }, [filteredEmployees, effectiveStatus]);
 
     const handleSave = async () => {
         setSaving(true);
         try {
-            const records = filteredEmployees.map((e) => ({
-                employeeId: e.id,
-                status: statusByEmployee[e.id] || "PRESENT",
-            }));
+            // Employees who are only "Leave" because of a leave period (no
+            // manual status for this date) aren't written as daily rows —
+            // the leave period itself is the source of truth for them.
+            const records = filteredEmployees
+                .filter((e) => !(leaveByEmployee[e.id] && !statusByEmployee[e.id]))
+                .map((e) => ({
+                    employeeId: e.id,
+                    status: effectiveStatus(e.id),
+                }));
             const res = await authFetch(`${API_BASE}/api/attendance/bulk`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -354,6 +443,102 @@ export default function TodaysAllocationEmployees({
             showToast(err?.message || "Failed to save attendance.");
         } finally {
             setSaving(false);
+        }
+    };
+
+    // ---- NEW: Leave Period popup ----
+    const openLeaveModal = () => {
+        setLeaveEmpIds(new Set());
+        setLeaveFrom(workDate);
+        setLeaveTo(workDate);
+        setLeaveReason("");
+        setLeaveSearch("");
+        setLeaveError("");
+        setLeaveModalOpen(true);
+        fetchUpcomingLeaves();
+    };
+
+    const leaveCandidates = useMemo(() => {
+        const q = leaveSearch.trim().toLowerCase();
+        if (!q) return employees;
+        return employees.filter((e) =>
+            [e.name, e.employeeCode, e.department, e.team]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase()
+                .includes(q)
+        );
+    }, [employees, leaveSearch]);
+
+    const toggleLeaveEmp = (id: string) => {
+        setLeaveEmpIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const handleSaveLeave = async () => {
+        setLeaveError("");
+        if (leaveEmpIds.size === 0) {
+            setLeaveError("Select at least one employee.");
+            return;
+        }
+        if (!leaveFrom || !leaveTo) {
+            setLeaveError("Choose both From and To dates.");
+            return;
+        }
+        if (leaveTo < leaveFrom) {
+            setLeaveError("To date can't be before From date.");
+            return;
+        }
+        setSavingLeave(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/employee-leaves`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    employeeIds: Array.from(leaveEmpIds),
+                    fromDate: leaveFrom,
+                    toDate: leaveTo,
+                    reason: leaveReason.trim(),
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to save leave");
+            showToast(json.message || "Leave period saved.");
+            setLeaveEmpIds(new Set());
+            setLeaveReason("");
+            fetchDayLeaves();
+            fetchUpcomingLeaves();
+        } catch (err: any) {
+            setLeaveError(err?.message || "Failed to save leave.");
+        } finally {
+            setSavingLeave(false);
+        }
+    };
+
+    const handleDeleteLeave = async (leave: LeavePeriod) => {
+        if (
+            !window.confirm(
+                `Remove leave for ${employeeNameById[leave.employeeId] || "this employee"} (${fmtDate(leave.fromDate)} to ${fmtDate(leave.toDate)})?`
+            )
+        )
+            return;
+        setDeletingLeaveId(leave.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/employee-leaves/${leave.id}`, {
+                method: "DELETE",
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to remove");
+            fetchDayLeaves();
+            fetchUpcomingLeaves();
+        } catch (err: any) {
+            setLeaveError(err?.message || "Failed to remove leave.");
+        } finally {
+            setDeletingLeaveId(null);
         }
     };
 
@@ -377,9 +562,10 @@ export default function TodaysAllocationEmployees({
                             Employees
                         </h2>
                         <p style={styles.headerSubtext}>
-                            Select a service, mark who's Present / Absent / Leave today, and save —
-                            Smart Allocation on the Cases tab splits pending cases equally across
-                            everyone marked Present here.
+                            Select a service, mark who's Present / Leave / Half Day today, and save
+                            — Smart Allocation on the Cases tab splits pending cases equally across
+                            everyone marked Present here. For a longer absence, use Leave Period to
+                            mark a from–to date range once.
                         </p>
                     </div>
                 </div>
@@ -387,11 +573,6 @@ export default function TodaysAllocationEmployees({
                 <div style={styles.filterBar}>
                     <div style={{ width: 190 }}>
                         <label style={styles.label}>Service</label>
-                        {/* NEW: read-only — Service is now pulled straight from
-                            whatever's selected on the Allocate tab (shared
-                            productId state in manualallocation.tsx), same as
-                            the Team box below. No dropdown here anymore; go
-                            to the Allocate tab to change the service. */}
                         <div
                             style={styles.teamAlignedLabel}
                             title={selectedProduct?.product_name || "All Services"}
@@ -401,12 +582,6 @@ export default function TodaysAllocationEmployees({
                     </div>
                     <div style={{ width: 190 }}>
                         <label style={styles.label}>Team</label>
-                        {/* NEW: read-only — states which team(s) the SELECTED
-                            SERVICE is aligned to. No dropdown, nothing to
-                            change here; Service above is the only control,
-                            and the table already only shows that team's
-                            employees. Fixed-width wrapper (same as Service)
-                            so long team names never grow this box. */}
                         <div style={styles.teamAlignedLabel} title={alignedTeamsLabel}>
                             {alignedTeamsLabel}
                         </div>
@@ -420,9 +595,6 @@ export default function TodaysAllocationEmployees({
                             onChange={(e) => setSearchText(e.target.value)}
                         />
                     </div>
-                    {/* NEW: External Members — multi-select of employees NOT
-                        on this service's own team, so they can be pulled
-                        in just for today/this service. */}
                     <div style={{ position: "relative" }}>
                         <label style={styles.label}>External Members</label>
                         <button
@@ -479,6 +651,10 @@ export default function TodaysAllocationEmployees({
                     <button type="button" style={styles.ghostBtn} onClick={markAllPresent}>
                         <i className="ti ti-checks" /> Mark all Present
                     </button>
+                    {/* NEW: opens the from–to Leave Period popup. */}
+                    <button type="button" style={styles.ghostBtn} onClick={openLeaveModal}>
+                        <i className="ti ti-calendar-event" /> Leave Period
+                    </button>
                 </div>
 
                 <div style={styles.countRow}>
@@ -493,10 +669,6 @@ export default function TodaysAllocationEmployees({
                     </span>
                 </div>
 
-                {/* NEW: All / My Team / External — filters the table below
-                    without touching who's actually included in the
-                    combined list (that's driven by the External Members
-                    picker above), just what's currently visible. */}
                 <div style={{ maxWidth: 220 }}>
                     <label style={styles.label}>Show</label>
                     <select
@@ -512,9 +684,9 @@ export default function TodaysAllocationEmployees({
 
                 <div style={styles.tableCard}>
                     <div style={styles.tableHeadRow}>
-                        <span style={styles.colName}>Employee</span>
-                        <span style={styles.colTeam}>Team</span>
-                        <span style={styles.colStatus}>Status</span>
+                        <div style={styles.colName}>Employee</div>
+                        <div style={styles.colTeam}>Team</div>
+                        <div style={{ ...styles.colStatus, ...styles.colStatusHead }}>Status</div>
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading employees…</div>
@@ -522,28 +694,36 @@ export default function TodaysAllocationEmployees({
                         <div style={styles.emptyNote}>No employees match this filter.</div>
                     ) : (
                         filteredEmployees.map((emp) => {
-                            const status = statusByEmployee[emp.id] || "PRESENT";
+                            const status = effectiveStatus(emp.id);
+                            const leave = leaveByEmployee[emp.id];
                             return (
                                 <div key={emp.id} style={styles.tableRow}>
-                                    <span style={styles.colName}>
+                                    <div style={styles.colName}>
                                         <span style={styles.avatar}>{initials(emp.name)}</span>
-                                        <span>
+                                        <div style={styles.nameBlock}>
                                             <div style={styles.empName}>
-                                                {emp.name}
+                                                <span>{emp.name}</span>
                                                 {externalIds.has(emp.id) && (
-                                                    <span style={styles.externalTag}>
-                                                        {" "}
-                                                        (External)
-                                                    </span>
+                                                    <span style={styles.externalTag}>External</span>
                                                 )}
                                             </div>
                                             {emp.employeeCode && (
                                                 <div style={styles.empCode}>{emp.employeeCode}</div>
                                             )}
-                                        </span>
-                                    </span>
-                                    <span style={styles.colTeam}>{emp.team || "—"}</span>
-                                    <span style={styles.colStatus}>
+                                            {/* NEW: shows the leave period this
+                                                employee is inside of. */}
+                                            {leave && (
+                                                <div style={styles.leaveTag}>
+                                                    <i className="ti ti-calendar-off" /> On leave{" "}
+                                                    {fmtDate(leave.fromDate)} to{" "}
+                                                    {fmtDate(leave.toDate)}
+                                                    {leave.reason ? ` · ${leave.reason}` : ""}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div style={styles.colTeam}>{emp.team || "—"}</div>
+                                    <div style={styles.colStatus}>
                                         {(Object.keys(STATUS_META) as SelectableStatus[]).map(
                                             (s) => (
                                                 <button
@@ -568,7 +748,7 @@ export default function TodaysAllocationEmployees({
                                                 </button>
                                             )
                                         )}
-                                    </span>
+                                    </div>
                                 </div>
                             );
                         })
@@ -586,16 +766,173 @@ export default function TodaysAllocationEmployees({
                 </button>
             </div>
 
+            {/* NEW: Leave Period popup */}
+            {leaveModalOpen && (
+                <div style={styles.modalOverlay} onClick={() => setLeaveModalOpen(false)}>
+                    <div
+                        style={{
+                            ...styles.modalCard,
+                            width: isMobile ? "calc(100% - 24px)" : 560,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={styles.modalHeader}>
+                            <span>
+                                <i className="ti ti-calendar-event" /> Leave Period
+                            </span>
+                            <button
+                                type="button"
+                                style={styles.modalClose}
+                                onClick={() => setLeaveModalOpen(false)}
+                                aria-label="Close"
+                            >
+                                <i className="ti ti-x" />
+                            </button>
+                        </div>
+
+                        <div style={styles.modalBody}>
+                            <div style={styles.dateRow}>
+                                <div style={{ flex: 1 }}>
+                                    <label style={styles.label}>From</label>
+                                    <input
+                                        type="date"
+                                        style={styles.select}
+                                        value={leaveFrom}
+                                        onChange={(e) => {
+                                            setLeaveFrom(e.target.value);
+                                            if (leaveTo < e.target.value)
+                                                setLeaveTo(e.target.value);
+                                        }}
+                                    />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <label style={styles.label}>To</label>
+                                    <input
+                                        type="date"
+                                        style={styles.select}
+                                        value={leaveTo}
+                                        min={leaveFrom}
+                                        onChange={(e) => setLeaveTo(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={styles.label}>Reason (optional)</label>
+                                <input
+                                    style={styles.select}
+                                    placeholder="e.g. Long weekend, family function"
+                                    maxLength={200}
+                                    value={leaveReason}
+                                    onChange={(e) => setLeaveReason(e.target.value)}
+                                />
+                            </div>
+
+                            <div>
+                                <label style={styles.label}>
+                                    Employees{" "}
+                                    {leaveEmpIds.size > 0 && (
+                                        <span style={{ color: BRAND.blue }}>
+                                            ({leaveEmpIds.size} selected)
+                                        </span>
+                                    )}
+                                </label>
+                                <input
+                                    style={{ ...styles.select, marginBottom: 8 }}
+                                    placeholder="Search name, code, team…"
+                                    value={leaveSearch}
+                                    onChange={(e) => setLeaveSearch(e.target.value)}
+                                />
+                                <div style={styles.leavePickList}>
+                                    {leaveCandidates.length === 0 ? (
+                                        <div style={styles.externalEmpty}>No employees found.</div>
+                                    ) : (
+                                        leaveCandidates.map((e) => (
+                                            <label key={e.id} style={styles.externalRow}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={leaveEmpIds.has(e.id)}
+                                                    onChange={() => toggleLeaveEmp(e.id)}
+                                                />
+                                                <span>
+                                                    {e.name}{" "}
+                                                    <span style={styles.externalRowTeam}>
+                                                        ({e.team || "No team"})
+                                                    </span>
+                                                </span>
+                                            </label>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            {leaveError && <p style={styles.leaveError}>{leaveError}</p>}
+
+                            <button
+                                type="button"
+                                style={{ ...styles.saveBtn, opacity: savingLeave ? 0.6 : 1 }}
+                                disabled={savingLeave}
+                                onClick={handleSaveLeave}
+                            >
+                                <i className="ti ti-device-floppy" />
+                                {savingLeave ? "Saving…" : "Save Leave Period"}
+                            </button>
+
+                            <div>
+                                <label style={styles.label}>Current &amp; upcoming leaves</label>
+                                <div style={styles.leavePickList}>
+                                    {upcomingLeaves.length === 0 ? (
+                                        <div style={styles.externalEmpty}>
+                                            No leave periods set.
+                                        </div>
+                                    ) : (
+                                        upcomingLeaves.map((l) => (
+                                            <div key={l.id} style={styles.leaveListRow}>
+                                                <span style={{ flex: 1, minWidth: 0 }}>
+                                                    <strong>
+                                                        {employeeNameById[l.employeeId] ||
+                                                            "Unknown employee"}
+                                                    </strong>
+                                                    <div style={styles.externalRowTeam}>
+                                                        {fmtDate(l.fromDate)} to {fmtDate(l.toDate)}
+                                                        {l.reason ? ` · ${l.reason}` : ""}
+                                                    </div>
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    style={{
+                                                        ...styles.leaveDeleteBtn,
+                                                        opacity: deletingLeaveId === l.id ? 0.5 : 1,
+                                                    }}
+                                                    disabled={deletingLeaveId === l.id}
+                                                    onClick={() => handleDeleteLeave(l)}
+                                                    aria-label="Remove leave period"
+                                                    title="Remove leave period"
+                                                >
+                                                    <i className="ti ti-trash" />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {toast && <div style={styles.toast}>{toast}</div>}
         </div>
     );
 }
 
+// Fixed widths so header labels and row cells line up in the same columns.
+const TEAM_COL_WIDTH = 160;
+const STATUS_BTN_WIDTH = 94;
+const STATUS_GAP = 6;
+const STATUS_COL_WIDTH = STATUS_BTN_WIDTH * 3 + STATUS_GAP * 2;
+
 const styles: Record<string, CSSProperties> = {
-    // Explicit opaque light background so the page never shows the OS/
-    // browser's dark <html> background (see index.css's
-    // `prefers-color-scheme: dark` rule) bleeding through in the gaps
-    // around the white cards — matches billing.tsx / productionreports.tsx.
     root: {
         display: "flex",
         flexDirection: "column",
@@ -638,6 +975,7 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.medium,
         color: "#374151",
         margin: "0 0 6px",
+        textAlign: "left",
     },
     select: {
         padding: "9px 12px",
@@ -645,25 +983,11 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #ececf5",
         fontSize: fontSize.sm,
         background: "#fafafa",
-        // FIX: background was hardcoded light but color was never set,
-        // so text fell back to the browser's own default — which in
-        // system/OS dark theme is light-on-light, making "Add from
-        // other teams…", the search box, and the external-search input
-        // all render as blank/invisible even though the box itself was
-        // visible. Match the explicit-light-everything pattern used
-        // elsewhere in this file (see externalRow's color, and root's
-        // comment above).
         color: "#17181C",
         minWidth: 170,
         width: "100%",
         boxSizing: "border-box",
     },
-    // NEW: read-only stand-in for the old Team <select> — same box shape
-    // so the filter row's alignment doesn't shift, but not a control.
-    // Text is clipped with an ellipsis (full text still available via the
-    // `title` tooltip) so a long list of aligned team names can never
-    // stretch this box wider than the fixed-width wrapper around it —
-    // that's what was making the row grow before.
     teamAlignedLabel: {
         padding: "9px 12px",
         borderRadius: radius.sm,
@@ -706,11 +1030,13 @@ const styles: Record<string, CSSProperties> = {
         background: "#fff",
         borderRadius: radius.lg,
         boxShadow: "0 6px 20px rgba(0,0,0,.04)",
-        overflow: "hidden",
+        overflowX: "auto",
+        overflowY: "hidden",
     },
     tableHeadRow: {
         display: "flex",
         alignItems: "center",
+        gap: 16,
         padding: "10px 20px",
         background: "#F4F8FD",
         fontSize: fontSize.xs,
@@ -718,22 +1044,51 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
+        textAlign: "left",
+        minWidth: 720,
     },
     tableRow: {
         display: "flex",
         alignItems: "center",
-        padding: "10px 20px",
+        gap: 16,
+        padding: "12px 20px",
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
-        gap: 8,
+        textAlign: "left",
+        minWidth: 720,
     },
-    colName: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10 },
-    colTeam: { width: 160, flexShrink: 0, color: "#6b7280" },
-    colStatus: { display: "flex", gap: 6, flexShrink: 0 },
+    // Name column: avatar + text block, always left aligned.
+    colName: {
+        flex: 1,
+        minWidth: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        textAlign: "left",
+    },
+    // Team column: same fixed width in header and rows, left aligned.
+    colTeam: {
+        width: TEAM_COL_WIDTH,
+        flexShrink: 0,
+        color: "#6b7280",
+        textAlign: "left",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    // Status column: fixed width = 3 equal buttons, so every row lines up.
+    colStatus: {
+        display: "flex",
+        alignItems: "center",
+        gap: STATUS_GAP,
+        width: STATUS_COL_WIDTH,
+        flexShrink: 0,
+    },
+    colStatusHead: { display: "block", textAlign: "left" },
     avatar: {
-        width: 32,
-        height: 32,
+        width: 34,
+        height: 34,
         borderRadius: radius.circle,
         background: "#DCEFFB",
         color: "#1785B0",
@@ -744,19 +1099,52 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         flexShrink: 0,
     },
-    empName: { fontSize: fontSize.base, color: "#1a1a2e", fontWeight: fontWeight.medium },
-    // FIX: explicit left-align — a bare block div is left-aligned by
-    // default, but making it explicit here removes any doubt/inherited
-    // override and guarantees the employee code never renders centered.
+    // Stacks name / code / leave tag, all left aligned.
+    nameBlock: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 2,
+        minWidth: 0,
+        textAlign: "left",
+    },
+    empName: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: fontSize.base,
+        color: "#1a1a2e",
+        fontWeight: fontWeight.medium,
+        textAlign: "left",
+    },
     empCode: {
         fontSize: fontSize.xs,
         color: "#9ca3af",
-        marginTop: 1,
         textAlign: "left",
-        display: "block",
     },
-    // NEW: External Members multi-select + row tag.
-    externalTag: { fontSize: fontSize.xs, fontWeight: fontWeight.regular, color: BRAND.amber },
+    // NEW: "On leave dd-mm-yyyy to dd-mm-yyyy" line under the employee.
+    leaveTag: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: fontSize.xs,
+        color: "#B45309",
+        background: "#FEF3C7",
+        padding: "2px 8px",
+        borderRadius: radius.pill,
+        marginTop: 2,
+        textAlign: "left",
+    },
+    // "External" shown as a small badge next to the name.
+    externalTag: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.medium,
+        color: "#B45309",
+        background: "#FEF3C7",
+        padding: "1px 8px",
+        borderRadius: radius.pill,
+        lineHeight: "16px",
+    },
     externalPanel: {
         position: "absolute",
         top: "100%",
@@ -783,8 +1171,9 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         color: "#17181C",
         cursor: "pointer",
+        textAlign: "left",
     },
-    externalRowTeam: { color: "#9ca3af", fontSize: fontSize.xs },
+    externalRowTeam: { color: "#9ca3af", fontSize: fontSize.xs, textAlign: "left" },
     externalDoneBtn: {
         marginTop: 8,
         padding: "8px 12px",
@@ -796,15 +1185,19 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         cursor: "pointer",
     },
+    // Equal-width pill buttons so Present / Leave / Half Day line up.
     statusBtn: {
         display: "inline-flex",
         alignItems: "center",
+        justifyContent: "center",
         gap: 5,
-        padding: "5px 10px",
+        width: STATUS_BTN_WIDTH,
+        padding: "6px 0",
         borderRadius: radius.pill,
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
+        whiteSpace: "nowrap",
     },
     emptyNote: {
         padding: "28px 20px",
@@ -826,6 +1219,96 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
+    },
+    // NEW: Leave Period popup.
+    modalOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 900,
+    },
+    modalCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        boxShadow: "0 20px 50px rgba(0,0,0,.25)",
+        maxHeight: "90vh",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+    },
+    modalHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        padding: "14px 18px",
+        background: GRADIENT,
+        color: "#fff",
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+    },
+    modalClose: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 28,
+        height: 28,
+        borderRadius: radius.sm,
+        border: "1px solid rgba(255,255,255,0.5)",
+        background: "rgba(255,255,255,0.12)",
+        color: "#fff",
+        cursor: "pointer",
+    },
+    modalBody: {
+        padding: "16px 18px 20px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        overflowY: "auto",
+    },
+    dateRow: { display: "flex", gap: 12 },
+    leavePickList: {
+        maxHeight: 170,
+        overflowY: "auto",
+        border: "1px solid #ececf5",
+        borderRadius: radius.sm,
+        padding: "4px 8px",
+        display: "flex",
+        flexDirection: "column",
+        background: "#fff",
+    },
+    leaveListRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 2px",
+        borderBottom: "1px solid #f1f1f1",
+        fontSize: fontSize.sm,
+        color: "#17181C",
+        textAlign: "left",
+    },
+    leaveDeleteBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 28,
+        height: 28,
+        borderRadius: radius.sm,
+        border: "1px solid #fecaca",
+        background: "#fef2f2",
+        color: BRAND.red,
+        cursor: "pointer",
+        flexShrink: 0,
+    },
+    leaveError: {
+        margin: 0,
+        fontSize: fontSize.sm,
+        color: BRAND.red,
+        fontWeight: fontWeight.medium,
+        textAlign: "left",
     },
     toast: {
         position: "fixed",

@@ -384,6 +384,38 @@ const Login = () => {
                         </div>
                     )}
 
+                    {/* Mobile only: logo sits at the top of the brand panel (white chip so
+                        the black wordmark stays readable on the blue gradient). On desktop
+                        the logo lives in the top-right corner of the form panel instead. */}
+                    {isMobile && (
+                        <div
+                            style={{
+                                position: "relative",
+                                alignSelf: "flex-start",
+                                zIndex: 2,
+                                display: "flex",
+                                alignItems: "center",
+                                lineHeight: 0,
+                                background: "#fff",
+                                borderRadius: isCompact ? 10 : 14,
+                                padding: isCompact ? "7px 12px" : "8px 14px",
+                                marginBottom: isCompact ? 14 : 18,
+                                boxShadow: "0 8px 24px rgba(10,12,50,.28)",
+                            }}
+                        >
+                            <img
+                                src="/Logo.png"
+                                alt="Alookate"
+                                draggable={false}
+                                style={{
+                                    height: isCompact ? 22 : 26,
+                                    width: "auto",
+                                    display: "block",
+                                }}
+                            />
+                        </div>
+                    )}
+
                     <div style={{ position: "relative", zIndex: 1 }}>
                         <div
                             className="dwa-pulse"
@@ -503,6 +535,7 @@ const Login = () => {
                     style={{
                         flex: 1,
                         width: "100%",
+                        position: "relative", // NEW: pins the logo to this panel's corner
                         padding: isCompact ? "28px 20px 40px" : isMobile ? "28px 20px" : "48px",
                         flexShrink: 0,
                         display: "flex",
@@ -511,6 +544,23 @@ const Login = () => {
                         overflowY: "auto",
                     }}
                 >
+                    {/* NEW: desktop logo, top-right corner of the whole card */}
+                    {!isMobile && (
+                        <img
+                            src="/Logo.png"
+                            alt="Alookate"
+                            draggable={false}
+                            style={{
+                                position: "absolute",
+                                top: 28,
+                                right: 32,
+                                height: 34,
+                                width: "auto",
+                                display: "block",
+                            }}
+                        />
+                    )}
+
                     {view === "sent" ? (
                         <>
                             <div

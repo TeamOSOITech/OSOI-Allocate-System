@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { CSSProperties, FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
@@ -16,8 +17,11 @@ const PAGE_SIZE = 10;
 // every case past #100.
 const EXPORT_PAGE_SIZE = 100;
 const MOBILE_BREAKPOINT = 768;
-// Manual Entry mode: how many case numbers can be typed in and
-// submitted together in one go.
+// Manual (count) mode: max number of cases that can be logged by
+// count alone in a single submission.
+const MAX_MANUAL_COUNT = 2000;
+// Manual mode: if case numbers ARE available they can be typed in
+// (up to this many at once) and real cases are created from them.
 const MAX_MANUAL_CASE_NUMBERS = 10;
 
 function useIsMobile() {
@@ -108,6 +112,181 @@ type ServiceCase = {
     createdAt: string;
 };
 
+// NEW: a count-only entry (Manual (Count) mode) — no case rows exist
+// for these yet, just how many cases are pending for a service.
+type CountEntry = {
+    id: string;
+    productId: string;
+    productName: string | null;
+    clientName: string | null;
+    subclientName: string | null;
+    workDate: string;
+    quantity: number;
+    fulfilledCount: number;
+};
+
+// NEW: inline case-number editor (shown while a row is in edit mode) —
+// lets the real case number be added later, replacing the auto number.
+function CaseNoEditor({
+    value,
+    onSave,
+    style,
+}: {
+    value: string;
+    onSave: (next: string) => Promise<void> | void;
+    style: CSSProperties;
+}) {
+    const [draft, setDraft] = useState(value);
+    useEffect(() => setDraft(value), [value]);
+    const commit = () => {
+        const next = draft.trim();
+        if (next && next !== value) onSave(next);
+        else setDraft(value);
+    };
+    return (
+        <input
+            type="text"
+            style={style}
+            value={draft}
+            maxLength={50}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") setDraft(value);
+            }}
+        />
+    );
+}
+
+// ---- NEW: upload / manual-entry RESULT box --------------------------------
+// Shows "N created" + "N skipped" chips and, for skipped rows, a clear
+// amber warning: rows are grouped by reason, each reason has a short
+// hint on what to fix, and the affected rows/case numbers are shown as
+// small chips. The list scrolls if it is long.
+
+type SkippedItem = { row?: number; caseNumber?: string; reason: string };
+
+type UploadResultData = {
+    createdCount: number;
+    skippedCount: number;
+    totalRows: number;
+    // Bulk Upload mode: per-row skip reasons from the backend.
+    skipped?: SkippedItem[];
+    // Manual Entry mode: every case number with its status.
+    results?: {
+        row?: number;
+        caseNumber?: string;
+        status: string;
+        message?: string;
+        reason?: string;
+    }[];
+};
+
+// Tells the user what to do next, based on the skip reason text.
+function skipHint(reason: string): string {
+    const r = reason.toLowerCase();
+    if (r.startsWith("service not found"))
+        return "The service name must exactly match a name in the Services list. Please check the spelling.";
+    if (r.startsWith("client not found"))
+        return "The client name must exactly match a name in the Clients list.";
+    if (r.includes("not mapped to service"))
+        return "This client is not linked to this service. Map the client to the service first.";
+    if (r.includes("already exists"))
+        return "This case number already exists in the Case Register, so it was not added again.";
+    if (r.includes("duplicate")) return "This case number appears more than once in this upload.";
+    if (r.startsWith("empty case number")) return "The Case Number is blank in these rows.";
+    if (r.startsWith("service missing"))
+        return "Enter a Service in the sheet, or select a default service above.";
+    return "";
+}
+
+function groupSkipped(items: SkippedItem[]) {
+    const map = new Map<string, SkippedItem[]>();
+    items.forEach((i) => {
+        const list = map.get(i.reason) || [];
+        list.push(i);
+        map.set(i.reason, list);
+    });
+    return Array.from(map, ([reason, list]) => ({ reason, items: list }));
+}
+
+function UploadResultBox({
+    result,
+    styles,
+}: {
+    result: UploadResultData;
+    styles: Record<string, CSSProperties>;
+}) {
+    const list: SkippedItem[] =
+        result.skipped && result.skipped.length > 0
+            ? result.skipped
+            : (result.results || [])
+                  .filter((r) => r.status === "skipped")
+                  .map((r) => ({
+                      row: r.row,
+                      caseNumber: r.caseNumber,
+                      reason: r.message || r.reason || "Skipped",
+                  }));
+    const groups = groupSkipped(list);
+    // The backend only sends the first 100 skipped rows' details.
+    const hidden = Math.max(0, result.skippedCount - list.length);
+
+    return (
+        <div style={styles.resultBox}>
+            <div style={styles.resultChips}>
+                <span
+                    style={{
+                        ...styles.resultChip,
+                        ...(result.createdCount > 0 ? styles.resultChipOk : styles.resultChipMuted),
+                    }}
+                >
+                    <i className="ti ti-circle-check" /> {result.createdCount} created
+                </span>
+                {result.skippedCount > 0 && (
+                    <span style={{ ...styles.resultChip, ...styles.resultChipWarn }}>
+                        <i className="ti ti-alert-triangle" /> {result.skippedCount} skipped
+                    </span>
+                )}
+            </div>
+
+            {result.skippedCount > 0 && (
+                <div style={styles.skipBox}>
+                    <div style={styles.skipTitle}>
+                        {result.skippedCount} row{result.skippedCount === 1 ? " was" : "s were"} not
+                        added. Please review the details below:
+                    </div>
+                    <div style={styles.skipScroll}>
+                        {groups.map((g) => {
+                            const hint = skipHint(g.reason);
+                            return (
+                                <div key={g.reason} style={styles.skipGroup}>
+                                    <div style={styles.skipReason}>{g.reason}</div>
+                                    {hint && <div style={styles.skipHint}>{hint}</div>}
+                                    <div style={styles.skipRows}>
+                                        {g.items.map((it, i) => (
+                                            <span key={i} style={styles.skipRowChip}>
+                                                {it.row ? `Row ${it.row}` : ""}
+                                                {it.row && it.caseNumber ? " · " : ""}
+                                                {it.caseNumber || (it.row ? "" : "—")}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {hidden > 0 && (
+                            <div style={styles.skipHint}>
+                                + {hidden} more skipped row{hidden === 1 ? "" : "s"} not shown here.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // NEW: small presentational card for the KPI row — same look as the
 // KpiCard used on the Daily Work tab.
 function KpiCard({
@@ -163,6 +342,7 @@ type ServiceCasesKpi = {
 
 export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     const isMobile = useIsMobile();
+    const navigate = useNavigate();
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
     // NEW: Case Register — Client column. Fetched once, same list the
@@ -171,6 +351,19 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // NEW: Subclient column — org-wide list, filtered client-side to
     // whichever client a given row/form has selected.
     const [subclients, setSubclients] = useState<Subclient[]>([]);
+
+    // ---- "Manual Entry" (type the case number(s) yourself, or just a
+    // count) vs "Bulk Upload" (bring in custom/random case numbers via
+    // an Excel sheet) — for orgs that already have their own case
+    // numbering (e.g. a client-provided case ID). Service + Date still
+    // come from the same dropdown/date picker in both modes.
+    // NOTE: the "Auto Generate" mode was removed from the UI — default
+    // mode is now Manual Entry.
+    const [formMode, setFormMode] = useState<"manual" | "upload">("manual");
+    const [uploadFile, setUploadFile] = useState<File | null>(null);
+    // CHANGED: `skipped` added — per-row skip reasons from the backend.
+    // `results` also kept — Manual Entry mode skipped rows come in there.
+    const [uploadResult, setUploadResult] = useState<UploadResultData | null>(null);
 
     // ---- left side: same shape as Daily Work's form (service + qty) ----
     const [workDate, setWorkDate] = useState(todayStr());
@@ -181,33 +374,22 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // NEW: Subclient picked alongside Client — cleared automatically
     // whenever the Client selection changes (see the effect below).
     const [formSubclientId, setFormSubclientId] = useState("");
-    // Manual entry: the person types the actual case number(s) instead
-    // of the system auto-generating them — one per line (or comma
-    // separated), up to MAX_MANUAL_CASE_NUMBERS at once.
+    // NEW: clients mapped to the SERVICE currently selected in the form.
+    // The form's Client dropdown only ever lists these (not every client
+    // in the org) — see the effect on productId below.
+    const [serviceClients, setServiceClients] = useState<Client[]>([]);
+    const [serviceClientsLoading, setServiceClientsLoading] = useState(false);
+    // Manual (count) mode: the case numbers aren't available yet, so only
+    // HOW MANY cases (e.g. 20, 30) is entered. No case rows are created —
+    // just the count is saved; real case numbers are added later at
+    // submit time.
+    const [manualQuantity, setManualQuantity] = useState("");
+    // Manual mode, case numbers AVAILABLE: type them in (one per line or
+    // comma separated) and real case rows are created from them instead.
     const [caseNumbersText, setCaseNumbersText] = useState("");
-    // Auto Generate mode: how many cases to create + the prefix each
-    // generated case number should start with (numbering then starts
-    // at 001 for a prefix that's never been used before).
-    const [autoQuantity, setAutoQuantity] = useState("");
-    const [autoPrefix, setAutoPrefix] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [formError, setFormError] = useState("");
     const [formSuccess, setFormSuccess] = useState("");
-
-    // ---- "Manual Entry" (type the case number(s) yourself) vs "Upload"
-    // (bring in custom/random case numbers via an Excel sheet) vs
-    // "Auto Generate" (system generates <prefix><001, 002, ...> for you,
-    // just pick service/client/subclient/quantity/prefix) — for orgs
-    // that already have their own case numbering (e.g. a client-provided
-    // case ID). Service + Date still come from the same dropdown/date
-    // picker in every mode.
-    const [formMode, setFormMode] = useState<"manual" | "upload" | "auto">("manual");
-    const [uploadFile, setUploadFile] = useState<File | null>(null);
-    const [uploadResult, setUploadResult] = useState<{
-        createdCount: number;
-        skippedCount: number;
-        totalRows: number;
-    } | null>(null);
 
     // ---- right side: individual case rows, filterable + paginated ----
     const [cases, setCases] = useState<ServiceCase[]>([]);
@@ -224,6 +406,26 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     const [totalCases, setTotalCases] = useState(0);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteError, setDeleteError] = useState("");
+    // NEW: save an edited case number (must stay unique in the org).
+    const handleCaseNumberChange = async (c: ServiceCase, next: string) => {
+        setClientEditError("");
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/case-number`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ caseNumber: next }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Failed to update case number");
+            setCases((prev) =>
+                prev.map((row) => (row.id === c.id ? { ...row, caseNumber: next } : row))
+            );
+        } catch (err: any) {
+            setClientEditError(err?.message || "Failed to update case number");
+        }
+    };
+
     // NEW: Case Register — inline Client edit. Tracks which row's
     // dropdown is mid-save so it can be disabled/greyed while saving.
     const [savingClientId, setSavingClientId] = useState<string | null>(null);
@@ -252,6 +454,188 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // NEW: "Export Excel" — downloads every case matching the current
     // filter/search as a real .xlsx file, not just the current page.
     const [exporting, setExporting] = useState(false);
+
+    // NEW: "Pending Counts" — count-only entries saved from Manual
+    // (Count) mode, shown above the cases table on the right side.
+    const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
+    // Which view the right side shows: the cases table or the pending
+    // counts — one at a time, switched with the two buttons on top.
+    const [rightTab, setRightTab] = useState<"cases" | "counts">("cases");
+    // Search box on the Counts view — filters by service, client,
+    // subclient or date (client-side; the list is small).
+    const [countSearch, setCountSearch] = useState("");
+    // NEW: same controls as the Cases view — service filter, select
+    // mode (checkboxes + bulk delete) and Excel export.
+    const [countFilterProductId, setCountFilterProductId] = useState("");
+    const [countSelectMode, setCountSelectMode] = useState(false);
+    const [countSelectedIds, setCountSelectedIds] = useState<Set<string>>(new Set());
+    const [countBulkDeleting, setCountBulkDeleting] = useState(false);
+    const [countExporting, setCountExporting] = useState(false);
+
+    const filteredCountEntries = countEntries.filter((c) => {
+        if (countFilterProductId && String(c.productId) !== countFilterProductId) return false;
+        const q = countSearch.trim().toLowerCase();
+        if (!q) return true;
+        return [
+            c.productName,
+            c.clientName,
+            c.subclientName,
+            c.workDate,
+            formatDisplayDate(c.workDate),
+        ]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(q));
+    });
+    const [deletingCountId, setDeletingCountId] = useState<string | null>(null);
+
+    const fetchCountEntries = useCallback(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/count-only`);
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
+            setCountEntries(json.data || []);
+        } catch (err) {
+            console.error("Failed to fetch count entries:", err);
+        }
+    }, []);
+
+    const handleDeleteCountEntry = async (entry: CountEntry) => {
+        if (
+            !window.confirm(
+                `Delete ${entry.quantity} pending case(s) for ${entry.productName || "this service"}? This can't be undone.`
+            )
+        )
+            return;
+        setDeleteError("");
+        setDeletingCountId(entry.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/count-only/${entry.id}`, {
+                method: "DELETE",
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to delete");
+            setCountEntries((prev) => prev.filter((c) => c.id !== entry.id));
+        } catch (err: any) {
+            setDeleteError(err?.message || "Failed to delete count entry");
+        } finally {
+            setDeletingCountId(null);
+        }
+    };
+
+    // NEW: Counts view — select mode / select all / select one.
+    const toggleCountSelectMode = () => {
+        setCountSelectMode((prev) => {
+            if (prev) setCountSelectedIds(new Set());
+            return !prev;
+        });
+    };
+
+    const toggleCountSelectAll = () => {
+        setCountSelectedIds((prev) =>
+            prev.size === filteredCountEntries.length && filteredCountEntries.length > 0
+                ? new Set()
+                : new Set(filteredCountEntries.map((c) => c.id))
+        );
+    };
+
+    const toggleCountSelectOne = (id: string) => {
+        setCountSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    // Drop selections that are no longer in the list (after delete/refetch).
+    useEffect(() => {
+        setCountSelectedIds((prev) => {
+            const existing = new Set(countEntries.map((c) => c.id));
+            const next = new Set<string>();
+            prev.forEach((id) => {
+                if (existing.has(id)) next.add(id);
+            });
+            return next.size === prev.size ? prev : next;
+        });
+    }, [countEntries]);
+
+    // NEW: bulk delete for counts — reuses the single count-only DELETE
+    // endpoint for every selected id, run in parallel.
+    const handleBulkDeleteCounts = async () => {
+        const ids = Array.from(countSelectedIds);
+        if (ids.length === 0) return;
+        if (
+            !window.confirm(
+                `Delete ${ids.length} selected count entr${ids.length > 1 ? "ies" : "y"}? This can't be undone.`
+            )
+        )
+            return;
+        setDeleteError("");
+        setCountBulkDeleting(true);
+        try {
+            const results = await Promise.allSettled(
+                ids.map((id) =>
+                    authFetch(`${API_BASE}/api/service-cases/count-only/${id}`, {
+                        method: "DELETE",
+                    }).then(async (res) => {
+                        const json = await res.json();
+                        if (!res.ok || !json.success)
+                            throw new Error(json?.message || "Failed to delete");
+                    })
+                )
+            );
+            const failed = results.filter((r) => r.status === "rejected").length;
+            if (failed > 0) {
+                setDeleteError(
+                    `${failed} of ${ids.length} count entr${ids.length > 1 ? "ies" : "y"} couldn't be deleted.`
+                );
+            }
+            setCountSelectedIds(new Set());
+            fetchCountEntries();
+        } finally {
+            setCountBulkDeleting(false);
+        }
+    };
+
+    // NEW: the full count list is already loaded client-side, so export
+    // uses the currently filtered/searched rows directly (no paging).
+    const handleExportCountsExcel = () => {
+        if (filteredCountEntries.length === 0) {
+            setDeleteError("No matching counts to export.");
+            return;
+        }
+        setDeleteError("");
+        setCountExporting(true);
+        try {
+            const sheetData = filteredCountEntries.map((c) => ({
+                Service: c.productName || "",
+                Client: c.clientName || "",
+                Subclient: c.subclientName || "",
+                Date: c.workDate,
+                "Total Cases": c.quantity,
+                Fulfilled: c.fulfilledCount,
+                "Pending Cases": c.quantity - c.fulfilledCount,
+            }));
+            const ws = XLSX.utils.json_to_sheet(sheetData);
+            ws["!cols"] = [
+                { wch: 18 }, // Service
+                { wch: 22 }, // Client
+                { wch: 22 }, // Subclient
+                { wch: 12 }, // Date
+                { wch: 12 }, // Total Cases
+                { wch: 12 }, // Fulfilled
+                { wch: 14 }, // Pending Cases
+            ];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Pending Counts");
+            XLSX.writeFile(wb, `pending-counts_${todayStr()}.xlsx`);
+        } catch (err: any) {
+            console.error("Failed to export counts:", err);
+            setDeleteError(err?.message || "Export failed.");
+        } finally {
+            setCountExporting(false);
+        }
+    };
 
     const fetchProducts = useCallback(async () => {
         setProductsLoading(true);
@@ -439,7 +823,8 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         fetchProducts();
         fetchClients();
         fetchSubclients();
-    }, [fetchProducts, fetchClients, fetchSubclients]);
+        fetchCountEntries();
+    }, [fetchProducts, fetchClients, fetchSubclients, fetchCountEntries]);
 
     // NEW: Subclient must always belong to the currently selected form
     // Client — clear it out whenever Client changes so a stale
@@ -447,6 +832,48 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     useEffect(() => {
         setFormSubclientId("");
     }, [formClientId]);
+
+    // NEW: the form's Client dropdown depends on the selected SERVICE.
+    // Whenever the service changes: clear any previously picked client
+    // (it may not be mapped to the new service — the effect above then
+    // clears the subclient too), and load only the clients mapped to the
+    // new service. A slow response for an old service is ignored.
+    useEffect(() => {
+        setFormClientId("");
+
+        if (!productId) {
+            setServiceClients([]);
+            setServiceClientsLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            setServiceClientsLoading(true);
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/product-clients/${productId}`
+                );
+                const json = await res.json();
+                if (!res.ok || !json.success) {
+                    throw new Error(json?.message || `HTTP ${res.status}`);
+                }
+                const list = Array.isArray(json) ? json : json?.data || [];
+                if (!cancelled) {
+                    setServiceClients(list.map((c: any) => ({ id: String(c.id), name: c.name })));
+                }
+            } catch (err) {
+                console.error("Failed to fetch clients for service:", err);
+                if (!cancelled) setServiceClients([]);
+            } finally {
+                if (!cancelled) setServiceClientsLoading(false);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [productId]);
 
     // Filter dropdown defaults to "All" — every service's cases show
     // together until the user picks a specific one.
@@ -484,15 +911,20 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     };
 
     // Splits the textarea on newlines AND commas, trims each entry, and
-    // drops blanks — lets people paste either "one per line" or
-    // "comma, separated, values" and have it just work.
+    // drops blanks.
     const parseCaseNumbers = (text: string) =>
         text
             .split(/[\n,]+/)
             .map((s) => s.trim())
             .filter(Boolean);
 
-    const handleSubmit = async (e: FormEvent) => {
+    // Manual: Service is required, Client/Subclient optional.
+    //  - Case numbers typed in  -> real cases are created from them
+    //    (same as before, via /manual).
+    //  - No case numbers typed  -> count only: nothing is added to the
+    //    Case Register, just the count is recorded ("Pending Counts"),
+    //    and case numbers can be added later.
+    const handleManualSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setFormError("");
         setFormSuccess("");
@@ -502,42 +934,81 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             return;
         }
         const caseNumbers = parseCaseNumbers(caseNumbersText);
-        if (caseNumbers.length === 0) {
-            setFormError("Type at least one case number.");
-            return;
-        }
-        if (caseNumbers.length > MAX_MANUAL_CASE_NUMBERS) {
+        const hasCaseNumbers = caseNumbers.length > 0;
+
+        if (hasCaseNumbers && caseNumbers.length > MAX_MANUAL_CASE_NUMBERS) {
             setFormError(
                 `You can enter up to ${MAX_MANUAL_CASE_NUMBERS} case numbers at once — you typed ${caseNumbers.length}.`
             );
             return;
         }
 
+        let quantity = 0;
+        if (!hasCaseNumbers) {
+            quantity = Number(manualQuantity);
+            if (!Number.isInteger(quantity) || quantity <= 0) {
+                setFormError(
+                    "Type the case numbers, or enter how many cases (a whole number greater than 0)."
+                );
+                return;
+            }
+            if (quantity > MAX_MANUAL_COUNT) {
+                setFormError(`Count cannot exceed ${MAX_MANUAL_COUNT} in a single submission.`);
+                return;
+            }
+        }
+
         setSubmitting(true);
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/manual`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    productId,
-                    caseNumbers,
-                    workDate,
-                    clientId: formClientId || null,
-                    subclientId: formSubclientId || null,
-                }),
-            });
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/${hasCaseNumbers ? "manual" : "count-only"}`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(
+                        hasCaseNumbers
+                            ? {
+                                  productId,
+                                  caseNumbers,
+                                  workDate,
+                                  clientId: formClientId || null,
+                                  subclientId: formSubclientId || null,
+                              }
+                            : {
+                                  productId,
+                                  quantity,
+                                  workDate,
+                                  clientId: formClientId || null,
+                                  subclientId: formSubclientId || null,
+                              }
+                    ),
+                }
+            );
+            const contentType = res.headers.get("content-type") || "";
+            if (!contentType.includes("application/json")) {
+                throw new Error(
+                    res.status === 404
+                        ? "Endpoint not found (HTTP 404) — the backend doesn't have this feature yet."
+                        : `Server returned an unexpected response (HTTP ${res.status}).`
+                );
+            }
             const json = await res.json();
-            if (!res.ok || !json.success)
-                throw new Error(json?.message || "Failed to create cases");
-            setFormSuccess(json.message || "Cases created.");
-            setUploadResult(json.data || null);
+            if (!res.ok || !json.success) throw new Error(json?.message || "Failed to save");
+            setFormSuccess(json.message || (hasCaseNumbers ? "Cases created." : "Count saved."));
             setCaseNumbersText("");
-            // Switch the filter to the service just logged, so the newly
-            // created cases are immediately visible (services are always
-            // shown separately now, never mixed together).
-            setFilterProductId(productId);
-            setPage(1);
-            fetchCases();
+            setManualQuantity("");
+            if (hasCaseNumbers) {
+                setUploadResult(json.data || null);
+                // Show the service just logged so the new cases are visible.
+                setFilterProductId(productId);
+                setPage(1);
+                fetchCases();
+                setRightTab("cases");
+            } else {
+                setUploadResult(null);
+                fetchCountEntries();
+                setRightTab("counts");
+            }
         } catch (err: any) {
             setFormError(err?.message || "Something went wrong.");
         } finally {
@@ -545,71 +1016,8 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         }
     };
 
-    // Auto Generate: system creates `autoQuantity` cases numbered
-    // "<autoPrefix>001", "<autoPrefix>002", ... — numbering starts at
-    // 001 the first time a given prefix is used, and continues from
-    // wherever it left off if the same prefix is used again later.
-    const handleAutoSubmit = async (e: FormEvent) => {
-        e.preventDefault();
-        setFormError("");
-        setFormSuccess("");
-
-        if (!productId) {
-            setFormError("Select a service.");
-            return;
-        }
-        const prefix = autoPrefix.trim();
-        if (!prefix) {
-            setFormError("Type a prefix (e.g. 12F).");
-            return;
-        }
-        if (!/^[A-Za-z0-9_-]{1,20}$/.test(prefix)) {
-            setFormError("Prefix can only contain letters, numbers, - and _, up to 20 characters.");
-            return;
-        }
-        const quantity = Number(autoQuantity);
-        if (!Number.isInteger(quantity) || quantity <= 0) {
-            setFormError("Quantity must be a whole number greater than 0.");
-            return;
-        }
-        if (quantity > 2000) {
-            setFormError("Quantity cannot exceed 2000 in a single submission.");
-            return;
-        }
-
-        setSubmitting(true);
-        try {
-            const res = await authFetch(`${API_BASE}/api/service-cases`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    productId,
-                    quantity,
-                    workDate,
-                    clientId: formClientId || null,
-                    subclientId: formSubclientId || null,
-                    casePrefix: prefix,
-                }),
-            });
-            const json = await res.json();
-            if (!res.ok || !json.success)
-                throw new Error(json?.message || "Failed to create cases");
-            setFormSuccess(json.message || "Cases created.");
-            setUploadResult(null);
-            setAutoQuantity("");
-            setFilterProductId(productId);
-            setPage(1);
-            fetchCases();
-        } catch (err: any) {
-            setFormError(err?.message || "Something went wrong.");
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    // NEW: sample .xlsx download for Upload mode — Case Number, Client
-    // Name, Subclient Name columns, so the long explanatory paragraph
-    // that used to live in the form isn't needed anymore.
+    // NEW: sample .xlsx download for Upload mode — Case Number, Service,
+    // Client Name, Subclient Name columns.
     const handleDownloadTemplate = async () => {
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/upload/template`);
@@ -628,16 +1036,15 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         }
     };
 
+    // CHANGED: Service is no longer required in Upload mode — it comes
+    // from the sheet's "Service" column. The dropdown is only a default
+    // for rows whose Service cell is empty.
     const handleUploadSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setFormError("");
         setFormSuccess("");
         setUploadResult(null);
 
-        if (!productId) {
-            setFormError("Select a service.");
-            return;
-        }
         if (!uploadFile) {
             setFormError("Choose a file to upload.");
             return;
@@ -647,11 +1054,14 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         try {
             const formData = new FormData();
             formData.append("file", uploadFile);
-            formData.append("productId", productId);
+            // Default service — only used for rows whose Service cell is empty.
+            if (productId) formData.append("productId", productId);
             formData.append("workDate", workDate);
             // NOTE: Client/Subclient are NOT sent here in Upload mode —
-            // they're now resolved per row from the sheet's own "Client
-            // Name" / "Subclient Name" columns on the backend.
+            // they're resolved per row from the sheet's own "Client
+            // Name" / "Subclient Name" columns on the backend. Rows whose
+            // client isn't mapped to that row's service are skipped by
+            // the backend and reported in the skipped count.
 
             const res = await authFetch(`${API_BASE}/api/service-cases/upload`, {
                 method: "POST",
@@ -676,9 +1086,11 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             setFormSuccess(json.message || "Cases uploaded.");
             setUploadResult(json.data || null);
             setUploadFile(null);
-            setFilterProductId(productId);
+            // Mixed-service file -> show all; single default service -> show that one.
+            setFilterProductId(productId || "");
             setPage(1);
             fetchCases();
+            setRightTab("cases");
         } catch (err: any) {
             setFormError(err?.message || "Something went wrong.");
         } finally {
@@ -861,24 +1273,26 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
-                        <div>
+                        <div style={styles.headerTextWrap}>
                             <h2 style={styles.pageTitle}>Daily Work</h2>
                             <p style={styles.headerSubtext}>
-                                Log a service and type in the case number(s) yourself — up to{" "}
-                                {MAX_MANUAL_CASE_NUMBERS} at once.
+                                Type or bulk-upload case numbers when you have them, or log just a
+                                count when case numbers aren't available yet.
                             </p>
                         </div>
                     </div>
 
-                    {!isMobile && (
-                        <div style={styles.breadcrumb}>
-                            <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
-                            <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbItem}>Dashboard</span>
-                            <span style={styles.breadcrumbSep}>/</span>
-                            <span style={styles.breadcrumbActive}>Case Register</span>
-                        </div>
-                    )}
+                    <div style={styles.headerRight}>
+                        {!isMobile && (
+                            <div style={styles.breadcrumb}>
+                                <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
+                                <span style={styles.breadcrumbSep}>/</span>
+                                <span style={styles.breadcrumbItem}>Dashboard</span>
+                                <span style={styles.breadcrumbSep}>/</span>
+                                <span style={styles.breadcrumbActive}>Case Register</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* NEW: same KPI row as the Daily Work tab — Services /
@@ -947,18 +1361,13 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                         <form
                             style={styles.form}
                             onSubmit={
-                                formMode === "manual"
-                                    ? handleSubmit
-                                    : formMode === "auto"
-                                      ? handleAutoSubmit
-                                      : handleUploadSubmit
+                                formMode === "manual" ? handleManualSubmit : handleUploadSubmit
                             }
                         >
-                            {/* Mode toggle — Manual Entry (type the case number(s)
-                            yourself, up to MAX_MANUAL_CASE_NUMBERS at once) vs
-                            Auto Generate (system generates prefix+001, 002, ...
-                            for you) vs Upload (custom case numbers from an
-                            Excel/CSV sheet, for orgs with their own numbering). */}
+                            {/* Mode toggle — Manual (type case numbers, or just a
+                            count when case numbers aren't available yet) vs
+                            Upload (case numbers available, brought in via an
+                            Excel/CSV sheet). */}
                             <div style={styles.modeToggleRow}>
                                 <button
                                     type="button"
@@ -981,21 +1390,6 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                     type="button"
                                     style={{
                                         ...styles.modeToggleBtn,
-                                        ...(formMode === "auto" ? styles.modeToggleBtnActive : {}),
-                                    }}
-                                    onClick={() => {
-                                        setFormMode("auto");
-                                        setFormError("");
-                                        setFormSuccess("");
-                                        setUploadResult(null);
-                                    }}
-                                >
-                                    Auto Generate
-                                </button>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.modeToggleBtn,
                                         ...(formMode === "upload"
                                             ? styles.modeToggleBtnActive
                                             : {}),
@@ -1007,7 +1401,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         setUploadResult(null);
                                     }}
                                 >
-                                    Upload Case Numbers
+                                    Bulk Upload
                                 </button>
                             </div>
 
@@ -1019,31 +1413,48 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 onChange={(e) => setWorkDate(e.target.value)}
                             />
 
-                            <label style={styles.label}>Service</label>
-                            <select
-                                style={styles.input}
-                                value={productId}
-                                onChange={(e) => setProductId(e.target.value)}
-                                disabled={productsLoading}
-                            >
-                                <option value="">-- Select service --</option>
-                                {products.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.product_name}
-                                    </option>
-                                ))}
-                            </select>
-
-                            {formMode === "manual" || formMode === "auto" ? (
+                            {/* CHANGED: in Upload mode Service is optional — it's
+                                just a default for rows whose Service cell is empty. */}
+                            {formMode === "manual" && (
+                                <>
+                                    <label style={styles.label}>Service</label>
+                                    <select
+                                        style={styles.input}
+                                        value={productId}
+                                        onChange={(e) => setProductId(e.target.value)}
+                                        disabled={productsLoading}
+                                    >
+                                        <option value="">-- Select service --</option>
+                                        {products.map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.product_name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </>
+                            )}
+                            {formMode === "manual" ? (
                                 <>
                                     <label style={styles.label}>Client</label>
+                                    {/* NEW: only the clients mapped to the selected
+                                        service are listed. Disabled until a service
+                                        is picked. */}
                                     <select
                                         style={styles.input}
                                         value={formClientId}
                                         onChange={(e) => setFormClientId(e.target.value)}
+                                        disabled={!productId || serviceClientsLoading}
                                     >
-                                        <option value="">-- Select client --</option>
-                                        {clients.map((cl) => (
+                                        <option value="">
+                                            {!productId
+                                                ? "-- Select service first --"
+                                                : serviceClientsLoading
+                                                  ? "Loading clients…"
+                                                  : serviceClients.length === 0
+                                                    ? "-- No clients mapped to this service --"
+                                                    : "-- Select client --"}
+                                        </option>
+                                        {serviceClients.map((cl) => (
                                             <option key={cl.id} value={cl.id}>
                                                 {cl.name}
                                             </option>
@@ -1071,60 +1482,49 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                             ))}
                                     </select>
                                     <p style={styles.helperNote}>
-                                        Optional — editable later from the table too.
+                                        Optional — only Service is required. Client/Subclient can be
+                                        added later.
                                     </p>
                                 </>
                             ) : (
                                 <p style={styles.helperNote}>
-                                    Client &amp; Subclient come from the file — see Sample Excel
-                                    above.
+                                    Download the template using the spreadsheet icon at the top
+                                    right of this card, fill in Case Number, Service, Client Name
+                                    and Subclient Name, then upload that file here.
                                 </p>
                             )}
 
                             {formMode === "manual" && (
                                 <>
-                                    <label style={styles.label}>Case Numbers</label>
+                                    <label style={styles.label}>Case Numbers (if available)</label>
                                     <textarea
                                         style={{ ...styles.input, ...styles.caseNumbersTextarea }}
                                         value={caseNumbersText}
                                         onChange={(e) => setCaseNumbersText(e.target.value)}
                                         placeholder={`Type one case number per line\n(or comma-separated) — up to ${MAX_MANUAL_CASE_NUMBERS} at once`}
-                                        rows={5}
-                                    />
-                                    <p style={styles.helperNote}>
-                                        One row is created per case number typed — up to{" "}
-                                        {MAX_MANUAL_CASE_NUMBERS} at a time. One per line or
-                                        comma-separated both work.
-                                    </p>
-                                </>
-                            )}
-
-                            {formMode === "auto" && (
-                                <>
-                                    <label style={styles.label}>Prefix</label>
-                                    <input
-                                        type="text"
-                                        style={styles.input}
-                                        value={autoPrefix}
-                                        onChange={(e) => setAutoPrefix(e.target.value)}
-                                        placeholder="e.g. 12F"
-                                        maxLength={20}
+                                        rows={4}
                                     />
 
-                                    <label style={styles.label}>Quantity</label>
+                                    <label style={styles.label}>
+                                        How many cases (if no case numbers)
+                                    </label>
                                     <input
                                         type="number"
                                         min={1}
-                                        max={2000}
-                                        style={styles.input}
-                                        value={autoQuantity}
-                                        onChange={(e) => setAutoQuantity(e.target.value)}
-                                        placeholder="How many cases to generate"
+                                        max={MAX_MANUAL_COUNT}
+                                        style={{
+                                            ...styles.input,
+                                            opacity: caseNumbersText.trim() ? 0.5 : 1,
+                                        }}
+                                        value={manualQuantity}
+                                        onChange={(e) => setManualQuantity(e.target.value)}
+                                        placeholder="e.g. 20, 30"
+                                        disabled={!!caseNumbersText.trim()}
                                     />
                                     <p style={styles.helperNote}>
-                                        {autoPrefix.trim()
-                                            ? `Generates ${autoPrefix.trim()}001, ${autoPrefix.trim()}002, ... — numbering starts at 001 the first time this prefix is used, and continues on if you use it again later.`
-                                            : "Numbering starts at 001 the first time a prefix is used, and continues on if you use the same prefix again later."}
+                                        Have case numbers? Type them above and cases are created
+                                        with those numbers. Don't have them yet? Leave it empty and
+                                        enter only the count — case numbers can be added later.
                                     </p>
                                 </>
                             )}
@@ -1134,24 +1534,27 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                     <label style={styles.label}>Case Numbers File</label>
                                     <input
                                         type="file"
-                                        accept=".xlsx,.xls,.csv"
+                                        accept=".xlsx,.csv"
                                         style={styles.input}
                                         onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                                     />
                                     <p style={styles.helperNote}>
-                                        Duplicate or already-used case numbers are skipped and
-                                        reported below.
+                                        Columns: Case Number, Service, Client Name, Subclient Name.
+                                        Duplicate case numbers, unknown services and unmapped
+                                        clients are skipped and reported below.
                                     </p>
                                 </>
                             )}
 
                             {formError && <p style={styles.errorText}>{formError}</p>}
-                            {formSuccess && <p style={styles.successText}>{formSuccess}</p>}
-                            {uploadResult && uploadResult.skippedCount > 0 && (
-                                <p style={styles.helperNote}>
-                                    {uploadResult.createdCount} created, {uploadResult.skippedCount}{" "}
-                                    skipped out of {uploadResult.totalRows} row(s).
-                                </p>
+                            {/* NEW: result box — created / skipped chips + a clear
+                                amber warning listing the skipped rows with reasons.
+                                (Count-only saves have no uploadResult, so they
+                                still show the plain success line.) */}
+                            {uploadResult ? (
+                                <UploadResultBox result={uploadResult} styles={styles} />
+                            ) : (
+                                formSuccess && <p style={styles.successText}>{formSuccess}</p>
                             )}
 
                             <button
@@ -1166,402 +1569,745 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         : "Creating..."
                                     : formMode === "upload"
                                       ? "Upload Cases"
-                                      : "Create Cases"}
+                                      : !caseNumbersText.trim()
+                                        ? "Save Count"
+                                        : "Create Cases"}
                             </button>
                         </form>
                     </div>
 
-                    {/* ---- RIGHT: case list — filter + pagination ---- */}
-                    <div style={styles.tableCard}>
-                        <div style={styles.tableToolbar}>
-                            <p style={styles.cardHeading}>
-                                Cases{" "}
-                                {totalCases > 0 && (
-                                    <span style={styles.countBadge}>{totalCases}</span>
+                    {/* ---- RIGHT: pending counts + case list ---- */}
+                    <div style={styles.rightCol}>
+                        {/* Two small buttons: Counts / Cases — only the selected one is shown. */}
+                        <div style={styles.rightTabRow}>
+                            <button
+                                type="button"
+                                style={
+                                    rightTab === "counts"
+                                        ? styles.rightTabBtnActive
+                                        : styles.rightTabBtn
+                                }
+                                onClick={() => setRightTab("counts")}
+                            >
+                                Counts (
+                                {countEntries.reduce(
+                                    (sum, c) => sum + (c.quantity - c.fulfilledCount),
+                                    0
                                 )}
-                            </p>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                {/* NEW: appears only once at least one row is
-                                    checked — bulk-deletes every selected case. */}
-                                {selectMode && selectedIds.size > 0 && (
-                                    <button
-                                        type="button"
-                                        style={{
-                                            ...styles.bulkDeleteBtn,
-                                            opacity: bulkDeleting ? 0.6 : 1,
-                                            cursor: bulkDeleting ? "not-allowed" : "pointer",
-                                        }}
-                                        disabled={bulkDeleting}
-                                        onClick={handleBulkDelete}
-                                    >
-                                        <i
-                                            className="ti ti-trash"
-                                            style={{ fontSize: fontSize.sm }}
-                                        />
-                                        {bulkDeleting
-                                            ? "Deleting…"
-                                            : `Delete Selected (${selectedIds.size})`}
-                                    </button>
-                                )}
-                                {/* NEW: searches Case Number, Service, Client, and
-                                    Subclient (and the date) across every page of
-                                    results — not just the 10 rows on screen. */}
-                                <div style={styles.searchBox}>
-                                    <i
-                                        className="ti ti-search"
-                                        style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
-                                    />
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search case no, client, service, date..."
-                                        style={styles.searchInput}
-                                    />
-                                    {searchQuery && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setSearchQuery("")}
-                                            style={styles.searchClearBtn}
-                                            aria-label="Clear search"
-                                        >
-                                            <i
-                                                className="ti ti-x"
-                                                style={{ fontSize: fontSize.xs }}
-                                            />
-                                        </button>
-                                    )}
-                                </div>
-                                <select
-                                    style={styles.filterSelect}
-                                    value={filterProductId}
-                                    onChange={(e) => {
-                                        // Reset to page 1 in the SAME handler as the
-                                        // filter change (not a separate effect) — see
-                                        // the note above debouncedSearch for why that
-                                        // matters (avoids a stale-page 416 error).
-                                        setFilterProductId(e.target.value);
-                                        setPage(1);
-                                    }}
-                                >
-                                    <option value="">All</option>
-                                    {products.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.product_name}
-                                        </option>
-                                    ))}
-                                </select>
-                                {/* NEW: checkboxes (select-all + per-row + bulk
-                                    delete) are hidden until this is clicked, so
-                                    the table doesn't show tick boxes all the time. */}
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.selectModeBtn,
-                                        ...(selectMode ? styles.selectModeBtnActive : {}),
-                                    }}
-                                    onClick={toggleSelectMode}
-                                >
-                                    <i
-                                        className="ti ti-square-check"
-                                        style={{ fontSize: fontSize.sm }}
-                                    />
-                                    {selectMode ? "Cancel" : "Select"}
-                                </button>
-                                {/* NEW: downloads every case matching the current
-                                    filter/search as a real .xlsx file (not just the
-                                    10 rows on screen). */}
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.selectModeBtn,
-                                        opacity: exporting ? 0.6 : 1,
-                                        cursor: exporting ? "not-allowed" : "pointer",
-                                    }}
-                                    disabled={exporting}
-                                    onClick={handleExportExcel}
-                                >
-                                    <i
-                                        className="ti ti-file-spreadsheet"
-                                        style={{ fontSize: fontSize.sm }}
-                                    />
-                                    {exporting ? "Exporting…" : "Export Excel"}
-                                </button>
-                            </div>
+                                )
+                            </button>
+                            <button
+                                type="button"
+                                style={
+                                    rightTab === "cases"
+                                        ? styles.rightTabBtnActive
+                                        : styles.rightTabBtn
+                                }
+                                onClick={() => setRightTab("cases")}
+                            >
+                                Cases ({totalCases})
+                            </button>
+                            {/* Jumps to Today's Allocation; that page's Back
+                                button reads `state.from` to return here.
+                                Pinned to the far right of the tab row. */}
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.allocateNowBtn,
+                                    marginLeft: "auto",
+                                    padding: "8px 16px",
+                                }}
+                                onClick={() =>
+                                    navigate("/today's-allocation", {
+                                        state: { from: "/daily-work" },
+                                    })
+                                }
+                            >
+                                <i className="ti ti-hand-stop" style={{ fontSize: fontSize.md }} />
+                                Allocate Now
+                            </button>
                         </div>
 
-                        <div
-                            style={{
-                                ...styles.tableHeadRow,
-                                gridTemplateColumns: selectMode
-                                    ? "32px 100px 1fr 1fr 1fr 100px 76px"
-                                    : "100px 1fr 1fr 1fr 100px 76px",
-                            }}
-                        >
-                            {selectMode && (
-                                <span style={styles.colCheckbox}>
-                                    <input
-                                        type="checkbox"
-                                        style={styles.checkbox}
-                                        checked={
-                                            cases.length > 0 && selectedIds.size === cases.length
-                                        }
-                                        ref={(el) => {
-                                            if (el) {
-                                                el.indeterminate =
-                                                    selectedIds.size > 0 &&
-                                                    selectedIds.size < cases.length;
-                                            }
-                                        }}
-                                        onChange={toggleSelectAll}
-                                        aria-label="Select all cases on this page"
-                                        disabled={cases.length === 0}
-                                    />
-                                </span>
-                            )}
-                            <span style={styles.colCaseNo}>Case No.</span>
-                            <span style={styles.colClient}>Client</span>
-                            <span style={styles.colClient}>Subclient</span>
-                            <span style={styles.colService}>Service</span>
-                            <span style={styles.colDate}>Date</span>
-                            <span style={styles.colAction}></span>
-                        </div>
-                        {/* Client/Subclient cells show as plain text until the
-                            row's pencil icon is clicked, then switch to the
-                            editable dropdowns below. */}
-
-                        {casesLoading ? (
-                            <div style={styles.emptyNote}>Loading…</div>
-                        ) : casesError ? (
-                            <div style={{ ...styles.emptyNote, color: BRAND.red }}>
-                                {casesError}
-                            </div>
-                        ) : cases.length === 0 ? (
-                            <div style={styles.emptyNote}>
-                                {debouncedSearch || filterProductId
-                                    ? "No matching cases found."
-                                    : "No cases logged yet."}
-                            </div>
-                        ) : (
-                            cases.map((c) => {
-                                const isEditingRow = editingRowId === c.id;
-                                const isSelected = selectedIds.has(c.id);
-                                return (
-                                    <div
-                                        key={c.id}
-                                        style={{
-                                            ...styles.tableRow,
-                                            gridTemplateColumns: selectMode
-                                                ? "32px 100px 1fr 1fr 1fr 100px 76px"
-                                                : "100px 1fr 1fr 1fr 100px 76px",
-                                            ...(isSelected ? styles.tableRowSelected : null),
-                                        }}
-                                    >
-                                        {selectMode && (
-                                            <span style={styles.colCheckbox}>
-                                                <input
-                                                    type="checkbox"
-                                                    style={styles.checkbox}
-                                                    checked={isSelected}
-                                                    onChange={() => toggleSelectOne(c.id)}
-                                                    aria-label={`Select ${c.caseNumber}`}
-                                                />
-                                            </span>
-                                        )}
-                                        <span
-                                            style={{
-                                                ...styles.colCaseNo,
-                                                fontWeight: fontWeight.semibold,
-                                            }}
-                                        >
-                                            {c.caseNumber}
-                                        </span>
-                                        {/* Case number, service, and date stay
-                                            read-only. Client/Subclient toggle
-                                            between plain text and dropdown
-                                            based on the row's edit state. */}
-                                        <span style={styles.colClient}>
-                                            {isEditingRow ? (
-                                                <select
-                                                    style={{
-                                                        ...styles.clientSelect,
-                                                        opacity: savingClientId === c.id ? 0.6 : 1,
-                                                    }}
-                                                    value={c.clientId || ""}
-                                                    disabled={savingClientId === c.id}
-                                                    autoFocus
-                                                    onChange={(e) =>
-                                                        handleClientChange(c, e.target.value)
-                                                    }
-                                                >
-                                                    <option value="">-- Select client --</option>
-                                                    {clients.map((cl) => (
-                                                        <option key={cl.id} value={cl.id}>
-                                                            {cl.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <span style={styles.cellText}>
-                                                    {c.clientName || "-"}
-                                                </span>
+                        {/* NEW: count-only entries (Manual (Count) mode) — no case
+                        numbers yet, just how many cases are pending. Now has the
+                        same controls as the Cases view: search, service filter,
+                        Select (+ Delete Selected) and Export Excel. */}
+                        {rightTab === "counts" && (
+                            <div style={styles.tableCard}>
+                                <div style={styles.tableToolbar}>
+                                    <p style={styles.cardHeading}>
+                                        Pending Counts{" "}
+                                        <span style={styles.countBadge}>
+                                            {countEntries.reduce(
+                                                (sum, c) => sum + (c.quantity - c.fulfilledCount),
+                                                0
                                             )}
                                         </span>
-                                        <span style={styles.colClient}>
-                                            {isEditingRow ? (
-                                                <select
-                                                    style={{
-                                                        ...styles.clientSelect,
-                                                        opacity:
-                                                            savingSubclientId === c.id ? 0.6 : 1,
-                                                    }}
-                                                    value={c.subclientId || ""}
-                                                    disabled={
-                                                        savingSubclientId === c.id || !c.clientId
-                                                    }
-                                                    onChange={(e) =>
-                                                        handleSubclientChange(c, e.target.value)
-                                                    }
-                                                >
-                                                    <option value="">
-                                                        {c.clientId
-                                                            ? "-- Select subclient --"
-                                                            : "-- No client --"}
-                                                    </option>
-                                                    {subclients
-                                                        .filter((s) => s.clientId === c.clientId)
-                                                        .map((s) => (
-                                                            <option key={s.id} value={s.id}>
-                                                                {s.name}
-                                                            </option>
-                                                        ))}
-                                                </select>
-                                            ) : (
-                                                <span style={styles.cellText}>
-                                                    {c.subclientName || "-"}
-                                                </span>
-                                            )}
-                                        </span>
-                                        <span style={styles.colService}>
-                                            {c.productName || "-"}
-                                        </span>
-                                        <span style={{ ...styles.colDate, color: "#767F92" }}>
-                                            {formatDisplayDate(c.workDate)}
-                                        </span>
-                                        <span style={styles.colAction}>
+                                    </p>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                        {countSelectMode && countSelectedIds.size > 0 && (
                                             <button
                                                 type="button"
                                                 style={{
-                                                    ...styles.editBtn,
-                                                    ...(isEditingRow ? styles.editBtnActive : null),
+                                                    ...styles.bulkDeleteBtn,
+                                                    opacity: countBulkDeleting ? 0.6 : 1,
+                                                    cursor: countBulkDeleting
+                                                        ? "not-allowed"
+                                                        : "pointer",
                                                 }}
-                                                onClick={() =>
-                                                    setEditingRowId((prev) =>
-                                                        prev === c.id ? null : c.id
-                                                    )
-                                                }
-                                                aria-label={`Edit ${c.caseNumber}`}
-                                                title={
-                                                    isEditingRow
-                                                        ? "Done editing"
-                                                        : "Edit client / subclient"
-                                                }
-                                            >
-                                                <i
-                                                    className={
-                                                        isEditingRow
-                                                            ? "ti ti-check"
-                                                            : "ti ti-pencil"
-                                                    }
-                                                    style={{ fontSize: fontSize.md }}
-                                                />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                style={{
-                                                    ...styles.deleteBtn,
-                                                    opacity: deletingId === c.id ? 0.5 : 1,
-                                                    cursor:
-                                                        deletingId === c.id
-                                                            ? "not-allowed"
-                                                            : "pointer",
-                                                }}
-                                                disabled={deletingId === c.id}
-                                                onClick={() => handleDelete(c)}
-                                                aria-label={`Delete ${c.caseNumber}`}
-                                                title="Delete case"
+                                                disabled={countBulkDeleting}
+                                                onClick={handleBulkDeleteCounts}
                                             >
                                                 <i
                                                     className="ti ti-trash"
-                                                    style={{ fontSize: fontSize.md }}
+                                                    style={{ fontSize: fontSize.sm }}
                                                 />
+                                                {countBulkDeleting
+                                                    ? "Deleting…"
+                                                    : `Delete Selected (${countSelectedIds.size})`}
                                             </button>
-                                        </span>
+                                        )}
+                                        <div style={styles.searchBox}>
+                                            <i
+                                                className="ti ti-search"
+                                                style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
+                                            />
+                                            <input
+                                                type="text"
+                                                value={countSearch}
+                                                onChange={(e) => setCountSearch(e.target.value)}
+                                                placeholder="Search service, client, subclient, date..."
+                                                style={styles.searchInput}
+                                            />
+                                            {countSearch && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCountSearch("")}
+                                                    style={styles.searchClearBtn}
+                                                    aria-label="Clear search"
+                                                >
+                                                    <i
+                                                        className="ti ti-x"
+                                                        style={{ fontSize: fontSize.xs }}
+                                                    />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <select
+                                            style={styles.filterSelect}
+                                            value={countFilterProductId}
+                                            onChange={(e) =>
+                                                setCountFilterProductId(e.target.value)
+                                            }
+                                        >
+                                            <option value="">All</option>
+                                            {products.map((p) => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.product_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.selectModeBtn,
+                                                ...(countSelectMode
+                                                    ? styles.selectModeBtnActive
+                                                    : {}),
+                                            }}
+                                            onClick={toggleCountSelectMode}
+                                        >
+                                            <i
+                                                className="ti ti-square-check"
+                                                style={{ fontSize: fontSize.sm }}
+                                            />
+                                            {countSelectMode ? "Cancel" : "Select"}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.selectModeBtn,
+                                                opacity: countExporting ? 0.6 : 1,
+                                                cursor: countExporting ? "not-allowed" : "pointer",
+                                            }}
+                                            disabled={countExporting}
+                                            onClick={handleExportCountsExcel}
+                                        >
+                                            <i
+                                                className="ti ti-file-spreadsheet"
+                                                style={{ fontSize: fontSize.sm }}
+                                            />
+                                            {countExporting ? "Exporting…" : "Export Excel"}
+                                        </button>
                                     </div>
-                                );
-                            })
+                                </div>
+                                <div
+                                    style={{
+                                        ...styles.tableHeadRow,
+                                        gridTemplateColumns: countSelectMode
+                                            ? "32px 1fr 1fr 1fr 100px 70px 40px"
+                                            : "1fr 1fr 1fr 100px 70px 40px",
+                                    }}
+                                >
+                                    {countSelectMode && (
+                                        <span style={styles.colCheckbox}>
+                                            <input
+                                                type="checkbox"
+                                                style={styles.checkbox}
+                                                checked={
+                                                    filteredCountEntries.length > 0 &&
+                                                    countSelectedIds.size ===
+                                                        filteredCountEntries.length
+                                                }
+                                                ref={(el) => {
+                                                    if (el) {
+                                                        el.indeterminate =
+                                                            countSelectedIds.size > 0 &&
+                                                            countSelectedIds.size <
+                                                                filteredCountEntries.length;
+                                                    }
+                                                }}
+                                                onChange={toggleCountSelectAll}
+                                                aria-label="Select all count entries"
+                                                disabled={filteredCountEntries.length === 0}
+                                            />
+                                        </span>
+                                    )}
+                                    <span style={styles.colService}>Service</span>
+                                    <span style={styles.colClient}>Client</span>
+                                    <span style={styles.colClient}>Subclient</span>
+                                    <span style={styles.colDate}>Date</span>
+                                    <span style={styles.colDate}>Cases</span>
+                                    <span style={styles.colAction}></span>
+                                </div>
+                                {filteredCountEntries.length === 0 && (
+                                    <div style={styles.emptyNote}>
+                                        {countSearch.trim() || countFilterProductId
+                                            ? "No matching counts found."
+                                            : "No pending counts."}
+                                    </div>
+                                )}
+                                {filteredCountEntries.map((c) => {
+                                    const isSelected = countSelectedIds.has(c.id);
+                                    return (
+                                        <div
+                                            key={c.id}
+                                            style={{
+                                                ...styles.tableRow,
+                                                gridTemplateColumns: countSelectMode
+                                                    ? "32px 1fr 1fr 1fr 100px 70px 40px"
+                                                    : "1fr 1fr 1fr 100px 70px 40px",
+                                                ...(isSelected ? styles.tableRowSelected : null),
+                                            }}
+                                        >
+                                            {countSelectMode && (
+                                                <span style={styles.colCheckbox}>
+                                                    <input
+                                                        type="checkbox"
+                                                        style={styles.checkbox}
+                                                        checked={isSelected}
+                                                        onChange={() => toggleCountSelectOne(c.id)}
+                                                        aria-label={`Select ${c.productName || "count entry"}`}
+                                                    />
+                                                </span>
+                                            )}
+                                            <span
+                                                style={{
+                                                    ...styles.colService,
+                                                    fontWeight: fontWeight.semibold,
+                                                }}
+                                            >
+                                                {c.productName || "-"}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {c.clientName || "-"}
+                                            </span>
+                                            <span style={styles.colService}>
+                                                {c.subclientName || "-"}
+                                            </span>
+                                            <span style={{ ...styles.colDate, color: "#767F92" }}>
+                                                {formatDisplayDate(c.workDate)}
+                                            </span>
+                                            <span
+                                                style={{
+                                                    ...styles.colDate,
+                                                    fontWeight: fontWeight.semibold,
+                                                }}
+                                            >
+                                                {c.quantity - c.fulfilledCount}
+                                            </span>
+                                            <span style={styles.colAction}>
+                                                <button
+                                                    type="button"
+                                                    style={{
+                                                        ...styles.deleteBtn,
+                                                        opacity: deletingCountId === c.id ? 0.5 : 1,
+                                                        cursor:
+                                                            deletingCountId === c.id
+                                                                ? "not-allowed"
+                                                                : "pointer",
+                                                    }}
+                                                    disabled={deletingCountId === c.id}
+                                                    onClick={() => handleDeleteCountEntry(c)}
+                                                    aria-label="Delete count entry"
+                                                    title="Delete count entry"
+                                                >
+                                                    <i
+                                                        className="ti ti-trash"
+                                                        style={{ fontSize: fontSize.md }}
+                                                    />
+                                                </button>
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                                {deleteError && <p style={styles.deleteErrorText}>{deleteError}</p>}
+                            </div>
                         )}
 
-                        {clientEditError && <p style={styles.deleteErrorText}>{clientEditError}</p>}
-                        {deleteError && <p style={styles.deleteErrorText}>{deleteError}</p>}
-
-                        {/* ---- pagination — numbered, "Showing X to Y of Z" ---- */}
-                        {!casesLoading && !casesError && totalPages > 1 && (
-                            <div style={styles.paginationRow}>
-                                <span style={styles.paginationSummary}>
-                                    Showing {(page - 1) * PAGE_SIZE + 1} to{" "}
-                                    {Math.min(page * PAGE_SIZE, totalCases)} of {totalCases} cases
-                                </span>
-                                <div style={styles.paginationControls}>
-                                    <button
-                                        type="button"
-                                        style={{
-                                            ...styles.pageBtn,
-                                            opacity: page <= 1 ? 0.5 : 1,
-                                            cursor: page <= 1 ? "not-allowed" : "pointer",
-                                        }}
-                                        disabled={page <= 1}
-                                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                    >
-                                        <i className="ti ti-chevron-left" />
-                                    </button>
-                                    {getPageNumbers(page, totalPages).map((p, idx) =>
-                                        p === "..." ? (
-                                            <span key={`dots-${idx}`} style={styles.pageEllipsis}>
-                                                …
-                                            </span>
-                                        ) : (
+                        {rightTab === "cases" && (
+                            <div style={styles.tableCard}>
+                                <div style={styles.tableToolbar}>
+                                    <p style={styles.cardHeading}>
+                                        Cases{" "}
+                                        {totalCases > 0 && (
+                                            <span style={styles.countBadge}>{totalCases}</span>
+                                        )}
+                                    </p>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                        {/* NEW: appears only once at least one row is
+                                    checked — bulk-deletes every selected case. */}
+                                        {selectMode && selectedIds.size > 0 && (
                                             <button
-                                                key={p}
                                                 type="button"
                                                 style={{
-                                                    ...styles.pageNumBtn,
-                                                    ...(p === page
-                                                        ? {
-                                                              ...styles.pageNumBtnActive,
-                                                              background: GRADIENT,
-                                                          }
-                                                        : {}),
+                                                    ...styles.bulkDeleteBtn,
+                                                    opacity: bulkDeleting ? 0.6 : 1,
+                                                    cursor: bulkDeleting
+                                                        ? "not-allowed"
+                                                        : "pointer",
                                                 }}
-                                                onClick={() => setPage(p as number)}
+                                                disabled={bulkDeleting}
+                                                onClick={handleBulkDelete}
                                             >
-                                                {p}
+                                                <i
+                                                    className="ti ti-trash"
+                                                    style={{ fontSize: fontSize.sm }}
+                                                />
+                                                {bulkDeleting
+                                                    ? "Deleting…"
+                                                    : `Delete Selected (${selectedIds.size})`}
                                             </button>
-                                        )
-                                    )}
-                                    <button
-                                        type="button"
-                                        style={{
-                                            ...styles.pageBtn,
-                                            opacity: page >= totalPages ? 0.5 : 1,
-                                            cursor: page >= totalPages ? "not-allowed" : "pointer",
-                                        }}
-                                        disabled={page >= totalPages}
-                                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                                    >
-                                        <i className="ti ti-chevron-right" />
-                                    </button>
+                                        )}
+                                        {/* NEW: searches Case Number, Service, Client, and
+                                    Subclient (and the date) across every page of
+                                    results — not just the 10 rows on screen. */}
+                                        <div style={styles.searchBox}>
+                                            <i
+                                                className="ti ti-search"
+                                                style={{ fontSize: fontSize.sm, color: "#94a3b8" }}
+                                            />
+                                            <input
+                                                type="text"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                placeholder="Search case no, client, service, date..."
+                                                style={styles.searchInput}
+                                            />
+                                            {searchQuery && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSearchQuery("")}
+                                                    style={styles.searchClearBtn}
+                                                    aria-label="Clear search"
+                                                >
+                                                    <i
+                                                        className="ti ti-x"
+                                                        style={{ fontSize: fontSize.xs }}
+                                                    />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <select
+                                            style={styles.filterSelect}
+                                            value={filterProductId}
+                                            onChange={(e) => {
+                                                // Reset to page 1 in the SAME handler as the
+                                                // filter change (not a separate effect) — see
+                                                // the note above debouncedSearch for why that
+                                                // matters (avoids a stale-page 416 error).
+                                                setFilterProductId(e.target.value);
+                                                setPage(1);
+                                            }}
+                                        >
+                                            <option value="">All</option>
+                                            {products.map((p) => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.product_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {/* NEW: checkboxes (select-all + per-row + bulk
+                                    delete) are hidden until this is clicked, so
+                                    the table doesn't show tick boxes all the time. */}
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.selectModeBtn,
+                                                ...(selectMode ? styles.selectModeBtnActive : {}),
+                                            }}
+                                            onClick={toggleSelectMode}
+                                        >
+                                            <i
+                                                className="ti ti-square-check"
+                                                style={{ fontSize: fontSize.sm }}
+                                            />
+                                            {selectMode ? "Cancel" : "Select"}
+                                        </button>
+                                        {/* NEW: downloads every case matching the current
+                                    filter/search as a real .xlsx file (not just the
+                                    10 rows on screen). */}
+                                        <button
+                                            type="button"
+                                            style={{
+                                                ...styles.selectModeBtn,
+                                                opacity: exporting ? 0.6 : 1,
+                                                cursor: exporting ? "not-allowed" : "pointer",
+                                            }}
+                                            disabled={exporting}
+                                            onClick={handleExportExcel}
+                                        >
+                                            <i
+                                                className="ti ti-file-spreadsheet"
+                                                style={{ fontSize: fontSize.sm }}
+                                            />
+                                            {exporting ? "Exporting…" : "Export Excel"}
+                                        </button>
+                                    </div>
                                 </div>
+
+                                <div
+                                    style={{
+                                        ...styles.tableHeadRow,
+                                        gridTemplateColumns: selectMode
+                                            ? "32px 150px 1fr 1fr 1fr 100px 76px"
+                                            : "150px 1fr 1fr 1fr 100px 76px",
+                                    }}
+                                >
+                                    {selectMode && (
+                                        <span style={styles.colCheckbox}>
+                                            <input
+                                                type="checkbox"
+                                                style={styles.checkbox}
+                                                checked={
+                                                    cases.length > 0 &&
+                                                    selectedIds.size === cases.length
+                                                }
+                                                ref={(el) => {
+                                                    if (el) {
+                                                        el.indeterminate =
+                                                            selectedIds.size > 0 &&
+                                                            selectedIds.size < cases.length;
+                                                    }
+                                                }}
+                                                onChange={toggleSelectAll}
+                                                aria-label="Select all cases on this page"
+                                                disabled={cases.length === 0}
+                                            />
+                                        </span>
+                                    )}
+                                    <span style={styles.colCaseNo}>Case No.</span>
+                                    <span style={styles.colClient}>Client</span>
+                                    <span style={styles.colClient}>Subclient</span>
+                                    <span style={styles.colService}>Service</span>
+                                    <span style={styles.colDate}>Date</span>
+                                    <span style={styles.colAction}></span>
+                                </div>
+                                {/* Client/Subclient cells show as plain text until the
+                            row's pencil icon is clicked, then switch to the
+                            editable dropdowns below. */}
+
+                                {casesLoading ? (
+                                    <div style={styles.emptyNote}>Loading…</div>
+                                ) : casesError ? (
+                                    <div style={{ ...styles.emptyNote, color: BRAND.red }}>
+                                        {casesError}
+                                    </div>
+                                ) : cases.length === 0 ? (
+                                    <div style={styles.emptyNote}>
+                                        {debouncedSearch || filterProductId
+                                            ? "No matching cases found."
+                                            : "No cases logged yet."}
+                                    </div>
+                                ) : (
+                                    cases.map((c) => {
+                                        const isEditingRow = editingRowId === c.id;
+                                        const isSelected = selectedIds.has(c.id);
+                                        return (
+                                            <div
+                                                key={c.id}
+                                                style={{
+                                                    ...styles.tableRow,
+                                                    gridTemplateColumns: selectMode
+                                                        ? "32px 150px 1fr 1fr 1fr 100px 76px"
+                                                        : "150px 1fr 1fr 1fr 100px 76px",
+                                                    ...(isSelected
+                                                        ? styles.tableRowSelected
+                                                        : null),
+                                                }}
+                                            >
+                                                {selectMode && (
+                                                    <span style={styles.colCheckbox}>
+                                                        <input
+                                                            type="checkbox"
+                                                            style={styles.checkbox}
+                                                            checked={isSelected}
+                                                            onChange={() => toggleSelectOne(c.id)}
+                                                            aria-label={`Select ${c.caseNumber}`}
+                                                        />
+                                                    </span>
+                                                )}
+                                                <span
+                                                    style={{
+                                                        ...styles.colCaseNo,
+                                                        fontWeight: fontWeight.semibold,
+                                                    }}
+                                                >
+                                                    {isEditingRow ? (
+                                                        <CaseNoEditor
+                                                            value={c.caseNumber}
+                                                            onSave={(next) =>
+                                                                handleCaseNumberChange(c, next)
+                                                            }
+                                                            style={{
+                                                                ...styles.clientSelect,
+                                                                width: "100%",
+                                                                fontWeight: fontWeight.semibold,
+                                                            }}
+                                                        />
+                                                    ) : (
+                                                        c.caseNumber
+                                                    )}
+                                                </span>
+                                                {/* Service and date stay
+                                            read-only. Client/Subclient toggle
+                                            between plain text and dropdown
+                                            based on the row's edit state. */}
+                                                <span style={styles.colClient}>
+                                                    {isEditingRow ? (
+                                                        <select
+                                                            style={{
+                                                                ...styles.clientSelect,
+                                                                opacity:
+                                                                    savingClientId === c.id
+                                                                        ? 0.6
+                                                                        : 1,
+                                                            }}
+                                                            value={c.clientId || ""}
+                                                            disabled={savingClientId === c.id}
+                                                            autoFocus
+                                                            onChange={(e) =>
+                                                                handleClientChange(
+                                                                    c,
+                                                                    e.target.value
+                                                                )
+                                                            }
+                                                        >
+                                                            <option value="">
+                                                                -- Select client --
+                                                            </option>
+                                                            {clients.map((cl) => (
+                                                                <option key={cl.id} value={cl.id}>
+                                                                    {cl.name}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    ) : (
+                                                        <span style={styles.cellText}>
+                                                            {c.clientName || "-"}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span style={styles.colClient}>
+                                                    {isEditingRow ? (
+                                                        <select
+                                                            style={{
+                                                                ...styles.clientSelect,
+                                                                opacity:
+                                                                    savingSubclientId === c.id
+                                                                        ? 0.6
+                                                                        : 1,
+                                                            }}
+                                                            value={c.subclientId || ""}
+                                                            disabled={
+                                                                savingSubclientId === c.id ||
+                                                                !c.clientId
+                                                            }
+                                                            onChange={(e) =>
+                                                                handleSubclientChange(
+                                                                    c,
+                                                                    e.target.value
+                                                                )
+                                                            }
+                                                        >
+                                                            <option value="">
+                                                                {c.clientId
+                                                                    ? "-- Select subclient --"
+                                                                    : "-- No client --"}
+                                                            </option>
+                                                            {subclients
+                                                                .filter(
+                                                                    (s) => s.clientId === c.clientId
+                                                                )
+                                                                .map((s) => (
+                                                                    <option key={s.id} value={s.id}>
+                                                                        {s.name}
+                                                                    </option>
+                                                                ))}
+                                                        </select>
+                                                    ) : (
+                                                        <span style={styles.cellText}>
+                                                            {c.subclientName || "-"}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span style={styles.colService}>
+                                                    {c.productName || "-"}
+                                                </span>
+                                                <span
+                                                    style={{ ...styles.colDate, color: "#767F92" }}
+                                                >
+                                                    {formatDisplayDate(c.workDate)}
+                                                </span>
+                                                <span style={styles.colAction}>
+                                                    <button
+                                                        type="button"
+                                                        style={{
+                                                            ...styles.editBtn,
+                                                            ...(isEditingRow
+                                                                ? styles.editBtnActive
+                                                                : null),
+                                                        }}
+                                                        onClick={() =>
+                                                            setEditingRowId((prev) =>
+                                                                prev === c.id ? null : c.id
+                                                            )
+                                                        }
+                                                        aria-label={`Edit ${c.caseNumber}`}
+                                                        title={
+                                                            isEditingRow
+                                                                ? "Done editing"
+                                                                : "Edit client / subclient"
+                                                        }
+                                                    >
+                                                        <i
+                                                            className={
+                                                                isEditingRow
+                                                                    ? "ti ti-check"
+                                                                    : "ti ti-pencil"
+                                                            }
+                                                            style={{ fontSize: fontSize.md }}
+                                                        />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        style={{
+                                                            ...styles.deleteBtn,
+                                                            opacity: deletingId === c.id ? 0.5 : 1,
+                                                            cursor:
+                                                                deletingId === c.id
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
+                                                        }}
+                                                        disabled={deletingId === c.id}
+                                                        onClick={() => handleDelete(c)}
+                                                        aria-label={`Delete ${c.caseNumber}`}
+                                                        title="Delete case"
+                                                    >
+                                                        <i
+                                                            className="ti ti-trash"
+                                                            style={{ fontSize: fontSize.md }}
+                                                        />
+                                                    </button>
+                                                </span>
+                                            </div>
+                                        );
+                                    })
+                                )}
+
+                                {clientEditError && (
+                                    <p style={styles.deleteErrorText}>{clientEditError}</p>
+                                )}
+                                {deleteError && <p style={styles.deleteErrorText}>{deleteError}</p>}
+
+                                {/* ---- pagination — numbered, "Showing X to Y of Z" ---- */}
+                                {!casesLoading && !casesError && totalPages > 1 && (
+                                    <div style={styles.paginationRow}>
+                                        <span style={styles.paginationSummary}>
+                                            Showing {(page - 1) * PAGE_SIZE + 1} to{" "}
+                                            {Math.min(page * PAGE_SIZE, totalCases)} of {totalCases}{" "}
+                                            cases
+                                        </span>
+                                        <div style={styles.paginationControls}>
+                                            <button
+                                                type="button"
+                                                style={{
+                                                    ...styles.pageBtn,
+                                                    opacity: page <= 1 ? 0.5 : 1,
+                                                    cursor: page <= 1 ? "not-allowed" : "pointer",
+                                                }}
+                                                disabled={page <= 1}
+                                                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                            >
+                                                <i className="ti ti-chevron-left" />
+                                            </button>
+                                            {getPageNumbers(page, totalPages).map((p, idx) =>
+                                                p === "..." ? (
+                                                    <span
+                                                        key={`dots-${idx}`}
+                                                        style={styles.pageEllipsis}
+                                                    >
+                                                        …
+                                                    </span>
+                                                ) : (
+                                                    <button
+                                                        key={p}
+                                                        type="button"
+                                                        style={{
+                                                            ...styles.pageNumBtn,
+                                                            ...(p === page
+                                                                ? {
+                                                                      ...styles.pageNumBtnActive,
+                                                                      background: GRADIENT,
+                                                                  }
+                                                                : {}),
+                                                        }}
+                                                        onClick={() => setPage(p as number)}
+                                                    >
+                                                        {p}
+                                                    </button>
+                                                )
+                                            )}
+                                            <button
+                                                type="button"
+                                                style={{
+                                                    ...styles.pageBtn,
+                                                    opacity: page >= totalPages ? 0.5 : 1,
+                                                    cursor:
+                                                        page >= totalPages
+                                                            ? "not-allowed"
+                                                            : "pointer",
+                                                }}
+                                                disabled={page >= totalPages}
+                                                onClick={() =>
+                                                    setPage((p) => Math.min(totalPages, p + 1))
+                                                }
+                                            >
+                                                <i className="ti ti-chevron-right" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1611,6 +2357,36 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             gap: 14,
             alignItems: "flex-start",
         },
+        // FIX: wrapper around the title + subtitle — forces left alignment
+        // so the subtitle sits directly under "Daily Work" instead of
+        // inheriting a centered text-align from a parent.
+        headerTextWrap: {
+            textAlign: "left",
+        },
+        // NEW: right side of the header — breadcrumb on top, the
+        // "Allocate Now" button just below it.
+        headerRight: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: isMobile ? "stretch" : "flex-end",
+            gap: 10,
+        },
+        allocateNowBtn: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            padding: "10px 18px",
+            border: "none",
+            borderRadius: radius.md,
+            background: GRADIENT,
+            color: "#fff",
+            fontFamily: fontFamily.base,
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+        },
         breadcrumb: {
             display: "flex",
             alignItems: "center",
@@ -1629,11 +2405,14 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             color: "#17181C",
             textAlign: "left",
         },
+        // FIX: textAlign left (was inheriting center) so the subtitle
+        // starts right under the "Daily Work" title.
         headerSubtext: {
             margin: "4px 0 0",
             fontSize: fontSize.base,
             color: "#767F92",
             maxWidth: 560,
+            textAlign: "left",
         },
         layout: {
             display: "grid",
@@ -1642,6 +2421,14 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             alignItems: "start",
             flex: 1,
             minHeight: 0,
+        },
+        // NEW: right column wrapper — stacks the Pending Counts card
+        // above the cases table.
+        rightCol: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 20,
+            minWidth: 0,
         },
         // NEW: same KPI-card row shown at the top of the Daily Work tab,
         // reused here on Case Register too (Services / Allocated /
@@ -1741,7 +2528,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             alignItems: "center",
             gap: 8,
         },
-        // Auto-generate / Upload Case Numbers mode toggle — same pill-button
+        // Manual Entry / Bulk Upload mode toggle — same pill-button
         // look as the other tab bars in this app (border + hover + gradient
         // when active).
         modeToggleRow: {
@@ -1771,6 +2558,38 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             color: "#fff",
             border: "1px solid transparent",
             boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb), 0.28)",
+        },
+        // NEW: small Counts / Cases toggle on the right side (above the
+        // table) — compact pill buttons, not full-width.
+        rightTabRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            margin: 0,
+        },
+        rightTabBtn: {
+            padding: "6px 16px",
+            borderRadius: radius.pill,
+            border: "1px solid #e4e9f2",
+            background: "#fff",
+            color: "#3b4a63",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        rightTabBtnActive: {
+            padding: "6px 16px",
+            borderRadius: radius.pill,
+            border: "1px solid transparent",
+            background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
+            color: "#fff",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            boxShadow: "0 4px 12px rgba(var(--brand-blue-rgb), 0.25)",
         },
         label: {
             fontSize: fontSize.sm,
@@ -1804,7 +2623,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         caseNumbersTextarea: {
             fontFamily: "inherit",
             resize: "vertical",
-            minHeight: 100,
+            minHeight: 80,
         },
         errorText: {
             margin: "10px 0 0",
@@ -1931,7 +2750,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         // and swallow the gap the way flex:1 + variable text does).
         tableHeadRow: {
             display: "grid",
-            gridTemplateColumns: "32px 100px 1fr 1fr 1fr 100px 76px",
+            gridTemplateColumns: "32px 150px 1fr 1fr 1fr 100px 76px",
             alignItems: "center",
             columnGap: 20,
             padding: "10px 20px",
@@ -1944,7 +2763,7 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
         },
         tableRow: {
             display: "grid",
-            gridTemplateColumns: "32px 100px 1fr 1fr 1fr 100px 76px",
+            gridTemplateColumns: "32px 150px 1fr 1fr 1fr 100px 76px",
             alignItems: "center",
             columnGap: 20,
             padding: "12px 20px",
@@ -2138,6 +2957,60 @@ function getStyles(isMobile: boolean): Record<string, CSSProperties> {
             color: "#9ca3af",
             fontSize: fontSize.sm,
         },
+
+        // ---- NEW: upload / manual-entry result box ----
+        resultBox: { display: "flex", flexDirection: "column", gap: 8, marginTop: 6 },
+        resultChips: { display: "flex", gap: 8, flexWrap: "wrap" },
+        resultChip: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 12px",
+            borderRadius: radius.pill,
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+        },
+        resultChipOk: { background: withBrandAlpha("green", 0.12), color: BRAND.green },
+        resultChipMuted: { background: "#f1f5f9", color: "#64748b" },
+        resultChipWarn: { background: "#FEF3C7", color: "#B45309" },
+        skipBox: {
+            background: "#FFFBEB",
+            border: "1px solid #FDE68A",
+            borderLeft: "4px solid #F59E0B",
+            borderRadius: radius.sm,
+            padding: "10px 12px",
+            textAlign: "left",
+        },
+        skipTitle: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#92400E",
+            marginBottom: 8,
+        },
+        skipScroll: {
+            maxHeight: 200,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+        },
+        skipGroup: { display: "flex", flexDirection: "column", gap: 4 },
+        skipReason: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#17181C",
+        },
+        skipHint: { fontSize: fontSize.xs, color: "#6b7280" },
+        skipRows: { display: "flex", flexWrap: "wrap", gap: 6 },
+        skipRowChip: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.medium,
+            color: "#92400E",
+            background: "#FEF3C7",
+            borderRadius: radius.pill,
+            padding: "2px 8px",
+        },
+
         pageIndicator: {
             fontSize: fontSize.sm,
             color: "#374151",

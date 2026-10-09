@@ -1,8 +1,19 @@
 // src/pages/admin/billing.tsx
 //
 // Billing — earnings report + invoice generator (Super Admin only).
-// Styled to match dailywork.tsx (same panels, gradient headers, KPI cards,
-// pills, pagination, modals). Logic is unchanged.
+// Styled to match dailywork.tsx / productionreport.tsx (same panels,
+// gradient headers, KPI cards, client-wise cards, pills, modals).
+//
+// MODIFIED in this version (earning logic is unchanged):
+//   - LETTERHEAD: the Generate Invoice popup now has a "Letterhead" option.
+//     Upload a full-page A4 PNG/JPG; the PDF is printed on top of it (on
+//     every page). Top / Bottom space (mm) keep the invoice content clear
+//     of the letterhead's header / footer. The letterhead and spacing are
+//     remembered in localStorage.
+//   - Client-wise cards (4 per row on desktop, 2 on tablet, 1 on mobile),
+//     the same layout as the Production Report. Each card shows the client's
+//     TOTAL CASES together with its TOTAL AMOUNT, plus a cases · amount line
+//     for every service. "View Details" opens that client's table below.
 //
 // HOW EARNING IS CALCULATED
 //   earning = (number of billable cases) x (rate for that client + service)
@@ -22,22 +33,25 @@
 //   * If every client in the period uses the same currency, totals are
 //     shown in that currency, exactly as before.
 //   * If the period mixes currencies (INR, USD, ...), a "Show totals in"
-//     dropdown appears. Picking a currency converts the KPI totals, the
-//     service cards and the table total into it.
+//     dropdown appears. Picking a currency converts the KPI totals and the
+//     service cards into it. Client cards always stay in the client's own
+//     currency. The invoice PDF is NOT converted: it is still one invoice
+//     per client currency.
 //   * Exchange rates come from open.er-api.com (free, no key, updates once
-//     a day) and are cached in localStorage for 12 hours. The invoice PDF is
-//     NOT converted: it is still one invoice per client currency.
+//     a day) and are cached in localStorage for 12 hours.
 //
 // FLOW
 //   1. Pick a date range -> the TOTAL earning for the period is shown.
 //   2. Narrow it down by Service (dropdown or by clicking a service card),
 //      Client, Employee or Work type -> the FILTERED earning is shown next
 //      to the total.
-//   3. "Generate Invoice" opens a popup with the filtered lines, where the
-//      Bill To / From / tax / notes can be edited, and a Download PDF
-//      button.
+//   3. Client cards show every client's cases + amount; "View Details"
+//      opens the service-wise lines for that client.
+//   4. "Generate Invoice" opens a popup with the filtered lines, where the
+//      Letterhead / Bill To / From / tax / notes can be edited, and a
+//      Download PDF button.
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -47,8 +61,16 @@ import { useTheme } from "../../context/themecontext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
+const TABLET_BREAKPOINT = 1100;
 const CASE_PAGE_SIZE = 5000;
 const FROM_KEY = "billing.invoice.from";
+// Letterhead (saved in the browser so it isn't uploaded every time)
+const LH_KEY = "billing.invoice.letterhead";
+const LH_TOP_KEY = "billing.invoice.letterhead.top";
+const LH_BOTTOM_KEY = "billing.invoice.letterhead.bottom";
+const MM = 72 / 25.4; // mm -> pt
+// Services listed on a client card before "+N more".
+const CARD_SERVICE_LIMIT = 4;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -60,6 +82,24 @@ function useIsMobile() {
         return () => window.removeEventListener("resize", onResize);
     }, []);
     return isMobile;
+}
+
+// Client cards per row: 4 on desktop, 2 on tablet, 1 on mobile.
+function useCardColumns() {
+    const get = () => {
+        if (typeof window === "undefined") return 4;
+        const w = window.innerWidth;
+        if (w < MOBILE_BREAKPOINT) return 1;
+        if (w < TABLET_BREAKPOINT) return 2;
+        return 4;
+    };
+    const [cols, setCols] = useState(get);
+    useEffect(() => {
+        const onResize = () => setCols(get());
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return cols;
 }
 
 const BRAND = {
@@ -233,6 +273,56 @@ function makeInvoiceNo() {
     return `INV-${stamp}-${String(Math.floor(Math.random() * 900) + 100)}`;
 }
 
+// All SUBMITTED cases for a date range (every page).
+async function loadCases(from: string, to: string): Promise<CaseRow[]> {
+    const all: CaseRow[] = [];
+    for (let page = 1; page <= 200; page++) {
+        const params = new URLSearchParams();
+        params.set("page", String(page));
+        params.set("pageSize", String(CASE_PAGE_SIZE));
+        if (from) params.set("workDateFrom", from);
+        if (to) params.set("workDateTo", to);
+        params.set("submissionStatus", "SUBMITTED");
+        const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json?.message || `HTTP ${res.status}`);
+        const batch: CaseRow[] = json.data || [];
+        all.push(...batch);
+        if (batch.length < CASE_PAGE_SIZE) break;
+    }
+    return all;
+}
+
+// Same client + same service -> one line.
+function groupCases(list: PricedCase[]): Group[] {
+    const m = new Map<string, Group>();
+    list.forEach((pc) => {
+        const r = pc.row;
+        const key = `${r.clientId}:${r.productId}`;
+        let g = m.get(key);
+        if (!g) {
+            g = {
+                key,
+                clientId: String(r.clientId ?? ""),
+                clientName: r.clientName || "No client",
+                productId: String(r.productId),
+                productName: r.productName || "Unknown service",
+                cases: 0,
+                rate: pc.rate,
+                currency: pc.currency,
+                amount: 0,
+            };
+            m.set(key, g);
+        }
+        g.cases += 1;
+        if (pc.rate !== null) g.amount += pc.rate;
+    });
+    return [...m.values()].sort(
+        (a, b) =>
+            a.clientName.localeCompare(b.clientName) || a.productName.localeCompare(b.productName)
+    );
+}
+
 // ---------- PDF ----------
 type InvoiceData = {
     primary: string; // active theme colour (hex) — the PDF follows the app theme
@@ -250,6 +340,9 @@ type InvoiceData = {
     tax: number;
     total: number;
     notes: string;
+    letterhead: string; // data URL ("" = no letterhead)
+    topMm: number; // blank space at the top, for the letterhead header
+    bottomMm: number; // blank space at the bottom, for the letterhead footer
 };
 
 const DEFAULT_PDF_BLUE: [number, number, number] = [32, 66, 151];
@@ -269,34 +362,56 @@ function pdfPrimary(hex: string): [number, number, number] {
 function buildInvoicePdf(inv: InvoiceData): jsPDF {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
     const M = 40;
     const BLUE = pdfPrimary(inv.primary);
     const GREY: [number, number, number] = [110, 118, 135];
 
-    // header band
-    doc.setFillColor(...BLUE);
-    doc.rect(0, 0, W, 8, "F");
+    // letterhead: drawn full-page behind the content, on every page
+    const useLH = !!inv.letterhead;
+    const top = useLH ? inv.topMm * MM : 40;
+    const bottom = useLH ? inv.bottomMm * MM : 40;
+    const oy = useLH ? Math.max(0, top - 30) : 0; // content shifts down below the letterhead header
+
+    const drawLH = () => {
+        if (!useLH) return;
+        try {
+            const fmt = inv.letterhead.startsWith("data:image/png") ? "PNG" : "JPEG";
+            doc.addImage(inv.letterhead, fmt, 0, 0, W, H, undefined, "FAST");
+        } catch {
+            /* bad image: skip */
+        }
+    };
+
+    if (useLH) {
+        drawLH();
+    } else {
+        // header band (only when there is no letterhead)
+        doc.setFillColor(...BLUE);
+        doc.rect(0, 0, W, 8, "F");
+    }
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(26);
     doc.setTextColor(...BLUE);
-    doc.text("INVOICE", M, 58);
+    doc.text("INVOICE", M, 58 + oy);
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...GREY);
-    doc.text("Invoice No", W - M - 150, 40);
-    doc.text("Invoice Date", W - M - 150, 56);
-    doc.text("Period", W - M - 150, 72);
+    doc.text("Invoice No", W - M - 150, 40 + oy);
+    doc.text("Invoice Date", W - M - 150, 56 + oy);
+    doc.text("Period", W - M - 150, 72 + oy);
     doc.setTextColor(30, 30, 40);
     doc.setFont("helvetica", "bold");
-    doc.text(inv.invoiceNo, W - M, 40, { align: "right" });
-    doc.text(fmtDate(inv.invoiceDate), W - M, 56, { align: "right" });
-    doc.text(`${fmtDate(inv.periodFrom)} to ${fmtDate(inv.periodTo)}`, W - M, 72, {
+    doc.text(inv.invoiceNo, W - M, 40 + oy, { align: "right" });
+    doc.text(fmtDate(inv.invoiceDate), W - M, 56 + oy, { align: "right" });
+    doc.text(`${fmtDate(inv.periodFrom)} to ${fmtDate(inv.periodTo)}`, W - M, 72 + oy, {
         align: "right",
     });
 
     // from / bill to
-    let y = 110;
+    let y = 110 + oy;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(...GREY);
@@ -349,7 +464,12 @@ function buildInvoicePdf(inv: InvoiceData): jsPDF {
         head,
         body,
         theme: "striped",
-        margin: { left: M, right: M },
+        // top/bottom keep the table clear of the letterhead on every page
+        margin: { left: M, right: M, top, bottom },
+        // pages after the first get the letterhead too
+        willDrawPage: (d: any) => {
+            if (d.pageNumber > 1) drawLH();
+        },
         headStyles: { fillColor: BLUE, textColor: 255, fontSize: 9.5 },
         styles: { fontSize: 9.5, cellPadding: 6, textColor: [30, 30, 40] },
         alternateRowStyles: { fillColor: [245, 248, 253] },
@@ -358,6 +478,15 @@ function buildInvoicePdf(inv: InvoiceData): jsPDF {
 
     // totals
     let ty = (doc as any).lastAutoTable.finalY + 22;
+    // start a new (letterhead) page when the next block doesn't fit
+    const ensure = (need: number) => {
+        if (ty + need > H - bottom) {
+            doc.addPage();
+            drawLH();
+            ty = useLH ? top : 50;
+        }
+    };
+    ensure(90);
     const labelX = W - M - 180;
     const row = (label: string, value: string, bold = false) => {
         doc.setFont("helvetica", bold ? "bold" : "normal");
@@ -376,6 +505,7 @@ function buildInvoicePdf(inv: InvoiceData): jsPDF {
     row("Total", money(inv.total, inv.currency), true);
 
     if (inv.notes.trim()) {
+        ensure(60);
         ty += 14;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9);
@@ -387,16 +517,19 @@ function buildInvoicePdf(inv: InvoiceData): jsPDF {
         doc.text(doc.splitTextToSize(inv.notes.trim(), W - M * 2), M, ty + 14);
     }
 
-    const H = doc.internal.pageSize.getHeight();
-    doc.setFontSize(8.5);
-    doc.setTextColor(...GREY);
-    doc.text("This is a computer generated invoice.", W / 2, H - 28, { align: "center" });
+    // the letterhead already has its own footer, so skip ours
+    if (!useLH) {
+        doc.setFontSize(8.5);
+        doc.setTextColor(...GREY);
+        doc.text("This is a computer generated invoice.", W / 2, H - 28, { align: "center" });
+    }
     return doc;
 }
 
 // ======================================================================
 export default function Billing() {
     const isMobile = useIsMobile();
+    const cardCols = useCardColumns();
     const { colors: themeColors } = useTheme();
 
     // lookups
@@ -430,14 +563,79 @@ export default function Billing() {
     const [notes, setNotes] = useState("");
     const [invCurrency, setInvCurrency] = useState("");
 
+    // letterhead
+    const [letterhead, setLetterhead] = useState("");
+    const [lhName, setLhName] = useState("");
+    const [lhTop, setLhTop] = useState("45");
+    const [lhBottom, setLhBottom] = useState("25");
+    const [lhError, setLhError] = useState("");
+
+    const onLetterheadFile = (file: File | undefined) => {
+        setLhError("");
+        if (!file) return;
+        if (!/^image\/(png|jpeg)$/.test(file.type)) {
+            setLhError("Sirf PNG ya JPG image upload karo.");
+            return;
+        }
+        if (file.size > 3 * 1024 * 1024) {
+            setLhError("Image 3 MB se choti honi chahiye.");
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const data = String(reader.result || "");
+            setLetterhead(data);
+            setLhName(file.name);
+            try {
+                localStorage.setItem(LH_KEY, data);
+            } catch {
+                setLhError(
+                    "Letterhead save nahi hua (browser storage full). Is baar ke liye use hoga."
+                );
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+    const removeLetterhead = () => {
+        setLetterhead("");
+        setLhName("");
+        try {
+            localStorage.removeItem(LH_KEY);
+        } catch {
+            /* ignore */
+        }
+    };
+
+    // load the saved letterhead + spacing when the page opens
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(LH_KEY) || "";
+            setLetterhead(saved);
+            setLhName(saved ? "Saved letterhead" : "");
+            setLhTop(localStorage.getItem(LH_TOP_KEY) || "45");
+            setLhBottom(localStorage.getItem(LH_BOTTOM_KEY) || "25");
+        } catch {
+            /* ignore */
+        }
+    }, []);
+
     // currency conversion
     const [rates, setRates] = useState<Record<string, number>>({});
     const [fxUpdated, setFxUpdated] = useState<number | null>(null);
     const [fxError, setFxError] = useState(false);
     const [totalCur, setTotalCur] = useState("");
 
-    // client-wise paging: one client per page
-    const [page, setPage] = useState(0);
+    // client whose "View Details" table is open (clientId, or null)
+    const [openClient, setOpenClient] = useState<string | null>(null);
+    const detailRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (openClient === null) return;
+        const t = setTimeout(
+            () => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            60
+        );
+        return () => clearTimeout(t);
+    }, [openClient]);
 
     // ---- lookups (rates live on the clients) ----
     useEffect(() => {
@@ -524,22 +722,7 @@ export default function Billing() {
         setLoading(true);
         setError("");
         try {
-            const all: CaseRow[] = [];
-            for (let page = 1; page <= 200; page++) {
-                const params = new URLSearchParams();
-                params.set("page", String(page));
-                params.set("pageSize", String(CASE_PAGE_SIZE));
-                if (fromDate) params.set("workDateFrom", fromDate);
-                if (toDate) params.set("workDateTo", toDate);
-                params.set("submissionStatus", "SUBMITTED");
-                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
-                const json = await res.json();
-                if (!res.ok || !json.success)
-                    throw new Error(json?.message || `HTTP ${res.status}`);
-                const batch: CaseRow[] = json.data || [];
-                all.push(...batch);
-                if (batch.length < CASE_PAGE_SIZE) break;
-            }
+            const all = await loadCases(fromDate, toDate);
             setCases(all);
         } catch (err: any) {
             setError(err?.message || "Failed to load cases.");
@@ -660,37 +843,9 @@ export default function Billing() {
         : [];
 
     // ---- lines: same client + same service ----
-    const groups = useMemo<Group[]>(() => {
-        const m = new Map<string, Group>();
-        filtered.forEach((pc) => {
-            const r = pc.row;
-            const key = `${r.clientId}:${r.productId}`;
-            let g = m.get(key);
-            if (!g) {
-                g = {
-                    key,
-                    clientId: String(r.clientId ?? ""),
-                    clientName: r.clientName || "No client",
-                    productId: String(r.productId),
-                    productName: r.productName || "Unknown service",
-                    cases: 0,
-                    rate: pc.rate,
-                    currency: pc.currency,
-                    amount: 0,
-                };
-                m.set(key, g);
-            }
-            g.cases += 1;
-            if (pc.rate !== null) g.amount += pc.rate;
-        });
-        return [...m.values()].sort(
-            (a, b) =>
-                a.clientName.localeCompare(b.clientName) ||
-                a.productName.localeCompare(b.productName)
-        );
-    }, [filtered]);
+    const groups = useMemo<Group[]>(() => groupCases(filtered), [filtered]);
 
-    // ---- client-wise pages: one client per page, with that client's own total ----
+    // ---- client-wise cards: each client with its own cases + total ----
     const clientPages = useMemo(() => {
         const m = new Map<
             string,
@@ -724,13 +879,13 @@ export default function Billing() {
         return [...m.values()]; // groups are already sorted by client name
     }, [groups]);
 
-    // back to the first client whenever the selection changes
+    // close the open client table whenever the selection changes
     useEffect(() => {
-        setPage(0);
+        setOpenClient(null);
     }, [fromDate, toDate, productId, clientId, employeeId, workType]);
 
-    const pageIdx = Math.min(page, Math.max(clientPages.length - 1, 0));
-    const current = clientPages[pageIdx];
+    const current =
+        openClient === null ? undefined : clientPages.find((c) => c.clientId === openClient);
 
     // ---- service cards (click = filter) ----
     const serviceCards = useMemo(() => {
@@ -773,13 +928,70 @@ export default function Billing() {
 
     // ---- invoice ----
     const pricedGroups = useMemo(() => groups.filter((g) => g.rate !== null), [groups]);
-    const invoiceCurrencies = useMemo(
-        () => [...new Set(pricedGroups.map((g) => g.currency))],
-        [pricedGroups]
+
+    // The invoice has its own date range + client, independent of the page filters.
+    const [invFromDate, setInvFromDate] = useState(firstOfMonthStr());
+    const [invToDate, setInvToDate] = useState(todayStr());
+    const [invClientId, setInvClientId] = useState("");
+    const [invCases, setInvCases] = useState<CaseRow[]>([]);
+    const [invLoading, setInvLoading] = useState(false);
+    const [invError, setInvError] = useState("");
+
+    useEffect(() => {
+        if (!invoiceOpen || !invFromDate || !invToDate || invFromDate > invToDate) {
+            setInvCases([]);
+            return;
+        }
+        let cancelled = false;
+        setInvLoading(true);
+        setInvError("");
+        loadCases(invFromDate, invToDate)
+            .then((rows) => {
+                if (!cancelled) setInvCases(rows);
+            })
+            .catch((err: any) => {
+                if (!cancelled) {
+                    setInvError(err?.message || "Failed to load cases.");
+                    setInvCases([]);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setInvLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [invoiceOpen, invFromDate, invToDate]);
+
+    const invClientName = useMemo(
+        () => clients.find((c) => String(c.id) === invClientId)?.name || "",
+        [clients, invClientId]
     );
+    const invGroups = useMemo<Group[]>(() => {
+        if (!invClientId) return [];
+        const list: PricedCase[] = invCases
+            .filter(
+                (c) => BILLABLE.includes(c.submissionType) && String(c.clientId) === invClientId
+            )
+            .map((row) => {
+                const r = rateMap.get(`${row.clientId}:${row.productId}`);
+                return { row, rate: r ? r.rate : null, currency: r?.currency || "USD" };
+            });
+        return groupCases(list);
+    }, [invCases, invClientId, rateMap]);
+    const invMissing = invGroups.filter((g) => g.rate === null).reduce((n, g) => n + g.cases, 0);
+    const invoicePriced = useMemo(() => invGroups.filter((g) => g.rate !== null), [invGroups]);
+    const invoiceCurrencies = useMemo(
+        () => [...new Set(invoicePriced.map((g) => g.currency))],
+        [invoicePriced]
+    );
+    useEffect(() => {
+        if (!invoiceOpen) return;
+        if (!invoiceCurrencies.includes(invCurrency)) setInvCurrency(invoiceCurrencies[0] || "");
+    }, [invoiceOpen, invoiceCurrencies, invCurrency]);
     const invoiceLines = useMemo(
-        () => pricedGroups.filter((g) => g.currency === invCurrency),
-        [pricedGroups, invCurrency]
+        () => invoicePriced.filter((g) => g.currency === invCurrency),
+        [invoicePriced, invCurrency]
     );
     const invoiceClients = useMemo(
         () => [...new Set(invoiceLines.map((l) => l.clientName))],
@@ -791,8 +1003,11 @@ export default function Billing() {
     const total = subtotal + tax;
 
     const openInvoice = () => {
-        const cur = invoiceCurrencies[0] || "";
-        setInvCurrency(cur);
+        setInvCurrency("");
+        setInvFromDate(fromDate);
+        setInvToDate(toDate);
+        setInvClientId(clientId);
+        setInvError("");
         setInvoiceNo(makeInvoiceNo());
         setInvoiceDate(todayStr());
         setBillToEdited(false);
@@ -808,8 +1023,8 @@ export default function Billing() {
     // keep Bill To in sync with the lines until the user types their own
     useEffect(() => {
         if (!invoiceOpen || billToEdited) return;
-        setBillTo(invoiceClients.length === 1 ? invoiceClients[0] : "");
-    }, [invoiceOpen, billToEdited, invoiceClients]);
+        setBillTo(invClientName);
+    }, [invoiceOpen, billToEdited, invClientName]);
 
     useEffect(() => {
         if (!invoiceOpen) return;
@@ -824,14 +1039,20 @@ export default function Billing() {
         } catch {
             /* ignore */
         }
+        try {
+            localStorage.setItem(LH_TOP_KEY, lhTop);
+            localStorage.setItem(LH_BOTTOM_KEY, lhBottom);
+        } catch {
+            /* ignore */
+        }
         const doc = buildInvoicePdf({
             primary: themeColors.blue,
             invoiceNo: invoiceNo.trim() || makeInvoiceNo(),
             invoiceDate,
             from: invFrom.trim(),
             billTo: billTo.trim(),
-            periodFrom: fromDate,
-            periodTo: toDate,
+            periodFrom: invFromDate,
+            periodTo: invToDate,
             currency: invCurrency,
             showClientCol: invoiceClients.length > 1,
             lines: invoiceLines,
@@ -840,11 +1061,14 @@ export default function Billing() {
             tax,
             total,
             notes,
+            letterhead,
+            topMm: Math.max(0, Number(lhTop) || 0),
+            bottomMm: Math.max(0, Number(lhBottom) || 0),
         });
         doc.save(`${invoiceNo.trim() || "invoice"}.pdf`);
     };
 
-    const canInvoice = !loading && pricedGroups.length > 0;
+    const canInvoice = !loading && clients.length > 0;
     const totalCases = billable.length;
 
     return (
@@ -889,7 +1113,7 @@ export default function Billing() {
                             }}
                             disabled={!canInvoice}
                             onClick={openInvoice}
-                            title={canInvoice ? "" : "No priced cases in the current selection"}
+                            title={canInvoice ? "" : "Client list is still loading"}
                         >
                             <i className="ti ti-file-invoice" style={{ fontSize: fontSize.lg }} />
                             Generate Invoice
@@ -1193,7 +1417,7 @@ export default function Billing() {
                     </div>
                 )}
 
-                {/* ---- lines table ---- */}
+                {/* ---- client-wise cards + detail table ---- */}
                 {loading ? (
                     <div style={styles.panel}>
                         <div style={styles.emptyState}>Calculating earnings…</div>
@@ -1222,245 +1446,282 @@ export default function Billing() {
                     </div>
                 ) : (
                     <>
-                        {/* client header: one page per client */}
-                        <div style={styles.clientHead}>
-                            <div>
-                                <div style={styles.clientName}>
-                                    <i
-                                        className="ti ti-building"
-                                        style={{ color: "var(--brand-blue)" }}
-                                    />
-                                    {current.clientName}
-                                </div>
-                                <div style={styles.clientMeta}>
-                                    Client {pageIdx + 1} of {clientPages.length} · {current.cases}{" "}
-                                    case{current.cases === 1 ? "" : "s"}
-                                    {current.missing > 0 && (
-                                        <span style={{ color: "#b45309" }}>
-                                            {" "}
-                                            · {current.missing} no rate
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                            <div style={{ textAlign: "right" }}>
-                                <div style={styles.clientTotal}>
-                                    {formatTotals(current.totals, "  ·  ")}
-                                </div>
-                                <div style={styles.clientMeta}>Client total</div>
-                            </div>
-                        </div>
-
-                        <div style={styles.panel}>
-                            <div style={{ overflowX: "auto" }}>
-                                <table style={styles.table}>
-                                    <thead>
-                                        <tr>
-                                            <th style={styles.th}>Service</th>
-                                            <th style={{ ...styles.th, textAlign: "right" }}>
-                                                Cases
-                                            </th>
-                                            <th style={{ ...styles.th, textAlign: "right" }}>
-                                                Rate
-                                            </th>
-                                            <th style={{ ...styles.th, textAlign: "right" }}>
-                                                Amount
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {current.lines.map((g, idx) => {
-                                            const rowBg = idx % 2 === 0 ? "#fff" : "#fafaff";
-                                            return (
-                                                <tr
-                                                    key={g.key}
-                                                    className="bl-row"
-                                                    style={{ background: rowBg }}
-                                                >
-                                                    <td style={styles.td}>
-                                                        <button
-                                                            type="button"
-                                                            className="bl-btn"
-                                                            style={styles.linkBtn}
-                                                            onClick={() =>
-                                                                setProductId(
-                                                                    productId === g.productId
-                                                                        ? ""
-                                                                        : g.productId
-                                                                )
-                                                            }
-                                                            title="Filter by this service"
-                                                        >
-                                                            {g.productName}
-                                                        </button>
-                                                    </td>
-                                                    <td
-                                                        style={{ ...styles.td, textAlign: "right" }}
-                                                    >
-                                                        <Pill value={g.cases} tone="blue" />
-                                                    </td>
-                                                    <td
-                                                        style={{ ...styles.td, textAlign: "right" }}
-                                                    >
-                                                        {g.rate === null ? (
-                                                            <span style={styles.noRatePill}>
-                                                                No rate
-                                                            </span>
-                                                        ) : (
-                                                            money(g.rate, g.currency)
-                                                        )}
-                                                    </td>
-                                                    <td
-                                                        style={{
-                                                            ...styles.td,
-                                                            textAlign: "right",
-                                                            fontWeight: fontWeight.semibold,
-                                                            color: "#1e1b4b",
-                                                        }}
-                                                    >
-                                                        {g.rate === null
-                                                            ? "—"
-                                                            : money(g.amount, g.currency)}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                    <tfoot>
-                                        <tr>
-                                            <td style={styles.tfootTd}>
-                                                Total · {current.clientName}
-                                            </td>
-                                            <td style={{ ...styles.tfootTd, textAlign: "right" }}>
-                                                {current.cases}
-                                            </td>
-                                            <td style={styles.tfootTd} />
-                                            <td style={{ ...styles.tfootTd, textAlign: "right" }}>
-                                                {formatTotals(current.totals, "  ·  ")}
-                                            </td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
-                            </div>
-
-                            {/* pager: one page per client */}
-                            <div style={styles.tableFooter}>
-                                <span style={styles.tableFooterText}>
-                                    <i
-                                        className="ti ti-info-circle"
-                                        style={{ fontSize: fontSize.base }}
-                                    />
-                                    Showing client {pageIdx + 1} of {clientPages.length}
+                        <div style={styles.cardsSection}>
+                            <div style={styles.cardsHeader}>
+                                <span style={styles.cardsTitle}>Client-wise Billing</span>
+                                <span style={styles.cardsHint}>
+                                    {clientPages.length} client
+                                    {clientPages.length === 1 ? "" : "s"} · each total is in the
+                                    client's own currency
                                 </span>
-                                <div style={styles.pagination}>
-                                    <button
-                                        type="button"
-                                        className="bl-btn"
-                                        style={styles.pageBtn}
-                                        disabled={pageIdx === 0}
-                                        onClick={() => setPage(pageIdx - 1)}
-                                    >
-                                        <i
-                                            className="ti ti-chevron-left"
-                                            style={{ fontSize: fontSize.md }}
-                                        />
-                                    </button>
-                                    {clientPages.slice(0, 4).map((c, i) => (
-                                        <button
-                                            key={c.clientId || i}
-                                            type="button"
-                                            className="bl-btn"
-                                            title={c.clientName}
-                                            aria-current={i === pageIdx ? "page" : undefined}
-                                            style={{
-                                                ...styles.pageBtn,
-                                                ...(i === pageIdx ? styles.pageBtnActive : {}),
-                                            }}
-                                            onClick={() => setPage(i)}
-                                        >
-                                            {i + 1}
-                                        </button>
-                                    ))}
-                                    <button
-                                        type="button"
-                                        className="bl-btn"
-                                        style={styles.pageBtn}
-                                        disabled={pageIdx >= clientPages.length - 1}
-                                        onClick={() => setPage(pageIdx + 1)}
-                                    >
-                                        <i
-                                            className="ti ti-chevron-right"
-                                            style={{ fontSize: fontSize.md }}
-                                        />
-                                    </button>
-                                </div>
                             </div>
-                        </div>
-
-                        {/* client-wise totals for every client (click a row to open its page) */}
-                        {clientPages.length > 1 && (
-                            <div style={styles.panel}>
-                                <div style={styles.panelHeader}>
-                                    <i className="ti ti-users" style={{ fontSize: fontSize.xl }} />
-                                    <span style={{ flex: 1 }}>Totals by client</span>
-                                    <span style={styles.panelHint}>Click a row to open</span>
-                                </div>
-                                <div style={{ overflowX: "auto" }}>
-                                    <table style={styles.table}>
-                                        <thead>
-                                            <tr>
-                                                <th style={styles.th}>Client</th>
-                                                <th style={{ ...styles.th, textAlign: "right" }}>
-                                                    Cases
-                                                </th>
-                                                <th style={{ ...styles.th, textAlign: "right" }}>
-                                                    Total
-                                                </th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {clientPages.map((c, i) => (
-                                                <tr
-                                                    key={c.clientId || i}
-                                                    className="bl-row"
-                                                    style={{
-                                                        cursor: "pointer",
-                                                        background:
-                                                            i % 2 === 0 ? "#fff" : "#fafaff",
-                                                    }}
-                                                    onClick={() => setPage(i)}
-                                                >
-                                                    <td
-                                                        style={{
-                                                            ...styles.td,
-                                                            fontWeight:
-                                                                i === pageIdx
-                                                                    ? fontWeight.semibold
-                                                                    : fontWeight.medium,
-                                                            color: "#312e81",
-                                                        }}
+                            <div
+                                style={{
+                                    ...styles.cardsGrid,
+                                    gridTemplateColumns: `repeat(${cardCols}, minmax(0, 1fr))`,
+                                }}
+                            >
+                                {clientPages.map((c) => {
+                                    const active = openClient === c.clientId;
+                                    const shown = c.lines.slice(0, CARD_SERVICE_LIMIT);
+                                    const extra = c.lines.length - shown.length;
+                                    return (
+                                        <div
+                                            key={c.clientId || c.clientName}
+                                            style={{
+                                                ...styles.clientCard,
+                                                borderTopColor: active ? BRAND.blue : "#e5e9f0",
+                                                borderRightColor: active ? BRAND.blue : "#e5e9f0",
+                                                borderBottomColor: active ? BRAND.blue : "#e5e9f0",
+                                                boxShadow: active
+                                                    ? "0 8px 22px rgba(var(--brand-blue-rgb),0.2)"
+                                                    : "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
+                                            }}
+                                        >
+                                            <div style={styles.clientCardTop}>
+                                                <div style={styles.clientCardNameWrap}>
+                                                    <div
+                                                        style={styles.clientCardName}
+                                                        title={c.clientName}
                                                     >
                                                         {c.clientName}
-                                                    </td>
-                                                    <td
-                                                        style={{ ...styles.td, textAlign: "right" }}
+                                                    </div>
+                                                    <div style={styles.clientAmount}>
+                                                        {formatTotals(c.totals, " · ")}
+                                                    </div>
+                                                    <div style={styles.clientAmountLbl}>
+                                                        Total amount
+                                                    </div>
+                                                </div>
+                                                <div style={styles.totalBox}>
+                                                    <div style={styles.totalNum}>{c.cases}</div>
+                                                    <div style={styles.totalLbl}>Total cases</div>
+                                                </div>
+                                            </div>
+                                            <div style={styles.statList}>
+                                                {shown.map((l) => (
+                                                    <div key={l.key} style={styles.statRow}>
+                                                        <span
+                                                            style={styles.statLabel}
+                                                            title={l.productName}
+                                                        >
+                                                            <span
+                                                                style={{
+                                                                    ...styles.statDot,
+                                                                    background:
+                                                                        l.rate === null
+                                                                            ? BRAND.amber
+                                                                            : BRAND.blue,
+                                                                }}
+                                                            />
+                                                            <span style={styles.statLabelText}>
+                                                                {l.productName}
+                                                            </span>
+                                                        </span>
+                                                        <span style={styles.statRight}>
+                                                            <span style={styles.statValue}>
+                                                                {l.cases}
+                                                            </span>
+                                                            <span style={styles.statAmount}>
+                                                                {l.rate === null
+                                                                    ? "No rate"
+                                                                    : money(l.amount, l.currency)}
+                                                            </span>
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {extra > 0 && (
+                                                    <div style={styles.moreNote}>
+                                                        +{extra} more service
+                                                        {extra === 1 ? "" : "s"}
+                                                    </div>
+                                                )}
+                                                {c.missing > 0 && (
+                                                    <div style={styles.missingNote}>
+                                                        {c.missing} case
+                                                        {c.missing === 1 ? "" : "s"} without a rate
+                                                        — not counted in the amount
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="bl-btn"
+                                                style={{
+                                                    ...styles.viewDetailsBtn,
+                                                    ...(active ? styles.viewDetailsBtnActive : {}),
+                                                }}
+                                                onClick={() =>
+                                                    setOpenClient(active ? null : c.clientId)
+                                                }
+                                            >
+                                                {active ? "Hide Details" : "View Details"}
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* detail table stays hidden until "View Details" is clicked */}
+                        {current && (
+                            <div
+                                ref={detailRef}
+                                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                            >
+                                <div style={styles.clientHead}>
+                                    <div>
+                                        <div style={styles.clientName}>
+                                            <i
+                                                className="ti ti-building"
+                                                style={{ color: "var(--brand-blue)" }}
+                                            />
+                                            {current.clientName}
+                                        </div>
+                                        <div style={styles.clientMeta}>
+                                            {current.cases} case{current.cases === 1 ? "" : "s"}
+                                            {current.missing > 0 && (
+                                                <span style={{ color: "#b45309" }}>
+                                                    {" "}
+                                                    · {current.missing} no rate
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div style={styles.clientHeadRight}>
+                                        <div style={{ textAlign: "right" }}>
+                                            <div style={styles.clientTotal}>
+                                                {formatTotals(current.totals, "  ·  ")}
+                                            </div>
+                                            <div style={styles.clientMeta}>Client total</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="bl-btn"
+                                            style={styles.closeDetailBtn}
+                                            onClick={() => setOpenClient(null)}
+                                        >
+                                            <i className="ti ti-x" />
+                                            Close
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div style={styles.panel}>
+                                    <div style={{ overflowX: "auto" }}>
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={styles.th}>Service</th>
+                                                    <th
+                                                        style={{ ...styles.th, textAlign: "right" }}
                                                     >
-                                                        <Pill value={c.cases} tone="blue" />
+                                                        Cases
+                                                    </th>
+                                                    <th
+                                                        style={{ ...styles.th, textAlign: "right" }}
+                                                    >
+                                                        Rate
+                                                    </th>
+                                                    <th
+                                                        style={{ ...styles.th, textAlign: "right" }}
+                                                    >
+                                                        Amount
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {current.lines.map((g, idx) => {
+                                                    const rowBg =
+                                                        idx % 2 === 0 ? "#fff" : "#fafaff";
+                                                    return (
+                                                        <tr
+                                                            key={g.key}
+                                                            className="bl-row"
+                                                            style={{ background: rowBg }}
+                                                        >
+                                                            <td style={styles.td}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="bl-btn"
+                                                                    style={styles.linkBtn}
+                                                                    onClick={() =>
+                                                                        setProductId(
+                                                                            productId ===
+                                                                                g.productId
+                                                                                ? ""
+                                                                                : g.productId
+                                                                        )
+                                                                    }
+                                                                    title="Filter by this service"
+                                                                >
+                                                                    {g.productName}
+                                                                </button>
+                                                            </td>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    textAlign: "right",
+                                                                }}
+                                                            >
+                                                                <Pill value={g.cases} tone="blue" />
+                                                            </td>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    textAlign: "right",
+                                                                }}
+                                                            >
+                                                                {g.rate === null ? (
+                                                                    <span style={styles.noRatePill}>
+                                                                        No rate
+                                                                    </span>
+                                                                ) : (
+                                                                    money(g.rate, g.currency)
+                                                                )}
+                                                            </td>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    textAlign: "right",
+                                                                    fontWeight: fontWeight.semibold,
+                                                                    color: "#1e1b4b",
+                                                                }}
+                                                            >
+                                                                {g.rate === null
+                                                                    ? "—"
+                                                                    : money(g.amount, g.currency)}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                            <tfoot>
+                                                <tr>
+                                                    <td style={styles.tfootTd}>
+                                                        Total · {current.clientName}
                                                     </td>
                                                     <td
                                                         style={{
-                                                            ...styles.td,
+                                                            ...styles.tfootTd,
                                                             textAlign: "right",
-                                                            fontWeight: fontWeight.semibold,
-                                                            color: "#1e1b4b",
                                                         }}
                                                     >
-                                                        {formatTotals(c.totals, "  ·  ")}
+                                                        {current.cases}
+                                                    </td>
+                                                    <td style={styles.tfootTd} />
+                                                    <td
+                                                        style={{
+                                                            ...styles.tfootTd,
+                                                            textAlign: "right",
+                                                        }}
+                                                    >
+                                                        {formatTotals(current.totals, "  ·  ")}
                                                     </td>
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                            </tfoot>
+                                        </table>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -1483,8 +1744,9 @@ export default function Billing() {
                         <div style={styles.modalHeader}>
                             <h3 style={styles.modalTitle}>Generate Invoice</h3>
                             <p style={styles.modalSubtitle}>
-                                For the {invoiceLines.reduce((s, l) => s + l.cases, 0)} filtered
-                                case(s), {fmtDate(fromDate)} to {fmtDate(toDate)}
+                                {invClientName || "Select a client"} · {fmtDate(invFromDate)} to{" "}
+                                {fmtDate(invToDate)} ·{" "}
+                                {invoiceLines.reduce((n, l) => n + l.cases, 0)} case(s)
                             </p>
                             <button
                                 type="button"
@@ -1497,6 +1759,166 @@ export default function Billing() {
                         </div>
 
                         <div style={styles.modalBody}>
+                            {/* ---- period + client (required) ---- */}
+                            <div
+                                style={{
+                                    ...styles.formGrid,
+                                    gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1.4fr",
+                                }}
+                            >
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-calendar" style={styles.labelIcon} />
+                                        From date
+                                    </span>
+                                    <input
+                                        type="date"
+                                        style={styles.input}
+                                        value={invFromDate}
+                                        max={invToDate || undefined}
+                                        onChange={(e) => setInvFromDate(e.target.value)}
+                                    />
+                                </label>
+                                <label style={styles.label}>
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-calendar" style={styles.labelIcon} />
+                                        To date
+                                    </span>
+                                    <input
+                                        type="date"
+                                        style={styles.input}
+                                        value={invToDate}
+                                        min={invFromDate || undefined}
+                                        onChange={(e) => setInvToDate(e.target.value)}
+                                    />
+                                </label>
+                                <label
+                                    style={{
+                                        ...styles.label,
+                                        gridColumn: isMobile ? "1 / -1" : undefined,
+                                    }}
+                                >
+                                    <span style={styles.labelText}>
+                                        <i className="ti ti-building" style={styles.labelIcon} />
+                                        Client
+                                    </span>
+                                    <select
+                                        style={styles.input}
+                                        value={invClientId}
+                                        onChange={(e) => {
+                                            setInvClientId(e.target.value);
+                                            setBillToEdited(false);
+                                        }}
+                                    >
+                                        <option value="">Select client</option>
+                                        {clients.map((c) => (
+                                            <option key={c.id} value={String(c.id)}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                            {invError && (
+                                <div style={styles.formError}>
+                                    <i
+                                        className="ti ti-alert-triangle"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
+                                    {invError}
+                                </div>
+                            )}
+                            {!invLoading && invClientId && invMissing > 0 && (
+                                <div style={styles.formError}>
+                                    <i
+                                        className="ti ti-alert-triangle"
+                                        style={{ fontSize: fontSize.md }}
+                                    />
+                                    {invMissing} case{invMissing === 1 ? "" : "s"} of this client
+                                    have no rate set, so they are not on the invoice.
+                                </div>
+                            )}
+
+                            {/* ---- letterhead ---- */}
+                            <div style={styles.lhBox}>
+                                <div style={styles.labelText}>
+                                    <i className="ti ti-file-text" style={styles.labelIcon} />
+                                    Letterhead (optional)
+                                </div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        gap: 10,
+                                        flexWrap: "wrap",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <label
+                                        className="bl-btn"
+                                        style={{ ...styles.cancelBtn, cursor: "pointer" }}
+                                    >
+                                        <i className="ti ti-upload" style={{ marginRight: 6 }} />
+                                        {letterhead ? "Change letterhead" : "Upload letterhead"}
+                                        <input
+                                            type="file"
+                                            accept="image/png,image/jpeg"
+                                            style={{ display: "none" }}
+                                            onChange={(e) => {
+                                                onLetterheadFile(e.target.files?.[0]);
+                                                e.target.value = "";
+                                            }}
+                                        />
+                                    </label>
+                                    {letterhead && (
+                                        <>
+                                            <span style={styles.fxNote}>{lhName}</span>
+                                            <button
+                                                type="button"
+                                                className="bl-btn"
+                                                style={styles.cancelBtn}
+                                                onClick={removeLetterhead}
+                                            >
+                                                Remove
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                                {letterhead && (
+                                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                                        <label style={{ ...styles.label, width: 150 }}>
+                                            <span style={styles.labelText}>Top space (mm)</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                style={styles.input}
+                                                value={lhTop}
+                                                onChange={(e) => setLhTop(e.target.value)}
+                                            />
+                                        </label>
+                                        <label style={{ ...styles.label, width: 150 }}>
+                                            <span style={styles.labelText}>Bottom space (mm)</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                style={styles.input}
+                                                value={lhBottom}
+                                                onChange={(e) => setLhBottom(e.target.value)}
+                                            />
+                                        </label>
+                                    </div>
+                                )}
+                                {lhError && (
+                                    <div style={{ ...styles.fxNote, color: "#b45309" }}>
+                                        {lhError}
+                                    </div>
+                                )}
+                                <div style={styles.fxNote}>
+                                    Letterhead ko A4 size (full page) PNG/JPG banao. Header/footer
+                                    ke neeche jitni jagah chhodni hai, utna Top/Bottom space set
+                                    karo.
+                                </div>
+                            </div>
+
                             <div
                                 style={{
                                     ...styles.formGrid,
@@ -1675,6 +2097,17 @@ export default function Billing() {
                                         </tbody>
                                     </table>
                                 </div>
+                                {invoiceLines.length === 0 && (
+                                    <div style={styles.emptyState}>
+                                        {invLoading
+                                            ? "Loading cases…"
+                                            : invFromDate > invToDate
+                                              ? "From date must be before To date."
+                                              : !invClientId
+                                                ? "Select a client to see the invoice lines."
+                                                : "No billable priced cases for this client in this period."}
+                                    </div>
+                                )}
                                 <div style={styles.totals}>
                                     <div style={styles.totalRow}>
                                         <span>Subtotal</span>
@@ -1817,7 +2250,7 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         flex: 1,
         minHeight: "100%",
-        background: "#f4f5fb",
+        background: "#eff4fa",
         fontFamily: fontFamily.base,
         textAlign: "left",
     },
@@ -1825,7 +2258,7 @@ const styles: Record<string, CSSProperties> = {
         width: "100%",
         flex: 1,
         minHeight: "100%",
-        background: "#f0f0f5",
+        background: "#eff4fa",
         fontFamily: fontFamily.base,
         textAlign: "left",
     },
@@ -1895,12 +2328,13 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "center",
         gap: "8px",
         padding: "14px 18px",
-        background: GRADIENT,
-        color: "#fff",
+        background: "#F4F8FD",
+        borderBottom: "1px solid #e5e9f0",
+        color: "#17181C",
         fontSize: fontSize.md,
         fontWeight: fontWeight.semibold,
     },
-    panelHint: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#e0e7ff" },
+    panelHint: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#767F92" },
     headerGhostBtn: {
         display: "flex",
         alignItems: "center",
@@ -1909,9 +2343,9 @@ const styles: Record<string, CSSProperties> = {
         height: 30,
         padding: "0 12px",
         borderRadius: radius.sm,
-        border: "1px solid rgba(255,255,255,0.5)",
-        background: "rgba(255,255,255,0.12)",
-        color: "#fff",
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: BRAND.blue,
         fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
         cursor: "pointer",
@@ -2080,7 +2514,156 @@ const styles: Record<string, CSSProperties> = {
     },
     svcMeta: { fontSize: fontSize.sm, color: "#94a3b8" },
 
-    // client-wise pages
+    // ---- client-wise cards (same layout as the Production Report) ----
+    cardsSection: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        padding: "16px 18px",
+        boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+    },
+    cardsHeader: {
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 10,
+        flexWrap: "wrap",
+    },
+    cardsTitle: {
+        fontSize: fontSize.xl,
+        fontWeight: fontWeight.bold,
+        color: "#17181C",
+    },
+    cardsHint: { fontSize: fontSize.xs, color: "#9CA3AF" },
+    // Column count is set inline from useCardColumns() (4 / 2 / 1).
+    // minmax(0, 1fr) stops long client names from stretching a column.
+    cardsGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+        gap: 12,
+    },
+    clientCard: {
+        background: "#fff",
+        border: "1px solid #e5e9f0",
+        borderLeft: "4px solid var(--brand-blue)",
+        borderRadius: radius.lg,
+        padding: "12px 14px",
+        textAlign: "left",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        fontFamily: "inherit",
+        boxShadow: "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
+        transition: "box-shadow .15s ease, border-color .15s ease",
+        minWidth: 0,
+    },
+    clientCardTop: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+        paddingBottom: 10,
+        borderBottom: "1px dashed #e5e9f0",
+    },
+    clientCardNameWrap: { minWidth: 0, flex: 1, textAlign: "left" },
+    clientCardName: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    clientAmount: {
+        marginTop: 4,
+        fontSize: fontSize["2xl"],
+        fontWeight: fontWeight.bold,
+        color: BRAND.green,
+        lineHeight: 1.15,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    clientAmountLbl: { fontSize: fontSize.xs, color: "#767F92", marginTop: 2 },
+    totalBox: {
+        textAlign: "center",
+        flexShrink: 0,
+        background: "rgba(var(--brand-blue-rgb),0.07)",
+        borderRadius: radius.md,
+        padding: "5px 12px",
+        minWidth: 64,
+    },
+    totalNum: {
+        fontSize: fontSize["4xl"],
+        fontWeight: fontWeight.bold,
+        color: BRAND.blue,
+        lineHeight: 1,
+    },
+    totalLbl: { fontSize: fontSize.xs, color: "#767F92", marginTop: 2, whiteSpace: "nowrap" },
+    statList: { display: "flex", flexDirection: "column", gap: 4 },
+    statRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        fontSize: fontSize.sm,
+        background: "#F7F9FD",
+        borderRadius: radius.sm,
+        padding: "5px 10px",
+    },
+    statLabel: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        color: "#5b6477",
+        minWidth: 0,
+        flex: 1,
+    },
+    statLabelText: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    statDot: { width: 8, height: 8, borderRadius: radius.circle, flexShrink: 0 },
+    statRight: {
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "flex-end",
+        gap: 8,
+        flexShrink: 0,
+    },
+    statValue: { fontWeight: fontWeight.semibold, fontSize: fontSize.base, color: BRAND.blue },
+    statAmount: {
+        fontSize: fontSize.xs,
+        color: "#5b6477",
+        minWidth: 70,
+        textAlign: "right",
+        whiteSpace: "nowrap",
+    },
+    moreNote: { fontSize: fontSize.xs, color: "#9CA3AF", padding: "0 10px" },
+    missingNote: { fontSize: fontSize.xs, color: "#b45309", padding: "0 10px" },
+    viewDetailsBtn: {
+        width: "100%",
+        padding: "7px 12px",
+        borderRadius: radius.md,
+        border: "1px solid rgba(var(--brand-blue-rgb),0.25)",
+        background: "rgba(var(--brand-blue-rgb),0.06)",
+        color: BRAND.blue,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+        fontFamily: "inherit",
+    },
+    viewDetailsBtnActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
+    },
+
+    // detail header for the opened client
     clientHead: {
         display: "flex",
         alignItems: "center",
@@ -2092,6 +2675,21 @@ const styles: Record<string, CSSProperties> = {
         padding: "14px 18px",
         boxShadow: "0 1px 3px rgba(30,27,75,0.06)",
         borderLeft: "4px solid var(--brand-blue)",
+    },
+    clientHeadRight: { display: "flex", alignItems: "center", gap: 14 },
+    closeDetailBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 14px",
+        borderRadius: radius.sm,
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: "#374151",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
     },
     clientName: {
         display: "flex",
@@ -2116,8 +2714,10 @@ const styles: Record<string, CSSProperties> = {
         padding: "10px 18px",
         fontSize: fontSize.xs,
         fontWeight: fontWeight.semibold,
-        color: "#e0e7ff",
-        background: GRADIENT,
+        color: "#767F92",
+        background: "#F4F8FD",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
         whiteSpace: "nowrap",
     },
     td: {
@@ -2130,8 +2730,9 @@ const styles: Record<string, CSSProperties> = {
         padding: "12px 18px",
         fontSize: fontSize.md,
         fontWeight: fontWeight.bold,
-        color: "var(--brand-blue)",
-        background: "#eef2ff",
+        color: "#17181C",
+        background: "#F4F8FD",
+        borderTop: "2px solid #ececf5",
     },
     linkBtn: {
         border: "none",
@@ -2162,43 +2763,6 @@ const styles: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         color: "#1e1b4b",
         marginBottom: 4,
-    },
-
-    tableFooter: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "12px 18px",
-        borderTop: "1px solid #f1f1f7",
-        flexWrap: "wrap",
-        gap: "10px",
-    },
-    tableFooterText: {
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        fontSize: fontSize.xs,
-        color: "#94a3b8",
-    },
-    pagination: { display: "flex", gap: "6px" },
-    pageBtn: {
-        width: 28,
-        height: 28,
-        borderRadius: radius.sm,
-        border: "1px solid #e2e4f0",
-        background: "#fff",
-        color: "var(--brand-blue)",
-        fontSize: fontSize.sm,
-        fontWeight: fontWeight.semibold,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    pageBtnActive: {
-        background: GRADIENT,
-        color: "#fff",
-        border: "none",
     },
 
     // ---- invoice popup ----
@@ -2268,6 +2832,15 @@ const styles: Record<string, CSSProperties> = {
         flexShrink: 0,
     },
     formGrid: { display: "grid", gap: 14 },
+    lhBox: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        padding: "12px 14px",
+        border: "1px dashed #c7cbe0",
+        borderRadius: radius.md,
+        background: "#fafaff",
+    },
     preview: {
         border: "1px solid #e2e4f0",
         borderRadius: radius.md,

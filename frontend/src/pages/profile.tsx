@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import type { CSSProperties, ChangeEvent } from "react";
+import type { CSSProperties, ChangeEvent, ReactNode } from "react";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
@@ -7,6 +7,11 @@ import { useRoleLabels } from "../context/roleLabelsContext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
+
+// NEW: only these roles get the "Search employee" box on the Profile page
+// and can open another employee's profile (read-only, except they can
+// submit work / resolve queries on that employee's behalf).
+const VIEW_OTHERS_ROLES = ["SUPER_ADMIN", "OPS_MANAGER"];
 
 // THEME: blue/lightBlue/green now come from the active theme color (see
 // useTheme() in the component below) instead of being hardcoded here, so
@@ -27,9 +32,7 @@ function withAlpha(hex: string, alpha: number) {
 }
 
 // Small injected stylesheet so buttons/rows/cards get real :hover states
-// (inline style objects can't express :hover on their own). Built from the
-// active theme color instead of a hardcoded navy, so hover tints track
-// whatever theme color is picked.
+// (inline style objects can't express :hover on their own).
 function getHoverCss(BRAND: { blue: string }) {
     return `
 .pf-card-hover { transition: box-shadow .18s ease, transform .18s ease; }
@@ -41,6 +44,13 @@ function getHoverCss(BRAND: { blue: string }) {
 .pf-tab:hover { color: ${BRAND.blue}; }
 .pf-row:hover { background: #FAFBFF; }
 .pf-avatar-edit:hover { filter: brightness(1.1); }
+.pf-emp-pill { transition: border-color .15s ease, box-shadow .15s ease; }
+.pf-emp-pill:focus-within { border-color: ${BRAND.blue} !important; box-shadow: 0 6px 20px ${withAlpha(BRAND.blue, 0.18)} !important; }
+.pf-emp-item { transition: background .12s ease; }
+.pf-emp-item:hover { background: ${withAlpha(BRAND.blue, 0.08)}; }
+.pf-emp-go { opacity: 0; transform: translateX(-4px); transition: opacity .15s ease, transform .15s ease; }
+.pf-emp-item:hover .pf-emp-go { opacity: 1; transform: translateX(0); }
+@keyframes pf-emp-pop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 `;
 }
 
@@ -64,8 +74,7 @@ function todayStr() {
 }
 
 // submitted_at is a full timestamp (UTC). This gives the viewer's LOCAL
-// calendar date (YYYY-MM-DD) — slicing the raw string instead would show
-// the previous day for anything submitted early morning IST.
+// calendar date (YYYY-MM-DD).
 function localDateStr(iso: string | null) {
     if (!iso) return null;
     const d = new Date(iso);
@@ -75,6 +84,14 @@ function localDateStr(iso: string | null) {
     ).padStart(2, "0")}`;
 }
 
+// NEW: the day (local, YYYY-MM-DD) this work was ALLOCATED to the employee.
+// Today / Past split uses this, NOT the case's workDate — so an old pending
+// case that is allocated today still shows under Today's Allocation.
+// Falls back to workDate when there is no allocation timestamp.
+function allocDay(allocatedAt?: string | null, workDate?: string | null) {
+    return localDateStr(allocatedAt || null) || workDate || "";
+}
+
 function formatDisplayDate(iso: string | null) {
     if (!iso) return "-";
     const [y, m, d] = iso.split("-");
@@ -82,10 +99,42 @@ function formatDisplayDate(iso: string | null) {
     return `${d}-${m}-${y}`;
 }
 
-// Guards against the classic "Unexpected token '<', ... is not valid JSON"
-// crash — that happens when the API URL is wrong or the route 404s and the
-// server sends back an HTML error page instead of JSON. Instead of trying
-// to JSON.parse HTML, this gives a clear, actionable error message.
+// NEW: full timestamp -> "05-10-2026, 02:30 PM" (viewer's local time)
+function formatDateTime(iso: string | null | undefined) {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "-";
+    const date = `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(
+        2,
+        "0"
+    )}-${d.getFullYear()}`;
+    const time = d.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+    return `${date}, ${time}`;
+}
+
+// NEW: milliseconds -> "3h 20m"
+function formatDuration(ms: number) {
+    const mins = Math.floor(Math.max(ms, 0) / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h === 0 ? `${m}m` : `${h}h ${m}m`;
+}
+
+// NEW: minutes -> "2h 30m"
+function formatMinutes(mins: number) {
+    const total = Math.round(mins);
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return h === 0 ? `${m}m` : `${h}h ${m}m`;
+}
+
+// Guards against the classic "Unexpected token '<' ... is not valid JSON"
+// crash — when the API URL is wrong or the route 404s and the server
+// sends back an HTML error page instead of JSON.
 async function safeJson(res: Response) {
     const contentType = res.headers.get("content-type") || "";
     if (!contentType.includes("application/json")) {
@@ -130,6 +179,16 @@ type EmployeeData = {
     bio?: string | null;
 };
 
+// NEW: one entry in the employee search dropdown (Super Admin / Ops Manager).
+type SearchEmp = {
+    id: string;
+    name: string;
+    email: string;
+    team?: string | null;
+    department?: string | null;
+    designation?: string | null;
+};
+
 // Everything an employee can report when submitting a case. The stored
 // value for "Completed by Team" is still DONE_BY_TEAM (only its label was
 // renamed) so older rows keep working.
@@ -158,10 +217,16 @@ type CaseRow = {
     workDate: string;
     profile: string;
     allocationStatus: string;
+    // NEW: when this case was allocated to me (timestamp)
+    allocatedAt?: string | null;
     submissionStatus: "PENDING" | "SUBMITTED";
     submissionType: SubmissionType | null;
     queryText: string;
     submittedAt: string | null;
+    clientId?: string | null;
+    clientName?: string | null;
+    subclientId?: string | null;
+    subclientName?: string | null;
 };
 
 function isSubmitted(c: CaseRow) {
@@ -179,10 +244,8 @@ function isOpenQuery(c: CaseRow) {
     return isSubmitted(c) && c.submissionType === "QUERY";
 }
 
-// A query that has since been completed. When a query is resolved the
-// backend keeps its query_text (a normal submit clears it for non-query
-// outcomes), so "was a query, now completed" = submitted + no longer
-// "QUERY" + query text still present.
+// A query that has since been completed (backend keeps query_text on
+// resolve, a normal submit clears it for non-query outcomes).
 function isResolvedQuery(c: CaseRow) {
     return (
         isSubmitted(c) &&
@@ -192,10 +255,20 @@ function isResolvedQuery(c: CaseRow) {
     );
 }
 
+// NEW: pending -> "3h 20m ago" (how long since it was allocated),
+// submitted -> "Done in 2h 10m" (allocation to submit).
+function allocAgeLabel(c: CaseRow) {
+    if (!c.allocatedAt) return "";
+    const start = new Date(c.allocatedAt).getTime();
+    if (Number.isNaN(start)) return "";
+    if (isSubmitted(c) && c.submittedAt) {
+        return `Done in ${formatDuration(new Date(c.submittedAt).getTime() - start)}`;
+    }
+    return `${formatDuration(Date.now() - start)} ago`;
+}
+
 // ---- "Normal" (quantity-based) allocation — the OLDER flow, from
-// Daily Work batches via /api/allocations. Case Register's per-case
-// flow (above) exists ALONGSIDE this, not instead of it — a task can
-// be handed out either way, so this page shows both kinds together.
+// Daily Work batches via /api/allocations.
 type BatchRow = {
     id: string;
     daily_work_id: string;
@@ -221,14 +294,10 @@ function isBatchDone(b: BatchRow) {
         b.submitted_qty >= b.allocated_qty
     );
 }
+void isBatchDone;
 
-// ---- Self Allocation modal — "Self Allocate" button on this page. A
-// service only shows up here if the LOGGED-IN EMPLOYEE'S OWN TEAM is one
-// of the teams tagged on that service (service_master.teams — see
-// products.service.js). That's the only alignment concept this app has
-// (there's no separate per-employee service link, just per-employee
-// team + per-service teams[]), so "service jisse woh khud/uski team
-// align hai" collapses to exactly this one check.
+// ---- Self Allocation modal — a service only shows up here if the
+// LOGGED-IN EMPLOYEE'S OWN TEAM is one of the teams tagged on that service.
 type ServiceOption = {
     id: string;
     product_name: string;
@@ -245,10 +314,64 @@ type SelfAllocCase = {
     workDate: string;
 };
 
-function batchPendingQty(b: BatchRow) {
-    const already = b.submitted_qty ?? 0;
-    return Math.max(b.allocated_qty - already, 0);
-}
+// clients / subclients for the "add client" dropdowns (ids are kept as
+// strings everywhere so comparisons between <select> values and ids work).
+type ClientOption = { id: string; name: string };
+type SubclientOption = { id: string; name: string; clientId: string };
+
+// COUNT-ONLY work ("20 cases pending", no case numbers yet).
+//  - MyCountRow: units allocated to ME that still need real case numbers.
+//  - AvailableCountRow: units nobody has taken yet (Self Allocate -> Counts).
+type MyCountRow = {
+    id: string;
+    productId: string;
+    productName: string | null;
+    clientId: string | null;
+    clientName: string | null;
+    subclientId: string | null;
+    subclientName: string | null;
+    workDate: string;
+    quantity: number;
+    allocatedToMe: number;
+    addedByMe: number;
+    remaining: number;
+    // NEW: when these units were allocated to me (timestamp)
+    allocatedAt?: string | null;
+};
+type AvailableCountRow = {
+    id: string;
+    productId: string;
+    productName: string | null;
+    clientId: string | null;
+    clientName: string | null;
+    subclientId: string | null;
+    subclientName: string | null;
+    workDate: string;
+    quantity: number;
+    unallocated: number;
+    allocatedToMe: number;
+};
+
+// one row in the "Add Case Numbers" popup: case number + its own
+// client / subclient + its status. Every case can have a DIFFERENT client.
+// "WIP" and "PENDING" both mean "just add the case, don't submit it yet".
+type AddCnRow = {
+    cn: string;
+    status: "WIP" | "PENDING" | SubmissionType;
+    query: string;
+    clientId: string;
+    subclientId: string;
+};
+
+// a fresh row — if the count already has a client / subclient, start with it
+// (the user can still change it per case).
+const blankAddCnRow = (mc: MyCountRow | null): AddCnRow => ({
+    cn: "",
+    status: "WIP",
+    query: "",
+    clientId: mc?.clientId || "",
+    subclientId: mc?.subclientId || "",
+});
 
 interface ProfileProps {
     onLogout: () => void;
@@ -332,13 +455,6 @@ const ClockIcon = () => (
         <path d="M12 7v5l3 3" />
     </Icon>
 );
-const AlertIcon = () => (
-    <Icon>
-        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-        <path d="M12 9v4" />
-        <path d="M12 17h.01" />
-    </Icon>
-);
 const DownloadIcon = () => (
     <Icon size={13}>
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -361,16 +477,43 @@ const QueryIcon = () => (
     </Icon>
 );
 
+// Bolds the part of `text` that matches what the user typed in the search box.
+function HighlightMatch({ text, q, color }: { text: string; q: string; color: string }) {
+    const query = q.trim();
+    if (!query) return <>{text}</>;
+    const i = text.toLowerCase().indexOf(query.toLowerCase());
+    if (i < 0) return <>{text}</>;
+    return (
+        <>
+            {text.slice(0, i)}
+            <span style={{ color, background: `${color}1A`, borderRadius: 4, padding: "0 2px" }}>
+                {text.slice(i, i + query.length)}
+            </span>
+            {text.slice(i + query.length)}
+        </>
+    );
+}
+
+function empInitials(name: string) {
+    return (
+        name
+            .split(" ")
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((w) => w[0]?.toUpperCase())
+            .join("") || "?"
+    );
+}
+
 /* ---------------------------------------------------------------------- */
 /*  Main component                                                         */
 /* ---------------------------------------------------------------------- */
 
 export default function Profile({ onLogout }: ProfileProps) {
+    void onLogout;
     const isMobile = useIsMobile();
     const { colors: themeColors } = useTheme();
     const { getRoleLabel } = useRoleLabels();
-    // amber/red are fixed status colors (not part of the theme palette),
-    // appended onto the active blue/lightBlue/green from useTheme().
     const BRAND = {
         blue: themeColors.blue,
         lightBlue: themeColors.lightBlue,
@@ -385,8 +528,6 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [employee, setEmployee] = useState<EmployeeData | null>(null);
     const [cases, setCases] = useState<CaseRow[]>([]);
-    // NEW: quantity-based batch allocations, shown alongside case
-    // allocations (see BatchRow above) — not a replacement for them.
     const [batches, setBatches] = useState<BatchRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -400,22 +541,17 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [photoError, setPhotoError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    // NEW: click the avatar to view it full-size, like the photo
-    // lightboxes in most other apps. Purely a view — the camera/edit
-    // button (a separate element on top of the avatar) still opens the
-    // file picker as before.
     const [isAvatarPreviewOpen, setIsAvatarPreviewOpen] = useState(false);
 
     const [activeTab, setActiveTab] = useState<"today" | "past">("today");
+    // Which list is open under the tabs — "Cases" or "Counts".
+    const [allocView, setAllocView] = useState<"cases" | "counts">("cases");
     const [dateFilter, setDateFilter] = useState("");
     const [productFilter, setProductFilter] = useState("all");
     const [statusFilter, setStatusFilter] = useState<"all" | "PENDING" | "SUBMITTED">("all");
     const [search, setSearch] = useState("");
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    // What the employee is reporting for the selected case — mandatory
-    // before "Submit Work" is enabled. "QUERY" additionally requires
-    // submitQueryText to be filled in.
     const [submitType, setSubmitType] = useState<"" | SubmissionType>("");
     const [submitQueryText, setSubmitQueryText] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -424,38 +560,28 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     // ---- Bulk Submit (every pending case for today, in one click) ----
     const [showBulkModal, setShowBulkModal] = useState(false);
-    // Per-row outcome + query text for the bulk modal. Rows default to
-    // "PENDING" (meaning "not touched, don't submit this one") — the
-    // employee only needs to change the rows they actually want to
-    // submit right now; anything left on "Pending" is simply skipped,
-    // not blocked on.
+    // Rows default to "PENDING" (shown as "WIP") — meaning "not touched,
+    // don't submit this one".
     const [bulkTypeById, setBulkTypeById] = useState<Record<string, "PENDING" | SubmissionType>>(
         {}
     );
     const [bulkQueryById, setBulkQueryById] = useState<Record<string, string>>({});
     const [bulkSubmitting, setBulkSubmitting] = useState(false);
     const [bulkError, setBulkError] = useState<string | null>(null);
-    // Search within the bulk modal — needed once there are dozens/
-    // hundreds of pending cases and the employee wants to find a
-    // specific one instead of scrolling.
     const [bulkSearch, setBulkSearch] = useState("");
 
-    // ---- All Query modal (every query raised, how many are still open
-    // and how many have been completed) ----
+    // ---- All Query modal ----
     const [showQueryModal, setShowQueryModal] = useState(false);
     const [queryView, setQueryView] = useState<"OPEN" | "RESOLVED">("OPEN");
     const [querySearch, setQuerySearch] = useState("");
-    // How the employee picked to complete each open query (per row).
     const [resolveTypeById, setResolveTypeById] = useState<Record<string, QueryResolution | "">>(
         {}
     );
     const [resolvingId, setResolvingId] = useState<string | null>(null);
     const [queryError, setQueryError] = useState<string | null>(null);
-    // Neutral info line (not an error) — e.g. "already completed by someone else".
     const [queryNotice, setQueryNotice] = useState<string | null>(null);
 
-    // ---- Self Allocation modal (pick a service you're aligned to →
-    // pick up remaining/pending cases on it, for yourself) ----
+    // ---- Self Allocation modal ----
     const [showSelfAllocModal, setShowSelfAllocModal] = useState(false);
     const [selfAllocServices, setSelfAllocServices] = useState<ServiceOption[]>([]);
     const [selfAllocServicesLoading, setSelfAllocServicesLoading] = useState(false);
@@ -468,6 +594,33 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [selfAllocSubmitting, setSelfAllocSubmitting] = useState(false);
     const [selfAllocSuccessCount, setSelfAllocSuccessCount] = useState<number | null>(null);
     const [selfAllocToast, setSelfAllocToast] = useState("");
+
+    // Self Allocate can also take COUNT-ONLY work (no case number yet).
+    const [selfAllocMode, setSelfAllocMode] = useState<"cases" | "counts">("cases");
+    const [availableCounts, setAvailableCounts] = useState<AvailableCountRow[]>([]);
+    const [availableCountsLoading, setAvailableCountsLoading] = useState(false);
+    const [availableCountsError, setAvailableCountsError] = useState<string | null>(null);
+    const [selfAllocQtyById, setSelfAllocQtyById] = useState<Record<string, number>>({});
+
+    // Counts allocated to me (today AND past, including fully-added ones).
+    const [myCounts, setMyCounts] = useState<MyCountRow[]>([]);
+    // "Add Case Numbers" popup for one of those counts. Client / subclient
+    // now live on EACH ROW (addCnRows), not as one popup-wide value.
+    const [addCnCount, setAddCnCount] = useState<MyCountRow | null>(null);
+    const [addCnRows, setAddCnRows] = useState<AddCnRow[]>([]);
+    const [addCnSubmitting, setAddCnSubmitting] = useState(false);
+    const [addCnError, setAddCnError] = useState<string | null>(null);
+    // client / subclient lists + saving state for the table's client column.
+    const [clients, setClients] = useState<ClientOption[]>([]);
+    const [subclients, setSubclients] = useState<SubclientOption[]>([]);
+    const [savingClientCaseId, setSavingClientCaseId] = useState<string | null>(null);
+    const [clientCellError, setClientCellError] = useState<string | null>(null);
+
+    // NEW: service AMP (time per case) in MINUTES, keyed by product id.
+    // Comes from /api/products (time_taken + time_unit = minutes | hours).
+    const [productAmp, setProductAmp] = useState<Record<string, number>>({});
+    const ampOf = (productId: string | null | undefined) =>
+        productId ? productAmp[String(productId)] || 0 : 0;
 
     // Success toast for Submit Work / Bulk Submit / completing a query.
     const [toastMsg, setToastMsg] = useState("");
@@ -493,34 +646,207 @@ export default function Profile({ onLogout }: ProfileProps) {
     })();
     const myId: string | null = cachedUser?.id || cachedUser?.userId || null;
 
+    // ---------------------------------------------------------------
+    // NEW: Employee search (Super Admin / Ops Manager only).
+    // Picking an employee opens THEIR profile on this same page, in the
+    // same format. Submit / Bulk Submit / All Query work on their behalf
+    // (onBehalfOf); everything else stays read-only. viewingRef is what
+    // loadAll/refreshCases read (so they always see the latest value);
+    // viewingId is state so the UI re-renders.
+    // ---------------------------------------------------------------
+    const canViewOthers = VIEW_OTHERS_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
+    const viewingRef = useRef<string | null>(null);
+    const [viewingId, setViewingId] = useState<string | null>(null);
+    const isViewingOther = !!viewingId && viewingId !== myId;
+    const [empList, setEmpList] = useState<SearchEmp[]>([]);
+    const [empQuery, setEmpQuery] = useState("");
+    const [empDropOpen, setEmpDropOpen] = useState(false);
+    const empBoxRef = useRef<HTMLDivElement>(null);
+
+    const loadEmpList = async () => {
+        if (!canViewOthers) return;
+        try {
+            const res = await authFetch(`${API_BASE}/api/employees`, { cache: "no-store" });
+            if (!res.ok) return;
+            const list = await res.json();
+            setEmpList(
+                (Array.isArray(list) ? list : list?.data || []).map((e: any) => ({
+                    id: String(e.id),
+                    name: e.name || "",
+                    email: e.email || "",
+                    team: e.team || null,
+                    department: e.department || null,
+                    designation: e.designation || null,
+                }))
+            );
+        } catch (err) {
+            console.error("Failed to load employees list:", err);
+        }
+    };
+
+    const empMatches = useMemo(() => {
+        const q = empQuery.trim().toLowerCase();
+        if (!q) return [];
+        return empList
+            .filter(
+                (e) =>
+                    e.id !== String(myId) &&
+                    `${e.name} ${e.email} ${e.team || ""} ${e.department || ""}`
+                        .toLowerCase()
+                        .includes(q)
+            )
+            .slice(0, 8);
+    }, [empQuery, empList, myId]);
+
+    // Close the search dropdown when clicking anywhere outside it.
+    useEffect(() => {
+        if (!empDropOpen) return;
+        const onDown = (e: MouseEvent) => {
+            if (empBoxRef.current && !empBoxRef.current.contains(e.target as Node)) {
+                setEmpDropOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onDown);
+        return () => document.removeEventListener("mousedown", onDown);
+    }, [empDropOpen]);
+
+    // Alt+K focuses the employee search (only for roles that have it).
+    const empInputRef = useRef<HTMLInputElement>(null);
+    useEffect(() => {
+        if (!canViewOthers) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.altKey && e.key.toLowerCase() === "k") {
+                e.preventDefault();
+                empInputRef.current?.focus();
+                setEmpDropOpen(true);
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [canViewOthers]);
+
+    // Opens another employee's profile (id) or goes back to your own (null).
+    const openEmployee = (id: string | null) => {
+        const next = id && id !== String(myId) ? id : null;
+        viewingRef.current = next;
+        setViewingId(next);
+        setEmpQuery("");
+        setEmpDropOpen(false);
+        setSelectedId(null);
+        setEditingProfile(false);
+        setProfileSaveError(null);
+        setPhotoError(null);
+        setActiveTab("today");
+        setAllocView("cases");
+        setDateFilter("");
+        setProductFilter("all");
+        setStatusFilter("all");
+        setSearch("");
+        setShowQueryModal(false);
+        setCases([]);
+        setBatches([]);
+        setMyCounts([]);
+        setEmployee(null);
+        setProfile(null);
+        setPhotoPreview(null);
+        loadAll();
+    };
+
+    // All counts allocated to me — every date, and also the ones whose case
+    // numbers are all added already (remaining = 0), so Past Allocation can
+    // show them as done.
+    const loadMyCounts = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/my-counts?includeAll=true`);
+            const json = await safeJson(res);
+            if (res.ok && json.success) setMyCounts(json.data?.mine || []);
+        } catch (err) {
+            console.error("Failed to load my counts:", err);
+        }
+    };
+
+    // client + subclient lists for the "add client / subclient" dropdowns.
+    const loadClientLists = async () => {
+        try {
+            const [cRes, sRes] = await Promise.all([
+                authFetch(`${API_BASE}/api/clients`),
+                authFetch(`${API_BASE}/api/clients/all/subclients`),
+            ]);
+            if (cRes.ok) {
+                const json = await safeJson(cRes);
+                const list = Array.isArray(json) ? json : json?.data || [];
+                setClients(list.map((c: any) => ({ id: String(c.id), name: c.name })));
+            }
+            if (sRes.ok) {
+                const json = await safeJson(sRes);
+                const list = Array.isArray(json) ? json : json?.data || [];
+                setSubclients(
+                    list.map((s: any) => ({
+                        id: String(s.id),
+                        name: s.name,
+                        clientId: String(s.clientId),
+                    }))
+                );
+            }
+        } catch (err) {
+            console.error("Failed to load clients:", err);
+        }
+    };
+
+    // NEW: loads every service's AMP (time per case, converted to minutes).
+    const loadProductAmps = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/products`);
+            if (!res.ok) return;
+            const json = await safeJson(res);
+            const list = Array.isArray(json) ? json : json?.data || [];
+            const map: Record<string, number> = {};
+            list.forEach((p: any) => {
+                const t = Number(p.time_taken);
+                if (!t || Number.isNaN(t)) return;
+                map[String(p.id)] = p.time_unit === "hours" ? t * 60 : t;
+            });
+            setProductAmp(map);
+        } catch (err) {
+            console.error("Failed to load service AMP:", err);
+        }
+    };
+
+    // The cases URL: own cases (mine=true) or another employee's (employeeId=).
+    const casesUrl = (targetId: string | null) =>
+        targetId
+            ? `${API_BASE}/api/service-cases?employeeId=${encodeURIComponent(targetId)}&pageSize=2000`
+            : `${API_BASE}/api/service-cases?mine=true&pageSize=2000`;
+
     const loadAll = async () => {
         setLoading(true);
         setError(null);
         try {
-            // Fetch the profile FIRST and read the user id straight off
-            // its response (server-resolved from the auth token) rather
-            // than from localStorage — the earlier "cases disappear
-            // after login" bug was exactly this: a client-cached id that
-            // can be momentarily stale/missing right after a fresh
-            // login/logout. Cases don't need an id at all (mine=true
-            // resolves server-side), but /api/allocations DOES require
-            // an explicit employeeId to scope to just this person, so it
-            // needs a reliable id source too.
-            const profileRes = await authFetch(`${API_BASE}/api/profile`);
-            const profileJson = await safeJson(profileRes);
-            let selfId: string | null = myId;
-            if (profileRes.ok && profileJson.success) {
-                setProfile(profileJson.data);
-                selfId = profileJson.data?.user_id || selfId;
+            // Which employee are we showing? null = me.
+            const targetId =
+                viewingRef.current && viewingRef.current !== String(myId)
+                    ? viewingRef.current
+                    : null;
+            let selfId: string | null = targetId || myId;
+
+            if (!targetId) {
+                // Fetch the profile FIRST and read the user id straight off its
+                // response (server-resolved from the auth token) rather than
+                // from localStorage.
+                const profileRes = await authFetch(`${API_BASE}/api/profile`);
+                const profileJson = await safeJson(profileRes);
+                if (profileRes.ok && profileJson.success) {
+                    setProfile(profileJson.data);
+                    selfId = profileJson.data?.user_id || selfId;
+                }
+            } else {
+                setProfile(null);
             }
 
-            // NEW: cases and "normal" quantity-based batch allocations
-            // are fetched together — a task can be handed out either
-            // way, so both need to show up here side by side, not one
-            // replacing the other.
             const [employeeRes, casesRes, batchesRes] = await Promise.all([
                 selfId ? authFetch(`${API_BASE}/api/employees/${selfId}`) : Promise.resolve(null),
-                authFetch(`${API_BASE}/api/service-cases?mine=true&pageSize=2000`),
+                authFetch(casesUrl(targetId)),
                 selfId
                     ? authFetch(`${API_BASE}/api/allocations?employeeId=${selfId}`)
                     : Promise.resolve(null),
@@ -532,18 +858,29 @@ export default function Profile({ onLogout }: ProfileProps) {
             }
             const casesJson = await safeJson(casesRes);
             if (casesRes.ok && casesJson.success) {
-                setCases(casesJson.data || []);
+                // ids normalized to strings so they match the client/subclient dropdowns
+                setCases(
+                    (casesJson.data || []).map((row: any) => ({
+                        ...row,
+                        productId: row.productId != null ? String(row.productId) : row.productId,
+                        clientId: row.clientId != null ? String(row.clientId) : null,
+                        subclientId: row.subclientId != null ? String(row.subclientId) : null,
+                    }))
+                );
             } else {
-                console.error("Failed to load my cases:", casesJson?.message);
+                console.error("Failed to load cases:", casesJson?.message);
             }
             if (batchesRes) {
                 const batchesJson = await safeJson(batchesRes);
                 if (batchesRes.ok && batchesJson.success) {
                     setBatches(batchesJson.data || []);
                 } else {
-                    console.error("Failed to load my batch allocations:", batchesJson?.message);
+                    console.error("Failed to load batch allocations:", batchesJson?.message);
                 }
             }
+            // Counts endpoint is always "me" — skip it when viewing someone else.
+            if (!targetId) loadMyCounts();
+            else setMyCounts([]);
         } catch (err: any) {
             setError(err?.message || "Could not load your profile");
         } finally {
@@ -551,29 +888,39 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
-    // Quietly re-reads just my cases (no full-page loading flash). This is
-    // what lets a query that someone else completed — e.g. a manager
-    // marking it "Completed by Team" — leave "In Query" here without the
-    // employee having to reload the whole page.
+    // Quietly re-reads just the cases (no full-page loading flash).
     const lastCasesRefreshRef = useRef(0);
     const refreshCases = async () => {
         lastCasesRefreshRef.current = Date.now();
+        const targetId =
+            viewingRef.current && viewingRef.current !== String(myId) ? viewingRef.current : null;
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases?mine=true&pageSize=2000`);
+            const res = await authFetch(casesUrl(targetId));
             const json = await safeJson(res);
-            if (res.ok && json.success) setCases(json.data || []);
+            if (res.ok && json.success) {
+                setCases(
+                    (json.data || []).map((row: any) => ({
+                        ...row,
+                        productId: row.productId != null ? String(row.productId) : row.productId,
+                        clientId: row.clientId != null ? String(row.clientId) : null,
+                        subclientId: row.subclientId != null ? String(row.subclientId) : null,
+                    }))
+                );
+            }
         } catch (err) {
-            console.error("Failed to refresh my cases:", err);
+            console.error("Failed to refresh cases:", err);
         }
     };
 
     useEffect(() => {
         loadAll();
+        loadClientLists();
+        loadProductAmps();
+        loadEmpList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // While the All Query popup is open, re-check every 15s so a query
-    // completed by someone else disappears from "In Query" on its own.
+    // While the All Query popup is open, re-check every 15s.
     useEffect(() => {
         if (!showQueryModal) return;
         const timer = window.setInterval(() => {
@@ -583,8 +930,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showQueryModal, resolvingId]);
 
-    // Coming back to this tab (popup open or not) also re-checks, so the
-    // "All Query (N)" count on the button doesn't go stale.
+    // Coming back to this tab also re-checks.
     useEffect(() => {
         const onVisible = () => {
             if (
@@ -609,8 +955,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [employee, profile]);
 
-    // Close the avatar lightbox on Escape, same as clicking the backdrop
-    // or the X button.
+    // Close the avatar lightbox on Escape.
     useEffect(() => {
         if (!isAvatarPreviewOpen) return;
         const onKeyDown = (e: KeyboardEvent) => {
@@ -620,16 +965,20 @@ export default function Profile({ onLogout }: ProfileProps) {
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [isAvatarPreviewOpen]);
 
+    // When viewing someone else, never fall back to the logged-in user's
+    // own cached details (that would show YOUR email/role under THEIR name).
+    const fallbackUser = isViewingOther ? null : cachedUser;
+
     const name =
         profile?.first_name || profile?.last_name
             ? `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim()
             : employee?.name ||
-              (cachedUser?.firstName
-                  ? `${cachedUser.firstName} ${cachedUser.lastName || ""}`.trim()
-                  : cachedUser?.email || "User");
+              (fallbackUser?.firstName
+                  ? `${fallbackUser.firstName} ${fallbackUser.lastName || ""}`.trim()
+                  : fallbackUser?.email || "User");
 
-    const email = profile?.email || employee?.email || cachedUser?.email || "-";
-    const role = profile?.role || employee?.role || cachedUser?.role || "-";
+    const email = profile?.email || employee?.email || fallbackUser?.email || "-";
+    const role = profile?.role || employee?.role || fallbackUser?.role || "-";
     const department = profile?.department || employee?.department || "-";
     const team = employee?.workedInTeams || "-";
     const manager = employee?.reportingManager || "-";
@@ -644,6 +993,9 @@ export default function Profile({ onLogout }: ProfileProps) {
         .map((w: string) => w[0]?.toUpperCase())
         .join("");
 
+    // CHANGED: Today / Past is decided by the day the case was ALLOCATED
+    // (allocatedAt), not by the case's workDate. So an old pending case that
+    // is allocated today shows under Today's Allocation.
     const { todaysCases, pastCases } = useMemo(() => {
         const today = todayStr();
         const sorted = [...cases].sort(
@@ -652,13 +1004,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                 (b.caseNumber || "").localeCompare(a.caseNumber || "")
         );
         return {
-            todaysCases: sorted.filter((c) => c.workDate === today),
-            pastCases: sorted.filter((c) => c.workDate !== today),
+            todaysCases: sorted.filter((c) => allocDay(c.allocatedAt, c.workDate) === today),
+            pastCases: sorted.filter((c) => allocDay(c.allocatedAt, c.workDate) !== today),
         };
     }, [cases]);
 
-    // NEW: same today/past split for batch (quantity-based) allocations.
-    const { todaysBatches, pastBatches } = useMemo(() => {
+    // same today/past split for batch (quantity-based) allocations.
+    const { todaysBatches } = useMemo(() => {
         const today = todayStr();
         const sorted = [...batches].sort((a, b) =>
             (b.workDate || "").localeCompare(a.workDate || "")
@@ -668,46 +1020,91 @@ export default function Profile({ onLogout }: ProfileProps) {
             pastBatches: sorted.filter((b) => b.workDate !== today),
         };
     }, [batches]);
+    void todaysBatches;
 
-    const baseBatchRows = activeTab === "today" ? todaysBatches : pastBatches;
-    const batchStats = useMemo(() => {
-        const totalAllocated = todaysBatches.reduce((s, b) => s + (b.allocated_qty || 0), 0);
-        const submittedQty = todaysBatches.reduce((s, b) => s + (b.submitted_qty ?? 0), 0);
-        const pendingCount = todaysBatches.filter((b) => !isBatchDone(b)).length;
-        return { totalAllocated, submittedQty, pendingCount };
-    }, [todaysBatches]);
-
+    // service filter lists services from BOTH cases and counts.
     const products = useMemo(
-        () => Array.from(new Set(cases.map((c) => c.productName).filter(Boolean))) as string[],
-        [cases]
+        () =>
+            Array.from(
+                new Set(
+                    [
+                        ...cases.map((c) => c.productName),
+                        ...myCounts.map((m) => m.productName),
+                    ].filter(Boolean)
+                )
+            ) as string[],
+        [cases, myCounts]
     );
 
     const baseRows = activeTab === "today" ? todaysCases : pastCases;
 
     const filteredRows = useMemo(() => {
         return baseRows.filter((c) => {
-            if (dateFilter && c.workDate !== dateFilter) return false;
+            // CHANGED: date filter matches the allocation day
+            if (dateFilter && allocDay(c.allocatedAt, c.workDate) !== dateFilter) return false;
             if (productFilter !== "all" && c.productName !== productFilter) return false;
             if (statusFilter !== "all" && c.submissionStatus !== statusFilter) return false;
             if (search.trim()) {
                 const q = search.trim().toLowerCase();
                 const hay =
-                    `${c.caseNumber || ""} ${c.productName || ""} ${c.profile || ""}`.toLowerCase();
+                    `${c.caseNumber || ""} ${c.productName || ""} ${c.profile || ""} ${c.clientName || ""} ${c.subclientName || ""}`.toLowerCase();
                 if (!hay.includes(q)) return false;
             }
             return true;
         });
     }, [baseRows, dateFilter, productFilter, statusFilter, search]);
 
+    // counts for the active tab (Today / Past) — includes fully-added ones
+    // (remaining = 0) so already-submitted counts still show in Past.
+    // CHANGED: split by the day the count was allocated to me.
+    const filteredCounts = useMemo(() => {
+        const today = todayStr();
+        const q = search.trim().toLowerCase();
+        return myCounts
+            .filter((m) =>
+                activeTab === "today"
+                    ? allocDay(m.allocatedAt, m.workDate) === today
+                    : allocDay(m.allocatedAt, m.workDate) !== today
+            )
+            .filter((m) => !dateFilter || allocDay(m.allocatedAt, m.workDate) === dateFilter)
+            .filter((m) => productFilter === "all" || m.productName === productFilter)
+            .filter(
+                (m) =>
+                    !q ||
+                    `${m.productName || ""} ${m.clientName || ""} ${m.subclientName || ""}`
+                        .toLowerCase()
+                        .includes(q)
+            )
+            .sort((a, b) => (b.workDate || "").localeCompare(a.workDate || ""));
+    }, [myCounts, activeTab, dateFilter, productFilter, search]);
+
+    // only the counts that still need case numbers.
+    const countsToAdd = useMemo(
+        () => filteredCounts.reduce((s, m) => s + m.remaining, 0),
+        [filteredCounts]
+    );
+
     const stats = useMemo(() => {
+        const today = todayStr();
         const total = todaysCases.length;
         const submittedCount = todaysCases.filter(isSubmitted).length;
         const pendingCount = total - submittedCount;
-        return { total, submittedCount, pendingCount };
-    }, [todaysCases]);
 
-    // All Query: scoped to ALL of the employee's cases (every date), not
-    // just today — a query raised last week is still a query today.
+        // NEW: allocated time = cases x service AMP (minutes). Cases with a
+        // case number count 1 x AMP each; counts still waiting for case
+        // numbers count remaining x AMP.
+        const caseMins = todaysCases.reduce((s, c) => s + ampOf(c.productId), 0);
+        // CHANGED: counts allocated today (by allocation day)
+        const countMins = myCounts
+            .filter((m) => allocDay(m.allocatedAt, m.workDate) === today)
+            .reduce((s, m) => s + ampOf(m.productId) * m.remaining, 0);
+        const allocatedMins = caseMins + countMins;
+
+        return { total, submittedCount, pendingCount, allocatedMins };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [todaysCases, myCounts, productAmp]);
+
+    // All Query: scoped to ALL of the employee's cases (every date).
     const { openQueries, resolvedQueries } = useMemo(() => {
         const newestFirst = (a: CaseRow, b: CaseRow) =>
             (b.submittedAt || "").localeCompare(a.submittedAt || "") ||
@@ -746,8 +1143,6 @@ export default function Profile({ onLogout }: ProfileProps) {
         );
     };
 
-    // "Submit Work" only lights up once a status is picked, and — if
-    // that status is "Query" — the query text is filled in too.
     const canSubmitSingle =
         !!selected && !!submitType && (submitType !== "QUERY" || submitQueryText.trim() !== "");
 
@@ -762,6 +1157,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 body: JSON.stringify({
                     submissionType: submitType,
                     queryText: submitType === "QUERY" ? submitQueryText.trim() : undefined,
+                    onBehalfOf: isViewingOther ? viewingId : undefined,
                 }),
             });
             const json = await res.json();
@@ -780,24 +1176,20 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
-    // ---- Bulk Submit: every still-pending case for TODAY (the KPI
-    // cards above and this button both scope to "today" — pending work
-    // from past dates is handled per-row on the Past Allocation tab). ----
+    // ---- Bulk Submit: every still-pending case for TODAY ----
     const pendingTodayCases = useMemo(
         () => todaysCases.filter((c) => !isSubmitted(c)),
         [todaysCases]
     );
 
-    // Search within the modal — matches case number, service, or the
-    // status label/text the employee typed, so finding one case among
-    // many pending ones doesn't mean scrolling through all of them.
+    // Search within the modal — matches case number, service, or status label.
     const bulkVisibleCases = useMemo(() => {
         const q = bulkSearch.trim().toLowerCase();
         if (!q) return pendingTodayCases;
         const statusLabel = (id: string) => {
             const t = bulkTypeById[id];
             const label = SUBMISSION_OPTIONS.find((o) => o.value === t)?.label;
-            return label ? label.toLowerCase() : "pending";
+            return label ? label.toLowerCase() : "wip";
         };
         return pendingTodayCases.filter((c) => {
             const hay = `${c.caseNumber} ${c.productName || ""} ${statusLabel(c.id)}`.toLowerCase();
@@ -806,8 +1198,6 @@ export default function Profile({ onLogout }: ProfileProps) {
     }, [pendingTodayCases, bulkSearch, bulkTypeById]);
 
     const openBulkModal = () => {
-        // Default every row to "Pending" — the employee only changes
-        // the ones they're actually ready to submit right now.
         const initialType: Record<string, "PENDING" | SubmissionType> = {};
         const initialQuery: Record<string, string> = {};
         pendingTodayCases.forEach((c) => {
@@ -830,9 +1220,6 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     // ---- Self Allocation ----
-    // The employee's own team, straight off /api/employees/:id. Backend
-    // key is "team" (employees.service.js mapRow) — read that first,
-    // falling back to workedInTeams in case that ever gets aligned too.
     const myTeamRaw = ((employee as any)?.team ?? employee?.workedInTeams ?? "").toString().trim();
     const myTeamLower = myTeamRaw.toLowerCase();
 
@@ -843,6 +1230,10 @@ export default function Profile({ onLogout }: ProfileProps) {
         setSelfAllocCasesError(null);
         setSelfAllocSelectedIds(new Set());
         setSelfAllocSuccessCount(null);
+        setSelfAllocMode("cases");
+        setAvailableCounts([]);
+        setAvailableCountsError(null);
+        setSelfAllocQtyById({});
         setSelfAllocServicesError(null);
         setSelfAllocServicesLoading(true);
         try {
@@ -858,9 +1249,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                     teams: p.teams || [],
                 })
             );
-            // Only services this employee's team is aligned to — that's
-            // the whole alignment model this app has (no separate
-            // per-employee link, just per-team).
             const aligned = myTeamLower
                 ? all.filter((s) =>
                       (s.teams || []).some(
@@ -884,12 +1272,12 @@ export default function Profile({ onLogout }: ProfileProps) {
         setSelfAllocSelectedIds(new Set());
         setSelfAllocCasesError(null);
         setSelfAllocSuccessCount(null);
+        setSelfAllocMode("cases");
+        setAvailableCounts([]);
+        setAvailableCountsError(null);
+        setSelfAllocQtyById({});
     };
 
-    // Loads every still-PENDING case on the picked service — today's,
-    // plus any earlier-dated one that never got taken (same "today +
-    // backlog" widening the Cases tab itself uses) — so this is
-    // genuinely "whatever's still remaining", not just today's.
     const loadSelfAllocCases = async (serviceId: string) => {
         setSelfAllocServiceId(serviceId);
         setSelfAllocCases([]);
@@ -940,11 +1328,6 @@ export default function Profile({ onLogout }: ProfileProps) {
         );
     };
 
-    // Submits the checked cases in one go. Once allocated, a case moves
-    // to the employee's own "Today's Allocation" table on this same
-    // page — there's deliberately no un-allocate/delete action offered
-    // here, or anywhere else on this page, for the employee themselves;
-    // only a manager can clear an allocation (Cases tab's own "Clear").
     const submitSelfAllocation = async () => {
         const caseIds = Array.from(selfAllocSelectedIds);
         if (caseIds.length === 0) {
@@ -956,18 +1339,12 @@ export default function Profile({ onLogout }: ProfileProps) {
             const res = await authFetch(`${API_BASE}/api/service-cases/self-allocate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                // allocationDate: older-dated cases become today's work once claimed.
                 body: JSON.stringify({ caseIds, allocationDate: todayStr() }),
             });
             const json = await safeJson(res);
             if (!res.ok || !json.success) {
                 throw new Error(json.message || "Failed to allocate");
             }
-            // Switch the modal to a success screen instead of just a
-            // toast — the employee gets a clear confirmation, and
-            // closing it drops them straight back onto the Profile page
-            // (this page's own "Today's Allocation" table, freshly
-            // reloaded below) where they submit their work.
             setSelfAllocSuccessCount(json.data?.allocatedCount ?? caseIds.length);
             loadAll();
         } catch (err: any) {
@@ -977,10 +1354,270 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
+    // ---------------------------------------------------------------
+    // Self Allocate -> Counts (work that has no case number yet)
+    // ---------------------------------------------------------------
+    const loadAvailableCounts = async (serviceId: string) => {
+        setSelfAllocServiceId(serviceId);
+        setAvailableCounts([]);
+        setSelfAllocQtyById({});
+        setAvailableCountsError(null);
+        if (!serviceId) return;
+        setAvailableCountsLoading(true);
+        try {
+            const params = new URLSearchParams({ productId: serviceId, workDate: todayStr() });
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/my-counts?${params.toString()}`
+            );
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to load remaining counts");
+            }
+            // Only the "available" list is used here. myCounts is loaded
+            // separately (all dates) by loadMyCounts, so don't overwrite it
+            // with this today-only response.
+            setAvailableCounts(json.data?.available || []);
+        } catch (err: any) {
+            setAvailableCountsError(err?.message || "Failed to load remaining counts");
+        } finally {
+            setAvailableCountsLoading(false);
+        }
+    };
+
+    const switchSelfAllocMode = (mode: "cases" | "counts") => {
+        if (mode === selfAllocMode) return;
+        setSelfAllocMode(mode);
+        if (selfAllocServiceId) {
+            if (mode === "counts") loadAvailableCounts(selfAllocServiceId);
+            else loadSelfAllocCases(selfAllocServiceId);
+        }
+    };
+
+    const setSelfAllocQty = (c: AvailableCountRow, raw: number) => {
+        const v = Math.max(0, Math.min(c.unallocated, Math.floor(Number(raw) || 0)));
+        setSelfAllocQtyById((prev) => ({ ...prev, [c.id]: v }));
+    };
+
+    const selfAllocPickedCount =
+        selfAllocMode === "counts"
+            ? availableCounts.reduce(
+                  (s, c) => s + Math.min(selfAllocQtyById[c.id] || 0, c.unallocated),
+                  0
+              )
+            : selfAllocSelectedIds.size;
+
+    const submitSelfAllocCounts = async () => {
+        const items = availableCounts
+            .map((c) => ({
+                countId: c.id,
+                quantity: Math.min(selfAllocQtyById[c.id] || 0, c.unallocated),
+            }))
+            .filter((i) => i.quantity > 0);
+        if (items.length === 0) {
+            showSelfAllocToast("Enter how many cases you want to take.");
+            return;
+        }
+        setSelfAllocSubmitting(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/my-counts/self-allocate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items }),
+            });
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to allocate");
+            }
+            setSelfAllocSuccessCount(json.data?.allocatedCount ?? selfAllocPickedCount);
+            loadAll();
+        } catch (err: any) {
+            showSelfAllocToast(err?.message || "Failed to allocate");
+        } finally {
+            setSelfAllocSubmitting(false);
+        }
+    };
+
+    // ---------------------------------------------------------------
+    // Add the real case numbers (+ client / subclient + status) to a
+    // count allocated to me. Every case can have its OWN client.
+    // ---------------------------------------------------------------
+    // rows that actually have a case number typed
+    const addCnParsed = useMemo(
+        () => addCnRows.filter((r) => r.cn.trim()).map((r) => ({ ...r, cn: r.cn.trim() })),
+        [addCnRows]
+    );
+
+    // how many of the typed case numbers will be submitted right away
+    // (WIP and Pending are only added, not submitted)
+    const addCnSubmitCount = addCnParsed.filter(
+        (r) => r.status !== "WIP" && r.status !== "PENDING"
+    ).length;
+
+    // true if any typed case is still missing its client (client is mandatory)
+    const addCnMissingClient = addCnParsed.some((r) => !r.clientId);
+
+    const setAddCnRow = (i: number, patch: Partial<AddCnRow>) =>
+        setAddCnRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+
+    // copy row 1's client / subclient onto every row (quick fill when most
+    // cases share the same client)
+    const applyFirstClientToAll = () =>
+        setAddCnRows((prev) =>
+            prev.length === 0
+                ? prev
+                : prev.map((r) => ({
+                      ...r,
+                      clientId: prev[0].clientId,
+                      subclientId: prev[0].subclientId,
+                  }))
+        );
+
+    // pasting several numbers (new lines / commas) into one box fills the rows below it
+    const pasteAddCnRows = (start: number, text: string) => {
+        const parts = text
+            .split(/[\n,\t]+/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        if (parts.length === 0) return;
+        const max = addCnCount?.remaining ?? parts.length;
+        setAddCnRows((prev) => {
+            const next = [...prev];
+            parts.forEach((p, j) => {
+                const idx = start + j;
+                if (idx >= max) return;
+                while (next.length <= idx) next.push(blankAddCnRow(addCnCount));
+                next[idx] = { ...next[idx], cn: p };
+            });
+            return next;
+        });
+    };
+
+    const openAddCaseNumbers = (mc: MyCountRow) => {
+        setAddCnCount(mc);
+        // one row per case still to add (first 10 shown, "+ Add row" for more)
+        setAddCnRows(Array.from({ length: Math.min(mc.remaining, 10) }, () => blankAddCnRow(mc)));
+        setAddCnError(null);
+    };
+
+    const closeAddCaseNumbers = () => {
+        if (addCnSubmitting) return;
+        setAddCnCount(null);
+    };
+
+    const submitAddCaseNumbers = async () => {
+        if (!addCnCount) return;
+        if (addCnParsed.length === 0) {
+            setAddCnError("Type at least one case number.");
+            return;
+        }
+        if (addCnParsed.length > addCnCount.remaining) {
+            setAddCnError(
+                `Only ${addCnCount.remaining} case(s) are allocated to you here — you typed ${addCnParsed.length}.`
+            );
+            return;
+        }
+        for (const r of addCnParsed) {
+            // Client is mandatory for every case.
+            if (!r.clientId) {
+                setAddCnError(`Select a client for ${r.cn}.`);
+                return;
+            }
+            if (r.status === "QUERY" && !r.query.trim()) {
+                setAddCnError(`Enter the query text for ${r.cn}.`);
+                return;
+            }
+        }
+        setAddCnSubmitting(true);
+        setAddCnError(null);
+        try {
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/my-counts/add-case-numbers`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        countId: addCnCount.id,
+                        caseNumbers: addCnParsed.map((r) => r.cn),
+                        // per case: its own client / subclient + status.
+                        // WIP / Pending = just add (sent to the backend as "WIP"),
+                        // anything else = add + submit.
+                        statuses: Object.fromEntries(
+                            addCnParsed.map((r) => [
+                                r.cn.toUpperCase(),
+                                {
+                                    submissionType: r.status === "PENDING" ? "WIP" : r.status,
+                                    queryText: r.status === "QUERY" ? r.query.trim() : undefined,
+                                    clientId: r.clientId,
+                                    subclientId: r.subclientId || undefined,
+                                },
+                            ])
+                        ),
+                    }),
+                }
+            );
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to add case numbers");
+            }
+            showToast(json.message || "Case numbers added.");
+            setAddCnCount(null);
+            loadAll();
+        } catch (err: any) {
+            setAddCnError(err?.message || "Failed to add case numbers");
+        } finally {
+            setAddCnSubmitting(false);
+        }
+    };
+
+    // ---------------------------------------------------------------
+    // client / subclient on a case — ADD only (empty field). Once a
+    // client / subclient is set it is locked (no dropdown shown).
+    // PATCH /:id/client-fill
+    // ---------------------------------------------------------------
+    const handleCaseClientChange = async (
+        c: CaseRow,
+        kind: "client" | "subclient",
+        value: string
+    ) => {
+        if (isViewingOther) return;
+        if (!value) return; // nothing to add
+        setClientCellError(null);
+        setSavingClientCaseId(c.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/client-fill`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(
+                    kind === "client" ? { clientId: value } : { subclientId: value }
+                ),
+            });
+            const json = await safeJson(res);
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || "Failed to update client");
+            }
+            const d = json.data || {};
+            setCases((prev) =>
+                prev.map((row) =>
+                    row.id === c.id
+                        ? {
+                              ...row,
+                              clientId: d.clientId != null ? String(d.clientId) : null,
+                              clientName: d.clientName ?? null,
+                              subclientId: d.subclientId != null ? String(d.subclientId) : null,
+                              subclientName: d.subclientName ?? null,
+                          }
+                        : row
+                )
+            );
+        } catch (err: any) {
+            setClientCellError(err?.message || "Failed to update client");
+        } finally {
+            setSavingClientCaseId(null);
+        }
+    };
+
     const setBulkType = (id: string, value: "PENDING" | SubmissionType) => {
         setBulkTypeById((prev) => ({ ...prev, [id]: value }));
-        // Switching away from "Query" clears any half-typed text so it
-        // doesn't get silently sent for a row that's no longer a query.
         if (value !== "QUERY") {
             setBulkQueryById((prev) => ({ ...prev, [id]: "" }));
         }
@@ -990,10 +1627,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         setBulkQueryById((prev) => ({ ...prev, [id]: value }));
     };
 
-    // Only rows the employee actually changed away from "Pending" get
-    // submitted — everything else is left pending for later, not
-    // blocked on. A "Query" row still needs its text filled in before
-    // it counts as ready.
+    // Only rows changed away from WIP get submitted.
     const bulkRowsToSubmit = useMemo(
         () =>
             pendingTodayCases.filter((c) => {
@@ -1037,7 +1671,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             const res = await authFetch(`${API_BASE}/api/service-cases/bulk-submit`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ items }),
+                body: JSON.stringify({ items, onBehalfOf: isViewingOther ? viewingId : undefined }),
             });
             const json = await safeJson(res);
             if (!res.ok || !json.success) {
@@ -1064,8 +1698,6 @@ export default function Profile({ onLogout }: ProfileProps) {
         setQueryNotice(null);
         setResolveTypeById({});
         setShowQueryModal(true);
-        // Always show the latest — someone else may have completed some
-        // of these since the page was loaded.
         refreshCases();
     };
 
@@ -1075,9 +1707,6 @@ export default function Profile({ onLogout }: ProfileProps) {
         setQueryNotice(null);
     };
 
-    // Marks one open query as completed (by me / the team / the client).
-    // The case then moves from "In Query" to "Query Completed" once the
-    // list is reloaded.
     const handleResolveQuery = async (c: CaseRow) => {
         const resolutionType = resolveTypeById[c.id];
         if (!resolutionType) {
@@ -1088,14 +1717,15 @@ export default function Profile({ onLogout }: ProfileProps) {
         setQueryNotice(null);
         setResolvingId(c.id);
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/resolve-query`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ resolutionType }),
-            });
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/${c.id}/${isViewingOther ? "complete-query" : "resolve-query"}`,
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ resolutionType }),
+                }
+            );
             const json = await safeJson(res);
-            // Someone else (a manager / admin) got there first — not an
-            // error. Just refresh; the row moves to "Query Completed".
             if (res.status === 409 && json.alreadyCompleted) {
                 setResolveTypeById((prev) => {
                     const next = { ...prev };
@@ -1126,6 +1756,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const handleSaveProfile = async () => {
+        if (isViewingOther) return;
         setSavingProfile(true);
         setProfileSaveError(null);
         try {
@@ -1158,6 +1789,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     const handlePhotoClick = () => fileInputRef.current?.click();
 
     const handlePhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+        if (isViewingOther) return;
         const file = e.target.files?.[0];
         if (!file) return;
         setPhotoError(null);
@@ -1194,12 +1826,23 @@ export default function Profile({ onLogout }: ProfileProps) {
     };
 
     const exportCsv = () => {
-        const header = ["#", "Case No.", "Service", "Date", "Status", "Outcome"];
+        const header = [
+            "#",
+            "Case No.",
+            "Service",
+            "Date",
+            "Allocated At",
+            "Time (AMP)",
+            "Status",
+            "Outcome",
+        ];
         const rows = filteredRows.map((c, i) => [
             i + 1,
             c.caseNumber,
             c.productName || "-",
             c.workDate,
+            `"${formatDateTime(c.allocatedAt)}"`,
+            ampOf(c.productId) ? formatMinutes(ampOf(c.productId)) : "-",
             isSubmitted(c) ? "Submitted" : "Pending",
             isSubmitted(c) ? outcomeLabel(c.submissionType) : "-",
         ]);
@@ -1215,10 +1858,126 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            {/* Same signature gradient rail used on Dashboard/Products pages */}
             <div style={styles.topBar} />
 
             <style>{hoverCss}</style>
+
+            {/* ---- NEW: Employee search (Super Admin / Ops Manager only) ---- */}
+            {canViewOthers && (
+                <div style={styles.empSearchCard}>
+                    <div ref={empBoxRef} style={styles.empPillWrap}>
+                        <div className="pf-emp-pill" style={styles.empPill}>
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                style={{ color: "#8A93A6", flexShrink: 0 }}
+                            >
+                                <circle cx="11" cy="11" r="7" />
+                                <path d="m20 20-3.5-3.5" />
+                            </svg>
+                            <input
+                                ref={empInputRef}
+                                style={styles.empPillInput}
+                                placeholder="Search employees (Ex: name, team or email)"
+                                value={empQuery}
+                                onChange={(e) => {
+                                    setEmpQuery(e.target.value);
+                                    setEmpDropOpen(true);
+                                }}
+                                onFocus={() => setEmpDropOpen(true)}
+                            />
+                            <span style={styles.empKbd}>Alt + K</span>
+                        </div>
+                        {empDropOpen && empQuery.trim() && (
+                            <div style={styles.empDropdown}>
+                                <div style={styles.empDropHeader}>
+                                    {empMatches.length === 0
+                                        ? "No results"
+                                        : `${empMatches.length} employee${
+                                              empMatches.length === 1 ? "" : "s"
+                                          } found`}
+                                </div>
+                                {empMatches.length === 0 ? (
+                                    <div
+                                        style={{ ...styles.smallMuted, padding: "10px 12px 14px" }}
+                                    >
+                                        No employee found for "{empQuery.trim()}".
+                                    </div>
+                                ) : (
+                                    empMatches.map((e) => (
+                                        <div
+                                            key={e.id}
+                                            className="pf-emp-item"
+                                            style={styles.empDropItem}
+                                            onClick={() => openEmployee(e.id)}
+                                        >
+                                            <div style={styles.empAvatar}>
+                                                {empInitials(e.name)}
+                                            </div>
+                                            <div style={styles.empItemBody}>
+                                                <div style={styles.empItemName}>
+                                                    <HighlightMatch
+                                                        text={e.name}
+                                                        q={empQuery}
+                                                        color={BRAND.blue}
+                                                    />
+                                                </div>
+                                                <div style={styles.empItemMeta}>
+                                                    {e.designation && (
+                                                        <span style={styles.empItemSub}>
+                                                            {e.designation}
+                                                        </span>
+                                                    )}
+                                                    {e.team && (
+                                                        <span style={styles.empChip}>{e.team}</span>
+                                                    )}
+                                                </div>
+                                                {e.email && (
+                                                    <div style={styles.empItemEmail}>
+                                                        <HighlightMatch
+                                                            text={e.email}
+                                                            q={empQuery}
+                                                            color={BRAND.blue}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <span className="pf-emp-go" style={styles.empGo}>
+                                                →
+                                            </span>
+                                        </div>
+                                    ))
+                                )}
+                                <div style={styles.empDropFooter}>
+                                    Click an employee to open their profile
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    {isViewingOther && (
+                        <button
+                            type="button"
+                            className="pf-btn pf-btn-outline"
+                            style={styles.exportBtn}
+                            onClick={() => openEmployee(null)}
+                        >
+                            ← Back to my profile
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {isViewingOther && (
+                <div style={styles.noteWarning}>
+                    Viewing <strong>{name}</strong>'s profile. You can submit work on their behalf.
+                </div>
+            )}
 
             {error && <div style={styles.noteWarning}>{error}</div>}
 
@@ -1238,16 +1997,18 @@ export default function Profile({ onLogout }: ProfileProps) {
                             ) : (
                                 <div style={styles.avatar}>{initials || "?"}</div>
                             )}
-                            <button
-                                type="button"
-                                style={styles.avatarEditBtn}
-                                className="pf-avatar-edit"
-                                onClick={handlePhotoClick}
-                                disabled={uploadingPhoto}
-                                title="Change photo"
-                            >
-                                <CameraIcon />
-                            </button>
+                            {!isViewingOther && (
+                                <button
+                                    type="button"
+                                    style={styles.avatarEditBtn}
+                                    className="pf-avatar-edit"
+                                    onClick={handlePhotoClick}
+                                    disabled={uploadingPhoto}
+                                    title="Change photo"
+                                >
+                                    <CameraIcon />
+                                </button>
+                            )}
                             <input
                                 ref={fileInputRef}
                                 type="file"
@@ -1268,30 +2029,36 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {editingProfile && (
+                    {!isViewingOther && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            {editingProfile && (
+                                <button
+                                    type="button"
+                                    className="pf-btn pf-btn-outline"
+                                    style={styles.cancelEditBtn}
+                                    disabled={savingProfile}
+                                    onClick={cancelEditProfile}
+                                >
+                                    Cancel
+                                </button>
+                            )}
                             <button
                                 type="button"
+                                style={styles.editProfileBtn}
                                 className="pf-btn pf-btn-outline"
-                                style={styles.cancelEditBtn}
                                 disabled={savingProfile}
-                                onClick={cancelEditProfile}
+                                onClick={() =>
+                                    editingProfile ? handleSaveProfile() : setEditingProfile(true)
+                                }
                             >
-                                Cancel
+                                {editingProfile
+                                    ? savingProfile
+                                        ? "Saving…"
+                                        : "Save"
+                                    : "Edit Profile"}
                             </button>
-                        )}
-                        <button
-                            type="button"
-                            style={styles.editProfileBtn}
-                            className="pf-btn pf-btn-outline"
-                            disabled={savingProfile}
-                            onClick={() =>
-                                editingProfile ? handleSaveProfile() : setEditingProfile(true)
-                            }
-                        >
-                            {editingProfile ? (savingProfile ? "Saving…" : "Save") : "Edit Profile"}
-                        </button>
-                    </div>
+                        </div>
+                    )}
                 </div>
 
                 <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
@@ -1306,9 +2073,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             <span style={styles.contactIcon}>
                                 <MailIcon />
                             </span>
-                            {/* FIX (#6 — clickable email): was plain text,
-                                now opens the user's mail client. Falls back
-                                to plain text if there's no email on file. */}
                             {email && email !== "-" ? (
                                 <a
                                     href={`mailto:${email}`}
@@ -1320,7 +2084,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <span style={styles.contactValue}>{email}</span>
                             )}
                         </div>
-                        {editingProfile ? (
+                        {editingProfile && !isViewingOther ? (
                             <div style={styles.editField}>
                                 <label style={styles.smallLabel}>Phone</label>
                                 <input
@@ -1337,10 +2101,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <span style={styles.contactIcon}>
                                     <PhoneIcon />
                                 </span>
-                                {/* FIX (#17 — clickable phone number): was
-                                    plain text, now dials/opens the user's
-                                    phone/calling app on tap. Strips spaces
-                                    so tel: links work on all devices. */}
                                 {phone && phone !== "-" ? (
                                     <a
                                         href={`tel:${phone.replace(/\s+/g, "")}`}
@@ -1378,7 +2138,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
                     <div style={styles.aboutBox}>
                         <div style={styles.aboutTitle}>About Me</div>
-                        {editingProfile ? (
+                        {editingProfile && !isViewingOther ? (
                             <textarea
                                 style={styles.aboutTextarea}
                                 rows={4}
@@ -1423,6 +2183,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                     sub="Awaiting submission"
                     styles={styles}
                 />
+                {/* NEW: total time allocated today = cases x service AMP */}
+                <StatCard
+                    icon={<ClockIcon />}
+                    tint={BRAND.lightBlue}
+                    value={stats.allocatedMins > 0 ? formatMinutes(stats.allocatedMins) : "0m"}
+                    label="Allocated Time"
+                    sub="Cases × service AMP"
+                    styles={styles}
+                />
             </div>
 
             {/* ---- Tabs + Export ---- */}
@@ -1453,14 +2222,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <QueryIcon /> All Query
                         {openQueries.length > 0 ? ` (${openQueries.length})` : ""}
                     </button>
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-outline"
-                        style={styles.exportBtn}
-                        onClick={openSelfAllocModal}
-                    >
-                        <BoxIcon /> Self Allocate
-                    </button>
+                    {!isViewingOther && (
+                        <button
+                            type="button"
+                            className="pf-btn pf-btn-outline"
+                            style={styles.exportBtn}
+                            onClick={openSelfAllocModal}
+                        >
+                            <BoxIcon /> Self Allocate
+                        </button>
+                    )}
                     <button
                         type="button"
                         className="pf-btn pf-btn-solid"
@@ -1489,6 +2260,32 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
             </div>
 
+            {/* ---- Counts / Cases toggle (works for Today's AND Past) ---- */}
+            {!isViewingOther && (
+                <div style={styles.allocViewRow}>
+                    <button
+                        type="button"
+                        className="pf-btn"
+                        style={
+                            allocView === "counts" ? styles.allocViewBtnActive : styles.allocViewBtn
+                        }
+                        onClick={() => setAllocView("counts")}
+                    >
+                        Counts ({filteredCounts.length})
+                    </button>
+                    <button
+                        type="button"
+                        className="pf-btn"
+                        style={
+                            allocView === "cases" ? styles.allocViewBtnActive : styles.allocViewBtn
+                        }
+                        onClick={() => setAllocView("cases")}
+                    >
+                        Cases ({filteredRows.length})
+                    </button>
+                </div>
+            )}
+
             {/* ---- Filters ---- */}
             <div style={isMobile ? styles.filterRowMobile : styles.filterRow}>
                 <div style={styles.filterField}>
@@ -1515,245 +2312,442 @@ export default function Profile({ onLogout }: ProfileProps) {
                         ))}
                     </select>
                 </div>
-                <div style={styles.filterField}>
-                    <label style={styles.smallLabel}>Status</label>
-                    <select
-                        style={styles.textInput}
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value as any)}
-                    >
-                        <option value="all">All</option>
-                        <option value="PENDING">Pending</option>
-                        <option value="SUBMITTED">Submitted</option>
-                    </select>
-                </div>
+                {allocView === "cases" && (
+                    <div style={styles.filterField}>
+                        <label style={styles.smallLabel}>Status</label>
+                        <select
+                            style={styles.textInput}
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value as any)}
+                        >
+                            <option value="all">All</option>
+                            <option value="PENDING">Pending</option>
+                            <option value="SUBMITTED">Submitted</option>
+                        </select>
+                    </div>
+                )}
                 <div style={{ ...styles.filterField, flex: 1 }}>
                     <label style={styles.smallLabel}>Search</label>
                     <input
                         style={styles.textInput}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search by case number, service or profile…"
-                    />
-                </div>
-            </div>
-
-            {/* ---- Table / mobile list ---- */}
-            <div className="pf-card-hover" style={styles.tableCard}>
-                {loading ? (
-                    <EmptyState text="Loading…" styles={styles} />
-                ) : filteredRows.length === 0 ? (
-                    <EmptyState
-                        text={
-                            activeTab === "today"
-                                ? "No allocation found for today."
-                                : "No past allocations found."
+                        placeholder={
+                            allocView === "cases"
+                                ? "Search by case number, service or profile…"
+                                : "Search by service or client…"
                         }
-                        styles={styles}
                     />
-                ) : isMobile ? (
-                    <div style={styles.allocList}>
-                        {filteredRows.map((c, i) => (
-                            <MobileRow
-                                key={c.id}
-                                index={i + 1}
-                                c={c}
-                                onSubmit={() => handlePickForSubmit(c)}
-                                onResolveQuery={openQueryModal}
-                                styles={styles}
-                            />
-                        ))}
-                    </div>
-                ) : (
-                    <table style={styles.table}>
-                        <colgroup>
-                            <col style={{ width: "5%" }} />
-                            <col style={{ width: "15%" }} />
-                            <col style={{ width: "21%" }} />
-                            <col style={{ width: "13%" }} />
-                            <col style={{ width: "14%" }} />
-                            <col style={{ width: "16%" }} />
-                            <col style={{ width: "16%" }} />
-                        </colgroup>
-                        <thead>
-                            <tr>
-                                <th style={styles.th}>#</th>
-                                <th style={styles.th}>Case No.</th>
-                                <th style={styles.th}>Service</th>
-                                <th style={styles.th}>Date</th>
-                                <th style={{ ...styles.th, textAlign: "center" }}>Status</th>
-                                <th style={{ ...styles.th, textAlign: "center" }}>Outcome</th>
-                                <th style={{ ...styles.th, textAlign: "center" }}>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredRows.map((c, i) => {
-                                const submitted = isSubmitted(c);
-                                return (
-                                    <tr
-                                        key={c.id}
-                                        className="pf-row"
-                                        style={{
-                                            ...styles.tr,
-                                            background: i % 2 === 1 ? "#FAFBFF" : "#fff",
-                                        }}
-                                    >
-                                        <td style={styles.td}>{i + 1}</td>
-                                        <td style={{ ...styles.td, fontWeight: fontWeight.bold }}>
-                                            {c.caseNumber}
-                                        </td>
-                                        <td style={styles.td}>{c.productName || "-"}</td>
-                                        <td style={styles.td}>{formatDisplayDate(c.workDate)}</td>
-                                        <td style={{ ...styles.td, textAlign: "center" }}>
-                                            <span
-                                                style={
-                                                    submitted
-                                                        ? styles.statusDone
-                                                        : styles.statusPending
-                                                }
-                                            >
-                                                {submitted ? "Submitted" : "Pending"}
-                                            </span>
-                                        </td>
-                                        <td style={{ ...styles.td, textAlign: "center" }}>
-                                            {submitted ? (
-                                                <>
-                                                    <span style={{ fontWeight: fontWeight.medium }}>
-                                                        {outcomeLabel(c.submissionType)}
-                                                    </span>
-                                                    {isResolvedQuery(c) && (
-                                                        <div style={styles.smallMuted}>
-                                                            Query resolved
-                                                        </div>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <span style={styles.smallMuted}>—</span>
-                                            )}
-                                        </td>
-                                        <td style={{ ...styles.td, textAlign: "center" }}>
-                                            {isOpenQuery(c) ? (
-                                                <button
-                                                    type="button"
-                                                    style={styles.rowSubmitBtn}
-                                                    onClick={openQueryModal}
-                                                >
-                                                    Resolve
-                                                </button>
-                                            ) : submitted ? (
-                                                <span style={styles.smallMuted}>
-                                                    {formatDisplayDate(localDateStr(c.submittedAt))}
-                                                </span>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    style={styles.rowSubmitBtn}
-                                                    onClick={() => handlePickForSubmit(c)}
-                                                >
-                                                    Submit
-                                                </button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                )}
+                </div>
             </div>
 
-            {/* ---- Submit Your Work ---- */}
-            <div ref={panelRef} className="pf-card-hover" style={styles.submitPanel}>
-                <div style={styles.submitPanelTitle}>Submit Your Work</div>
-                <div style={styles.submitPanelSub}>
-                    {selected
-                        ? `Confirm submission for case "${selected.caseNumber}"`
-                        : "Select a case from the table above to submit your work."}
-                </div>
-
-                {selected && (
-                    <div style={isMobile ? styles.submitGridMobile : styles.submitGrid}>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Case No.</label>
-                            <input
-                                style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                value={selected.caseNumber}
-                                disabled
-                            />
-                        </div>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Service</label>
-                            <input
-                                style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                value={selected.productName || "-"}
-                                disabled
-                            />
-                        </div>
-                        <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
-                            <label style={styles.smallLabel}>Status *</label>
-                            <select
-                                style={styles.textInput}
-                                value={submitType}
-                                onChange={(e) => {
-                                    const v = e.target.value as "" | SubmissionType;
-                                    setSubmitType(v);
-                                    if (v !== "QUERY") setSubmitQueryText("");
-                                }}
-                            >
-                                <option value="">Select status</option>
-                                {SUBMISSION_OPTIONS.map((o) => (
-                                    <option key={o.value} value={o.value}>
-                                        {o.label}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        {submitType === "QUERY" && (
-                            <div style={{ ...styles.filterField, flex: 1, minWidth: 220 }}>
-                                <label style={styles.smallLabel}>Query *</label>
-                                <input
-                                    style={styles.textInput}
-                                    value={submitQueryText}
-                                    onChange={(e) => setSubmitQueryText(e.target.value)}
-                                    placeholder="Describe the query…"
-                                />
+            {/* ---- Counts view ---- */}
+            {!isViewingOther && allocView === "counts" && (
+                <div className="pf-card-hover" style={styles.countsCard}>
+                    <div style={styles.countsCardHeader}>
+                        <div>
+                            <div style={styles.countsCardTitle}>Cases waiting for case numbers</div>
+                            <div style={styles.smallMuted}>
+                                These were allocated to you as a count. Add the real case number(s),
+                                pick the client for each case and a status — each one becomes a
+                                case, submitted right away or kept as WIP.
                             </div>
+                        </div>
+                        <span style={styles.countsBadge}>{countsToAdd} to add</span>
+                    </div>
+                    {filteredCounts.length === 0 ? (
+                        <EmptyState
+                            text={
+                                activeTab === "today"
+                                    ? "No counts waiting for today."
+                                    : "No past counts found."
+                            }
+                            styles={styles}
+                        />
+                    ) : (
+                        filteredCounts.map((mc) => {
+                            const done = mc.remaining === 0;
+                            const mcAmp = ampOf(mc.productId);
+                            return (
+                                <div key={mc.id} style={styles.countsRow}>
+                                    <div style={styles.countsRowMain}>
+                                        <strong>{mc.productName || "-"}</strong>
+                                        <span style={styles.smallMuted}>
+                                            {[mc.clientName, mc.subclientName]
+                                                .filter(Boolean)
+                                                .join(" / ") || "No client yet"}{" "}
+                                            · {formatDisplayDate(mc.workDate)}
+                                            {mc.allocatedAt && (
+                                                <> · Allocated {formatDateTime(mc.allocatedAt)}</>
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div style={styles.countsRowNums}>
+                                        {done ? (
+                                            <span style={styles.statusDone}>All added</span>
+                                        ) : (
+                                            <>
+                                                <strong>{mc.remaining}</strong> to add
+                                            </>
+                                        )}
+                                        <span style={styles.smallMuted}>
+                                            {" "}
+                                            ({mc.addedByMe}/{mc.allocatedToMe} added)
+                                        </span>
+                                        {mcAmp > 0 && (
+                                            <span style={styles.smallMuted}>
+                                                {" "}
+                                                · {formatMinutes(mcAmp * mc.allocatedToMe)} total
+                                            </span>
+                                        )}
+                                    </div>
+                                    {!done && (
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-solid"
+                                            style={styles.rowSubmitBtn}
+                                            onClick={() => openAddCaseNumbers(mc)}
+                                        >
+                                            Submit Case Numbers
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            )}
+
+            {(isViewingOther || allocView === "cases") && (
+                <>
+                    <div style={styles.allocSummaryRow}>
+                        <span style={styles.allocSummaryChip}>
+                            Allocated: {filteredRows.length + countsToAdd}
+                        </span>
+                        <span style={styles.allocSummaryChip}>
+                            With case number: {filteredRows.length}
+                        </span>
+                        {!isViewingOther && (
+                            <span style={styles.allocSummaryChip}>
+                                Waiting for case numbers: {countsToAdd}
+                            </span>
                         )}
                     </div>
-                )}
 
-                {submitError && <p style={styles.rowError}>{submitError}</p>}
+                    {/* ---- Table / mobile list ---- */}
+                    <div className="pf-card-hover" style={styles.tableCard}>
+                        {loading ? (
+                            <EmptyState text="Loading…" styles={styles} />
+                        ) : filteredRows.length === 0 ? (
+                            <EmptyState
+                                text={
+                                    activeTab === "today"
+                                        ? "No allocation found for today."
+                                        : "No past allocations found."
+                                }
+                                styles={styles}
+                            />
+                        ) : isMobile ? (
+                            <div style={styles.allocList}>
+                                {filteredRows.map((c, i) => (
+                                    <MobileRow
+                                        key={c.id}
+                                        index={i + 1}
+                                        c={c}
+                                        ampMins={ampOf(c.productId)}
+                                        onSubmit={() => handlePickForSubmit(c)}
+                                        onResolveQuery={openQueryModal}
+                                        clientCell={
+                                            <ClientCell
+                                                c={c}
+                                                clients={clients}
+                                                subclients={subclients}
+                                                saving={savingClientCaseId === c.id}
+                                                onChange={(kind, v) =>
+                                                    handleCaseClientChange(c, kind, v)
+                                                }
+                                                readOnly={isViewingOther}
+                                                styles={styles}
+                                            />
+                                        }
+                                        styles={styles}
+                                    />
+                                ))}
+                            </div>
+                        ) : (
+                            <table style={styles.table}>
+                                <colgroup>
+                                    <col style={{ width: "4%" }} />
+                                    <col style={{ width: "10%" }} />
+                                    <col style={{ width: "11%" }} />
+                                    <col style={{ width: "12%" }} />
+                                    <col style={{ width: "12%" }} />
+                                    <col style={{ width: "8%" }} />
+                                    <col style={{ width: "15%" }} />
+                                    <col style={{ width: "9%" }} />
+                                    <col style={{ width: "9%" }} />
+                                    <col style={{ width: "10%" }} />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style={styles.th}>#</th>
+                                        <th style={styles.th}>Case No.</th>
+                                        <th style={styles.th}>Service</th>
+                                        <th style={styles.th}>Client</th>
+                                        <th style={styles.th}>Subclient</th>
+                                        <th style={styles.th}>Date</th>
+                                        <th style={styles.th}>Allocated At</th>
+                                        <th style={{ ...styles.th, textAlign: "center" }}>
+                                            Status
+                                        </th>
+                                        <th style={{ ...styles.th, textAlign: "center" }}>
+                                            Outcome
+                                        </th>
+                                        <th style={{ ...styles.th, textAlign: "center" }}>
+                                            Action
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredRows.map((c, i) => {
+                                        const submitted = isSubmitted(c);
+                                        const rowAmp = ampOf(c.productId);
+                                        return (
+                                            <tr
+                                                key={c.id}
+                                                className="pf-row"
+                                                style={{
+                                                    ...styles.tr,
+                                                    background: i % 2 === 1 ? "#FAFBFF" : "#fff",
+                                                }}
+                                            >
+                                                <td style={styles.td}>{i + 1}</td>
+                                                <td
+                                                    style={{
+                                                        ...styles.td,
+                                                        fontWeight: fontWeight.bold,
+                                                    }}
+                                                >
+                                                    {c.caseNumber}
+                                                </td>
+                                                <td style={styles.td}>{c.productName || "-"}</td>
+                                                {/* FIX: part="client" -> only the client shows here
+                                                    (subclient has its own column) */}
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    <ClientCell
+                                                        c={c}
+                                                        part="client"
+                                                        clients={clients}
+                                                        subclients={subclients}
+                                                        saving={savingClientCaseId === c.id}
+                                                        onChange={(kind, v) =>
+                                                            handleCaseClientChange(c, kind, v)
+                                                        }
+                                                        readOnly={isViewingOther}
+                                                        styles={styles}
+                                                    />
+                                                </td>
 
-                <div style={styles.infoBox}>
-                    <span style={styles.infoBoxIcon}>
-                        <InfoIcon />
-                    </span>
-                    <div>
-                        <strong>How it works?</strong>
-                        <p style={{ margin: "4px 0 0" }}>
-                            Pick a case from the table above, choose its status — Completed,
-                            Completed by Team, Completed by Client or Query — and submit. "Query"
-                            needs a short note on what the query is; you can track and complete your
-                            queries later from "All Query" up top. Use "Bulk Submit" to submit every
-                            pending case for today in one click.
-                        </p>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    <ClientCell
+                                                        c={c}
+                                                        part="subclient"
+                                                        clients={clients}
+                                                        subclients={subclients}
+                                                        saving={savingClientCaseId === c.id}
+                                                        onChange={(kind, v) =>
+                                                            handleCaseClientChange(c, kind, v)
+                                                        }
+                                                        readOnly={isViewingOther}
+                                                        styles={styles}
+                                                    />
+                                                </td>
+                                                <td style={styles.td}>
+                                                    {formatDisplayDate(c.workDate)}
+                                                </td>
+                                                {/* NEW: allocation date + time, AMP time and age */}
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    <div>{formatDateTime(c.allocatedAt)}</div>
+                                                    {(rowAmp > 0 || c.allocatedAt) && (
+                                                        <div style={styles.smallMuted}>
+                                                            {rowAmp > 0
+                                                                ? `Time: ${formatMinutes(rowAmp)}`
+                                                                : ""}
+                                                            {rowAmp > 0 && c.allocatedAt
+                                                                ? " · "
+                                                                : ""}
+                                                            {c.allocatedAt ? allocAgeLabel(c) : ""}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td style={{ ...styles.td, textAlign: "center" }}>
+                                                    <span
+                                                        style={
+                                                            submitted
+                                                                ? styles.statusDone
+                                                                : styles.statusPending
+                                                        }
+                                                    >
+                                                        {submitted ? "Submitted" : "Pending"}
+                                                    </span>
+                                                </td>
+                                                <td style={{ ...styles.td, textAlign: "center" }}>
+                                                    {submitted ? (
+                                                        <>
+                                                            <span
+                                                                style={{
+                                                                    fontWeight: fontWeight.medium,
+                                                                }}
+                                                            >
+                                                                {outcomeLabel(c.submissionType)}
+                                                            </span>
+                                                            {isResolvedQuery(c) && (
+                                                                <div style={styles.smallMuted}>
+                                                                    Query resolved
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <span style={styles.smallMuted}>—</span>
+                                                    )}
+                                                </td>
+                                                <td style={{ ...styles.td, textAlign: "center" }}>
+                                                    {isOpenQuery(c) ? (
+                                                        <button
+                                                            type="button"
+                                                            style={styles.rowSubmitBtn}
+                                                            onClick={openQueryModal}
+                                                        >
+                                                            Resolve
+                                                        </button>
+                                                    ) : submitted ? (
+                                                        <span style={styles.smallMuted}>
+                                                            {formatDisplayDate(
+                                                                localDateStr(c.submittedAt)
+                                                            )}
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            style={styles.rowSubmitBtn}
+                                                            onClick={() => handlePickForSubmit(c)}
+                                                        >
+                                                            Submit
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        )}
+                        {clientCellError && <p style={styles.rowError}>{clientCellError}</p>}
                     </div>
-                </div>
 
-                <button
-                    type="button"
-                    className="pf-btn pf-btn-solid"
-                    style={{
-                        ...styles.submitBtn,
-                        opacity: !canSubmitSingle || submitting ? 0.6 : 1,
-                        cursor: !canSubmitSingle || submitting ? "not-allowed" : "pointer",
-                    }}
-                    disabled={!canSubmitSingle || submitting}
-                    onClick={handleSubmitWork}
-                >
-                    {submitting ? "Submitting…" : "Submit Work"}
-                </button>
-            </div>
+                    {/* ---- Submit Your Work ---- */}
+                    <div ref={panelRef} className="pf-card-hover" style={styles.submitPanel}>
+                        <div style={styles.submitPanelTitle}>
+                            {isViewingOther ? `Submit Work for ${name}` : "Submit Your Work"}
+                        </div>
+                        <div style={styles.submitPanelSub}>
+                            {selected
+                                ? `Confirm submission for case "${selected.caseNumber}"`
+                                : "Select a case from the table above to submit your work."}
+                        </div>
+
+                        {selected && (
+                            <div style={isMobile ? styles.submitGridMobile : styles.submitGrid}>
+                                <div style={styles.filterField}>
+                                    <label style={styles.smallLabel}>Case No.</label>
+                                    <input
+                                        style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                        value={selected.caseNumber}
+                                        disabled
+                                    />
+                                </div>
+                                <div style={styles.filterField}>
+                                    <label style={styles.smallLabel}>Service</label>
+                                    <input
+                                        style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                        value={selected.productName || "-"}
+                                        disabled
+                                    />
+                                </div>
+                                <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
+                                    <label style={styles.smallLabel}>Status *</label>
+                                    <select
+                                        style={styles.textInput}
+                                        value={submitType}
+                                        onChange={(e) => {
+                                            const v = e.target.value as "" | SubmissionType;
+                                            setSubmitType(v);
+                                            if (v !== "QUERY") setSubmitQueryText("");
+                                        }}
+                                    >
+                                        <option value="">Select status</option>
+                                        {SUBMISSION_OPTIONS.map((o) => (
+                                            <option key={o.value} value={o.value}>
+                                                {o.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {submitType === "QUERY" && (
+                                    <div
+                                        style={{
+                                            ...styles.filterField,
+                                            flex: 1,
+                                            minWidth: 220,
+                                        }}
+                                    >
+                                        <label style={styles.smallLabel}>Query *</label>
+                                        <input
+                                            style={styles.textInput}
+                                            value={submitQueryText}
+                                            onChange={(e) => setSubmitQueryText(e.target.value)}
+                                            placeholder="Describe the query…"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {submitError && <p style={styles.rowError}>{submitError}</p>}
+
+                        <div style={styles.infoBox}>
+                            <span style={styles.infoBoxIcon}>
+                                <InfoIcon />
+                            </span>
+                            <div>
+                                <strong>How it works?</strong>
+                                <p style={{ margin: "4px 0 0" }}>
+                                    Pick a case from the table above, choose its status — Completed,
+                                    Completed by Team, Completed by Client or Query — and submit.
+                                    "Query" needs a short note on what the query is; you can track
+                                    and complete your queries later from "All Query" up top. Use
+                                    "Bulk Submit" to submit every pending case for today in one
+                                    click.
+                                </p>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            className="pf-btn pf-btn-solid"
+                            style={{
+                                ...styles.submitBtn,
+                                opacity: !canSubmitSingle || submitting ? 0.6 : 1,
+                                cursor: !canSubmitSingle || submitting ? "not-allowed" : "pointer",
+                            }}
+                            disabled={!canSubmitSingle || submitting}
+                            onClick={handleSubmitWork}
+                        >
+                            {submitting ? "Submitting…" : "Submit Work"}
+                        </button>
+                    </div>
+                </>
+            )}
 
             {/* ---- Bulk Submit modal ---- */}
             {showBulkModal && (
@@ -1765,9 +2759,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     Bulk Submit — Today's Pending Cases
                                 </h3>
                                 <p style={styles.bulkModalSubtitle}>
-                                    Every case below starts as "Pending" — only change the ones
-                                    you're ready to submit now; the rest stay pending for later. A
-                                    "Query" row also needs its text filled in.
+                                    Every case below starts as "WIP" — only change the ones you're
+                                    ready to submit now; the rest stay pending for later. A "Query"
+                                    row also needs its text filled in.
                                 </p>
                             </div>
                             <button
@@ -1780,8 +2774,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             </button>
                         </div>
 
-                        {/* Search — matters once there are dozens of pending cases and
-                            only a few need to be found and submitted right now. */}
                         <input
                             style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
                             value={bulkSearch}
@@ -1858,7 +2850,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             )
                                                         }
                                                     >
-                                                        <option value="PENDING">Pending</option>
+                                                        <option value="PENDING">WIP</option>
                                                         {SUBMISSION_OPTIONS.map((o) => (
                                                             <option key={o.value} value={o.value}>
                                                                 {o.label}
@@ -1922,7 +2914,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 disabled={bulkSubmitting || !bulkCanSubmit}
                                 title={
                                     !bulkCanSubmit
-                                        ? "Change at least one case's status away from Pending first"
+                                        ? "Change at least one case's status away from WIP first"
                                         : undefined
                                 }
                             >
@@ -1940,8 +2932,6 @@ export default function Profile({ onLogout }: ProfileProps) {
             {/* ---- All Query modal ---- */}
             {showQueryModal && (
                 <div style={styles.bulkOverlay}>
-                    {/* A bit wider than the other modals so the date and the
-                        "Completed by Client" dropdown don't get clipped. */}
                     <div
                         style={{ ...styles.bulkModal, width: 940 }}
                         onClick={(e) => e.stopPropagation()}
@@ -1950,10 +2940,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                             <div>
                                 <h3 style={styles.bulkModalTitle}>All Queries</h3>
                                 <p style={styles.bulkModalSubtitle}>
-                                    Every query you've raised, across all dates. Once a query is
-                                    sorted out, mark it as completed from here. If your team
-                                    completes one, it moves to Query Completed on its own (as
-                                    "Completed by Team").
+                                    Every query raised, across all dates. Once a query is sorted
+                                    out, mark it as completed from here. If the team completes one,
+                                    it moves to Query Completed on its own (as "Completed by Team").
                                 </p>
                             </div>
                             <button
@@ -1966,8 +2955,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             </button>
                         </div>
 
-                        {/* How many are still in query vs. completed. The first two
-                            tiles double as the tabs for the list below. */}
                         <div style={styles.queryTilesRow}>
                             <QueryTile
                                 label="In Query"
@@ -2150,10 +3137,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                 <div style={styles.bulkOverlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
                         {selfAllocSuccessCount !== null ? (
-                            // ---- Success screen — shown right after a successful
-                            // allocate, in place of the picker. Closing this drops
-                            // the employee straight back onto the Profile page
-                            // (already refreshed) where they submit their work.
                             <div
                                 style={{
                                     display: "flex",
@@ -2181,9 +3164,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <h3 style={styles.bulkModalTitle}>Allocated!</h3>
                                 <p style={styles.bulkModalSubtitle}>
                                     {selfAllocSuccessCount} case
-                                    {selfAllocSuccessCount === 1 ? "" : "s"} allocated to yourself.
-                                    You'll find {selfAllocSuccessCount === 1 ? "it" : "them"} in
-                                    Today's Allocation below, ready to submit.
+                                    {selfAllocSuccessCount === 1 ? "" : "s"} allocated to yourself.{" "}
+                                    {selfAllocMode === "counts"
+                                        ? `You'll find ${
+                                              selfAllocSuccessCount === 1 ? "it" : "them"
+                                          } under "Counts" — add the case number${
+                                              selfAllocSuccessCount === 1 ? "" : "s"
+                                          } there.`
+                                        : `You'll find ${
+                                              selfAllocSuccessCount === 1 ? "it" : "them"
+                                          } in Today's Allocation below, ready to submit.`}
                                 </p>
                                 <button
                                     type="button"
@@ -2204,10 +3194,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     <div>
                                         <h3 style={styles.bulkModalTitle}>Self Allocate</h3>
                                         <p style={styles.bulkModalSubtitle}>
-                                            Pick a service, tick the cases you want, then hit
-                                            Allocate. Only services your team (
-                                            {myTeamRaw || "no team set"}) is aligned to show up
-                                            here.
+                                            Pick a service, then take cases that already have a case
+                                            number, or take a count of cases whose numbers aren't
+                                            known yet (you add the numbers later). Only services
+                                            your team ({myTeamRaw || "no team set"}) is aligned to
+                                            show up here.
                                         </p>
                                     </div>
                                     <button
@@ -2217,6 +3208,33 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         aria-label="Close"
                                     >
                                         ✕
+                                    </button>
+                                </div>
+
+                                <div style={styles.selfAllocModeRow}>
+                                    <button
+                                        type="button"
+                                        className="pf-btn"
+                                        style={
+                                            selfAllocMode === "cases"
+                                                ? styles.selfAllocModeBtnActive
+                                                : styles.selfAllocModeBtn
+                                        }
+                                        onClick={() => switchSelfAllocMode("cases")}
+                                    >
+                                        With case number
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn"
+                                        style={
+                                            selfAllocMode === "counts"
+                                                ? styles.selfAllocModeBtnActive
+                                                : styles.selfAllocModeBtn
+                                        }
+                                        onClick={() => switchSelfAllocMode("counts")}
+                                    >
+                                        Count only (add numbers later)
                                     </button>
                                 </div>
 
@@ -2240,7 +3258,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         <select
                                             style={{ ...styles.textInput, width: "100%" }}
                                             value={selfAllocServiceId}
-                                            onChange={(e) => loadSelfAllocCases(e.target.value)}
+                                            onChange={(e) =>
+                                                selfAllocMode === "counts"
+                                                    ? loadAvailableCounts(e.target.value)
+                                                    : loadSelfAllocCases(e.target.value)
+                                            }
                                         >
                                             <option value="">Select a service…</option>
                                             {selfAllocServices.map((s) => (
@@ -2252,7 +3274,112 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     )}
                                 </div>
 
-                                {selfAllocServiceId && (
+                                {selfAllocServiceId && selfAllocMode === "counts" && (
+                                    <div style={styles.bulkTableWrap}>
+                                        {availableCountsLoading ? (
+                                            <p style={styles.smallMuted}>
+                                                Loading remaining counts…
+                                            </p>
+                                        ) : availableCountsError ? (
+                                            <p style={styles.rowError}>{availableCountsError}</p>
+                                        ) : availableCounts.length === 0 ? (
+                                            <p style={styles.smallMuted}>
+                                                No unallocated counts left on this service.
+                                            </p>
+                                        ) : (
+                                            <table style={styles.bulkTable}>
+                                                <colgroup>
+                                                    <col style={{ width: "36%" }} />
+                                                    <col style={{ width: "20%" }} />
+                                                    <col style={{ width: "16%" }} />
+                                                    <col style={{ width: "28%" }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th style={styles.th}>
+                                                            Client / Subclient
+                                                        </th>
+                                                        <th style={styles.th}>Date</th>
+                                                        <th style={styles.th}>Available</th>
+                                                        <th style={styles.th}>How many to take</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {availableCounts.map((c) => (
+                                                        <tr key={c.id} style={styles.tr}>
+                                                            <td
+                                                                style={{
+                                                                    ...styles.td,
+                                                                    whiteSpace: "normal",
+                                                                }}
+                                                            >
+                                                                {[c.clientName, c.subclientName]
+                                                                    .filter(Boolean)
+                                                                    .join(" / ") || "-"}
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                {formatDisplayDate(c.workDate)}
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                {c.unallocated}
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                <div
+                                                                    style={{
+                                                                        display: "flex",
+                                                                        gap: 6,
+                                                                        alignItems: "center",
+                                                                    }}
+                                                                >
+                                                                    <input
+                                                                        type="number"
+                                                                        min={0}
+                                                                        max={c.unallocated}
+                                                                        style={{
+                                                                            ...styles.textInput,
+                                                                            width: 80,
+                                                                            padding: "6px 8px",
+                                                                        }}
+                                                                        value={
+                                                                            selfAllocQtyById[
+                                                                                c.id
+                                                                            ] ?? 0
+                                                                        }
+                                                                        onChange={(e) =>
+                                                                            setSelfAllocQty(
+                                                                                c,
+                                                                                Number(
+                                                                                    e.target.value
+                                                                                )
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        className="pf-btn pf-btn-outline"
+                                                                        style={
+                                                                            styles.selfAllocAllBtn
+                                                                        }
+                                                                        onClick={() =>
+                                                                            setSelfAllocQty(
+                                                                                c,
+                                                                                c.unallocated
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        All
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                )}
+
+                                {selfAllocServiceId && selfAllocMode === "cases" && (
                                     <div style={styles.bulkTableWrap}>
                                         {selfAllocCasesLoading ? (
                                             <p style={styles.smallMuted}>
@@ -2364,30 +3491,333 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             width: "auto",
                                             flex: 1,
                                             opacity:
-                                                selfAllocSubmitting ||
-                                                selfAllocSelectedIds.size === 0
+                                                selfAllocSubmitting || selfAllocPickedCount === 0
                                                     ? 0.6
                                                     : 1,
                                             cursor:
-                                                selfAllocSubmitting ||
-                                                selfAllocSelectedIds.size === 0
+                                                selfAllocSubmitting || selfAllocPickedCount === 0
                                                     ? "not-allowed"
                                                     : "pointer",
                                         }}
-                                        onClick={submitSelfAllocation}
-                                        disabled={
-                                            selfAllocSubmitting || selfAllocSelectedIds.size === 0
+                                        onClick={
+                                            selfAllocMode === "counts"
+                                                ? submitSelfAllocCounts
+                                                : submitSelfAllocation
                                         }
+                                        disabled={selfAllocSubmitting || selfAllocPickedCount === 0}
                                     >
                                         {selfAllocSubmitting
                                             ? "Allocating…"
-                                            : selfAllocSelectedIds.size > 0
-                                              ? `Allocate (${selfAllocSelectedIds.size})`
+                                            : selfAllocPickedCount > 0
+                                              ? `Allocate (${selfAllocPickedCount})`
                                               : "Allocate"}
                                     </button>
                                 </div>
                             </>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* ---- Add Case Numbers modal — per-case client / subclient + status ---- */}
+            {addCnCount && (
+                <div style={styles.bulkOverlay} onClick={closeAddCaseNumbers}>
+                    <div
+                        style={{ ...styles.bulkModal, width: 980 }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={styles.bulkModalHeader}>
+                            <div>
+                                <h3 style={styles.bulkModalTitle}>Add Case Numbers</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    {addCnCount.productName || "Service"} ·{" "}
+                                    {formatDisplayDate(addCnCount.workDate)} —{" "}
+                                    <strong>{addCnCount.remaining}</strong> case
+                                    {addCnCount.remaining === 1 ? "" : "s"} left to add. Type the
+                                    case number, pick its client (every case can have a different
+                                    one) and its status — WIP / Pending keeps it pending, any other
+                                    status submits it right away.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                style={styles.closeBtn}
+                                onClick={closeAddCaseNumbers}
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <label style={styles.smallLabel}>Case numbers, client &amp; status</label>
+                        <div style={{ ...styles.bulkTableWrap, marginTop: 4, marginBottom: 6 }}>
+                            <table style={{ ...styles.bulkTable, minWidth: 880 }}>
+                                <colgroup>
+                                    <col style={{ width: "5%" }} />
+                                    <col style={{ width: "17%" }} />
+                                    <col style={{ width: "21%" }} />
+                                    <col style={{ width: "19%" }} />
+                                    <col style={{ width: "17%" }} />
+                                    <col style={{ width: "21%" }} />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th style={styles.th}>#</th>
+                                        <th style={styles.th}>Case No.</th>
+                                        <th style={styles.th}>Client *</th>
+                                        <th style={styles.th}>Subclient</th>
+                                        <th style={styles.th}>Status</th>
+                                        <th style={styles.th}>Query</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {addCnRows.map((r, i) => {
+                                        const queryMissing =
+                                            r.status === "QUERY" && !r.query.trim();
+                                        const rowSubOptions = subclients.filter(
+                                            (s) => s.clientId === r.clientId
+                                        );
+                                        // WIP / Pending are the "not submitted" statuses
+                                        const isNotSubmitted =
+                                            r.status === "WIP" || r.status === "PENDING";
+                                        return (
+                                            <tr key={i} style={styles.tr}>
+                                                <td style={styles.td}>{i + 1}</td>
+                                                <td style={styles.td}>
+                                                    <input
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                        }}
+                                                        value={r.cn}
+                                                        maxLength={50}
+                                                        disabled={addCnSubmitting}
+                                                        placeholder="Case number"
+                                                        onChange={(e) =>
+                                                            setAddCnRow(i, { cn: e.target.value })
+                                                        }
+                                                        onPaste={(e) => {
+                                                            const t =
+                                                                e.clipboardData.getData("text");
+                                                            if (/[\n,\t]/.test(t.trim())) {
+                                                                e.preventDefault();
+                                                                pasteAddCnRows(i, t);
+                                                            }
+                                                        }}
+                                                    />
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <select
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                        }}
+                                                        value={r.clientId}
+                                                        disabled={addCnSubmitting}
+                                                        onChange={(e) =>
+                                                            setAddCnRow(i, {
+                                                                clientId: e.target.value,
+                                                                subclientId: "",
+                                                            })
+                                                        }
+                                                    >
+                                                        <option value="">Select client</option>
+                                                        {clients.map((cl) => (
+                                                            <option key={cl.id} value={cl.id}>
+                                                                {cl.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <select
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                        }}
+                                                        value={r.subclientId}
+                                                        disabled={addCnSubmitting || !r.clientId}
+                                                        onChange={(e) =>
+                                                            setAddCnRow(i, {
+                                                                subclientId: e.target.value,
+                                                            })
+                                                        }
+                                                    >
+                                                        <option value="">
+                                                            {!r.clientId
+                                                                ? "Pick client first"
+                                                                : rowSubOptions.length === 0
+                                                                  ? "No subclients"
+                                                                  : "Subclient (optional)"}
+                                                        </option>
+                                                        {rowSubOptions.map((s) => (
+                                                            <option key={s.id} value={s.id}>
+                                                                {s.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </td>
+                                                <td style={styles.td}>
+                                                    <select
+                                                        style={{
+                                                            ...styles.textInput,
+                                                            width: "100%",
+                                                            fontWeight: !isNotSubmitted
+                                                                ? fontWeight.semibold
+                                                                : "normal",
+                                                            color: !isNotSubmitted
+                                                                ? BRAND.blue
+                                                                : undefined,
+                                                        }}
+                                                        value={r.status}
+                                                        disabled={addCnSubmitting}
+                                                        onChange={(e) =>
+                                                            setAddCnRow(i, {
+                                                                status: e.target.value as
+                                                                    | "WIP"
+                                                                    | "PENDING"
+                                                                    | SubmissionType,
+                                                                query:
+                                                                    e.target.value === "QUERY"
+                                                                        ? r.query
+                                                                        : "",
+                                                            })
+                                                        }
+                                                    >
+                                                        <option value="WIP">WIP</option>
+                                                        <option value="PENDING">Pending</option>
+                                                        {SUBMISSION_OPTIONS.map((o) => (
+                                                            <option key={o.value} value={o.value}>
+                                                                {o.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </td>
+                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
+                                                    {r.status === "QUERY" ? (
+                                                        <input
+                                                            style={{
+                                                                ...styles.textInput,
+                                                                width: "100%",
+                                                                border: queryMissing
+                                                                    ? `1px solid ${STATUS_RED}`
+                                                                    : styles.textInput.border,
+                                                            }}
+                                                            value={r.query}
+                                                            disabled={addCnSubmitting}
+                                                            placeholder="Describe the query…"
+                                                            onChange={(e) =>
+                                                                setAddCnRow(i, {
+                                                                    query: e.target.value,
+                                                                })
+                                                            }
+                                                        />
+                                                    ) : (
+                                                        <span style={styles.smallMuted}>—</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div
+                            style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 10,
+                                flexWrap: "wrap",
+                                marginBottom: 12,
+                            }}
+                        >
+                            <span style={styles.smallMuted}>
+                                {addCnParsed.length} of {addCnCount.remaining} entered
+                                {addCnSubmitCount > 0
+                                    ? ` · ${addCnSubmitCount} will be submitted`
+                                    : ""}
+                            </span>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button
+                                    type="button"
+                                    className="pf-btn pf-btn-outline"
+                                    style={styles.selfAllocAllBtn}
+                                    disabled={addCnSubmitting || addCnRows.length < 2}
+                                    onClick={applyFirstClientToAll}
+                                >
+                                    Apply row 1 client to all
+                                </button>
+                                {addCnRows.length < addCnCount.remaining && (
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.selfAllocAllBtn}
+                                        disabled={addCnSubmitting}
+                                        onClick={() =>
+                                            setAddCnRows((prev) => [
+                                                ...prev,
+                                                blankAddCnRow(addCnCount),
+                                            ])
+                                        }
+                                    >
+                                        + Add row
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {addCnError && <p style={styles.rowError}>{addCnError}</p>}
+
+                        <div style={styles.bulkModalFooter}>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.bulkCancelBtn}
+                                onClick={closeAddCaseNumbers}
+                                disabled={addCnSubmitting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-solid"
+                                style={{
+                                    ...styles.submitBtn,
+                                    width: "auto",
+                                    flex: 1,
+                                    opacity:
+                                        addCnSubmitting ||
+                                        addCnParsed.length === 0 ||
+                                        addCnMissingClient
+                                            ? 0.6
+                                            : 1,
+                                    cursor:
+                                        addCnSubmitting ||
+                                        addCnParsed.length === 0 ||
+                                        addCnMissingClient
+                                            ? "not-allowed"
+                                            : "pointer",
+                                }}
+                                onClick={submitAddCaseNumbers}
+                                disabled={
+                                    addCnSubmitting ||
+                                    addCnParsed.length === 0 ||
+                                    addCnMissingClient
+                                }
+                                title={
+                                    addCnMissingClient
+                                        ? "Select a client for every case number you typed"
+                                        : undefined
+                                }
+                            >
+                                {addCnSubmitting
+                                    ? "Saving…"
+                                    : addCnParsed.length > 0
+                                      ? `Submit (${addCnParsed.length})`
+                                      : "Submit"}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -2398,7 +3828,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     role="status"
                     style={{
                         ...styles.toast,
-                        zIndex: 400, // above the modals (200), so it shows from inside All Query too
+                        zIndex: 400,
                         display: "flex",
                         alignItems: "center",
                         gap: 8,
@@ -2411,9 +3841,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
             )}
 
-            {/* NEW: click-to-zoom lightbox for the profile photo, same
-                pattern as the bulk modal overlay above (fixed, dark
-                backdrop, closes on backdrop click / X / Escape). */}
             {isAvatarPreviewOpen && photoUrl && (
                 <div style={styles.lightboxOverlay} onClick={() => setIsAvatarPreviewOpen(false)}>
                     <button
@@ -2439,8 +3866,6 @@ export default function Profile({ onLogout }: ProfileProps) {
 
 /* ---------------------------------------------------------------------- */
 /*  Small presentational subcomponents                                     */
-/*  (take `styles` as a prop since it's now built per-render from the      */
-/*  active theme, instead of a module-level constant.)                     */
 /* ---------------------------------------------------------------------- */
 
 function InfoIconRow({
@@ -2475,7 +3900,7 @@ function StatCard({
 }: {
     icon: React.ReactNode;
     tint: string;
-    value: number;
+    value: number | string;
     label: string;
     sub: string;
     styles: Record<string, CSSProperties>;
@@ -2498,9 +3923,6 @@ function EmptyState({ text, styles }: { text: string; styles: Record<string, CSS
     return <div style={styles.emptyState}>{text}</div>;
 }
 
-// One of the count tiles at the top of the All Query modal. With an
-// onClick it doubles as a tab (In Query / Query Completed); without one
-// (Total Queries) it's just a read-only counter.
 function QueryTile({
     label,
     value,
@@ -2533,18 +3955,122 @@ function QueryTile({
     );
 }
 
+// Client / Subclient cell for a case row.
+//  - readOnly              -> plain text only (viewing another employee)
+//  - Client already set    -> plain text, NO dropdown (nobody edits it here)
+//  - Client blank          -> dropdown to add one
+//  - Subclient already set -> plain text
+//  - Subclient blank       -> dropdown ONLY if a client is set AND that client
+//                             has subclients; otherwise just "-"
+function ClientCell({
+    c,
+    clients,
+    subclients,
+    saving,
+    onChange,
+    styles,
+    readOnly,
+    part,
+}: {
+    c: CaseRow;
+    clients: ClientOption[];
+    subclients: SubclientOption[];
+    saving: boolean;
+    onChange: (kind: "client" | "subclient", value: string) => void;
+    styles: Record<string, CSSProperties>;
+    readOnly?: boolean;
+    part?: "client" | "subclient"; // show only one of the two
+}) {
+    const clientSet = !!c.clientId;
+    const subclientSet = !!c.subclientId;
+    // Client / subclient can NOT be added from this table. They are chosen only
+    // at submit time (Add Case Numbers popup); after that editing is off.
+    // So the cell is always plain text ("-" when empty). Flip to false to
+    // bring the inline dropdowns back.
+    const LOCKED = true;
+
+    const selectStyle: CSSProperties = {
+        ...styles.textInput,
+        width: "100%",
+        padding: "6px 8px",
+        fontSize: fontSize.xs,
+        opacity: saving ? 0.6 : 1,
+    };
+    const subOptions = subclients.filter((s) => s.clientId === (c.clientId || ""));
+
+    // Client: set -> name. Not set + readOnly -> "-". Not set -> dropdown to add.
+    const clientNode =
+        LOCKED || readOnly || clientSet ? (
+            <span>{c.clientName || "-"}</span>
+        ) : (
+            <select
+                style={selectStyle}
+                value=""
+                disabled={saving}
+                onChange={(e) => onChange("client", e.target.value)}
+            >
+                <option value="">+ Add client</option>
+                {clients.map((cl) => (
+                    <option key={cl.id} value={cl.id}>
+                        {cl.name}
+                    </option>
+                ))}
+            </select>
+        );
+
+    // Subclient: set -> name. Not set -> dropdown ONLY when a client exists and
+    // it has subclients to pick from. Otherwise a plain "-" (no empty dropdown).
+    const canPickSubclient = !LOCKED && !readOnly && clientSet && subOptions.length > 0;
+    const subclientNode = subclientSet ? (
+        <span style={part === "subclient" ? undefined : styles.smallMuted}>
+            {c.subclientName || "-"}
+        </span>
+    ) : canPickSubclient ? (
+        <select
+            style={selectStyle}
+            value=""
+            disabled={saving}
+            onChange={(e) => onChange("subclient", e.target.value)}
+        >
+            <option value="">+ Add subclient</option>
+            {subOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                    {s.name}
+                </option>
+            ))}
+        </select>
+    ) : (
+        <span style={part === "subclient" ? undefined : styles.smallMuted}>-</span>
+    );
+
+    if (part === "client") return clientNode;
+    if (part === "subclient") return subclientNode;
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {clientNode}
+            {subclientNode}
+        </div>
+    );
+}
+
 function MobileRow({
     index,
     c,
+    ampMins,
     onSubmit,
     onResolveQuery,
+    clientCell,
     styles,
+    readOnly,
 }: {
     index: number;
     c: CaseRow;
+    ampMins: number;
     onSubmit: () => void;
     onResolveQuery: () => void;
+    clientCell: ReactNode;
     styles: Record<string, CSSProperties>;
+    readOnly?: boolean;
 }) {
     const submitted = isSubmitted(c);
     return (
@@ -2561,7 +4087,16 @@ function MobileRow({
                 <span>{formatDisplayDate(c.workDate)}</span>
                 {submitted && <span>{outcomeLabel(c.submissionType)}</span>}
             </div>
-            {isOpenQuery(c) ? (
+            {/* NEW: allocation date + time, AMP time and age */}
+            {(c.allocatedAt || ampMins > 0) && (
+                <div style={styles.mobileMetaRow}>
+                    {c.allocatedAt && <span>Allocated {formatDateTime(c.allocatedAt)}</span>}
+                    {ampMins > 0 && <span>Time: {formatMinutes(ampMins)}</span>}
+                    {c.allocatedAt && <span>{allocAgeLabel(c)}</span>}
+                </div>
+            )}
+            <div style={{ margin: "6px 0" }}>{clientCell}</div>
+            {readOnly ? null : isOpenQuery(c) ? (
                 <button type="button" style={styles.rowSubmitBtn} onClick={onResolveQuery}>
                     Resolve
                 </button>
@@ -2579,14 +4114,7 @@ function MobileRow({
 }
 
 /* ---------------------------------------------------------------------- */
-/*  Styles — now a function of the active theme color (BRAND/GRADIENT)     */
-/*  instead of a module-level constant, so every gradient/tinted shadow/   */
-/*  border on this page repaints when the user switches theme color.       */
-/*  Same recipes as before: Add User's outline button (white bg + tinted   */
-/*  border + brand text), filled button (brand gradient + tinted shadow),  */
-/*  input recipe (background #fafafa, border #ececf5), neutral card        */
-/*  shadow ("0 10px 30px rgba(0,0,0,.06)"), and theme.ts tokens            */
-/*  (fontFamily, fontWeight, radius).                                      */
+/*  Styles — a function of the active theme color (BRAND/GRADIENT)         */
 /* ---------------------------------------------------------------------- */
 
 const CARD_SHADOW = "0 10px 30px rgba(0,0,0,.06)";
@@ -2640,6 +4168,135 @@ function getStyles(
             background: "rgba(245,158,11,0.1)",
             padding: "8px 12px",
             borderRadius: radius.sm,
+        },
+
+        /* NEW: employee search (Super Admin / Ops Manager) */
+        empSearchCard: {
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+        },
+        empPillWrap: { position: "relative", width: "100%", maxWidth: 420 },
+        empPill: {
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            height: 46,
+            boxSizing: "border-box",
+            padding: "0 10px 0 16px",
+            background: "#fff",
+            border: "1px solid #E3E8F2",
+            borderRadius: 999,
+            boxShadow: "0 4px 14px rgba(23,44,84,.08)",
+        },
+        empPillInput: {
+            flex: 1,
+            minWidth: 0,
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: fontSize.base,
+            color: "#17181C",
+            fontFamily: "inherit",
+        },
+        empKbd: {
+            flexShrink: 0,
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: "#3D4459",
+            background: "#EEF1F6",
+            borderRadius: 8,
+            padding: "5px 10px",
+            whiteSpace: "nowrap",
+        },
+        empDropdown: {
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            marginTop: 8,
+            background: "#fff",
+            border: "1px solid #E3E8F2",
+            borderRadius: 18,
+            boxShadow: "0 18px 44px rgba(23,44,84,.18)",
+            zIndex: 50,
+            maxHeight: 420,
+            overflowY: "auto",
+            textAlign: "left",
+            padding: 6,
+            animation: "pf-emp-pop .16s ease-out",
+        },
+        empDropHeader: {
+            fontSize: fontSize.xxs,
+            fontWeight: fontWeight.semibold,
+            color: "#9099AC",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+            padding: "8px 12px 6px",
+        },
+        empDropItem: {
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 12px",
+            cursor: "pointer",
+            borderRadius: 12,
+        },
+        empAvatar: {
+            width: 40,
+            height: 40,
+            flexShrink: 0,
+            borderRadius: "50%",
+            background: GRADIENT,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            boxShadow: `0 4px 10px ${withAlpha(BRAND.blue, 0.25)}`,
+        },
+        empItemBody: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 },
+        empItemName: {
+            fontSize: fontSize.base,
+            fontWeight: fontWeight.semibold,
+            color: "#17181C",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        empItemMeta: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+        empItemSub: { fontSize: fontSize.xs, color: "#5B6479", fontWeight: fontWeight.medium },
+        empChip: {
+            fontSize: fontSize.xxs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+            background: withAlpha(BRAND.blue, 0.1),
+            borderRadius: 999,
+            padding: "2px 9px",
+            whiteSpace: "nowrap",
+        },
+        empItemEmail: {
+            fontSize: fontSize.xs,
+            color: "#9099AC",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        empGo: {
+            color: BRAND.blue,
+            fontSize: fontSize.lg,
+            fontWeight: fontWeight.bold,
+            flexShrink: 0,
+        },
+        empDropFooter: {
+            fontSize: fontSize.xxs,
+            color: "#9099AC",
+            textAlign: "center",
+            padding: "8px 0 4px",
+            borderTop: "1px solid #f1f1f5",
+            marginTop: 4,
         },
 
         /* Identity card */
@@ -2705,8 +4362,6 @@ function getStyles(
             padding: "2px 9px",
             borderRadius: radius.pill,
         },
-        // Matches Add User's `styles.templateBtn` — white bg, brand text,
-        // tinted border, semibold weight, pill-ish radius.
         editProfileBtn: {
             border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
             background: "#fff",
@@ -2793,13 +4448,13 @@ function getStyles(
             cursor: "pointer",
         },
 
-        /* Stats */
+        /* Stats — 4 cards now (Total / Submitted / Pending / Allocated Time) */
         statsGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: "repeat(4, 1fr)",
             gap: 16,
         },
-        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr", gap: 12 },
+        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
         statCard: {
             background: "#fff",
             borderRadius: radius.lg,
@@ -2862,7 +4517,6 @@ function getStyles(
             borderRadius: radius.sm,
             cursor: "pointer",
         },
-        // Matches Add User's outline button recipe.
         exportBtn: {
             display: "flex",
             alignItems: "center",
@@ -2912,7 +4566,6 @@ function getStyles(
             zIndex: 70,
         },
         smallLabel: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, color: "#3D4459" },
-        // Matches Add User's `styles.input` recipe exactly.
         textInput: {
             padding: "10px 12px",
             background: "#fafafa",
@@ -2933,7 +4586,7 @@ function getStyles(
             boxShadow: CARD_SHADOW,
             overflowX: "auto",
         },
-        table: { width: "100%", borderCollapse: "collapse", minWidth: 720, tableLayout: "fixed" },
+        table: { width: "100%", borderCollapse: "collapse", minWidth: 900, tableLayout: "fixed" },
         th: {
             textAlign: "left",
             fontSize: fontSize.xs,
@@ -2976,8 +4629,6 @@ function getStyles(
             padding: "3px 10px",
             borderRadius: radius.pill,
         },
-        // Matches Add User's filled button recipe — brand gradient + tinted
-        // shadow.
         rowSubmitBtn: {
             background: GRADIENT,
             color: "#fff",
@@ -3051,8 +4702,6 @@ function getStyles(
             marginBottom: 16,
         },
         infoBoxIcon: { color: BRAND.blue, flexShrink: 0, marginTop: 1 },
-        // Matches Add User's filled `registerButton` recipe — gradient,
-        // tinted shadow, semibold weight.
         submitBtn: {
             width: "100%",
             background: GRADIENT,
@@ -3072,7 +4721,7 @@ function getStyles(
         },
         smallMuted: { fontSize: fontSize.xs, color: "#9099AC" },
 
-        // ---- Avatar lightbox (click profile photo to zoom) ----
+        // ---- Avatar lightbox ----
         lightboxOverlay: {
             position: "fixed",
             inset: 0,
@@ -3174,6 +4823,139 @@ function getStyles(
             minWidth: 640,
             borderCollapse: "collapse",
             tableLayout: "fixed",
+        },
+        // ---- Self Allocate mode toggle, counts card, add-case-number popup ----
+        selfAllocModeRow: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 },
+        selfAllocModeBtn: {
+            flex: 1,
+            minWidth: 150,
+            padding: "9px 12px",
+            borderRadius: radius.md,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            background: "#fff",
+            color: "#3b4a63",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
+        selfAllocModeBtnActive: {
+            flex: 1,
+            minWidth: 150,
+            padding: "9px 12px",
+            borderRadius: radius.md,
+            border: "1px solid transparent",
+            background: GRADIENT,
+            color: "#fff",
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
+        },
+        selfAllocAllBtn: {
+            background: "#fff",
+            color: BRAND.blue,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.3)}`,
+            borderRadius: radius.sm,
+            padding: "6px 10px",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+        },
+        allocViewRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+        allocViewBtn: {
+            padding: "6px 16px",
+            borderRadius: radius.pill,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            background: "#fff",
+            color: "#3b4a63",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+        },
+        allocViewBtnActive: {
+            padding: "6px 16px",
+            borderRadius: radius.pill,
+            border: "1px solid transparent",
+            background: GRADIENT,
+            color: "#fff",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            boxShadow: `0 4px 12px ${withAlpha(BRAND.blue, 0.25)}`,
+        },
+        allocSummaryRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+        allocSummaryChip: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.blue,
+            background: withAlpha(BRAND.blue, 0.08),
+            borderRadius: radius.pill,
+            padding: "4px 12px",
+            whiteSpace: "nowrap",
+        },
+        countsCard: {
+            background: "#fff",
+            borderRadius: radius.lg,
+            padding: 16,
+            boxShadow: CARD_SHADOW,
+            borderLeft: `4px solid ${BRAND.amber}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            textAlign: "left",
+        },
+        countsCardHeader: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 12,
+            flexWrap: "wrap",
+        },
+        countsCardTitle: {
+            fontSize: fontSize.md,
+            fontWeight: fontWeight.bold,
+            color: "#17181C",
+            marginBottom: 2,
+        },
+        countsBadge: {
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.amber,
+            background: withAlpha(BRAND.amber, 0.12),
+            borderRadius: radius.pill,
+            padding: "4px 12px",
+            whiteSpace: "nowrap",
+        },
+        countsRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            flexWrap: "wrap",
+            padding: "10px 12px",
+            border: "1px solid #f1f1f5",
+            borderRadius: radius.md,
+            background: "#FAFBFF",
+        },
+        countsRowMain: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            textAlign: "left",
+            gap: 2,
+            flex: 1,
+            minWidth: 180,
+            fontSize: fontSize.base,
+        },
+        countsRowNums: { fontSize: fontSize.base, color: "#17181C" },
+        addCnFixedValue: {
+            padding: "10px 12px",
+            background: "#f5f5fa",
+            border: "1px solid #ececf5",
+            borderRadius: radius.sm,
+            fontSize: fontSize.base,
+            color: "#17181C",
         },
         bulkModalFooter: {
             display: "flex",

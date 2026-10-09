@@ -32,7 +32,8 @@ type Employee = {
     // Shown on the card in place of Location, and included in search.
     team?: string | null;
     // NEW: role code from user_master (e.g. "SUPER_ADMIN", "TEAM_MEMBER").
-    // Editable only by a Super Admin — see Role field in the drawer below.
+    // Editable by Super Admin (anyone) and Ops Manager (only Process Lead /
+    // Vertical Head / Team Member) — see Role field in the drawer below.
     role?: string | null;
     status: EntityStatus;
     reportingManager: string | null;
@@ -50,8 +51,9 @@ type Employee = {
 type Team = { id: string; name: string };
 
 // The app's fixed 6-tier role codes — see backend src/config/permissions.js.
-// Only a Super Admin can change this field (enforced both here and on the
-// backend), so unlike Department/Team this list is NOT fetched dynamically.
+// Only Super Admin / Ops Manager can change this field (enforced both here
+// and on the backend), so unlike Department/Team this list is NOT fetched
+// dynamically.
 const ROLE_OPTIONS: { value: string; label: string }[] = [
     { value: "SUPER_ADMIN", label: "Super Admin" },
     { value: "OPS_MANAGER", label: "Ops Manager" },
@@ -60,6 +62,20 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
     { value: "VERTICAL_HEAD", label: "Vertical Head" },
     { value: "TEAM_MEMBER", label: "Team Member" },
 ];
+
+// NEW: which roles each tier is allowed to ASSIGN in the Role dropdown.
+//   Super Admin -> any of the six roles, for any employee.
+//   Ops Manager -> only Process Lead / Vertical Head / Team Member (and only
+//                  on employees who currently hold one of those roles — that
+//                  part comes from EDITABLE_TARGET_ROLES inside the
+//                  component), so an Ops Manager can never promote someone to
+//                  Super Admin / Ops Manager / Audit Manager.
+// Every other role gets no entry = Role stays read-only.
+// The backend must enforce the same rule (see the note in the reply).
+const ASSIGNABLE_ROLES: Record<string, string[]> = {
+    SUPER_ADMIN: ROLE_OPTIONS.map((r) => r.value),
+    OPS_MANAGER: ["PROCESS_LEAD", "VERTICAL_HEAD", "TEAM_MEMBER"],
+};
 
 // Role label resolution now goes through useRoleLabels() (see the
 // component below) instead of this static list, so an org's custom
@@ -241,12 +257,28 @@ export default function Employees() {
         }
         return false;
     };
-    // NEW: Role field is special — Ops Manager can edit everything else
-    // about an employee, but only a Super Admin can change someone's
-    // role (prevents a lower admin tier from granting/removing Super
-    // Admin access). Everyone else always sees Role read-only, even in
-    // edit mode.
-    const canEditRole = role === "SUPER_ADMIN";
+    // CHANGED: Role used to be Super Admin only (one global flag). It's now
+    // decided per employee:
+    //   * Super Admin  -> can change anyone's role, to any of the six roles.
+    //   * Ops Manager  -> can change the role only of Process Lead /
+    //                     Vertical Head / Team Member, and can only set it to
+    //                     one of those same three (never up to Super Admin /
+    //                     Ops Manager / Audit Manager).
+    //   * Everyone else (Process Lead, Vertical Head, Team Member, ...) ->
+    //     Role stays read-only.
+    // The target-employee part reuses canEditEmployee(), so the Role field is
+    // editable exactly when the rest of the drawer is, for roles that are
+    // allowed to assign roles at all.
+    const assignableRoles = ASSIGNABLE_ROLES[role] || [];
+    const canEditRoleFor = (employee: Employee | null | undefined) =>
+        assignableRoles.length > 0 && canEditEmployee(employee);
+    // NEW: Reset Password is narrower than Edit — only Super Admin and Ops
+    // Manager get it (NOT Process Lead / Vertical Head), and only for an
+    // employee they are allowed to edit (so an Ops Manager never sees it on
+    // a Super Admin / Audit Manager / another Ops Manager). Mirrors the
+    // backend check in employees.controller.js resetEmployeePassword().
+    const canResetPassword = (employee: Employee | null | undefined) =>
+        (role === "SUPER_ADMIN" || role === "OPS_MANAGER") && canEditEmployee(employee);
 
     const [search, setSearch] = useState("");
     const [departmentFilter, setDepartmentFilter] = useState("All");
@@ -286,6 +318,14 @@ export default function Employees() {
     const [isEditingDrawer, setIsEditingDrawer] = useState(false);
     const [editForm, setEditForm] = useState<Employee | null>(null);
     const [saving, setSaving] = useState(false);
+
+    // ---- Reset Password (Super Admin / Ops Manager only) ----
+    const [showResetModal, setShowResetModal] = useState(false);
+    const [resetPasswordValue, setResetPasswordValue] = useState("");
+    const [resetShowPassword, setResetShowPassword] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [resetError, setResetError] = useState("");
+    const [resetDone, setResetDone] = useState(false);
 
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
@@ -407,6 +447,64 @@ export default function Employees() {
     // on the backend, accepting a partial/full employee object and
     // returning the updated record. If it isn't wired up yet, this will hit
     // the catch block below — the UI is ready as soon as the route is.
+    const RESET_MIN_PASSWORD = 8;
+    const RESET_MAX_PASSWORD = 72;
+
+    const openResetModal = () => {
+        if (!canResetPassword(selectedEmployee)) return;
+        setResetPasswordValue("");
+        setResetShowPassword(false);
+        setResetError("");
+        setResetDone(false);
+        setShowResetModal(true);
+    };
+
+    const closeResetModal = () => {
+        if (resetting) return;
+        setShowResetModal(false);
+        setResetPasswordValue("");
+        setResetShowPassword(false);
+        setResetError("");
+        setResetDone(false);
+    };
+
+    // Sets the new password straight away (no email). POST
+    // /api/employees/:id/reset-password
+    const handleResetPassword = async () => {
+        if (!selectedEmployee || !canResetPassword(selectedEmployee)) return;
+        if (resetPasswordValue.length < RESET_MIN_PASSWORD) {
+            setResetError(`Password must be at least ${RESET_MIN_PASSWORD} characters.`);
+            return;
+        }
+        if (resetPasswordValue.length > RESET_MAX_PASSWORD) {
+            setResetError(`Password can be at most ${RESET_MAX_PASSWORD} characters.`);
+            return;
+        }
+        setResetting(true);
+        setResetError("");
+        try {
+            const res = await authFetch(
+                `${apiBase}/api/employees/${selectedEmployee.id}/reset-password`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ newPassword: resetPasswordValue }),
+                }
+            );
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(body?.error || body?.message || "Failed to reset password");
+            }
+            setResetPasswordValue("");
+            setResetShowPassword(false);
+            setResetDone(true);
+        } catch (err: any) {
+            setResetError(err?.message || "Failed to reset password");
+        } finally {
+            setResetting(false);
+        }
+    };
+
     const handleSaveEdit = async () => {
         if (!editForm) return;
         // Defense in depth: the pencil/Edit affordances are already hidden
@@ -419,14 +517,27 @@ export default function Employees() {
         setSaving(true);
         try {
             // Guard on the frontend too: even though the Role <select> is
-            // hidden from non-Super-Admins in the UI, editForm still
+            // hidden from roles that can't assign roles, editForm still
             // carries whatever role the originally-selected employee had.
             // Explicitly stripping it here (rather than trusting the UI
-            // never having changed it) means a non-Super-Admin's save
-            // request never includes a role field at all — the backend
-            // enforces this too, but this avoids relying on that alone.
+            // never having changed it) means a request from someone who
+            // can't change this employee's role never includes a role field
+            // at all — the backend enforces this too, but this avoids
+            // relying on that alone.
+            //
+            // CHANGED: Ops Manager can now change roles too, but only to
+            // Process Lead / Vertical Head / Team Member. If the chosen role
+            // isn't one this user may assign, the save is stopped with a
+            // clear message instead of silently sending it.
             const payload: Record<string, any> = { ...editForm };
-            if (!canEditRole) delete payload.role;
+            const roleChanged = (payload.role || "") !== (selectedEmployee?.role || "");
+            if (!canEditRoleFor(selectedEmployee)) {
+                delete payload.role;
+            } else if (roleChanged && !assignableRoles.includes(payload.role || "")) {
+                alert("You can't assign that role.");
+                setSaving(false);
+                return;
+            }
 
             const res = await authFetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
@@ -687,6 +798,13 @@ export default function Employees() {
     // What the drawer should display: live edits while editing, otherwise
     // the selected employee as-is.
     const drawerData = isEditingDrawer && editForm ? editForm : selectedEmployee;
+
+    // Roles shown in the Role dropdown: only the ones this user may assign.
+    // The employee's current role is always kept in the list so the select
+    // never shows a blank value for it.
+    const roleDropdownOptions = ROLE_OPTIONS.filter(
+        (r) => assignableRoles.includes(r.value) || r.value === (selectedEmployee?.role || "")
+    );
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
@@ -1465,6 +1583,17 @@ export default function Employees() {
                                                 <i className="ti ti-pencil" /> Edit
                                             </button>
                                         )}
+
+                                        {canResetPassword(selectedEmployee) && (
+                                            <button
+                                                type="button"
+                                                style={styles.drawerEditBtn}
+                                                onClick={openResetModal}
+                                                disabled={saving}
+                                            >
+                                                <i className="ti ti-key" /> Reset Password
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -1500,14 +1629,16 @@ export default function Employees() {
                                     </span>
                                 </div>
 
-                                {/* NEW: Role — always visible, but only editable when
-                                    the logged-in user is themselves a Super Admin. Ops
-                                    Manager (or anyone else who reaches edit mode) sees
-                                    it read-only even though they can edit every other
-                                    field on this card. */}
+                                {/* CHANGED: Role — always visible. Editable in edit mode
+                                    by Super Admin (any employee, any role) and by Ops
+                                    Manager (only Process Lead / Vertical Head / Team
+                                    Member employees, and only to one of those three
+                                    roles). Everyone else sees it read-only even in edit
+                                    mode. The dropdown only lists roles the logged-in
+                                    user is allowed to assign. */}
                                 <div style={styles.detailsRow}>
                                     <span style={styles.detailsLabel}>Role</span>
-                                    {isEditingDrawer && canEditRole ? (
+                                    {isEditingDrawer && canEditRoleFor(selectedEmployee) ? (
                                         <select
                                             className="emp-drawer-select"
                                             style={styles.detailsInput}
@@ -1517,7 +1648,7 @@ export default function Employees() {
                                             }
                                         >
                                             <option value="">Select role</option>
-                                            {ROLE_OPTIONS.map((r) => (
+                                            {roleDropdownOptions.map((r) => (
                                                 <option key={r.value} value={r.value}>
                                                     {getRoleLabel(r.value)}
                                                 </option>
@@ -1800,6 +1931,128 @@ export default function Employees() {
                                 {deleting ? "Deleting..." : "Delete"}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Reset Password modal — Super Admin / Ops Manager only */}
+            {showResetModal && selectedEmployee && (
+                <div style={styles.modalOverlay}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.resetModalIcon}>
+                            <i className={resetDone ? "ti ti-check" : "ti ti-key"} />
+                        </div>
+                        <h3
+                            style={{
+                                margin: "0 0 6px",
+                                fontSize: fontSize.xl,
+                                fontWeight: fontWeight.bold,
+                                color: "#16233a",
+                            }}
+                        >
+                            {resetDone ? "Password updated" : "Reset Password"}
+                        </h3>
+
+                        {resetDone ? (
+                            <>
+                                <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
+                                    The new password for <strong>{selectedEmployee.name}</strong> is
+                                    set. They can log in with it right away — share it with them
+                                    directly.
+                                </p>
+                                <div style={styles.modalButtons}>
+                                    <button
+                                        type="button"
+                                        style={styles.saveButton}
+                                        onClick={closeResetModal}
+                                    >
+                                        Done
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
+                                    Set a new password for <strong>{selectedEmployee.name}</strong>.
+                                    It takes effect immediately — no email is sent.
+                                </p>
+                                <div style={styles.resetInputWrap}>
+                                    <input
+                                        type={resetShowPassword ? "text" : "password"}
+                                        style={styles.resetInput}
+                                        value={resetPasswordValue}
+                                        placeholder="New password (min 8 characters)"
+                                        autoFocus
+                                        autoComplete="new-password"
+                                        maxLength={RESET_MAX_PASSWORD}
+                                        disabled={resetting}
+                                        onChange={(e) => {
+                                            setResetPasswordValue(e.target.value);
+                                            if (resetError) setResetError("");
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") handleResetPassword();
+                                        }}
+                                    />
+                                    <button
+                                        type="button"
+                                        style={styles.resetEyeBtn}
+                                        onClick={() => setResetShowPassword((v) => !v)}
+                                        aria-label={
+                                            resetShowPassword ? "Hide password" : "Show password"
+                                        }
+                                        title={
+                                            resetShowPassword ? "Hide password" : "Show password"
+                                        }
+                                    >
+                                        <i
+                                            className={
+                                                resetShowPassword ? "ti ti-eye-off" : "ti ti-eye"
+                                            }
+                                        />
+                                    </button>
+                                </div>
+                                {resetError && (
+                                    <p
+                                        style={{
+                                            margin: "10px 0 0",
+                                            fontSize: fontSize.sm,
+                                            color: "#DC2626",
+                                            fontWeight: fontWeight.medium,
+                                            textAlign: "left",
+                                        }}
+                                    >
+                                        {resetError}
+                                    </p>
+                                )}
+                                <div style={styles.modalButtons}>
+                                    <button
+                                        type="button"
+                                        style={styles.cancelButton}
+                                        onClick={closeResetModal}
+                                        disabled={resetting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.saveButton,
+                                            opacity:
+                                                resetting || !resetPasswordValue.trim() ? 0.7 : 1,
+                                            cursor:
+                                                resetting || !resetPasswordValue.trim()
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                        onClick={handleResetPassword}
+                                        disabled={resetting || !resetPasswordValue.trim()}
+                                    >
+                                        {resetting ? "Updating..." : "Submit"}
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
@@ -2919,5 +3172,51 @@ const styles: Record<string, CSSProperties> = {
         background: "#DC2626",
         color: "#fff",
         fontWeight: fontWeight.medium,
+    },
+
+    // ---- Reset Password modal ----
+    resetModalIcon: {
+        width: 70,
+        height: 70,
+        margin: "0 auto 15px",
+        borderRadius: radius.circle,
+        background: "rgba(var(--brand-blue-rgb), 0.12)",
+        color: "var(--brand-blue)",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        fontSize: fontSize["7xl"],
+    },
+    resetInputWrap: {
+        position: "relative",
+        marginTop: 18,
+    },
+    resetInput: {
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "11px 42px 11px 14px",
+        border: "1px solid #e1e6ef",
+        borderRadius: radius.sm,
+        fontSize: fontSize.base,
+        color: "#16233a",
+        background: "#fafafa",
+        outline: "none",
+        fontFamily: "inherit",
+    },
+    resetEyeBtn: {
+        position: "absolute",
+        right: 6,
+        top: "50%",
+        transform: "translateY(-50%)",
+        width: 32,
+        height: 32,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: "none",
+        background: "transparent",
+        color: "#7d90a6",
+        cursor: "pointer",
+        fontSize: fontSize.lg,
     },
 };

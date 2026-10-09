@@ -84,7 +84,8 @@ const menuItems: MenuItem[] = [
     // REMOVED: standalone Attendance nav link — leave-marking now lives
     // inline inside Manual/Smart Allocation instead of a separate page.
 
-    {
+    // Todays allocation button
+    /*{
         label: "Today's Allocation",
         icon: "ti ti-hand-stop",
         path: "/today's-allocation",
@@ -95,7 +96,7 @@ const menuItems: MenuItem[] = [
         // Vertical Head gets the (team-scoped) allocation grid, Team
         // Member gets the self-allocate-only view — see App.jsx.
         roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER", "VERTICAL_HEAD"],
-    },
+    },*/
     {
         label: "Production Reports",
         icon: "ti ti-file-analytics",
@@ -150,7 +151,7 @@ const pathToLabel: Record<string, string> = {
     "/services": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
-    "/today's-allocation": "Today's Allocation",
+    //"/today's-allocation": "Today's Allocation",
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",

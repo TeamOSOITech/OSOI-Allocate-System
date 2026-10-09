@@ -31,14 +31,11 @@ type ProductRate = {
 
 const CURRENCY_OPTIONS = ["USD", "GBP", "INR", "EUR", "AUD", "CAD"];
 
-// NEW: default currency for a newly-added service rate is derived from
-// the Client/Subclient's own Country field — e.g. Country "USA" defaults
-// the amount's currency to USD instead of always defaulting to USD
-// regardless of country. Country is free-typed (not a fixed dropdown), so
-// this matches common spellings/abbreviations case-insensitively rather
-// than requiring an exact country code. Anything unrecognized falls back
-// to USD — this only sets the default; the Unit dropdown next to Status
-// can always be changed by hand afterward.
+// Default currency for a newly-added service rate is derived from the
+// Client/Subclient's own Country field. Country is free-typed, so this
+// matches common spellings/abbreviations case-insensitively. Anything
+// unrecognized falls back to USD — the Unit dropdown can always be
+// changed by hand afterward.
 const COUNTRY_CURRENCY_MAP: Record<string, string> = {
     usa: "USD",
     "united states": "USD",
@@ -70,11 +67,9 @@ function currencyForCountry(country: string | null | undefined): string {
     return COUNTRY_CURRENCY_MAP[key] || "USD";
 }
 
-// NEW: there is only ONE currency ("Unit") per client/subclient now — set
-// once next to Status, not per-service anymore. Whenever Country changes
-// (typed at any point, before or after services are already checked),
-// every already-selected service's rate is re-stamped with the new
-// currency so the whole form always stays consistent with Country.
+// There is only ONE currency ("Unit") per client/subclient — set once next
+// to Status. Whenever Country changes, every already-selected service's
+// rate is re-stamped with the new currency.
 function withCountryUpdate<
     T extends { country: string; currency: string; productRates: ProductRate[] },
 >(form: T, newCountry: string): T {
@@ -87,10 +82,8 @@ function withCountryUpdate<
     };
 }
 
-// NEW: manual override for the Unit dropdown (or the "+" add-new-currency
-// control) — same idea as withCountryUpdate, but triggered by the person
-// picking/adding a currency directly instead of it being inferred from
-// Country. Every already-selected service's rate is re-stamped to match.
+// Manual override for the Unit dropdown (or the "+" add-new-currency
+// control) — every already-selected service's rate is re-stamped to match.
 function withCurrencyUpdate<T extends { currency: string; productRates: ProductRate[] }>(
     form: T,
     newCurrency: string
@@ -105,11 +98,8 @@ function withCurrencyUpdate<T extends { currency: string; productRates: ProductR
 type Client = {
     // NOTE: declared as `number` for the common case, but the backend
     // can actually send a "pending-<request id>" string placeholder for
-    // a still-unapproved CLIENT_CREATE (see attachPendingClientApprovals
-    // in clients.controller.js). isPendingCreateClient() below checks
-    // this at runtime via String(c.id) rather than widening this type,
-    // since Edit/Delete are hidden for those rows and never call
-    // openEditModal/openDeleteConfirm with a placeholder id anyway.
+    // a still-unapproved CLIENT_CREATE. isPendingCreateClient() below
+    // checks this at runtime via String(c.id).
     id: number;
     name: string;
     country: string | null;
@@ -123,11 +113,11 @@ type Client = {
     primaryContactName: string | null;
     primaryContactEmail: string | null;
     primaryContactPhone: string | null;
+    // NOTE: these "secondary" fields are shown in the UI as the
+    // "Finance Contact" — field names kept so backend/DB don't change.
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
-    // REVERSED MAPPING: which Products this Client is linked to, via the
-    // client_products junction table — each with its own amount/currency.
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
     approvalStatus?: "PENDING_CREATE" | "PENDING_UPDATE" | "PENDING_DELETE";
@@ -135,18 +125,12 @@ type Client = {
 
 // A "PENDING_CREATE" client is a placeholder synthesized from an
 // approval request that hasn't been approved yet — its real id (at
-// runtime) is "pending-<request id>", not a real database id. Editing/
-// deleting it would submit a CLIENT_UPDATE/DELETE whose payload.id is
-// that placeholder string, which fails with a Postgres bigint error the
-// moment an approver tries to approve it. Same bug/fix as
-// isPendingCreate in products.tsx. Uses String(c.id) rather than a
-// typed check since the declared type stays `number` (see note above).
+// runtime) is "pending-<request id>", not a real database id.
 function isPendingCreateClient(c: Client) {
     return String(c.id).startsWith("pending-");
 }
 
-// Subclients now carry the same Primary/Secondary contact fields as Clients
-// so both entities are viewable, editable, and exportable with parity.
+// Subclients carry the same Primary / Finance contact fields as Clients.
 type SubclientRow = {
     id: number;
     name: string;
@@ -162,16 +146,15 @@ type SubclientRow = {
     primaryContactName: string | null;
     primaryContactEmail: string | null;
     primaryContactPhone: string | null;
+    // Shown in the UI as the "Finance Contact" (field names unchanged).
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
-    // REVERSED MAPPING: which Products this Subclient is linked to, via the
-    // subclient_products junction table — each with its own amount/currency.
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
 };
 
-// A Product is now a standalone catalog entry (see products.tsx) — Clients
+// A Product is a standalone catalog entry (see products.tsx) — Clients
 // and Subclients each pick which ones they use.
 type ProductOption = {
     id: number;
@@ -201,9 +184,7 @@ function getAvatarColors(name: string) {
     return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
-// Normalizes a raw website value (e.g. "acme.com" or "www.acme.com") into a
-// safe, absolute href so it always opens correctly in a new tab, regardless
-// of whether the user typed a protocol when entering it in the form.
+// Normalizes a raw website value into a safe, absolute href.
 function toSafeHref(raw: string) {
     const trimmed = raw.trim();
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -211,9 +192,7 @@ function toSafeHref(raw: string) {
 }
 
 // Small reusable clickable-website renderer used in both the card view and
-// the details modal. Falls back to a plain "—" when no website is set, and
-// never throws on malformed input — worst case it just builds a best-effort
-// https:// link.
+// the details modal.
 function WebsiteLink({ website, style }: { website: string | null; style?: CSSProperties }) {
     if (!website || !website.trim()) {
         return <span style={style}>—</span>;
@@ -237,9 +216,7 @@ type TabKey = "client" | "subclient";
 type ViewDetailsTarget =
     { type: "client"; data: Client } | { type: "subclient"; data: SubclientRow };
 
-// Row-level bulk result, one entry per row in the uploaded sheet — whether
-// that row succeeded or failed — so the modal can render a full list
-// exactly like the "Bulk Add Users" page does.
+// Row-level bulk result, one entry per row in the uploaded sheet.
 type BulkRowResult = {
     row: number;
     identifier: string;
@@ -268,16 +245,8 @@ const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
 };
 
 // Injected once — inline style objects can't express :hover/:focus, so the
-// handful of interactive/motion rules live here instead of duplicating them
-// as onMouseEnter/onMouseLeave handlers everywhere.
-//
-// All brand colors below reference the CSS custom properties set on
-// <html> by ThemeProvider (--brand-blue / --brand-light-blue / --brand-green
-// / their *-rgb counterparts for rgba() shadows), so this entire page — the
-// tabs, table hover state, tooltips, and the Sample Sheet / Bulk Upload
-// affordances — automatically follows whichever theme color is selected
-// from the header's "Theme color" picker, instead of being pinned to one
-// fixed palette.
+// handful of interactive/motion rules live here. All brand colors reference
+// the CSS custom properties set on <html> by ThemeProvider.
 const GLOBAL_CSS = `
 .cl-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .cl-card:hover {
@@ -296,10 +265,7 @@ const GLOBAL_CSS = `
 .cl-table thead th:first-child { border-top-left-radius: 16px; }
 .cl-table thead th:last-child { border-top-right-radius: 16px; }
 
-/* Tooltip used on the Sample Sheet button so hover clearly communicates
-   that the download is an Excel (.xlsx) template for bulk upload. Colors
-   follow the active theme gradient (same one used on tabs, Add button, and
-   the filled View Details button), rather than a fixed palette. */
+/* Tooltip used on the Sample Sheet button. */
 .cl-tooltip-wrap { position: relative; display: inline-flex; }
 .cl-tooltip-wrap .cl-tooltip-bubble {
   position: absolute;
@@ -335,22 +301,18 @@ const GLOBAL_CSS = `
   transform: translateX(-50%) translateY(0);
 }
 
-/* Custom slim scrollbar for the list/grid area so it reads as a native
-   overflow container rather than the page itself growing. */
+/* Custom slim scrollbar for the list/grid area. */
 .cl-scroll-area::-webkit-scrollbar { width: 8px; }
 .cl-scroll-area::-webkit-scrollbar-track { background: transparent; }
 .cl-scroll-area::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .cl-scroll-area::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
 
-/* Bulk upload results list scrollbar (Bulk Add Users style) */
+/* Bulk upload results list scrollbar */
 .cl-results-list::-webkit-scrollbar { width: 8px; }
 .cl-results-list::-webkit-scrollbar-track { background: transparent; }
 .cl-results-list::-webkit-scrollbar-thumb { background: #cfd9ea; border-radius: 8px; }
 .cl-results-list::-webkit-scrollbar-thumb:hover { background: #b7c4dc; }
 
-/* Tabs wrap onto a second line instead of getting clipped by the page's
-   overflow:hidden shell on narrow phone widths — this is what was hiding
-   the "Subclient" tab on mobile before. */
 @media (max-width: 480px) {
   .cl-tab-btn { padding: 9px 14px !important; font-size: 13px !important; }
 }
@@ -359,10 +321,8 @@ const GLOBAL_CSS = `
 export default function Clients() {
     const isMobile = useIsMobile();
 
-    // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
-    // for both /api/clients and /api/subclients — hide the buttons for
-    // anyone who'd just get a 403 from clicking them (Phase 5: hide
-    // create actions from every role except the ones actually allowed).
+    // Matches backend's authorize gate on POST/bulk-upload for both
+    // /api/clients and /api/subclients.
     let currentUser: { role?: string } | null = null;
     try {
         const userStr = localStorage.getItem("user");
@@ -388,9 +348,8 @@ export default function Clients() {
 
     const [viewDetails, setViewDetails] = useState<ViewDetailsTarget | null>(null);
 
-    // Shared shape for both Client and Subclient Add/Edit forms so both
-    // entities can carry Country / Website / Main Email / Main Phone /
-    // Primary Contact / Secondary Contact fields identically.
+    // Shared shape for both Client and Subclient Add/Edit forms.
+    // (secondaryContact* = the "Finance Contact" in the UI.)
     const emptyForm = {
         name: "",
         country: "",
@@ -405,23 +364,16 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
-        // NEW: single currency ("Unit") for the whole client/subclient —
-        // defaults from Country but can be manually overridden via the
-        // Unit dropdown next to Status. Applied to every service rate
-        // below, instead of each service carrying its own currency.
+        // Single currency ("Unit") for the whole client/subclient —
+        // defaults from Country but can be manually overridden.
         currency: "USD",
-        // REVERSED MAPPING: [{ productId, amount, currency }] for each
-        // Product this Client/Subclient uses, at this client/subclient's
-        // own rate.
+        // [{ productId, amount, currency }] for each Product this
+        // Client/Subclient uses, at this client/subclient's own rate.
         productRates: [] as ProductRate[],
     };
 
     const [showAddModal, setShowAddModal] = useState(false);
-    // NEW: currency list backing the "Unit" dropdown — starts from
-    // CURRENCY_OPTIONS but can grow via the small "+" control next to it
-    // (renderUnitField below) when someone needs a currency that isn't in
-    // the default list. Shared across Add/Edit since only one of those
-    // modals is ever open at a time.
+    // Currency list backing the "Unit" dropdown — can grow via the "+" control.
     const [currencyOptions, setCurrencyOptions] = useState<string[]>(CURRENCY_OPTIONS);
     const [addingCurrency, setAddingCurrency] = useState(false);
     const [newCurrencyCode, setNewCurrencyCode] = useState("");
@@ -429,15 +381,11 @@ export default function Clients() {
     const [addSubmitting, setAddSubmitting] = useState(false);
     const [addError, setAddError] = useState("");
 
-    // NEW: shown as a dismissible banner when a create/edit/delete came
-    // back 202 (Process Lead's request went to their reporting manager
-    // for approval instead of applying immediately) — see approvalGate.js.
+    // Shown as a dismissible banner when a create/edit/delete came back
+    // 202 (went to the reporting manager for approval).
     const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
-    // NEW: auto-dismiss the banner above after 10s instead of leaving it
-    // on screen until the user clicks the ✕. Resets on every new notice
-    // (e.g. approving a second row right after the first) and cleans up
-    // the timer on unmount / notice change so it never fires stale.
+    // Auto-dismiss the banner after 5s.
     useEffect(() => {
         if (!approvalNotice) return;
         const timer = setTimeout(() => setApprovalNotice(null), 5000);
@@ -456,10 +404,6 @@ export default function Clients() {
     const [deleteError, setDeleteError] = useState("");
 
     // ---- Bulk-select / bulk-delete state ----
-    // Checkboxes stay hidden until "Select" is switched on, then apply to
-    // whichever tab (Client/Subclient) is currently active. Reuses the same
-    // DELETE /:id endpoint as the single-delete flow above, one request per
-    // selected row, instead of a separate bulk-delete backend route.
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
@@ -467,19 +411,11 @@ export default function Clients() {
     const [bulkDeleteError, setBulkDeleteError] = useState("");
 
     // ---- Bulk upload state ----
-    // Bulk upload now lives inside its own modal (opened via the "Bulk
-    // Upload" button) instead of firing immediately off a hidden file
-    // input, matching the Add User page's "Bulk Add Users" modal pattern:
-    // required-columns callout -> Choose File -> explicit Upload button ->
-    // full created/failed row-by-row results list.
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkFile, setBulkFile] = useState<File | null>(null);
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
-    // NEW: 202 = a Process Lead's bulk upload went to their reporting
-    // manager for approval instead of creating anything yet (see
-    // CLIENT_BULK_CREATE on the backend). Mutually exclusive with
-    // bulkResult.
+    // 202 = bulk upload went to the reporting manager for approval.
     const [bulkPendingApprovalMsg, setBulkPendingApprovalMsg] = useState<string | null>(null);
     const [bulkError, setBulkError] = useState("");
 
@@ -489,16 +425,8 @@ export default function Clients() {
         setLoading(true);
         setError("");
         try {
-            // NOTE: clients.tsx is the one place meant to show still-
-            // pending "New Client" rows (Awaiting approval badge,
-            // Edit/Delete hidden — see isPendingCreateClient below).
-            // Everywhere else that reads /api/clients (Service Cases'
-            // client picker, History, Billing) intentionally does NOT
-            // pass this, so a not-yet-approved client never shows up as
-            // a selectable option there. Same reasoning applies to
-            // /api/products below — no includePending here means the
-            // client-product-linking dropdown only offers already-
-            // approved services.
+            // clients.tsx is the one place meant to show still-pending
+            // "New Client" rows (includePending=true).
             const [clientsRes, subclientsRes, productsRes] = await Promise.all([
                 authFetch(`${apiBase}/api/clients?includePending=true`, { cache: "no-store" }),
                 authFetch(`${apiBase}/api/subclients`, { cache: "no-store" }),
@@ -511,9 +439,7 @@ export default function Clients() {
             setClients(await clientsRes.json());
             setSubclients(await subclientsRes.json());
 
-            // Products endpoint isn't critical to render this page, so a
-            // failure here shouldn't block Clients/Subclients from showing —
-            // it would just mean the "Products" picker in Add/Edit is empty.
+            // Products endpoint isn't critical to render this page.
             if (productsRes.ok) {
                 const productsJson = await productsRes.json();
                 setProducts(productsJson?.data || []);
@@ -530,20 +456,15 @@ export default function Clients() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiBase]);
 
-    // Reset filters when switching tabs so stale country selections from one
-    // dataset don't carry into another.
+    // Reset filters when switching tabs.
     useEffect(() => {
         setSearch("");
         setStatusFilter("All");
         setCountryFilter("All");
-        // Bulk selection is per-tab (Client ids and Subclient ids can
-        // overlap), so switching tabs clears it and exits select mode.
         setSelectedIds(new Set());
         setIsSelectMode(false);
     }, [activeTab]);
 
-    // Country filter options now come from whichever dataset is active, since
-    // Subclients carry their own Country field too (same as Clients).
     const countries = useMemo(() => {
         const source = activeTab === "client" ? clients : subclients;
         return Array.from(new Set(source.map((c) => c.country).filter(Boolean) as string[])).sort();
@@ -576,10 +497,7 @@ export default function Clients() {
     const currentFilteredLength =
         activeTab === "client" ? filteredClients.length : filteredSubclients.length;
 
-    // No pagination anymore — the full filtered set renders inside a
-    // scrollable container. The container only shows a scrollbar (and
-    // scrolls) when the content actually overflows its available height;
-    // short lists sit flush with no scroll affordance at all.
+    // No pagination — the full filtered set renders inside a scrollable container.
     const pageClients = filteredClients;
     const pageSubclients = filteredSubclients;
 
@@ -590,8 +508,6 @@ export default function Clients() {
 
     const tabLabel = activeTab === "client" ? "Client" : "Subclient";
 
-    // Whichever list is on-screen for the active tab — used by the
-    // bulk-select bar and the table/card checkboxes.
     const currentPageRows: { id: number; name: string }[] =
         activeTab === "client" ? pageClients : pageSubclients;
 
@@ -672,9 +588,6 @@ export default function Clients() {
         setSelectedIds(new Set());
         setBulkDeleting(false);
 
-        // Only auto-close (and exit select mode) on a clean sweep — leave
-        // the modal open showing the error if something failed, so it
-        // isn't missed.
         if (failedCount === 0) {
             setShowBulkDeleteConfirm(false);
             setIsSelectMode(false);
@@ -717,11 +630,10 @@ export default function Clients() {
                 primaryContactName: addForm.primaryContactName || null,
                 primaryContactEmail: addForm.primaryContactEmail || null,
                 primaryContactPhone: addForm.primaryContactPhone || null,
+                // Finance contact (field names unchanged for the backend)
                 secondaryContactName: addForm.secondaryContactName || null,
                 secondaryContactEmail: addForm.secondaryContactEmail || null,
                 secondaryContactPhone: addForm.secondaryContactPhone || null,
-                // REVERSED MAPPING: this Client/Subclient links to these
-                // existing Products (picked in the form below).
                 productRates: addForm.productRates,
             };
 
@@ -744,10 +656,7 @@ export default function Clients() {
                 throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
-            // NEW: 202 = a Process Lead's request went to their reporting
-            // manager for approval instead of being created immediately —
-            // see approvalGate.js. Surface that clearly instead of letting
-            // it look like a normal, already-applied create.
+            // 202 = request went to the reporting manager for approval.
             if (response.status === 202) {
                 const data = await response.json().catch(() => null);
                 setApprovalNotice(
@@ -768,16 +677,8 @@ export default function Clients() {
 
     // ---- Edit handlers ----
 
-    // FIX: this used to populate the Edit form straight from `target.data`
-    // — whatever was already sitting in the `clients`/`subclients` list
-    // state. If that list snapshot was even slightly stale (e.g. taken
-    // right after a product was linked elsewhere, or before this page's
-    // last fetchAll landed), the Products picker would render with
-    // nothing checked even though the link genuinely exists in the DB.
-    // Now it re-fetches that single record fresh from the backend first,
-    // so the Edit form — including productRates — always reflects exactly
-    // what's in the database at the moment you open it. Falls back to the
-    // list data only if that fetch fails, so Edit still opens.
+    // Re-fetches the single record fresh from the backend before filling
+    // the Edit form, so productRates always reflect what's in the DB.
     const buildEditForm = (data: Client | SubclientRow, type: "client" | "subclient") => ({
         name: data.name,
         country: data.country || "",
@@ -792,10 +693,6 @@ export default function Clients() {
         secondaryContactName: data.secondaryContactName || "",
         secondaryContactEmail: data.secondaryContactEmail || "",
         secondaryContactPhone: data.secondaryContactPhone || "",
-        // Existing saved rates may already carry their own currency (from
-        // before this became a single "Unit" per client/subclient) — use
-        // whatever the first one has as the starting Unit value, falling
-        // back to the country-derived default if there are no rates yet.
         currency:
             (data.productRates && data.productRates[0]?.currency) ||
             currencyForCountry(data.country),
@@ -804,8 +701,7 @@ export default function Clients() {
 
     const openEditModal = async (target: ViewDetailsTarget) => {
         setEditError("");
-        // Open immediately with whatever we already have, so the modal
-        // doesn't sit blank while the fresh fetch is in flight...
+        // Open immediately with whatever we already have...
         setEditForm(buildEditForm(target.data, target.type));
         setEditTarget(target);
 
@@ -816,7 +712,7 @@ export default function Clients() {
                     ? `${apiBase}/api/clients/${target.data.id}`
                     : `${apiBase}/api/subclients/${target.data.id}`;
             const res = await authFetch(endpoint, { cache: "no-store" });
-            if (!res.ok) return; // keep the fallback data already set above
+            if (!res.ok) return;
             const fresh = await res.json();
             setEditForm(buildEditForm(fresh, target.type));
         } catch {
@@ -857,6 +753,7 @@ export default function Clients() {
                 primaryContactName: editForm.primaryContactName || null,
                 primaryContactEmail: editForm.primaryContactEmail || null,
                 primaryContactPhone: editForm.primaryContactPhone || null,
+                // Finance contact (field names unchanged for the backend)
                 secondaryContactName: editForm.secondaryContactName || null,
                 secondaryContactEmail: editForm.secondaryContactEmail || null,
                 secondaryContactPhone: editForm.secondaryContactPhone || null,
@@ -882,8 +779,6 @@ export default function Clients() {
                 throw new Error(data?.detail ? `${base}: ${data.detail}` : base);
             }
 
-            // NEW: 202 = this edit went to the reporting manager for
-            // approval instead of applying immediately — see approvalGate.js.
             if (response.status === 202) {
                 const data = await response.json().catch(() => null);
                 setApprovalNotice(
@@ -930,8 +825,6 @@ export default function Clients() {
                 throw new Error(data?.message || "Failed to delete");
             }
 
-            // NEW: 202 = this delete went to the reporting manager for
-            // approval instead of applying immediately — see approvalGate.js.
             if (response.status === 202) {
                 const data = await response.json().catch(() => null);
                 setApprovalNotice(
@@ -951,19 +844,9 @@ export default function Clients() {
     };
 
     // ---- Bulk upload handlers (tied to whichever tab is active) ----
-    // Template is always served/generated as an .xlsx workbook by the backend.
-    // NOTE: the Subclient template's header row must mirror the Client
-    // template's header row (Name, Country, Status, Website, Main Email,
-    // Main Phone, Primary/Secondary Contact fields) plus the Subclient-only
-    // Client lookup column. That parity lives in the backend template
-    // generator for /api/subclients/bulk/template — not in this file.
 
-    // FIX: window.open() was hitting this endpoint as a bare, unauthenticated
-    // browser navigation, so the backend saw no Authorization header and
-    // rejected it with "No token provided" — even though every other call on
-    // this page correctly goes through authFetch. Downloading via authFetch
-    // (blob response) attaches the same auth token as everything else, then
-    // we trigger the save manually via a temporary <a download> link.
+    // Downloads via authFetch (blob response) so the auth token is attached,
+    // then triggers the save manually via a temporary <a download> link.
     const handleDownloadTemplate = async () => {
         const endpoint = BULK_ENDPOINT_MAP[activeTab];
         try {
@@ -986,9 +869,10 @@ export default function Clients() {
         }
     };
 
-    // Required-columns copy shown inside the Bulk Upload modal, mirroring
-    // the info callout on the Add User page's "Bulk Add Users" modal.
-    // Subclients carry one extra lookup column (Client) that Clients don't.
+    // Required-columns copy shown inside the Bulk Upload modal.
+    // NOTE: these must match the column headers the BACKEND template/upload
+    // uses (still "Secondary Contact ..." there), so they are intentionally
+    // not renamed here. Rename them in the backend first if needed.
     const bulkRequiredColumnsText =
         activeTab === "client"
             ? "Name, Country, Status, Website, Main Email, Main Phone, Primary Contact Name, Primary Contact Email, Primary Contact Phone, Secondary Contact Name, Secondary Contact Email, Secondary Contact Phone"
@@ -1045,10 +929,7 @@ export default function Clients() {
                 throw new Error(data?.message || "Bulk upload failed");
             }
 
-            // NEW: 202 = a Process Lead's bulk upload went to their
-            // reporting manager for approval instead of creating
-            // anything yet (see CLIENT_BULK_CREATE on the backend) —
-            // there's no row-by-row result to show yet.
+            // 202 = bulk upload went to the reporting manager for approval.
             if (response.status === 202) {
                 setBulkPendingApprovalMsg(
                     data?.message || "This bulk upload has been submitted for approval."
@@ -1056,10 +937,6 @@ export default function Clients() {
                 return;
             }
 
-            // Backend is expected to return: { totalRows, createdCount,
-            // failedCount, results: [{ row, identifier, status, message? }] }
-            // so every row — created AND failed — can be listed in the UI,
-            // matching the "Bulk Add Users" results list.
             setBulkResult(data as BulkResult);
             await fetchAll();
         } catch (err: any) {
@@ -1069,18 +946,9 @@ export default function Clients() {
         }
     };
 
-    // REVERSED MAPPING: shared "which Products does this Client/Subclient
-    // use, and at what rate" picker, used by both Add and Edit forms, for
-    // both tabs. The rate (amount + currency) lives on the link, not on
-    // the product, since the same product can cost differently per client.
-    //
-    // FIX: Supabase/PostgREST doesn't always return a bigint id as the
-    // same JS type in every response (e.g. plain `number` from
-    // /api/products vs a value that round-tripped through JSON as a
-    // `string` from the client/subclient detail endpoint). A strict `===`
-    // then silently never matches, so a previously-saved product shows as
-    // unchecked even though the link genuinely exists in the DB. Comparing
-    // via Number(...) on both sides makes the match type-independent.
+    // "Which Products does this Client/Subclient use, and at what rate"
+    // picker, used by both Add and Edit forms. Compared via Number(...) on
+    // both sides so bigint ids match regardless of JSON type.
     const toggleProductId = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
@@ -1092,13 +960,7 @@ export default function Clients() {
                 ...prev,
                 productRates: has
                     ? prev.productRates.filter((r) => Number(r.productId) !== Number(productId))
-                    : [
-                          ...prev.productRates,
-                          // Uses this form's single Unit/currency (see emptyForm.currency,
-                          // withCountryUpdate, withCurrencyUpdate) — same currency for
-                          // every service, not picked per-service anymore.
-                          { productId, amount: "", currency: prev.currency },
-                      ],
+                    : [...prev.productRates, { productId, amount: "", currency: prev.currency }],
             };
         });
     };
@@ -1118,11 +980,7 @@ export default function Clients() {
         }));
     };
 
-    // NEW: "Select All" / "Deselect All" for the Services picker — checks
-    // every product currently loaded, each starting with a blank amount
-    // and this form's current Unit/currency (same default as toggling one
-    // on individually), or clears every selected service if all of them
-    // are already checked.
+    // "Select All" / "Deselect All" for the Services picker.
     const toggleAllProducts = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void,
@@ -1168,9 +1026,6 @@ export default function Clients() {
                         background: "#fafbfc",
                     }}
                 >
-                    {/* NEW: Select All / Deselect All toggle for this Services
-                        picker — mirrors the same control added to the Teams
-                        picker on the Products page. */}
                     <label
                         style={{
                             display: "flex",
@@ -1243,11 +1098,8 @@ export default function Clients() {
                                     {p.product_name}
                                 </label>
                                 {checked && (
-                                    // FIX: currency used to repeat as a dropdown next to
-                                    // EVERY checked service — moved to a single "Unit"
-                                    // field next to Status instead (see renderUnitField),
-                                    // since it's the same currency for all services on
-                                    // this client/subclient. Each row now only needs Amount.
+                                    // Currency is a single "Unit" field next to Status
+                                    // (see renderUnitField); each row only needs Amount.
                                     <input
                                         type="number"
                                         min="0"
@@ -1280,13 +1132,9 @@ export default function Clients() {
 
     const editTabLabel = editTarget?.type === "client" ? "Client" : "Subclient";
 
-    // NEW: "Unit" field — the single currency for this client/subclient,
-    // shown once next to Status (not per-service anymore). Defaults from
-    // Country (currencyForCountry/withCountryUpdate) but can be changed
-    // by hand — picking a different Unit re-stamps every already-selected
-    // service to match (withCurrencyUpdate). The small "+" reveals an
-    // inline input to add a currency code that isn't in the dropdown yet;
-    // submitting adds it to the shared list and selects it immediately.
+    // "Unit" field — the single currency for this client/subclient, shown
+    // once next to Status. The small "+" reveals an inline input to add a
+    // currency code that isn't in the dropdown yet.
     const renderUnitField = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
@@ -1405,9 +1253,8 @@ export default function Clients() {
         </div>
     );
 
-    // Shared Company Info + Primary/Secondary Contact fieldset renderer used by
-    // both the Add and Edit forms, and for both Client and Subclient tabs, so
-    // the two entity types never drift out of parity again.
+    // Shared Company Info + Primary / Finance Contact fieldset renderer used
+    // by both the Add and Edit forms, for both Client and Subclient tabs.
     const renderContactFieldset = (
         formState: typeof emptyForm,
         setFormState: (updater: (prev: typeof emptyForm) => typeof emptyForm) => void
@@ -1480,7 +1327,8 @@ export default function Clients() {
                 />
             </div>
 
-            <div style={styles.formSectionLabel}>Secondary Contact Person</div>
+            {/* Finance Contact (stored in the secondaryContact* fields) */}
+            <div style={styles.formSectionLabel}>Finance Contact Person</div>
             <div>
                 <label style={styles.formLabel}>Name</label>
                 <input
@@ -1521,9 +1369,8 @@ export default function Clients() {
 
             <div style={isMobile ? styles.contentColMobile : styles.contentCol}>
                 <div style={styles.contentBody}>
-                    {/* NEW: shown when a Process Lead's create/edit/delete came back
-                        202 — it went to their reporting manager for approval instead
-                        of applying immediately. See approvalGate.js. */}
+                    {/* Shown when a create/edit/delete came back 202 — it went to
+                        the reporting manager for approval. */}
                     {approvalNotice && (
                         <div
                             style={{
@@ -1557,9 +1404,7 @@ export default function Clients() {
                         </div>
                     )}
 
-                    {/* Tabs — flexWrap so on very narrow phones "Subclient" wraps to
-                        its own line instead of being clipped by the mobile shell's
-                        overflow:hidden, and stays reachable/tappable either way. */}
+                    {/* Tabs */}
                     <div style={isMobile ? styles.tabRowMobile : styles.tabRow}>
                         <button
                             type="button"
@@ -1594,11 +1439,8 @@ export default function Clients() {
                             </p>
 
                             <div style={styles.headerActions}>
-                                {/* Process Lead can't reach the full Approvals page
-                                    anymore (decision-makers only) — this gives them a
-                                    read-only way to check their own submitted Client/
-                                    Subclient requests without leaving this page.
-                                    Renders nothing for any other role. */}
+                                {/* Read-only way for a Process Lead to check their own
+                                    submitted Client/Subclient requests. */}
                                 <MyPendingApprovals
                                     types={[
                                         "CLIENT_CREATE",
@@ -1610,10 +1452,6 @@ export default function Clients() {
                                     ]}
                                 />
 
-                                {/* Sample sheet is only useful for bulk-uploading, which
-                                    itself is gated behind canManage — Team Member /
-                                    Vertical Head (view-only) have no use for a template
-                                    they can't upload, so hide it for them too. */}
                                 {canManage && (
                                     <span className="cl-tooltip-wrap">
                                         <button
@@ -1633,9 +1471,6 @@ export default function Clients() {
                                     </span>
                                 )}
 
-                                {/* Bulk Upload now opens a modal (matching the Add User
-                                    page's "Bulk Add Users" modal) instead of firing an
-                                    upload the instant a file is chosen. */}
                                 {canManage && (
                                     <span className="cl-tooltip-wrap">
                                         <button
@@ -1701,8 +1536,6 @@ export default function Clients() {
                             <option value="Inactive">Inactive</option>
                         </select>
 
-                        {/* Country filter now applies to both tabs since Subclients
-                            carry a Country field too, same as Clients. */}
                         <select
                             style={styles.filterSelect}
                             value={countryFilter}
@@ -1717,10 +1550,7 @@ export default function Clients() {
                             ))}
                         </select>
 
-                        {/* NEW: "Select" toggle — checkboxes for bulk delete only show
-                            once this is switched on, instead of sitting on every
-                            row/card all the time. Tapping it again exits select mode
-                            and clears whatever was checked. */}
+                        {/* "Select" toggle — bulk-delete checkboxes only show once on. */}
                         {canManage && currentPageRows.length > 0 && (
                             <button
                                 type="button"
@@ -1771,9 +1601,7 @@ export default function Clients() {
                         )}
                     </div>
 
-                    {/* NEW: bulk-select bar — a single "Select All" checkbox plus a
-                        "Delete Selected (N)" button that appears once at least one
-                        row is checked. Only shown once "Select" mode is on. */}
+                    {/* Bulk-select bar */}
                     {canManage && isSelectMode && currentPageRows.length > 0 && (
                         <div style={styles.bulkSelectBar}>
                             <label style={styles.bulkSelectAllLabel}>
@@ -1805,10 +1633,7 @@ export default function Clients() {
                         </div>
                     )}
 
-                    {/* Cards / Table — scrollable area that fills remaining height.
-                        The scrollbar (and scroll behavior) only kicks in once content
-                        actually exceeds the available space; short lists sit flush
-                        with no scrollbar at all. No pagination controls anymore. */}
+                    {/* Cards / Table — scrollable area */}
                     <div className="cl-scroll-area" style={styles.scrollArea}>
                         {loading ? (
                             <div style={styles.emptyState}>
@@ -1832,9 +1657,6 @@ export default function Clients() {
                             </div>
                         ) : viewMode === "list" ? (
                             <div style={styles.tableWrap}>
-                                {/* Column layout is identical for Client and Subclient: only
-                                    the 2nd column header/value differs (Country vs Client). This
-                                    keeps both tables visually and structurally aligned. */}
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
                                         {canManage && isSelectMode && (
@@ -2022,17 +1844,8 @@ export default function Clients() {
                                                                 >
                                                                     View
                                                                 </button>
-                                                                {/* FIX: Edit/Delete were always rendered
-                                                                    regardless of role — Team Member /
-                                                                    Vertical Head (view-only per the backend's
-                                                                    authorize("SUPER_ADMIN"/etc.) gate) could
-                                                                    see and click these, only to get a 403
-                                                                    from the API. Now hidden entirely for
-                                                                    anyone canManage doesn't cover, matching
-                                                                    the same gate already used for the Add
-                                                                    button above. Also hidden for still-
-                                                                    pending-create placeholder rows — see
-                                                                    isPendingCreateClient. */}
+                                                                {/* Edit/Delete hidden for roles that can't
+                                                                    manage, and for still-pending-create rows. */}
                                                                 {canManage &&
                                                                     !isPendingCreateClient(
                                                                         client
@@ -2288,9 +2101,6 @@ export default function Clients() {
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
-                                                {/* NEW: top-right select checkbox for bulk
-                                                    delete — only shown once "Select" mode is
-                                                    switched on. */}
                                                 {canManage && isSelectMode && (
                                                     <input
                                                         type="checkbox"
@@ -2307,7 +2117,27 @@ export default function Clients() {
                                                         style={styles.cardSelectCheckbox}
                                                     />
                                                 )}
-                                                <div style={styles.cardHeaderSimple}>
+                                                {isPendingCreateClient(client) && (
+                                                    <span
+                                                        style={{
+                                                            ...styles.pendingBadge,
+                                                            ...styles.pendingBadgeCorner,
+                                                            // leave room for the checkbox in select mode
+                                                            right:
+                                                                canManage && isSelectMode ? 38 : 10,
+                                                        }}
+                                                    >
+                                                        Awaiting approval
+                                                    </span>
+                                                )}
+                                                <div
+                                                    style={{
+                                                        ...styles.cardHeaderSimple,
+                                                        paddingRight: isPendingCreateClient(client)
+                                                            ? 110
+                                                            : 0,
+                                                    }}
+                                                >
                                                     <div
                                                         style={{
                                                             ...styles.avatar,
@@ -2330,11 +2160,6 @@ export default function Clients() {
                                                         >
                                                             {client.subclients} Subclients
                                                         </span>
-                                                        {isPendingCreateClient(client) && (
-                                                            <span style={styles.pendingBadge}>
-                                                                Awaiting approval
-                                                            </span>
-                                                        )}
                                                     </div>
                                                 </div>
 
@@ -2409,9 +2234,6 @@ export default function Clients() {
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
-                                                {/* NEW: top-right select checkbox for bulk
-                                                    delete — only shown once "Select" mode is
-                                                    switched on. */}
                                                 {canManage && isSelectMode && (
                                                     <input
                                                         type="checkbox"
@@ -2542,7 +2364,6 @@ export default function Clients() {
                                 </span>
                             </div>
 
-                            {/* Country now shown for both Client and Subclient details. */}
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Country</span>
                                 <span style={styles.detailsValue}>
@@ -2575,7 +2396,7 @@ export default function Clients() {
                                 </>
                             )}
 
-                            {/* REVERSED MAPPING: Services linked to this Client/Subclient */}
+                            {/* Services linked to this Client/Subclient */}
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Services</span>
                                 <span style={{ ...styles.detailsValue, textAlign: "right" }}>
@@ -2587,8 +2408,6 @@ export default function Clients() {
                                 </span>
                             </div>
 
-                            {/* Company Info + Primary/Secondary Contact are identical for
-                                both Client and Subclient view modals. */}
                             <div style={styles.detailsSectionLabel}>Company Information</div>
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Website</span>
@@ -2630,7 +2449,8 @@ export default function Clients() {
                                 </span>
                             </div>
 
-                            <div style={styles.detailsSectionLabel}>Secondary Contact</div>
+                            {/* Finance Contact (stored in the secondaryContact* fields) */}
+                            <div style={styles.detailsSectionLabel}>Finance Contact</div>
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Name</span>
                                 <span style={styles.detailsValue}>
@@ -2651,17 +2471,8 @@ export default function Clients() {
                             </div>
 
                             <div style={styles.detailsModalFooter}>
-                                {/* FIX: these Edit/Delete buttons inside the View
-                                    Details modal were always rendered regardless
-                                    of role — Team Member / Vertical Head (view-only
-                                    access) could see and click them, only to get
-                                    "Access denied" from the backend on submit.
-                                    Gate them the same way as the list-row icons
-                                    above (canManage), so anyone without edit/delete
-                                    permission never sees affordances that are
-                                    guaranteed to fail. Also hidden when this is a
-                                    still-pending-create client placeholder — see
-                                    isPendingCreateClient. */}
+                                {/* Edit/Delete only for roles that can manage, and not
+                                    for a still-pending-create client placeholder. */}
                                 {canManage &&
                                     viewDetails.type === "client" &&
                                     isPendingCreateClient(viewDetails.data) && (
@@ -2766,7 +2577,6 @@ export default function Clients() {
                                 />
                             </div>
 
-                            {/* Country now shown for both Client and Subclient forms. */}
                             <div>
                                 <label style={styles.formLabel}>Country</label>
                                 <input
@@ -2820,12 +2630,10 @@ export default function Clients() {
                                 </select>
                             </div>
 
-                            {/* NEW: Unit (currency) — shown ONCE here, right next to
-                                Status, not per-service anymore. */}
+                            {/* Unit (currency) — shown once, next to Status */}
                             {renderUnitField(addForm, setAddForm)}
 
-                            {/* REVERSED MAPPING: pick which existing Products this
-                                Client/Subclient uses */}
+                            {/* Pick which existing Products this Client/Subclient uses */}
                             {renderProductPicker(addForm, setAddForm)}
 
                             {/* Same fieldset for both Client and Subclient */}
@@ -2879,7 +2687,6 @@ export default function Clients() {
                                 />
                             </div>
 
-                            {/* Country now shown for both Client and Subclient forms. */}
                             <div>
                                 <label style={styles.formLabel}>Country</label>
                                 <input
@@ -2932,15 +2739,10 @@ export default function Clients() {
                                 </select>
                             </div>
 
-                            {/* NEW: Unit (currency) — shown ONCE here, right next to
-                                Status, not per-service anymore. */}
                             {renderUnitField(editForm, setEditForm)}
 
-                            {/* REVERSED MAPPING: pick which existing Products this
-                                Client/Subclient uses */}
                             {renderProductPicker(editForm, setEditForm)}
 
-                            {/* Same fieldset for both Client and Subclient */}
                             {renderContactFieldset(editForm, setEditForm)}
 
                             {editError && <p style={styles.formError}>{editError}</p>}
@@ -3085,14 +2887,7 @@ export default function Clients() {
                 </div>
             )}
 
-            {/* Bulk Upload modal — mirrors the "Bulk Add Users" modal layout
-                (title/subtitle, required-columns callout, Choose File row with
-                an explicit Upload button, then a "X created · Y failed"
-                summary followed by a full scrollable list of EVERY row) but
-                now themed with the app's brand palette (var(--brand-blue) /
-                var(--brand-light-blue)) instead of the old fixed purple, so it
-                matches whichever theme color is selected. Sample Sheet's
-                tooltip (in the header actions above) uses the same variables. */}
+            {/* Bulk Upload modal */}
             {showBulkModal && (
                 <div style={styles.overlay}>
                     <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
@@ -3227,9 +3022,7 @@ export default function Clients() {
                 </div>
             )}
 
-            {/* Decorative footer wave — same treatment as Production Reports:
-                visible only when there's no data to show (Client or
-                Subclient tab), hidden as soon as the list/table has rows. */}
+            {/* Decorative footer wave — visible only when there's no data. */}
             {!loading && !error && currentFilteredLength === 0 && (
                 <svg
                     style={styles.wave}
@@ -3262,12 +3055,7 @@ const styles: Record<string, CSSProperties> = {
     root: {
         display: "flex",
         width: "100%",
-        // Was 100vh — the FULL device viewport — but this root renders
-        // inside AppLayout's <main>, which only gets the leftover space
-        // below the header. Claiming 100vh made the root taller than the
-        // space actually visible, so the last sliver (where the
-        // empty-state footer wave sits) needed a scroll to reach even
-        // when nothing was really overflowing. 100% fits <main> exactly.
+        // 100% (not 100vh) so it fits AppLayout's <main> exactly.
         height: "100%",
         flex: 1,
         minHeight: 0,
@@ -3374,8 +3162,7 @@ const styles: Record<string, CSSProperties> = {
         position: "relative",
         zIndex: 1,
     },
-    // Decorative footer wave — only rendered when the list is empty (see
-    // JSX), so it doesn't compete with a populated table/grid for space.
+    // Decorative footer wave — only rendered when the list is empty.
     wave: {
         position: "absolute",
         left: 0,
@@ -3398,9 +3185,6 @@ const styles: Record<string, CSSProperties> = {
     },
 
     tabRow: { display: "flex", gap: 8, flexShrink: 0 },
-    // Mobile: wraps to a second line and tightens padding on very narrow
-    // screens (see the @media rule in GLOBAL_CSS) instead of overflowing
-    // past the right edge, which is what was hiding the Subclient tab.
     tabRowMobile: { display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" },
     tabBtn: {
         display: "flex",
@@ -3544,8 +3328,6 @@ const styles: Record<string, CSSProperties> = {
         color: "var(--brand-blue)",
     },
 
-    // NEW: "Select" toggle button — switches bulk-select mode on/off so the
-    // per-row/card checkboxes aren't shown all the time by default.
     selectModeBtn: {
         display: "flex",
         alignItems: "center",
@@ -3566,8 +3348,6 @@ const styles: Record<string, CSSProperties> = {
         color: "var(--brand-blue)",
         border: "1px solid var(--brand-blue)",
     },
-    // NEW: bulk-select bar (Select All + Delete Selected) shown above the
-    // list/grid, and the top-right checkbox placed on each card.
     bulkSelectBar: {
         display: "flex",
         alignItems: "center",
@@ -3617,10 +3397,8 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
     },
 
-    // Scrollable: fills remaining vertical space in contentBody and only
-    // scrolls (shows a scrollbar) once the rendered cards/rows exceed that
-    // height. When there's little content, this behaves like a normal
-    // block with no scroll affordance at all.
+    // Scrollable: fills remaining vertical space and only scrolls once the
+    // rendered cards/rows exceed that height.
     scrollArea: {
         flex: 1,
         minHeight: 0,
@@ -3665,8 +3443,6 @@ const styles: Record<string, CSSProperties> = {
         gap: 10,
         minHeight: 40,
     },
-    // Simplified card header used in the original design: avatar, name, and
-    // a small tinted count badge underneath — no status pill, no icon actions.
     cardHeaderSimple: {
         display: "flex",
         alignItems: "flex-start",
@@ -3893,12 +3669,17 @@ const styles: Record<string, CSSProperties> = {
         cursor: "pointer",
         padding: 0,
     },
+    // FIXED: button keeps its own height (flex: 0 0 auto) and sticks to the
+    // bottom of the card (marginTop: auto). Before, `flex: 1` made it grow
+    // to fill any spare space when a card in the same grid row was taller
+    // (e.g. one with an "Awaiting approval" badge), so button heights differed.
     viewDetailsBtnFilled: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        flex: 1,
+        flex: "0 0 auto",
+        marginTop: "auto",
         border: "none",
         background: "linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))",
         color: "#fff",
@@ -4048,6 +3829,16 @@ const styles: Record<string, CSSProperties> = {
         padding: "2px 8px",
         whiteSpace: "nowrap",
         verticalAlign: "middle",
+    },
+    // "Awaiting approval" pinned to the card's top-right corner so it does
+    // not add a line inside the card (keeps every card the same height).
+    pendingBadgeCorner: {
+        position: "absolute",
+        top: 10,
+        right: 10,
+        marginLeft: 0,
+        padding: "2px 8px",
+        zIndex: 1,
     },
     tdMuted: {
         fontSize: fontSize.sm,
@@ -4211,9 +4002,7 @@ const styles: Record<string, CSSProperties> = {
         gridColumn: "1 / -1",
     },
 
-    // ---- Bulk Upload modal — now themed to match the rest of the page
-    // (brand blue/teal) instead of a fixed purple, so it follows whichever
-    // color the person picks from the header's theme switcher. ----
+    // ---- Bulk Upload modal ----
     bulkModal: {
         background: "#fff",
         borderRadius: radius.lg,
