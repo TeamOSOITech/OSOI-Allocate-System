@@ -6,11 +6,30 @@
 // response.
 
 const {
-  canAssignRole,
   canEditTargetRole,
   canDeleteTargetRole,
 } = require("../../config/permissions");
 const employeesService = require("./employees.service");
+
+// CHANGED: which roles may change another user's role at all, and which
+// roles each of them may ASSIGN. Mirrors ASSIGNABLE_ROLES in employees.tsx.
+//   Super Admin -> any of the six roles
+//   Ops Manager -> only Process Lead / Vertical Head / Team Member
+// Every other role has no entry = cannot change roles.
+// (Who can be edited at all is still decided by canEditTargetRole below,
+// so an Ops Manager can never touch a Super Admin / Audit Manager /
+// another Ops Manager record.)
+const ROLE_CHANGE_ASSIGNABLE = {
+  SUPER_ADMIN: [
+    "SUPER_ADMIN",
+    "OPS_MANAGER",
+    "AUDIT_MANAGER",
+    "PROCESS_LEAD",
+    "VERTICAL_HEAD",
+    "TEAM_MEMBER",
+  ],
+  OPS_MANAGER: ["PROCESS_LEAD", "VERTICAL_HEAD", "TEAM_MEMBER"],
+};
 
 async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
@@ -18,14 +37,9 @@ async function listEmployees(req, res) {
   try {
     let employees = await employeesService.fetchAllEmployees(orgId);
 
-    // NEW: Vertical Head only ever sees their OWN team's employees —
-    // matches the "own team, not the whole org" scope Vertical Head
-    // already holds everywhere else (materialisation.view.team,
-    // tasks.allocate.team) and is what powers the Employee/Team pickers
-    // on Today's Allocation (see manualallocation.tsx). Self is always
-    // kept in the list even if their own Team field happens to be
-    // blank/mismatched, so a Vertical Head never loses sight of their
-    // own row. Every other role is unaffected — full org list as before.
+    // Vertical Head only ever sees their OWN team's employees. Self is
+    // always kept in the list even if their own Team field happens to be
+    // blank/mismatched. Every other role gets the full org list.
     if (req.user.role === "VERTICAL_HEAD") {
       const self = employees.find((e) => e.id === req.user.userId);
       const ownTeam = (self?.team || "").trim().toLowerCase();
@@ -59,14 +73,11 @@ async function updateEmployee(req, res) {
   const orgId = req.user.organizationId;
   const body = req.body || {};
 
-  // FIX: enforce the full org hierarchy for WHO can edit WHOM, not just
-  // a special-case for Super Admin targets:
+  // Enforce the full org hierarchy for WHO can edit WHOM:
   //   Super Admin  -> can edit anyone (incl. other Super Admins)
   //   Ops Manager  -> Process Lead, Vertical Head, Team Member
   //   Process Lead -> Vertical Head, Team Member
-  // See EDITABLE_TARGET_ROLES in src/config/permissions.js — this is
-  // the single source of truth for that matrix, kept in sync with the
-  // frontend's mirror in employees.tsx (canEditEmployee).
+  // See EDITABLE_TARGET_ROLES in src/config/permissions.js.
   let targetRole;
   try {
     targetRole = await employeesService.fetchTargetRole(id, orgId);
@@ -83,9 +94,9 @@ async function updateEmployee(req, res) {
     });
   }
 
-  // NEW: reporting manager, if being changed, must be a real user in
-  // the same organization. Checked before building updatePayload so a
-  // bad value never reaches the DB write.
+  // Reporting manager, if being changed, must be a real user in the
+  // same organization. Checked before building updatePayload so a bad
+  // value never reaches the DB write.
   if (body.reportingManager !== undefined && body.reportingManager) {
     const rmCheck = await employeesService.validateReportingManager(
       body.reportingManager,
@@ -98,24 +109,22 @@ async function updateEmployee(req, res) {
 
   const updatePayload = {};
 
-  // FIX (Finding #03): there was previously no way to change a user's
-  // role after creation — req.body.role was never read, so a demoted
-  // SUPER_ADMIN kept full access until someone edited user_master.Role
-  // directly in Supabase. Role changes are allowed here, but ONLY if the
-  // acting user is permitted to assign the target role (same matrix used
-  // at user-creation time).
-  //
-  // Role edits are restricted to Super Admin ONLY, regardless of target
-  // (Ops Manager/Process Lead can edit the other fields per
-  // EDITABLE_TARGET_ROLES above, but never Role — granting/removing
-  // elevated access stays a Super-Admin-only action).
-  if (body.role !== undefined) {
-    if (req.user.role !== "SUPER_ADMIN") {
+  // CHANGED: Role edits are now allowed for Super Admin AND Ops Manager.
+  //   * Super Admin -> any employee, any of the six roles.
+  //   * Ops Manager -> only employees they may edit (checked above), and
+  //     only to Process Lead / Vertical Head / Team Member.
+  //   * Everyone else -> 403.
+  // The frontend sends the employee's current role back on every save,
+  // so we only enforce this when the role is actually CHANGING. An
+  // unchanged role is silently ignored instead of causing a 403.
+  if (body.role !== undefined && body.role !== targetRole) {
+    const allowed = ROLE_CHANGE_ASSIGNABLE[req.user.role];
+    if (!allowed) {
       return res.status(403).json({
-        error: "Only a Super Admin can change a user's role.",
+        error: "Only a Super Admin or Ops Manager can change a user's role.",
       });
     }
-    if (!canAssignRole(req.user.role, body.role)) {
+    if (!allowed.includes(body.role)) {
       return res.status(403).json({
         error: `You are not permitted to assign the role "${body.role}"`,
       });
@@ -141,13 +150,7 @@ async function updateEmployee(req, res) {
     updatePayload["Date of Birth"] = body.dateOfBirth;
   if (body.employeeCode !== undefined)
     updatePayload["Employee ID"] = body.employeeCode;
-  // FIX: frontend sends this field as "team" (see employees.tsx —
-  // updateEditField("team", ...) / drawerData.team), not "workedInTeams".
-  // The old check (`body.workedInTeams !== undefined`) never matched
-  // anything the frontend actually sends, so the "Worked In Teams" column
-  // was silently never included in the update — Team appeared to save in
-  // the UI (optimistic local state) but nothing was ever written to the
-  // database, so it came back empty on every refresh.
+  // Frontend sends this field as "team" (not "workedInTeams").
   if (body.team !== undefined) updatePayload["Worked In Teams"] = body.team;
 
   if (Object.keys(updatePayload).length === 0) {
@@ -174,14 +177,10 @@ async function deleteEmployee(req, res) {
   const { id } = req.params;
   const orgId = req.user.organizationId;
 
-  // FIX: requirePermission("employees.manage") on the route alone isn't
-  // enough — Process Lead also holds that permission (for create/edit),
-  // but per the org's flow, delete is Super Admin / Ops Manager ONLY.
-  // See DELETABLE_TARGET_ROLES in src/config/permissions.js — Process
-  // Lead is intentionally omitted there, so canDeleteTargetRole() always
-  // returns false for it, blocking delete regardless of the target's
-  // role. Also enforces the target-role hierarchy for Ops Manager
-  // (can't delete another Ops Manager / Audit Manager / Super Admin).
+  // requirePermission("employees.manage") on the route alone isn't
+  // enough — Process Lead also holds that permission, but delete is
+  // Super Admin / Ops Manager ONLY. See DELETABLE_TARGET_ROLES in
+  // src/config/permissions.js.
   let targetRole;
   try {
     targetRole = await employeesService.fetchTargetRole(id, orgId);
@@ -207,9 +206,76 @@ async function deleteEmployee(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /api/employees/:id/reset-password   body: { newPassword }
+//
+// Admin-side password reset that sets the password straight away (no
+// email / recovery link).
+//
+// Who: ONLY Super Admin and Ops Manager. On top of that the target must
+// be someone the caller is allowed to edit (EDITABLE_TARGET_ROLES).
+// ------------------------------------------------------------
+const RESET_PASSWORD_ROLES = ["SUPER_ADMIN", "OPS_MANAGER"];
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_LENGTH = 72; // bcrypt only uses the first 72 bytes
+
+async function resetEmployeePassword(req, res) {
+  const { id } = req.params;
+  const orgId = req.user.organizationId;
+
+  if (!RESET_PASSWORD_ROLES.includes(req.user.role)) {
+    return res.status(403).json({
+      error: "Only a Super Admin or Ops Manager can reset a password.",
+    });
+  }
+
+  const newPassword =
+    typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({
+      error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+    });
+  }
+  if (newPassword.length > MAX_PASSWORD_LENGTH) {
+    return res.status(400).json({
+      error: `Password can be at most ${MAX_PASSWORD_LENGTH} characters.`,
+    });
+  }
+
+  let targetRole;
+  try {
+    targetRole = await employeesService.fetchTargetRole(id, orgId);
+  } catch (error) {
+    console.error("Failed to look up target employee role:", error);
+    return res.status(500).json({ error: "Failed to reset password" });
+  }
+  if (targetRole === undefined) {
+    return res.status(404).json({ error: "Employee not found" });
+  }
+  if (!canEditTargetRole(req.user.role, targetRole)) {
+    return res.status(403).json({
+      error: "You don't have permission to reset this employee's password.",
+    });
+  }
+
+  const result = await employeesService.setEmployeePassword(id, newPassword);
+  if (!result.ok) {
+    return res
+      .status(400)
+      .json({ error: result.message || "Failed to reset password" });
+  }
+
+  // audit trail — who reset whose password (never the password itself)
+  console.log(
+    `[resetEmployeePassword] ${req.user.userId} (${req.user.role}) reset the password of ${id}`,
+  );
+  res.json({ success: true, message: "Password updated." });
+}
+
 module.exports = {
   listEmployees,
   getEmployeeById,
   updateEmployee,
   deleteEmployee,
+  resetEmployeePassword,
 };

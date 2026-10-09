@@ -211,6 +211,16 @@ app.use(
   "/api/attendance",
   loadRoute("attendance", "./src/modules/attendance/attendance.routes"),
 );
+// NEW: Leave Periods (from date -> to date) — an employee marked on
+// leave for a date range shows as Leave by default inside it, no daily
+// marking needed. Merged into attendance by attendance.service.js.
+app.use(
+  "/api/employee-leaves",
+  loadRoute(
+    "employeeleaves",
+    "./src/modules/employeeleaves/employeeleaves.routes",
+  ),
+);
 // NEW: "External Members" — persists who's been borrowed onto a service
 // for a given work date on the Employees tab (Today's Allocation page),
 // so the picks survive a page refresh/reopen instead of resetting.

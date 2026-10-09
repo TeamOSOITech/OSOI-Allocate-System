@@ -16,14 +16,65 @@
 // This is intentionally a completely separate table/module from
 // dailywork.controller.js — Daily Work's own batches/allocations are
 // untouched by any of this.
+//
+// MODIFIED in this version:
+//   - NEW (NOTIFY): POST /api/service-cases/notify-allocation
+//     (notifyAllocation below). Sends every employee who got new work ONE
+//     email: "Your work has been allocated today. Please login to check."
+//     It never contains how many cases they got.
+//   - NEW (NOTIFY ONCE): an employee is mailed only the FIRST time work is
+//     allocated to them for a given work date. Later allocations on the
+//     same date (Smart Allocation run again, more cases added) send no
+//     new mail. Tracked in the allocation_notifications table (see the
+//     SQL in the comment above notifyAllocation).
+//   - Email redesign: "Work Allocated Today" heading, pill button
+//     "Login to Alookate", Logo2.png above the message, "Alookate" branding.
 
-const { sendError } = require("../../utils/response");
 const supabase = require("../../config/supabaseClient");
-const attendanceService = require("../attendance/attendance.service");
+// MODIFIED: fair rotation (extra case goes to whoever got the least work
+// in the last 30 days) — now used by the case-number Smart Allocation too.
+const { getRecentLoad, orderByLeastLoad } = require("./fairness");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
+// NEW: a client can only be used on a service it is mapped to.
+const {
+  getMappedClientIds,
+  assertClientMappedToProduct,
+} = require("./serviceClients");
+// NEW (NOTIFY): self-contained Brevo mail sender (no extra file/package
+// needed — Node 18+ has fetch built in). Uses the same Brevo account as
+// reset-password / signup emails. .env keys used:
+//   BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME (optional)
+// Agar tumhare .env mein in keys ke naam alag hain to yaha badal do.
+async function sendEmail({ to, subject, text, html }) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  if (!apiKey || !senderEmail) {
+    throw new Error("BREVO_API_KEY / BREVO_SENDER_EMAIL missing in .env");
+  }
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: {
+        email: senderEmail,
+        // CHANGED: "Allocate" -> "Alookate"
+        name: process.env.BREVO_SENDER_NAME || "Alookate",
+      },
+      to: [{ email: to }],
+      subject,
+      textContent: text,
+      htmlContent: html,
+    }),
+  });
+  if (!res.ok) throw new Error(`Brevo ${res.status}: ${await res.text()}`);
+}
 
 // ---------- brand theme (same palette as clients.controller.js) ----------
 const BRAND = {
@@ -67,38 +118,98 @@ function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Looks at every case_number already used by THIS SERVICE in this org
-// that starts with `prefix` immediately followed by digits (e.g. prefix
-// "12F0" matches "12F0001", "12F0002", ... but not "12F0OO1"), and
-// returns one past the highest number found for that service — or 1 if
-// this service has never used this prefix before, so a new service
-// always starts fresh at 001 even when the SAME prefix text is reused
-// for it. Scoped by product_id (not just organization_id) so two
-// different services sharing one prefix (e.g. both typed "12F0") each
-// get their own independent 001, 002, 003... instead of one service's
-// numbers continuing into the other's.
-async function getNextPrefixNumber(prefix, organizationId, productId) {
-  const { data, error } = await supabase
-    .from("service_cases")
-    .select("case_number")
-    .eq("organization_id", organizationId)
-    .eq("product_id", productId)
-    .ilike("case_number", `${prefix}%`);
-  if (error) throw error;
+// Looks at every case_number already used in this org that starts with
+// `prefix` immediately followed by digits (e.g. prefix "12F0" matches
+// "12F0001", "12F0002", ... but not "12F0OO1"), and returns one past the
+// highest number found — or 1 if this prefix has never been used before.
+async function getNextPrefixNumber(
+  prefix,
+  organizationId /*, productId (unused) */,
+) {
+  // Case numbers are unique per ORGANIZATION (not per service), so the
+  // counter is org-wide. Paged because Supabase returns max 1000 rows
+  // per request — without this the max could be under-counted and a
+  // duplicate generated once a prefix passes 1000 cases.
   const re = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`, "i");
   let max = 0;
-  (data || []).forEach((row) => {
-    const m = (row.case_number || "").match(re);
-    if (m) {
-      const n = parseInt(m[1], 10);
-      if (n > max) max = n;
-    }
-  });
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("service_cases")
+      .select("case_number")
+      .eq("organization_id", organizationId)
+      .ilike("case_number", `${prefix}%`)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      const m = (row.case_number || "").match(re);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    });
+    if (!data || data.length < PAGE) break;
+  }
   return max + 1;
 }
 
+// NEW: automatic prefix = first 3 letters of the company (organization)
+// name + 3-letter month + 4-digit year of the selected work date,
+// e.g. "Northstar Consulting", 30-09-2026 -> "NORSEP2026", so the
+// generated case numbers look like NORSEP2026001, NORSEP2026002, ...
+const MONTH_ABBR = [
+  "JAN",
+  "FEB",
+  "MAR",
+  "APR",
+  "MAY",
+  "JUN",
+  "JUL",
+  "AUG",
+  "SEP",
+  "OCT",
+  "NOV",
+  "DEC",
+];
+async function buildAutoPrefix(organizationId, workDate) {
+  const { data: org, error } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", organizationId)
+    .maybeSingle();
+  if (error) throw error;
+  const letters = (org?.name || "").replace(/[^A-Za-z]/g, "").toUpperCase();
+  const company = (letters || "ORG").slice(0, 3);
+  const d = /^\d{4}-\d{2}-\d{2}/.test(workDate || "")
+    ? new Date(`${workDate.slice(0, 10)}T00:00:00Z`)
+    : new Date();
+  return `${company}${MONTH_ABBR[d.getUTCMonth()]}${d.getUTCFullYear()}`;
+}
+
+// GET /api/service-cases/auto-prefix?workDate=YYYY-MM-DD
+// Preview for the Auto Generate form: the prefix + next free number.
+async function getAutoPrefix(req, res) {
+  try {
+    const prefix = await buildAutoPrefix(
+      req.user.organizationId,
+      req.query.workDate,
+    );
+    const next = await getNextPrefixNumber(prefix, req.user.organizationId);
+    res.json({
+      success: true,
+      data: {
+        prefix,
+        nextCaseNumber: `${prefix}${String(next).padStart(3, "0")}`,
+      },
+    });
+  } catch (err) {
+    console.error("getAutoPrefix error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 // NEW: Case Register — Client column. Same shape as getProductNameMap
-// above, just pointed at the clients table instead of service_master.
+// below, just pointed at the clients table instead of service_master.
 async function getClientNameMap(clientIds, organizationId) {
   const uniqueIds = [...new Set(clientIds.filter(Boolean))];
   if (uniqueIds.length === 0) return {};
@@ -160,30 +271,31 @@ function chunkArray(arr, size) {
   return out;
 }
 
-// FIX: case-insensitive duplicate detection for case numbers. Postgres
-// text comparison is case-sensitive by default, so a plain `.in()`
-// match let "CASEB021" and "caseb021" both get created as if they were
-// different case numbers — same real case, two rows. `ilike` WITHOUT
-// any % wildcards does an exact but case-insensitive match, so this
-// reuses that to treat them as the same case number while still
-// storing whatever casing the person actually typed. Batches candidates
-// into chunks of 150 so a large upload (thousands of rows) doesn't
-// build one unworkably long filter string.
 // FIX: guards the exact-match use of `ilike` below (no % added) against
 // SQL LIKE's own wildcard characters appearing INSIDE a real case
-// number. Postgres treats a literal "_" as "any one character" and "%"
-// as "any run of characters" in a LIKE/ILIKE pattern — so a case number
-// like "CASE_021" would, without this, also match "CASEX021" or
-// "CASE9021" since "_" isn't being compared literally. Escaping them
+// number ("_" = any one char, "%" = any run of chars). Escaping them
 // with a backslash makes the match exact-character, case-insensitive
 // only (as intended for a duplicate check).
 function escapeLikeWildcards(value) {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+// FIX: case-insensitive duplicate detection for case numbers. `ilike`
+// WITHOUT any % wildcards does an exact but case-insensitive match, so
+// "CASEB021" and "caseb021" are treated as the same case number while
+// still storing whatever casing the person actually typed. Batches
+// candidates into chunks of 150 so a large upload doesn't build one
+// unworkably long filter string.
+//
+// MODIFIED: now checks the WHOLE ORGANIZATION (product_id filter removed).
+// Case numbers are unique per organization everywhere else in this file
+// (updateServiceCaseNumber, getNextPrefixNumber, the DB unique constraint),
+// so a per-service check let a duplicate through and then the insert failed
+// with a 23505 -> HTTP 500 for the whole batch. `productId` is kept in the
+// signature only so existing callers don't change.
 async function findExistingCaseNumbersCI(
   caseNumbers,
-  productId,
+  productId, // unused — case numbers are org-wide unique
   organizationId,
 ) {
   const found = new Set();
@@ -200,7 +312,6 @@ async function findExistingCaseNumbersCI(
         .from("service_cases")
         .select("case_number")
         .eq("organization_id", organizationId)
-        .eq("product_id", productId)
         .or(orExpr);
       if (error) throw error;
       return data || [];
@@ -275,13 +386,9 @@ async function findMatchingIds(table, nameColumn, term, organizationId) {
 
 // NEW: the Case Register search box passes its raw text straight into a
 // PostgREST `.or()` filter string below, where commas and parentheses
-// are the DSL's own separators/grouping characters. Someone searching
-// for something containing either — a case number with a comma, a
-// client name with "(India)" in it — would otherwise silently break
-// that whole request (PostgREST fails to parse the filter and errors
-// out). Per PostgREST's escaping rules, wrapping the value in double
-// quotes (and escaping any literal double quote inside it) makes it
-// safe again.
+// are the DSL's own separators/grouping characters. Per PostgREST's
+// escaping rules, wrapping the value in double quotes (and escaping any
+// literal double quote inside it) makes it safe again.
 function escapeOrFilterValue(value) {
   if (/[,()"]/.test(value)) {
     return `"${value.replace(/"/g, '\\"')}"`;
@@ -289,12 +396,9 @@ function escapeOrFilterValue(value) {
   return value;
 }
 
-// FIX: only recognized "YYYY-MM-DD" and "DD-MM-YYYY" — so typing a date
-// with slashes or dots (02/09/2026, 02.09.2026), which is exactly how a
-// date input/autofill or someone typing casually tends to format it,
-// silently matched nothing. Now accepts '-', '/', or '.' as the
-// separator in either order (ISO year-first, or day-first — the
-// convention the rest of this app's date-tag search already used).
+// FIX: accepts '-', '/', or '.' as the separator in either order (ISO
+// year-first, or day-first — the convention the rest of this app's
+// date-tag search already used).
 function tryParseSearchDate(term) {
   const t = term.trim();
   // Year-first: 2026-09-02 / 2026/09/02 / 2026.09.02
@@ -336,16 +440,13 @@ async function getProductNameMap(productIds, organizationId) {
 }
 
 // ------------------------------------------------------------
-// NEW: Today's Allocation — "Cases" + "Employees" tabs.
+// Today's Allocation — "Cases" + "Employees" tabs.
 //
-// Cases created here (service_cases) can now be ALLOCATED to an
-// employee, either one at a time (manual, from the Cases tab's per-row
-// dropdown) or all at once (auto/smart, splitting every still-PENDING
-// case for a service as evenly as possible across whoever is marked
-// PRESENT for the day on the Employees tab — same `attendance` table
-// Daily Work's Smart Allocation already reads).
+// Cases created here (service_cases) can be ALLOCATED to an employee,
+// either one at a time (manual, from the Cases tab's per-row dropdown)
+// or all at once (auto/smart).
 //
-// Requires two new columns on service_cases (see migration note below):
+// Requires columns on service_cases:
 //   assigned_employee_id  uuid, nullable, references user_master
 //   allocation_status     text, default 'PENDING' ('PENDING' | 'ALLOCATED')
 //   allocated_at          timestamptz, nullable
@@ -389,7 +490,8 @@ async function listServiceCases(req, res) {
     // assigned to them in one go rather than paginating — that page
     // does its own today/past split and filtering client-side, same as
     // it already did for the old allocations-based table.
-    const maxPageSize = req.query.mine === "true" ? 2000 : 100;
+    const maxPageSize =
+      req.query.mine === "true" || req.query.employeeId ? 2000 : 100;
     const pageSize = Math.min(
       Math.max(parseInt(req.query.pageSize, 10) || 20, 1),
       maxPageSize,
@@ -450,26 +552,21 @@ async function listServiceCases(req, res) {
     // the search box's OR clause, etc.) to a freshly-created query
     // builder. Supabase-js query builders aren't cloneable, so this
     // gets called twice below — once for a count-only query, once for
-    // the actual page of data — rather than trying to reuse one
-    // builder instance for both.
+    // the actual page of data.
     const applyFilters = (q) => {
       let filtered = q.eq("organization_id", req.user.organizationId);
       if (req.query.productId) {
         filtered = filtered.eq("product_id", req.query.productId);
       }
-      // NEW: Cases tab filters — same work_date the Employees tab marks
+      // Cases tab filters — same work_date the Employees tab marks
       // attendance for, and allocation_status so "show only unallocated"
       // works without pulling every case ever logged.
       //
-      // FIX: "Today's Allocation" used to hide any case logged on an
-      // earlier date the moment its day passed, even if it was never
-      // allocated — so work that didn't get done on time just vanished
-      // from view instead of carrying forward. includeBacklog=true (sent
-      // only by the Cases/Today's Allocation tab) widens the exact-date
-      // match into: this exact date (any status) OR an earlier date
-      // that's STILL PENDING. Other pages (Case Register, History, QC,
-      // Audit) don't send this flag, so they keep the old exact-date
-      // behaviour.
+      // includeBacklog=true (sent only by the Cases/Today's Allocation
+      // tab) widens the exact-date match into: this exact date (any
+      // status) OR an earlier date that's STILL PENDING. Other pages
+      // (Case Register, History, QC, Audit) don't send this flag, so
+      // they keep the exact-date behaviour.
       if (req.query.workDate) {
         if (req.query.includeBacklog === "true") {
           filtered = filtered.or(
@@ -479,17 +576,15 @@ async function listServiceCases(req, res) {
           filtered = filtered.eq("work_date", req.query.workDate);
         }
       }
-      // NEW: Production Reports — History (case-number) view filters.
-      // Date-RANGE variant of the exact-match workDate above, so a
-      // report page can pull "everything between two dates" instead of
-      // one day at a time. Independent of workDate — pass whichever fits.
+      // Production Reports — History (case-number) view filters.
+      // Date-RANGE variant of the exact-match workDate above.
       if (req.query.workDateFrom) {
         filtered = filtered.gte("work_date", req.query.workDateFrom);
       }
       if (req.query.workDateTo) {
         filtered = filtered.lte("work_date", req.query.workDateTo);
       }
-      // NEW: case-number search for the same History view — partial,
+      // case-number search for the same History view — partial,
       // case-insensitive match so "b011" finds "CASEB011".
       if (req.query.caseNumber) {
         filtered = filtered.ilike("case_number", `%${req.query.caseNumber}%`);
@@ -497,30 +592,26 @@ async function listServiceCases(req, res) {
       if (req.query.clientId) {
         filtered = filtered.eq("client_id", req.query.clientId);
       }
-      // NEW: Subclient filter — same idea as clientId above.
+      // Subclient filter — same idea as clientId above.
       if (req.query.subclientId) {
         filtered = filtered.eq("subclient_id", req.query.subclientId);
       }
       if (req.query.allocationStatus) {
         filtered = filtered.eq("allocation_status", req.query.allocationStatus);
       }
-      // NEW: Quality Scores (QC) page — filter to one employee's cases.
-      // This was missing entirely before, so selecting "Administrator"
-      // in the Employee dropdown did nothing server-side; combined with
-      // other filters this is very likely why the count looked wrong.
+      // Quality Scores (QC) page — filter to one employee's cases.
       if (req.query.employeeId) {
         filtered = filtered.eq("assigned_employee_id", req.query.employeeId);
       }
-      // NEW: Case Register search box — one input that searches Case
+      // Case Register search box — one input that searches Case
       // Number, Service, Client, and Subclient (and the work date, in
       // either 2026-08-26 or 26-08-2026 form) all at once, across the
-      // FULL result set (not just whatever page happens to be on
-      // screen), same as the productId dropdown filter above. Runs as
-      // one .or() so it stays an AND with every other filter applied.
+      // FULL result set. Runs as one .or() so it stays an AND with
+      // every other filter applied.
       if (searchOrParts) {
         filtered = filtered.or(searchOrParts.join(","));
       }
-      // NEW: "mine=true" — the employee's own Today's/Past Allocation
+      // "mine=true" — the employee's own Today's/Past Allocation
       // table on the Profile page. Scoped server-side to whoever is
       // authenticated (never trusts a client-supplied employee id),
       // same pattern as /api/allocations/self.
@@ -530,12 +621,8 @@ async function listServiceCases(req, res) {
       if (req.query.submissionStatus) {
         filtered = filtered.eq("submission_status", req.query.submissionStatus);
       }
-      // NEW: Quality Scores (QC) page filter. Confirmed via Supabase's
-      // service_cases_qc_status_check constraint that qc_status only
-      // ever holds the plain values 'PENDING' / 'PASSED' / 'FAILED' (NOT
-      // the 'QC_PASS'/'QC_FAIL' convention the separate QC & Audit
-      // workflow uses on its own qc_status-like fields) — so this reads
-      // and writes those three values directly, no translation.
+      // Quality Scores (QC) page filter. qc_status only ever holds the
+      // plain values 'PENDING' / 'PASSED' / 'FAILED'.
       if (req.query.qcStatus === "PENDING") {
         filtered = filtered.or("qc_status.is.null,qc_status.eq.PENDING");
       } else if (req.query.qcStatus === "PASSED") {
@@ -543,10 +630,8 @@ async function listServiceCases(req, res) {
       } else if (req.query.qcStatus === "FAILED") {
         filtered = filtered.eq("qc_status", "FAILED");
       }
-      // NEW: Audit — same page, second pass over cases that already
-      // passed QC (see updateServiceCaseAudit below). audit_status
-      // follows the exact same PENDING/PASSED/FAILED convention as
-      // qc_status above, so the same filter shape applies.
+      // Audit — second pass over cases that already passed QC. Same
+      // PENDING/PASSED/FAILED convention as qc_status above.
       if (req.query.auditStatus === "PENDING") {
         filtered = filtered.or("audit_status.is.null,audit_status.eq.PENDING");
       } else if (req.query.auditStatus === "PASSED") {
@@ -557,16 +642,9 @@ async function listServiceCases(req, res) {
       return filtered;
     };
 
-    // NEW: guards against a 416 "Requested range not satisfiable" from
-    // PostgREST — this can happen when a filter/search narrows the
-    // result set out from under a page number the client had picked
-    // for the previous (unfiltered/wider) view, e.g. a stale request
-    // that still asks for page 2 right as a filter change on the
-    // frontend cuts total results down to 4. Rather than surface that
-    // as an error, clamp the requested page down to the last valid one
-    // for this filtered set — the frontend's own page-reset logic
-    // handles the common case, this is just a server-side safety net
-    // for any request that still slips through with a stale page.
+    // Guards against a 416 "Requested range not satisfiable" from
+    // PostgREST — clamp the requested page down to the last valid one
+    // for this filtered set.
     const { count: filteredCount, error: countError } = await applyFilters(
       supabase
         .from("service_cases")
@@ -583,13 +661,9 @@ async function listServiceCases(req, res) {
     const query = applyFilters(
       supabase.from("service_cases").select("*", { count: "exact" }),
     )
-      // FIX: ordering by created_at alone left ties unresolved when a
-      // whole batch (e.g. 10 cases) was inserted in the same instant —
-      // Postgres/PostgREST doesn't guarantee any particular order among
-      // equal timestamps, so CASET010 could sort before CASET001. Adding
-      // sequence_number as a tiebreaker (also descending, so within a
-      // batch the highest/newest case number still shows first) makes
-      // the order deterministic and correct every time.
+      // FIX: sequence_number as a tiebreaker (also descending) makes the
+      // order deterministic when a whole batch is inserted in the same
+      // instant.
       .order("created_at", { ascending: false })
       .order("sequence_number", { ascending: false })
       .range(from, to);
@@ -598,40 +672,35 @@ async function listServiceCases(req, res) {
     if (error) throw error;
 
     const rows = data || [];
-    // PERF FIX: these 4 lookups don't depend on each other (each is
-    // derived only from `rows`, none reads another's result), so they
-    // were running back-to-back for no reason — every call to this
-    // endpoint (Case Register, Today's Allocation, QC, Audit, History
-    // all hit it) paid the sum of all 4 round-trips instead of the max
-    // of them. Promise.all runs them concurrently instead.
+    // PERF FIX: these 4 lookups don't depend on each other, so they run
+    // concurrently instead of back-to-back.
     const [productMap, employeeMap, clientMap, subclientMap] =
       await Promise.all([
         getProductNameMap(
           rows.map((r) => r.product_id),
           req.user.organizationId,
         ),
-        // FIX: this used to only resolve assigned_employee_id, so the QC
-        // Result summary on the Audit tab always showed a blank Reviewer —
-        // qc_employee_id and audit_employee_id were never even looked up.
-        // Same map, just fed every employee id that can appear on a row.
+        // Every employee id that can appear on a row.
         getEmployeeNameMap(
           rows.flatMap((r) => [
             r.assigned_employee_id,
             r.qc_employee_id,
             r.audit_employee_id,
-            // NEW: "Allocated By" — who ran the allocate/auto-allocate
+            // "Allocated By" — who ran the allocate/auto-allocate
             // action, not just who it landed on.
             r.allocated_by,
+            // "Submitted By" — who actually pressed Submit (the employee,
+            // or a Super Admin / Ops Manager submitting on their behalf).
+            r.submitted_by,
           ]),
           req.user.organizationId,
         ),
-        // NEW: Client column — resolves client_id on each case to its
-        // name, same pattern as productMap/employeeMap above.
+        // Client column — resolves client_id on each case to its name.
         getClientNameMap(
           rows.map((r) => r.client_id),
           req.user.organizationId,
         ),
-        // NEW: Subclient column.
+        // Subclient column.
         getSubclientNameMap(
           rows.map((r) => r.subclient_id),
           req.user.organizationId,
@@ -654,33 +723,33 @@ async function listServiceCases(req, res) {
       assignedEmployeeName: employeeMap[r.assigned_employee_id] || null,
       allocationStatus: r.allocation_status || "PENDING",
       allocatedAt: r.allocated_at || null,
-      // NEW: who performed the allocation (manual or auto) — shown next
-      // to the assigned employee so it's visible who is doing the
-      // allocating, not just who ended up with the case.
+      // who performed the allocation (manual or auto) — shown next to
+      // the assigned employee.
       allocatedById: r.allocated_by || null,
       allocatedByName: employeeMap[r.allocated_by] || null,
       profile: r.profile || "",
-      // NEW: employee's own submission of their work on this case —
-      // separate from allocation_status (which just means "assigned to
-      // someone"). 'SUBMITTED' once the assigned employee marks it done.
+      // employee's own submission of their work on this case — separate
+      // from allocation_status. 'SUBMITTED' once the assigned employee
+      // marks it done.
       submissionStatus: r.submission_status || "PENDING",
       submissionType: r.submission_type || null,
       queryText: r.query_text || "",
       submittedAt: r.submitted_at || null,
-      // NEW: Quality Scores (QC) page — direct passthrough now that the
-      // Supabase check constraint confirms qc_status only ever holds
-      // 'PENDING' / 'PASSED' / 'FAILED' (no translation needed).
+      // who actually submitted it (Production Report -> "Submitted By" /
+      // "On behalf" chip). Null for rows submitted before this column existed.
+      submittedById: r.submitted_by || null,
+      submittedByName: employeeMap[r.submitted_by] || null,
+      // Quality Scores (QC) page — direct passthrough.
       qcStatus: r.qc_status || "PENDING",
       marks: r.qc_marks ?? null,
-      // NEW: exposed so the Audit tab's "QC Result" summary (reviewer /
+      // exposed so the Audit tab's "QC Result" summary (reviewer /
       // marks / remarks) can actually show something instead of "—".
       qcMarks: r.qc_marks ?? null,
       qcNotes: r.qc_notes || null,
       qcEmployeeId: r.qc_employee_id || null,
       qcEmployeeName: employeeMap[r.qc_employee_id] || null,
       qcReviewedAt: r.qc_reviewed_at || null,
-      // NEW: Audit — second pass over QC-passed cases, same shape as
-      // the QC fields above.
+      // Audit — second pass over QC-passed cases, same shape as QC.
       auditStatus: r.audit_status || null,
       auditMarks: r.audit_marks ?? null,
       auditNotes: r.audit_notes || null,
@@ -701,13 +770,13 @@ async function listServiceCases(req, res) {
     });
   } catch (err) {
     console.error("listServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
 // POST /api/service-cases
-// body: { productId, quantity, workDate? }
+// body: { productId, quantity, workDate?, clientId?, subclientId?, casePrefix?, autoPrefix? }
 //
 // Creates `quantity` individual case rows for the service, continuing
 // the running per-service sequence from wherever it last left off.
@@ -717,17 +786,21 @@ async function createServiceCases(req, res) {
     const { productId } = req.body;
     const quantity = Number(req.body.quantity);
     const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
-    // NEW: Client can now be picked at creation time too (still editable
-    // later from the table). Optional — null is fine, same as before.
+    // Client can be picked at creation time too (still editable later
+    // from the table). Optional — null is fine.
     const clientId = req.body.clientId || null;
-    // NEW: Subclient — only meaningful alongside a client, validated
-    // below to actually belong to it.
+    // Subclient — only meaningful alongside a client, validated below
+    // to actually belong to it.
     const subclientId = req.body.subclientId || null;
-    // NEW: Auto Generate mode — optional custom prefix. When given,
-    // case numbers are "<prefix><number>" (numbering restarts at 001
-    // for a never-before-used prefix) instead of the default
-    // CASE+service-letter format.
-    const rawCasePrefix = (req.body.casePrefix || "").toString().trim();
+    // Auto Generate mode — optional custom prefix. When given, case
+    // numbers are "<prefix><number>" (numbering restarts at 001 for a
+    // never-before-used prefix) instead of CASE+service-letter format.
+    let rawCasePrefix = (req.body.casePrefix || "").toString().trim();
+    // autoPrefix=true -> server builds <ORG3><MON><YEAR> itself
+    // (client-supplied prefix is ignored so it can't be spoofed).
+    if (req.body.autoPrefix === true) {
+      rawCasePrefix = await buildAutoPrefix(req.user.organizationId, workDate);
+    }
     let casePrefix = null;
     if (rawCasePrefix) {
       if (!/^[A-Za-z0-9_-]{1,20}$/.test(rawCasePrefix)) {
@@ -784,6 +857,17 @@ async function createServiceCases(req, res) {
           .status(404)
           .json({ success: false, message: "Client not found" });
       }
+      // NEW: the client must be mapped to this service.
+      const mapCheck = await assertClientMappedToProduct(
+        clientId,
+        productId,
+        req.user.organizationId,
+      );
+      if (!mapCheck.ok) {
+        return res
+          .status(400)
+          .json({ success: false, message: mapCheck.message });
+      }
     }
     if (subclientId) {
       const subclientCheck = await validateSubclient(
@@ -814,11 +898,10 @@ async function createServiceCases(req, res) {
 
     const startSeq = (maxRow?.sequence_number || 0) + 1;
 
-    // NEW: when a custom prefix is given, the visible case NUMBER is
-    // numbered independently of `sequence_number` (which stays a plain
-    // internal running counter, same as always, used only for
-    // ordering) — this is what makes a fresh prefix start at 001
-    // instead of continuing wherever this service's counter is at.
+    // When a custom prefix is given, the visible case NUMBER is numbered
+    // independently of `sequence_number` (which stays a plain internal
+    // running counter used only for ordering) — this is what makes a
+    // fresh prefix start at 001.
     const startCaseNum = casePrefix
       ? await getNextPrefixNumber(
           casePrefix,
@@ -827,28 +910,48 @@ async function createServiceCases(req, res) {
         )
       : null;
 
-    const rowsToInsert = Array.from({ length: quantity }, (_, i) => {
-      const seq = startSeq + i;
-      const caseNumber = casePrefix
-        ? `${casePrefix}${String(startCaseNum + i).padStart(3, "0")}`
-        : formatCaseNumber(letter, seq);
-      return {
-        organization_id: req.user.organizationId,
-        product_id: productId,
-        client_id: clientId,
-        subclient_id: subclientId,
-        work_date: workDate,
-        sequence_number: seq,
-        case_number: caseNumber,
-        created_by: req.user.userId,
-      };
-    });
+    const buildRows = (caseNumStart) =>
+      Array.from({ length: quantity }, (_, i) => {
+        const seq = startSeq + i;
+        const caseNumber = casePrefix
+          ? `${casePrefix}${String(caseNumStart + i).padStart(3, "0")}`
+          : formatCaseNumber(letter, seq);
+        return {
+          organization_id: req.user.organizationId,
+          product_id: productId,
+          client_id: clientId,
+          subclient_id: subclientId,
+          work_date: workDate,
+          sequence_number: seq,
+          case_number: caseNumber,
+          created_by: req.user.userId,
+        };
+      });
 
-    const { data, error } = await supabase
-      .from("service_cases")
-      .insert(rowsToInsert)
-      .select();
-    if (error) throw error;
+    // If two people generate at the same moment, the DB's unique
+    // constraint (23505) rejects the second batch — recompute the next
+    // free number and retry so duplicates can never get in.
+    let rowsToInsert = buildRows(startCaseNum);
+    let data;
+    for (let attempt = 0; ; attempt++) {
+      const result = await supabase
+        .from("service_cases")
+        .insert(rowsToInsert)
+        .select();
+      if (!result.error) {
+        data = result.data;
+        break;
+      }
+      if (result.error.code === "23505" && casePrefix && attempt < 3) {
+        const next = await getNextPrefixNumber(
+          casePrefix,
+          req.user.organizationId,
+        );
+        rowsToInsert = buildRows(next);
+        continue;
+      }
+      throw result.error;
+    }
 
     res.status(201).json({
       success: true,
@@ -859,86 +962,60 @@ async function createServiceCases(req, res) {
     });
   } catch (err) {
     console.error("createServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
-// POST /api/service-cases/upload
-// multipart/form-data: file (.xlsx/.xls/.csv), productId, workDate
-//
-// Alternative to createServiceCases above for orgs that already have
-// their own case numbering (e.g. a client-provided case ID) — instead
-// of auto-generating CASEB001, CASEB002, ..., this reads a "Case
-// Number" column from the uploaded sheet and creates one row per
-// value, verbatim, all under the one Service + Date picked in the
-// form (same as the quantity-based form — those two still come from
-// the dropdown/date picker, not from the sheet).
-//
-// Case numbers are unique per organization (case_number is used as a
-// lookup key elsewhere, e.g. bulkUpdateServiceCaseProfiles), so any
-// value that already exists anywhere in this org, or repeats within
-// the sheet itself, is skipped and reported back rather than failing
-// the whole upload — same "row-by-row results" shape as the other
-// bulk endpoints in this codebase (see subclients.controller.js).
-// sequence_number still needs a value (NOT NULL, used for ordering),
-// so it just continues this service's running counter same as the
-// auto-generate flow — it's an internal ordinal only, it doesn't need
-// to match anything in the case number text itself.
-// ------------------------------------------------------------
-// ------------------------------------------------------------
 // GET /api/service-cases/upload/template
 //
-// NEW: sample .xlsx for Upload mode — "Case Number" column (required)
-// plus the "Client Name" / "Subclient Name" columns uploadCustomServiceCases
-// below reads. Client/Subclient are optional in the actual upload; the
-// sample just shows the expected header names and one example row.
+// Sample .xlsx for Upload mode — "Case Number" column (required) plus
+// the "Client Name" / "Subclient Name" columns uploadCustomServiceCases
+// below reads. Client/Subclient are optional in the actual upload.
 // ------------------------------------------------------------
 async function downloadUploadTemplate(req, res) {
   try {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Cases");
-
-    sheet.columns = [
-      { header: "Case Number", key: "caseNumber", width: 22 },
-      { header: "Client Name", key: "clientName", width: 26 },
-      { header: "Subclient Name", key: "subclientName", width: 26 },
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Cases");
+    ws.columns = [
+      { header: "Case Number", key: "caseNumber", width: 18 },
+      { header: "Service", key: "service", width: 22 },
+      { header: "Client Name", key: "client", width: 24 },
+      { header: "Subclient Name", key: "subclient", width: 24 },
     ];
+    ws.getRow(1).eachCell((cell) => styleHeaderCell(cell));
+    ws.addRow(["CASE-1001", "Income Tax", "ABC Ltd", "ABC North"]);
+    ws.addRow(["CASE-1002", "GST", "XYZ Pvt Ltd", ""]);
 
-    const headerRow = sheet.getRow(1);
-    headerRow.height = 26;
-    [1, 2, 3].forEach((col) => styleHeaderCell(headerRow.getCell(col)));
-
-    sheet.addRows([
-      {
-        caseNumber: "CASEB011",
-        clientName: "Acme Corp",
-        subclientName: "Acme West",
-      },
-      { caseNumber: "CASEB012", clientName: "", subclientName: "" },
-    ]);
-
-    sheet.views = [{ state: "frozen", ySplit: 1 }];
-
+    const buf = await wb.xlsx.writeBuffer();
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=case_register_upload_template.xlsx",
+      'attachment; filename="case_register_upload_template.xlsx"',
     );
-
-    await workbook.xlsx.write(res);
-    res.end();
+    res.send(Buffer.from(buf));
   } catch (err) {
     console.error("downloadUploadTemplate error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to generate template" });
+    res.status(500).json({ success: false, message: err.message });
   }
 }
-
+// ------------------------------------------------------------
+// POST /api/service-cases/upload
+// multipart/form-data: file (.xlsx/.csv), productId, workDate
+//
+// Alternative to createServiceCases for orgs that already have their
+// own case numbering — reads a "Case Number" column from the uploaded
+// sheet and creates one row per value, verbatim, all under the one
+// Service + Date picked in the form.
+//
+// Case numbers are unique per organization, so any value that already
+// exists anywhere in this org, or repeats within the sheet itself, is
+// skipped and reported back rather than failing the whole upload.
+// A row whose client isn't mapped to the selected service is skipped too.
+// ------------------------------------------------------------
 async function uploadCustomServiceCases(req, res) {
   try {
     if (!req.file) {
@@ -947,34 +1024,20 @@ async function uploadCustomServiceCases(req, res) {
         .json({ success: false, message: "No file uploaded" });
     }
 
-    const { productId } = req.body;
+    const orgId = req.user.organizationId;
+    // CHANGED: productId ab optional hai — sirf default service hai
+    // (un rows ke liye jinka Service cell khali ho).
+    const defaultProductId = req.body.productId
+      ? String(req.body.productId)
+      : null;
     const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
-
-    if (!productId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "productId is required" });
-    }
-
-    const product = await getProduct(productId, req.user.organizationId);
-    if (!product) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Service not found" });
-    }
-    const vhScope = await assertVerticalHeadCanUseProduct(req, product);
-    if (!vhScope.ok) {
-      return res.status(403).json({ success: false, message: vhScope.message });
-    }
 
     let sheetRows;
     try {
       sheetRows = await parseSpreadsheetRows(
         req.file.buffer,
         req.file.originalname,
-        {
-          defval: "",
-        },
+        { defval: "" },
       );
     } catch (parseErr) {
       return res
@@ -987,36 +1050,6 @@ async function uploadCustomServiceCases(req, res) {
         .status(400)
         .json({ success: false, message: "Uploaded file has no data rows" });
     }
-
-    const norm = (v) => (v || "").toString().trim();
-
-    // Column is case-insensitive/whitespace-tolerant: accepts "Case
-    // Number", "case number", "CaseNumber", etc. Falls back to the
-    // first column in the sheet if nothing matches that header, so a
-    // simple single-column sheet with any header still works.
-    const firstRowKeys = Object.keys(sheetRows[0] || {});
-    const caseNumberKey =
-      firstRowKeys.find(
-        (k) => k.replace(/\s+/g, "").toLowerCase() === "casenumber",
-      ) || firstRowKeys[0];
-    // NEW: optional "Client Name" / "Subclient Name" columns — bulk
-    // upload now resolves Client + Subclient per row from the sheet
-    // instead of one value picked for the whole batch. Both columns
-    // are optional; a row with neither still creates fine, same as
-    // before.
-    const clientNameKey = firstRowKeys.find((k) =>
-      ["clientname", "client"].includes(k.replace(/\s+/g, "").toLowerCase()),
-    );
-    const subclientNameKey = firstRowKeys.find((k) =>
-      ["subclientname", "subclient"].includes(
-        k.replace(/\s+/g, "").toLowerCase(),
-      ),
-    );
-
-    const results = [];
-    let createdCount = 0;
-    let skippedCount = 0;
-
     if (sheetRows.length > 5000) {
       return res.status(400).json({
         success: false,
@@ -1024,92 +1057,161 @@ async function uploadCustomServiceCases(req, res) {
       });
     }
 
-    // FIX: dedupe within the sheet is now case-insensitive — "CASEB021"
-    // and "caseb021" on two different rows of the same sheet are the
-    // same case number, not two different ones. Original casing from
-    // the sheet is still what gets stored; only the comparison ignores
-    // case. Keeps the first occurrence's row number for reporting.
+    const norm = (v) => (v || "").toString().trim();
+    const squash = (k) => k.replace(/\s+/g, "").toLowerCase();
+
+    // Columns case-insensitive / whitespace-tolerant.
+    const firstRowKeys = Object.keys(sheetRows[0] || {});
+    const caseNumberKey =
+      firstRowKeys.find((k) => squash(k) === "casenumber") || firstRowKeys[0];
+    // NEW: "Service" column
+    const serviceKey = firstRowKeys.find((k) =>
+      ["service", "servicename", "product"].includes(squash(k)),
+    );
+    const clientNameKey = firstRowKeys.find((k) =>
+      ["clientname", "client"].includes(squash(k)),
+    );
+    const subclientNameKey = firstRowKeys.find((k) =>
+      ["subclientname", "subclient"].includes(squash(k)),
+    );
+
+    if (!serviceKey && !defaultProductId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Add a Service column in the file or select a default service.",
+      });
+    }
+
+    // ---- services of this org (ek baar) ----
+    const { data: orgProducts, error: prodErr } = await supabase
+      .from("service_master")
+      .select("*")
+      .eq("organization_id", orgId);
+    if (prodErr) throw prodErr;
+    const productById = new Map(
+      (orgProducts || []).map((p) => [String(p.id), p]),
+    );
+    const productByName = new Map(
+      (orgProducts || []).map((p) => [
+        norm(p.product_name).toLowerCase(),
+        String(p.id),
+      ]),
+    );
+
+    if (defaultProductId && !productById.has(defaultProductId)) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Service not found" });
+    }
+
+    // Vertical-head scope: har service jo is file me use hogi, uske liye
+    // ek hi baar check (cache).
+    const scopeCache = new Map();
+    const canUseProduct = async (pid) => {
+      if (!scopeCache.has(pid)) {
+        const scope = await assertVerticalHeadCanUseProduct(
+          req,
+          productById.get(pid),
+        );
+        scopeCache.set(pid, scope);
+      }
+      return scopeCache.get(pid);
+    };
+
+    const results = [];
+    let createdCount = 0;
+    let skippedCount = 0;
+    const skip = (row, caseNumber, message) => {
+      skippedCount++;
+      results.push({ row, caseNumber, status: "skipped", message });
+    };
+
+    // ---- pass 1: empty / duplicate-in-file / service resolve ----
     const seenInFile = new Set();
     const candidates = [];
-    sheetRows.forEach((row, i) => {
+    for (let i = 0; i < sheetRows.length; i++) {
+      const row = sheetRows[i];
       const rowNum = i + 2;
       const caseNumber = norm(row[caseNumberKey]);
+
       if (!caseNumber) {
-        skippedCount++;
-        results.push({
-          row: rowNum,
-          caseNumber: "",
-          status: "skipped",
-          message: "Empty case number",
-        });
-        return;
+        skip(rowNum, "", "Empty case number");
+        continue;
       }
       const key = caseNumber.toUpperCase();
       if (seenInFile.has(key)) {
-        skippedCount++;
-        results.push({
-          row: rowNum,
-          caseNumber,
-          status: "skipped",
-          message: "Duplicate within uploaded file",
-        });
-        return;
+        skip(rowNum, caseNumber, "Duplicate within uploaded file");
+        continue;
       }
+
+      // service for THIS row
+      const serviceName = serviceKey ? norm(row[serviceKey]) : "";
+      let rowProductId = defaultProductId;
+      if (serviceName) {
+        rowProductId = productByName.get(serviceName.toLowerCase()) || null;
+        if (!rowProductId) {
+          skip(rowNum, caseNumber, `Service not found: "${serviceName}"`);
+          continue;
+        }
+      } else if (!rowProductId) {
+        skip(
+          rowNum,
+          caseNumber,
+          "Service missing (no Service in row and no default selected)",
+        );
+        continue;
+      }
+
+      const scope = await canUseProduct(rowProductId);
+      if (!scope.ok) {
+        skip(
+          rowNum,
+          caseNumber,
+          scope.message || "You can't add cases to this service",
+        );
+        continue;
+      }
+
       seenInFile.add(key);
       candidates.push({
         row: rowNum,
         caseNumber,
+        productId: rowProductId,
         clientName: clientNameKey ? norm(row[clientNameKey]) : "",
         subclientName: subclientNameKey ? norm(row[subclientNameKey]) : "",
       });
-    });
+    }
 
-    // Check which of the surviving candidates already exist for THIS
-    // service (product_id) — same case number is fine under a
-    // different service, it only clashes within the same service.
-    // FIX: now case-insensitive too (see findExistingCaseNumbersCI) —
-    // "CASEB021" already in the DB now correctly blocks "caseb021".
+    // ---- org-wide, case-insensitive duplicate check ----
     const existingSet =
       candidates.length > 0
         ? await findExistingCaseNumbersCI(
             candidates.map((c) => c.caseNumber),
-            productId,
-            req.user.organizationId,
+            candidates[0].productId,
+            orgId,
           )
         : new Set();
 
     const toInsert = [];
     candidates.forEach((c) => {
       if (existingSet.has(c.caseNumber.toUpperCase())) {
-        skippedCount++;
-        results.push({
-          row: c.row,
-          caseNumber: c.caseNumber,
-          status: "skipped",
-          message: "Case number already exists for this service",
-        });
+        skip(c.row, c.caseNumber, "Case number already exists");
       } else {
         toInsert.push(c);
       }
     });
 
-    // NEW: resolve each row's Client Name / Subclient Name against the
-    // org's actual clients/subclients — loaded once here rather than
-    // per-row, since a sheet can be thousands of rows. A row whose
-    // Client Name doesn't match anything is skipped outright (rather
-    // than silently created client-less) so a typo'd name gets caught
-    // instead of quietly losing its client link. A Subclient Name that
-    // doesn't resolve is more forgiving — the case still gets created,
-    // just without that subclient.
-    let clientNameToId = new Map();
-    let subclientKeyToId = new Map();
+    // ---- client / subclient lookup (ek baar) ----
+    const clientNameToId = new Map();
+    const subclientKeyToId = new Map();
     const needsClientLookup = toInsert.some((c) => c.clientName);
     const needsSubclientLookup = toInsert.some((c) => c.subclientName);
     if (needsClientLookup || needsSubclientLookup) {
       const { data: orgClients, error: clientsErr } = await supabase
         .from("clients")
         .select("id, name")
-        .eq("organization_id", req.user.organizationId);
+        .eq("organization_id", orgId);
       if (clientsErr) throw clientsErr;
       (orgClients || []).forEach((cl) => {
         clientNameToId.set(cl.name.trim().toLowerCase(), cl.id);
@@ -1119,7 +1221,7 @@ async function uploadCustomServiceCases(req, res) {
         const { data: orgSubclients, error: subErr } = await supabase
           .from("subclients")
           .select("id, name, client_id")
-          .eq("organization_id", req.user.organizationId);
+          .eq("organization_id", orgId);
         if (subErr) throw subErr;
         (orgSubclients || []).forEach((s) => {
           subclientKeyToId.set(
@@ -1130,20 +1232,35 @@ async function uploadCustomServiceCases(req, res) {
       }
     }
 
+    // CHANGED: client mapping ab HAR ROW KI service ke against check hota
+    // hai — har service ka mapped-clients set ek baar load hoke cache hota hai.
+    const mappedCache = new Map();
+    const getMappedSet = async (pid) => {
+      if (!mappedCache.has(pid)) {
+        const ids = await getMappedClientIds(pid, orgId);
+        mappedCache.set(pid, new Set((ids || []).map((x) => String(x))));
+      }
+      return mappedCache.get(pid);
+    };
+
     const resolved = [];
-    toInsert.forEach((c) => {
+    for (const c of toInsert) {
       let clientId = null;
       if (c.clientName) {
         clientId = clientNameToId.get(c.clientName.toLowerCase()) || null;
         if (!clientId) {
-          skippedCount++;
-          results.push({
-            row: c.row,
-            caseNumber: c.caseNumber,
-            status: "skipped",
-            message: `Client not found: "${c.clientName}"`,
-          });
-          return;
+          skip(c.row, c.caseNumber, `Client not found: "${c.clientName}"`);
+          continue;
+        }
+        const mapped = await getMappedSet(c.productId);
+        if (!mapped.has(String(clientId))) {
+          const pName = productById.get(c.productId)?.product_name || "this";
+          skip(
+            c.row,
+            c.caseNumber,
+            `Client "${c.clientName}" is not mapped to service "${pName}"`,
+          );
+          continue;
         }
       }
       let subclientId = null;
@@ -1154,36 +1271,45 @@ async function uploadCustomServiceCases(req, res) {
           ) || null;
       }
       resolved.push({ ...c, clientId, subclientId });
-    });
+    }
 
+    // ---- insert (sequence_number har service ka apna) ----
     if (resolved.length > 0) {
-      const { data: maxRow, error: maxError } = await supabase
-        .from("service_cases")
-        .select("sequence_number")
-        .eq("organization_id", req.user.organizationId)
-        .eq("product_id", productId)
-        .order("sequence_number", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (maxError) throw maxError;
+      const nextSeq = new Map();
+      for (const pid of new Set(resolved.map((c) => c.productId))) {
+        const { data: maxRow, error: maxError } = await supabase
+          .from("service_cases")
+          .select("sequence_number")
+          .eq("organization_id", orgId)
+          .eq("product_id", pid)
+          .order("sequence_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (maxError) throw maxError;
+        nextSeq.set(pid, (maxRow?.sequence_number || 0) + 1);
+      }
 
-      const startSeq = (maxRow?.sequence_number || 0) + 1;
+      const rowsToInsert = resolved.map((c) => {
+        const seq = nextSeq.get(c.productId);
+        nextSeq.set(c.productId, seq + 1);
+        return {
+          organization_id: orgId,
+          product_id: c.productId,
+          client_id: c.clientId,
+          subclient_id: c.subclientId,
+          work_date: workDate,
+          sequence_number: seq,
+          case_number: c.caseNumber,
+          created_by: req.user.userId,
+        };
+      });
 
-      const rowsToInsert = resolved.map((c, i) => ({
-        organization_id: req.user.organizationId,
-        product_id: productId,
-        client_id: c.clientId,
-        subclient_id: c.subclientId,
-        work_date: workDate,
-        sequence_number: startSeq + i,
-        case_number: c.caseNumber,
-        created_by: req.user.userId,
-      }));
-
-      const { error: insertError } = await supabase
-        .from("service_cases")
-        .insert(rowsToInsert);
-      if (insertError) throw insertError;
+      for (let i = 0; i < rowsToInsert.length; i += 500) {
+        const { error: insertError } = await supabase
+          .from("service_cases")
+          .insert(rowsToInsert.slice(i, i + 500));
+        if (insertError) throw insertError;
+      }
 
       createdCount = resolved.length;
       resolved.forEach((c) => {
@@ -1205,11 +1331,20 @@ async function uploadCustomServiceCases(req, res) {
         createdCount,
         skippedCount,
         results,
+        // frontend ki skip-reasons list isi se banti hai
+        skipped: results
+          .filter((r) => r.status === "skipped")
+          .slice(0, 100)
+          .map((r) => ({
+            row: r.row,
+            caseNumber: r.caseNumber,
+            reason: r.message,
+          })),
       },
     });
   } catch (err) {
     console.error("uploadCustomServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1217,18 +1352,12 @@ async function uploadCustomServiceCases(req, res) {
 // POST /api/service-cases/manual
 // application/json: { productId, workDate, clientId, subclientId, caseNumbers: string[] }
 //
-// Replaces the old quantity-based "Auto-generate" flow (createServiceCases
-// above). Instead of the system inventing CASEB001, CASEB002, ... on its
-// own, the person types the actual case numbers themselves — one per
+// The person types the actual case numbers themselves — one per
 // line/comma in the textarea on the frontend, sent here as an array.
-// Supports at least 10 case numbers typed in at once (the frontend caps
-// the textarea at 10 lines; this endpoint itself allows up to 500 so a
-// slightly larger paste still works).
+// (the frontend caps the textarea at 10; this endpoint allows up to 500).
 //
-// Same uniqueness rule as uploadCustomServiceCases: case_number is
-// unique per organization, so duplicates (within the request or already
-// in the DB) are skipped and reported back rather than failing the
-// whole submission.
+// Duplicates (within the request or already in the DB) are skipped and
+// reported back rather than failing the whole submission.
 // ------------------------------------------------------------
 async function manualCreateServiceCases(req, res) {
   try {
@@ -1280,6 +1409,17 @@ async function manualCreateServiceCases(req, res) {
           .status(404)
           .json({ success: false, message: "Client not found" });
       }
+      // NEW: the client must be mapped to this service.
+      const mapCheck = await assertClientMappedToProduct(
+        clientId,
+        productId,
+        req.user.organizationId,
+      );
+      if (!mapCheck.ok) {
+        return res
+          .status(400)
+          .json({ success: false, message: mapCheck.message });
+      }
     }
     if (subclientId) {
       const subclientCheck = await validateSubclient(
@@ -1296,11 +1436,8 @@ async function manualCreateServiceCases(req, res) {
 
     const norm = (v) => (v || "").toString().trim();
 
-    // FIX: dedupe within the submitted list is now case-insensitive —
-    // "CASEB021" and "caseb021" typed in the same batch are treated as
-    // the same case number (second one skipped), not two different
-    // ones. The ORIGINAL casing the person typed is still what gets
-    // stored; only the comparison ignores case.
+    // Dedupe within the submitted list is case-insensitive. The ORIGINAL
+    // casing the person typed is still what gets stored.
     const seen = new Set();
     const results = [];
     const candidates = [];
@@ -1327,11 +1464,8 @@ async function manualCreateServiceCases(req, res) {
         .json({ success: false, message: "Enter at least one case number" });
     }
 
-    // Duplicate check is scoped to THIS service only (product_id) — the
-    // same case number is allowed to exist under a different service in
-    // the same org; it only clashes if it already exists for this same
-    // service. FIX: now case-insensitive too (see findExistingCaseNumbersCI)
-    // — "CASEB021" already in the DB now correctly blocks "caseb021".
+    // MODIFIED: org-wide, case-insensitive duplicate check (see
+    // findExistingCaseNumbersCI).
     const existingSet = await findExistingCaseNumbersCI(
       candidates.map((c) => c.caseNumber),
       productId,
@@ -1345,7 +1479,7 @@ async function manualCreateServiceCases(req, res) {
           caseNumber: c.caseNumber,
           status: "skipped",
           reason: "already_exists",
-          message: "Case number already exists for this service",
+          message: "Case number already exists",
         });
       } else {
         toInsert.push(c);
@@ -1389,15 +1523,8 @@ async function manualCreateServiceCases(req, res) {
     }
 
     const skippedCount = results.filter((r) => r.status === "skipped").length;
-    // NEW: spell out exactly WHY things were skipped instead of just a
-    // bare count — the already-exists case in particular is the one
-    // people keep re-typing by mistake, so it gets called out by case
-    // number rather than left as a generic "X skipped". FIX: this now
-    // matches on the stable `reason` CODE set above, not the display
-    // `message` text — matching on message text silently broke the
-    // moment the message wording above was edited (e.g. to add "for
-    // this service"), since a plain string-equality check has no way
-    // to warn you when it stops matching anything.
+    // Spell out exactly WHY things were skipped. Matches on the stable
+    // `reason` CODE, not the display `message` text.
     const alreadyExisting = results
       .filter((r) => r.status === "skipped" && r.reason === "already_exists")
       .map((r) => r.caseNumber);
@@ -1427,7 +1554,213 @@ async function manualCreateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("manualCreateServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /api/service-cases/count-only
+// body: { productId, quantity, workDate?, clientId?, subclientId? }
+//
+// "Manual (Count)" mode — case numbers aren't available yet, so NO
+// rows are created in service_cases. Only the count is recorded in
+// service_case_counts. Service is required; Client/Subclient are
+// optional. Case numbers get attached later (at submit time) by
+// bumping fulfilled_count.
+// ------------------------------------------------------------
+async function createCountOnlyEntry(req, res) {
+  try {
+    const { productId } = req.body;
+    const quantity = Number(req.body.quantity);
+    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const clientId = req.body.clientId || null;
+    const subclientId = req.body.subclientId || null;
+
+    if (!productId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "productId is required" });
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "quantity must be a whole number greater than 0",
+      });
+    }
+    if (quantity > 2000) {
+      return res.status(400).json({
+        success: false,
+        message: "quantity cannot exceed 2000 in a single submission",
+      });
+    }
+
+    const product = await getProduct(productId, req.user.organizationId);
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Service not found" });
+    }
+    const vhScope = await assertVerticalHeadCanUseProduct(req, product);
+    if (!vhScope.ok) {
+      return res.status(403).json({ success: false, message: vhScope.message });
+    }
+
+    if (clientId) {
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("id", clientId)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (clientError) throw clientError;
+      if (!client) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Client not found" });
+      }
+      // NEW: the client must be mapped to this service.
+      const mapCheck = await assertClientMappedToProduct(
+        clientId,
+        productId,
+        req.user.organizationId,
+      );
+      if (!mapCheck.ok) {
+        return res
+          .status(400)
+          .json({ success: false, message: mapCheck.message });
+      }
+    }
+    if (subclientId) {
+      const subclientCheck = await validateSubclient(
+        subclientId,
+        req.user.organizationId,
+        clientId,
+      );
+      if (!subclientCheck.ok) {
+        return res
+          .status(404)
+          .json({ success: false, message: subclientCheck.message });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("service_case_counts")
+      .insert({
+        organization_id: req.user.organizationId,
+        product_id: productId,
+        client_id: clientId,
+        subclient_id: subclientId,
+        work_date: workDate,
+        quantity,
+        created_by: req.user.userId,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({
+      success: true,
+      message: `${quantity} case(s) recorded for ${product.product_name}. Case numbers can be added later at submit time.`,
+      data: {
+        id: data.id,
+        productId: data.product_id,
+        quantity: data.quantity,
+        workDate: data.work_date,
+      },
+    });
+  } catch (err) {
+    console.error("createCountOnlyEntry error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// GET /api/service-cases/count-only
+// Query params: productId (optional)
+//
+// Lists count-only entries that still have cases left to attach case
+// numbers to (fulfilled_count < quantity), newest first — shown in the
+// "Pending Counts" card on the Case Register page.
+// ------------------------------------------------------------
+async function listCountOnlyEntries(req, res) {
+  try {
+    let query = supabase
+      .from("service_case_counts")
+      .select("*")
+      .eq("organization_id", req.user.organizationId);
+    if (req.query.productId) {
+      query = query.eq("product_id", req.query.productId);
+    }
+    const { data, error } = await query
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    const rows = (data || []).filter(
+      (r) => (r.fulfilled_count || 0) < r.quantity,
+    );
+
+    const [productMap, clientMap, subclientMap] = await Promise.all([
+      getProductNameMap(
+        rows.map((r) => r.product_id),
+        req.user.organizationId,
+      ),
+      getClientNameMap(
+        rows.map((r) => r.client_id),
+        req.user.organizationId,
+      ),
+      getSubclientNameMap(
+        rows.map((r) => r.subclient_id),
+        req.user.organizationId,
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: r.id,
+        productId: r.product_id,
+        productName: productMap[r.product_id] || null,
+        clientId: r.client_id || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientId: r.subclient_id || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        workDate: r.work_date,
+        quantity: r.quantity,
+        fulfilledCount: r.fulfilled_count || 0,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error("listCountOnlyEntries error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// DELETE /api/service-cases/count-only/:id
+// Removes a count-only entry (e.g. entered by mistake).
+// ------------------------------------------------------------
+async function deleteCountOnlyEntry(req, res) {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from("service_case_counts")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Count entry not found" });
+    }
+    res.json({ success: true, message: "Count entry deleted." });
+  } catch (err) {
+    console.error("deleteCountOnlyEntry error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1435,8 +1768,7 @@ async function manualCreateServiceCases(req, res) {
 // DELETE /api/service-cases/:id
 // Removes a single case row. Deliberately does NOT touch or renumber
 // any other case for that service — sequence numbers are a running,
-// ever-increasing log (like an invoice number), not a dense 1..N range,
-// so deleting #7 leaves a gap rather than shifting #8, #9, ... down.
+// ever-increasing log (like an invoice number), not a dense 1..N range.
 // ------------------------------------------------------------
 async function deleteServiceCase(req, res) {
   try {
@@ -1460,7 +1792,7 @@ async function deleteServiceCase(req, res) {
     res.json({ success: true, message: `${data.case_number} deleted.` });
   } catch (err) {
     console.error("deleteServiceCase error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1492,12 +1824,8 @@ async function allocateServiceCase(req, res) {
       }
     }
 
-    // NEW: fetch the current row BEFORE overwriting it. This is the only
-    // chance to see who this case was assigned to prior to a "Clear"
-    // (employeeId === null) — the update below wipes
-    // assigned_employee_id/allocated_at, so if we don't log it now that
-    // information is gone forever, which was the whole complaint: "Clear"
-    // deleted the allocation with no trace anywhere.
+    // Fetch the current row BEFORE overwriting it — the only chance to
+    // see who this case was assigned to prior to a "Clear".
     const { data: existing, error: existingError } = await supabase
       .from("service_cases")
       .select(
@@ -1513,10 +1841,7 @@ async function allocateServiceCase(req, res) {
         .json({ success: false, message: "Case not found" });
     }
 
-    // Only a real "Clear" (going from someone assigned -> nobody) gets
-    // logged — allocating for the first time, or re-allocating from one
-    // employee straight to another, isn't a clear and has nothing to
-    // preserve.
+    // Only a real "Clear" (someone assigned -> nobody) gets logged.
     if (!employeeId && existing.assigned_employee_id) {
       const [productMap, prevEmployeeMap] = await Promise.all([
         getProductNameMap([existing.product_id], req.user.organizationId),
@@ -1539,9 +1864,7 @@ async function allocateServiceCase(req, res) {
           allocated_at: existing.allocated_at,
           cleared_by: req.user.userId,
         });
-      // Don't let a logging failure block the actual clear action —
-      // losing the log entry for one case is far better than an admin
-      // being unable to clear anything because a log table hiccuped.
+      // Don't let a logging failure block the actual clear action.
       if (logError) {
         console.error("Failed to write allocation_clear_log:", logError);
       }
@@ -1553,9 +1876,7 @@ async function allocateServiceCase(req, res) {
         assigned_employee_id: employeeId,
         allocation_status: employeeId ? "ALLOCATED" : "PENDING",
         allocated_at: employeeId ? new Date().toISOString() : null,
-        // NEW: who performed THIS allocation (manual, one case at a
-        // time) — cleared back to null on "Clear" since nobody is
-        // allocating anything anymore.
+        // who performed THIS allocation — cleared back to null on "Clear".
         allocated_by: employeeId ? req.user.userId : null,
       })
       .eq("id", id)
@@ -1592,7 +1913,7 @@ async function allocateServiceCase(req, res) {
     });
   } catch (err) {
     console.error("allocateServiceCase error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1600,12 +1921,8 @@ async function allocateServiceCase(req, res) {
 // GET /api/service-cases/clear-log
 // Query params: dateFrom, dateTo, productId, employeeId, page, pageSize
 //
-// NEW: "where did the cleared allocation go?" — every time
-// allocateServiceCase (above) clears a case that had someone assigned,
-// it writes a row here FIRST. This endpoint is the read side of that:
-// a past record of every clear action (who had the case, who cleared
-// it, and when), newest first, so clearing is no longer a silent,
-// unrecoverable delete.
+// Read side of allocation_clear_log: a past record of every clear
+// action (who had the case, who cleared it, and when), newest first.
 // ------------------------------------------------------------
 async function listAllocationClearLog(req, res) {
   try {
@@ -1638,9 +1955,7 @@ async function listAllocationClearLog(req, res) {
 
     const rows = data || [];
     // Product/employee names are snapshotted at clear-time in the log
-    // row itself (product_name/employee_name), so they still read
-    // correctly even if the product or employee is later renamed or
-    // removed. Only "cleared_by" needs a fresh lookup here.
+    // row itself. Only "cleared_by" needs a fresh lookup here.
     const clearedByMap = await getEmployeeNameMap(
       rows.map((r) => r.cleared_by),
       orgId,
@@ -1673,7 +1988,7 @@ async function listAllocationClearLog(req, res) {
     });
   } catch (err) {
     console.error("listAllocationClearLog error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1682,49 +1997,19 @@ async function listAllocationClearLog(req, res) {
 // body: { productId, workDate, employeeIds: [...] }
 //
 // "Smart Allocation" for the Cases tab: takes every still-PENDING case
-// for the given service+date and works out a weighted round-robin split
-// across the given employee list — the same people marked PRESENT (or
-// Half Day) on the Employees tab. Case #1 to employee #1, #2 to #2, ...
-// wrapping back to #1 once the employee list is exhausted, so counts
-// differ by at most 1 across employees of the same weight. Anyone
-// marked Half Day counts as weight 1 against everyone else's weight 2,
-// so they end up with roughly half as many cases.
+// for the given service (this date + earlier backlog) and works out an
+// even split across the given employee list.
 //
-// IMPORTANT: this is a PREVIEW only — it does NOT write anything to
-// the database. It just returns the computed case -> employee split so
-// the frontend can drop each suggestion into that row's "Allocate to"
-// dropdown. Nothing is actually allocated until the person reviews the
-// dropdowns and presses the page's own "Allocate" button, which saves
-// each row through the normal single-case PATCH
-// (/api/service-cases/:id/allocate) endpoint above. This keeps a
-// single write path for allocation instead of two, and means clicking
-// "Smart Allocation" by itself can never change a case's status.
+// MODIFIED: the "extra" cases (when it doesn't split evenly) now go to
+// whoever got the LEAST work for this service in the last 30 days
+// (same rule the count-only Smart Allocation uses) instead of always
+// going to the first people in the list.
+//
+// IMPORTANT: this is a PREVIEW only — it does NOT write anything to the
+// database. Nothing is actually allocated until the person presses the
+// page's own "Allocate" button, which saves each row through the normal
+// single-case PATCH (/api/service-cases/:id/allocate).
 // ------------------------------------------------------------
-// ------------------------------------------------------------
-// Smooth weighted round-robin (same algorithm nginx uses for weighted
-// load balancing): picks the next employee by running weight totals
-// instead of a plain idx % n, so higher-weight employees get more
-// cases while everyone's turns stay evenly spread out rather than
-// clumped at the start. weight 2 = full day, weight 1 = Half Day, so
-// a Half Day employee ends up with roughly half as many cases.
-// ------------------------------------------------------------
-function weightedRoundRobinAssign(itemCount, weightedEmployees) {
-  const n = weightedEmployees.length;
-  const totalWeight = weightedEmployees.reduce((s, e) => s + e.weight, 0);
-  const current = new Array(n).fill(0);
-  const assignments = [];
-  for (let i = 0; i < itemCount; i++) {
-    let maxIdx = 0;
-    for (let j = 0; j < n; j++) {
-      current[j] += weightedEmployees[j].weight;
-      if (current[j] > current[maxIdx]) maxIdx = j;
-    }
-    current[maxIdx] -= totalWeight;
-    assignments.push(weightedEmployees[maxIdx].id);
-  }
-  return assignments;
-}
-
 async function autoAllocateServiceCases(req, res) {
   try {
     const { productId, workDate } = req.body;
@@ -1745,35 +2030,13 @@ async function autoAllocateServiceCases(req, res) {
       });
     }
 
-    // Half Day counts as half a unit here too — weight 1 vs weight 2 for
-    // everyone else (Present, or nobody explicitly marked). Attendance is
-    // re-fetched here rather than trusted from the client so this can't
-    // be spoofed by whatever employeeIds the frontend happens to send.
-    const attendanceRows = await attendanceService.fetchAttendanceForDate(
-      req.user.organizationId,
-      workDate,
-    );
-    const halfDayIds = new Set(
-      attendanceRows
-        .filter((a) => a.status === "HALF_DAY")
-        .map((a) => a.employee_id),
-    );
-    const weightedEmployees = employeeIds.map((id) => ({
-      id,
-      weight: halfDayIds.has(id) ? 1 : 2,
-    }));
-
     const { data: pendingCases, error } = await supabase
       .from("service_cases")
       .select("id, case_number, sequence_number")
       .eq("organization_id", req.user.organizationId)
       .eq("product_id", productId)
-      // FIX: was .eq("work_date", workDate) — Smart Allocation only ever
-      // saw today's own cases, so a case logged on an earlier date that
-      // never got allocated was invisible to it forever, even though
-      // it's still sitting there PENDING. lte() carries that backlog
-      // forward instead, matching the Cases tab's list view fix above
-      // (includeBacklog).
+      // lte() carries unallocated backlog forward, matching the Cases
+      // tab's list view (includeBacklog).
       .lte("work_date", workDate)
       .eq("allocation_status", "PENDING")
       .order("sequence_number", { ascending: true });
@@ -1786,16 +2049,21 @@ async function autoAllocateServiceCases(req, res) {
       });
     }
 
-    // NOTE: preview only — no DB write here. Cases stay PENDING until
-    // the frontend's "Allocate" button saves them via allocateServiceCase.
-    const assignedEmployeeIds = weightedRoundRobinAssign(
-      pendingCases.length,
-      weightedEmployees,
+    // MODIFIED: least-loaded employees first, so they are the ones
+    // who receive the extra case(s) of the round-robin.
+    const load = await getRecentLoad(
+      req.user.organizationId,
+      productId,
+      workDate,
+      employeeIds,
     );
+    const ordered = orderByLeastLoad(employeeIds, load);
+
+    // NOTE: preview only — no DB write here.
     const updates = pendingCases.map((c, idx) => ({
       id: c.id,
       caseNumber: c.case_number,
-      employeeId: assignedEmployeeIds[idx],
+      employeeId: ordered[idx % ordered.length],
     }));
 
     const employeeMap = await getEmployeeNameMap(
@@ -1803,8 +2071,7 @@ async function autoAllocateServiceCases(req, res) {
       req.user.organizationId,
     );
     // Per-employee summary — how many cases + which case numbers each
-    // employee WOULD get, so the UI can show it right after running
-    // Smart Allocation without a second fetch.
+    // employee WOULD get.
     const perEmployee = employeeIds.map((empId) => {
       const cases = updates.filter((u) => u.employeeId === empId);
       return {
@@ -1819,9 +2086,8 @@ async function autoAllocateServiceCases(req, res) {
       success: true,
       message: `${updates.length} case(s) distributed across ${employeeIds.length} employee(s) — review below and press Allocate to confirm.`,
       data: {
-        // Full case -> employee map (every case, not just per-employee
-        // groupings above) so the frontend can seed each row's dropdown
-        // without a second lookup.
+        // Full case -> employee map so the frontend can seed each row's
+        // dropdown without a second lookup.
         assignments: updates.map((u) => ({
           caseId: u.id,
           caseNumber: u.caseNumber,
@@ -1833,28 +2099,287 @@ async function autoAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("autoAllocateServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
-// NEW: Profile — free-text value attached to a case, keyed by case
-// number (same way employee allocation works, just a plain text field
-// instead of a dropdown). Two ways to set it, both from the Case
-// Register page:
-//   1. Single — PATCH /:id/profile, one case at a time.
-//   2. Bulk upload — POST /bulk-profile, a CSV of (case number,
-//      profile) pairs parsed on the frontend and sent as JSON here,
-//      matched by case_number within the org and updated together.
+// NEW (NOTIFY): POST /api/service-cases/notify-allocation
+// body: { employeeIds: string[], workDate? }
 //
-// Requires a new column on service_cases (see migration note below):
-//   profile  text, nullable
+// Called by the Today's Allocation page right after "Allocate" is
+// saved. Every employee who got NEW work receives ONE email:
+//   "Your work has been allocated today. Please login to check."
+//
+//   - The message never contains how many cases/what work they got.
+//   - The text is fixed on the server (a message sent by the client
+//     is ignored), so this endpoint can't be used to send custom mail.
+//   - Each employee is mailed only once per call, even if their id is
+//     repeated in the request.
+//   - NEW (NOTIFY ONCE): an employee is mailed only the FIRST time work
+//     is allocated to them for a given work date. Allocating again on
+//     the same date (Smart Allocation re-run, more cases added) sends
+//     NO new mail. The next work date counts as a fresh "first time".
+//   - Only employees of the caller's own organization are mailed.
+//   - A mail failure never affects the allocation itself (it is
+//     already saved); the page just shows a small toast.
+//
+// Requires this table (run once in the Supabase SQL editor):
+//
+//   create table if not exists allocation_notifications (
+//     id uuid primary key default gen_random_uuid(),
+//     organization_id uuid not null,
+//     employee_id uuid not null,
+//     work_date date not null,
+//     created_at timestamptz not null default now(),
+//     unique (organization_id, employee_id, work_date)
+//   );
+//
+// (Use the same type for organization_id as your other tables.)
 // ------------------------------------------------------------
+// CHANGED: "allocated today"
+const ALLOC_MESSAGE =
+  "Your work has been allocated today. Please login to check.";
+
+// App link shown in the email button. Set FRONTEND_URL in .env
+// (e.g. https://your-app.vercel.app). Falls back to "#" if missing.
+const APP_URL = (process.env.FRONTEND_URL || "").replace(/\/+$/, "");
+const APP_LOGIN_URL = APP_URL ? `${APP_URL}/login` : "#";
+// NEW: Logo2.png must be in the frontend's public/ folder so it opens at
+// https://your-app.vercel.app/Logo2.png (email needs a full public URL).
+// EMAIL_LOGO_URL (optional .env) overrides the default <FRONTEND_URL>/Logo2.png
+const LOGO_URL =
+  process.env.EMAIL_LOGO_URL || (APP_URL ? `${APP_URL}/Logo2.png` : "");
+
+// Email-safe HTML (tables + inline styles only — works in Gmail/Outlook).
+// Brand colours match the app (#08A1CE -> #204297). Contains NO case counts.
+function buildAllocationEmailHtml() {
+  return `<!DOCTYPE html>
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tell mail apps: this email is light-only, don't convert it to dark -->
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light only" />
+  <style>
+    :root { color-scheme: light only; supported-color-schemes: light only; }
+    /* Apple Mail / Outlook.com: even in dark mode keep the SAME light colours */
+    @media (prefers-color-scheme: dark) {
+      .bg-page { background-color: #eef6fb !important; background-image: linear-gradient(#eef6fb,#eef6fb) !important; }
+      .bg-card { background-color: #ffffff !important; background-image: linear-gradient(#ffffff,#ffffff) !important; }
+      .bg-head { background-color: #204297 !important; background-image: linear-gradient(135deg,#08A1CE,#204297) !important; }
+      .bg-btn  { background-color: #204297 !important; background-image: linear-gradient(135deg,#08A1CE,#204297) !important; }
+      .txt-title { color: #1e2a4a !important; }
+      .txt-sub   { color: #6b7690 !important; }
+      .txt-white { color: #ffffff !important; }
+      .txt-foot  { color: #9aa3b5 !important; }
+    }
+  </style>
+  <!--[if mso]><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
+</head>
+<body class="bg-page" style="margin:0;padding:0;background:#eef6fb;">
+  <table class="bg-page" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eef6fb" style="background:#eef6fb;background-image:linear-gradient(#eef6fb,#eef6fb);padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table class="bg-card" role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="max-width:480px;width:100%;background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(32,66,151,0.15);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+
+          <!-- Header -->
+          <tr>
+            <td class="bg-head" align="center" bgcolor="#204297" style="background:#204297;background-image:linear-gradient(135deg,#08A1CE,#204297);padding:36px 24px;">
+              <div style="width:60px;height:60px;line-height:60px;border-radius:16px;background:rgba(255,255,255,0.2);color:#ffffff;font-size:30px;text-align:center;margin:0 auto 14px;">&#9989;</div>
+              <div class="txt-white" style="color:#ffffff;font-size:22px;font-weight:800;letter-spacing:0.3px;">Work Allocated Today</div>
+            </td>
+          </tr>
+
+          <!-- White section: logo + message + button, all in ONE cell (no row seams) -->
+          <tr>
+            <td class="bg-card" align="center" bgcolor="#ffffff" style="background:#ffffff;background-image:linear-gradient(#ffffff,#ffffff);padding:28px 32px 22px;">
+              ${
+                LOGO_URL
+                  ? `<img src="${LOGO_URL}" alt="Alookate" width="120" style="display:block;margin:0 auto 22px;width:120px;max-width:120px;height:auto;border:0;outline:none;text-decoration:none;" />`
+                  : ""
+              }
+              <p class="txt-title" style="margin:0 0 10px;color:#1e2a4a;font-size:18px;font-weight:700;">Your work has been allocated.</p>
+              <p class="txt-sub" style="margin:0 0 26px;color:#6b7690;font-size:15px;line-height:1.6;">Please login to check.</p>
+
+              <!-- Outlook desktop: real rounded button (VML) -->
+              <!--[if mso]>
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${APP_LOGIN_URL}" style="height:48px;v-text-anchor:middle;width:230px;" arcsize="50%" stroke="f" fillcolor="#204297">
+                <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Login to Alookate</center>
+              </v:roundrect>
+              <![endif]-->
+              <!-- Gmail / Apple Mail / Outlook.com / phones -->
+              <!--[if !mso]><!-- -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                <tr>
+                  <td class="bg-btn" align="center" bgcolor="#204297" style="background:#204297;background-image:linear-gradient(135deg,#08A1CE,#204297);border-radius:30px;padding:14px 40px;">
+                    <a class="txt-white" href="${APP_LOGIN_URL}" target="_blank" style="color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;display:inline-block;">Login to Alookate</a>
+                  </td>
+                </tr>
+              </table>
+              <!--<![endif]-->
+
+               </td>
+          </tr>
+
+        </table>
+        <p class="txt-foot" style="margin:16px 0 0;color:#9aa3b5;font-size:11px;font-family:Arial,sans-serif;">This is an automated message from Alookate.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+async function notifyAllocation(req, res) {
+  console.log("[notify] hit, body:", JSON.stringify(req.body));
+  try {
+    const employeeIds = Array.isArray(req.body.employeeIds)
+      ? [
+          ...new Set(
+            req.body.employeeIds
+              .map((x) => (x || "").toString().trim())
+              .filter(Boolean),
+          ),
+        ]
+      : [];
+
+    if (employeeIds.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No employees provided." });
+    }
+    if (employeeIds.length > 500) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Too many employees." });
+    }
+
+    // the work date this allocation is for (falls back to today)
+    const rawDate = (req.body.workDate || "").toString().slice(0, 10);
+    const workDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? rawDate
+      : new Date().toISOString().slice(0, 10);
+
+    // only people who belong to THIS organization
+    const { data: members, error } = await supabase
+      .from("user_master")
+      .select('"Auth User Id"')
+      .eq("organization_id", req.user.organizationId)
+      .in("Auth User Id", employeeIds);
+    if (error) throw error;
+
+    const validIds = [
+      ...new Set((members || []).map((m) => m["Auth User Id"])),
+    ];
+
+    if (validIds.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No matching employees found." });
+    }
+
+    // NEW (NOTIFY ONCE): try to "claim" (employee, date). Rows that
+    // already exist are ignored, so .select() returns ONLY the employees
+    // who have NOT been mailed yet for this date. The unique key does the
+    // check, so two people pressing Allocate at the same moment can't
+    // both mail the same employee.
+    const { data: claimed, error: claimError } = await supabase
+      .from("allocation_notifications")
+      .upsert(
+        validIds.map((id) => ({
+          organization_id: req.user.organizationId,
+          employee_id: id,
+          work_date: workDate,
+        })),
+        {
+          onConflict: "organization_id,employee_id,work_date",
+          ignoreDuplicates: true,
+        },
+      )
+      .select("employee_id");
+    if (claimError) throw claimError;
+
+    const toSend = (claimed || []).map((r) => r.employee_id);
+    const skipped = validIds.length - toSend.length;
+
+    // everyone was already mailed earlier for this date — nothing to
+    // do, and NOT an error (the frontend must not show a failure toast)
+    if (toSend.length === 0) {
+      return res.json({ success: true, data: { sent: 0, failed: 0, skipped } });
+    }
+
+    const results = await Promise.allSettled(
+      toSend.map(async (authId) => {
+        const { data, error: userErr } =
+          await supabase.auth.admin.getUserById(authId);
+        if (userErr || !data?.user?.email) {
+          throw userErr || new Error(`No email for ${authId}`);
+        }
+
+        // NOTE: agar tagged-email scheme (multi-role-per-email) use ho raha
+        // hai to yaha wahi "real mailbox nikalne wala" helper lagao jo
+        // reset-password mail bhejte waqt use hota hai.
+        const to = data.user.email;
+        console.log("[notify] sending to:", to);
+
+        await sendEmail({
+          to,
+          // CHANGED: "Work allocated today"
+          subject: "Work allocated today",
+          text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
+          html: buildAllocationEmailHtml(),
+        });
+        console.log("[notify] sent to:", to);
+      }),
+    );
+
+    const sent = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.length - sent;
+    if (failed > 0) {
+      console.error(
+        "notifyAllocation failures:",
+        results.filter((r) => r.status === "rejected").map((r) => r.reason),
+      );
+      // a mail that FAILED must not count as "already mailed" — release
+      // the claim so the next Allocate can try that employee again.
+      const failedIds = toSend.filter(
+        (_, i) => results[i].status === "rejected",
+      );
+      const { error: releaseError } = await supabase
+        .from("allocation_notifications")
+        .delete()
+        .eq("organization_id", req.user.organizationId)
+        .eq("work_date", workDate)
+        .in("employee_id", failedIds);
+      if (releaseError) {
+        console.error("Failed to release notification claim:", releaseError);
+      }
+    }
+
+    // koi bhi mail chali gayi to success; sab fail hui to frontend ko toast dikhe
+    if (sent === 0) {
+      return res
+        .status(502)
+        .json({ success: false, message: "Could not send messages." });
+    }
+
+    res.json({ success: true, data: { sent, failed, skipped } });
+  } catch (err) {
+    console.error("notifyAllocation error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
 
 // ------------------------------------------------------------
-// PATCH /api/service-cases/:id/profile
-// body: { profile: string }
+// Profile — free-text value attached to a case, keyed by case number.
+//   1. Single — PATCH /:id/profile, one case at a time.
+//   2. Bulk upload — POST /bulk-profile, (case number, profile) pairs.
+//
+// Requires a column on service_cases:  profile  text, nullable
 // ------------------------------------------------------------
+
+// PATCH /api/service-cases/:id/profile   body: { profile: string }
 async function updateServiceCaseProfile(req, res) {
   try {
     const { id } = req.params;
@@ -1885,7 +2410,79 @@ async function updateServiceCaseProfile(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseProfile error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// PATCH /api/service-cases/:id/case-number
+// body: { caseNumber }
+//
+// Cases can be generated first (auto number / placeholder) and the real
+// case number added later. Case numbers stay unique per organization,
+// so a value already used by another case is rejected.
+// ------------------------------------------------------------
+async function updateServiceCaseNumber(req, res) {
+  try {
+    const { id } = req.params;
+    const caseNumber = (req.body.caseNumber ?? "").toString().trim();
+    if (!caseNumber) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Case number cannot be empty." });
+    }
+    if (caseNumber.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message: "Case number cannot be longer than 50 characters.",
+      });
+    }
+
+    // Duplicate check (case-insensitive, exact match, other rows only).
+    const { data: dupes, error: dupError } = await supabase
+      .from("service_cases")
+      .select("id")
+      .eq("organization_id", req.user.organizationId)
+      .ilike("case_number", caseNumber.replace(/[\\%_]/g, "\\$&"))
+      .neq("id", id)
+      .limit(1);
+    if (dupError) throw dupError;
+    if (dupes && dupes.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `Case number "${caseNumber}" already exists.`,
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("service_cases")
+      .update({ case_number: caseNumber })
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .select()
+      .maybeSingle();
+    if (error) {
+      if (error.code === "23505") {
+        return res.status(409).json({
+          success: false,
+          message: `Case number "${caseNumber}" already exists.`,
+        });
+      }
+      throw error;
+    }
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+    res.json({
+      success: true,
+      message: `Case number updated to ${data.case_number}.`,
+      data: { id: data.id, caseNumber: data.case_number },
+    });
+  } catch (err) {
+    console.error("updateServiceCaseNumber error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -1894,20 +2491,19 @@ async function updateServiceCaseProfile(req, res) {
 // body: { clientId?, subclientId? }
 //
 // Case Register table's inline-editable Client + Subclient columns.
-// Only these two are editable in place — case number, service, and
-// date stay read-only, set once at creation time. Either field is
-// optional in the body; only the ones actually sent get changed.
-// Passing clientId: null (or "") clears the client (and, per the rule
-// below, the subclient along with it — a subclient can't outlive the
-// client it belongs to).
+// Either field is optional in the body; only the ones actually sent get
+// changed. Passing clientId: null (or "") clears the client (and the
+// subclient along with it — a subclient can't outlive its client).
+// A client being SET must be mapped to the case's service.
 // ------------------------------------------------------------
 async function updateServiceCaseClient(req, res) {
   try {
     const { id } = req.params;
 
+    // NEW: product_id is selected too, for the client-service mapping check.
     const { data: existing, error: existingError } = await supabase
       .from("service_cases")
-      .select("id, case_number, client_id, subclient_id")
+      .select("id, case_number, product_id, client_id, subclient_id")
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
       .maybeSingle();
@@ -1944,11 +2540,21 @@ async function updateServiceCaseClient(req, res) {
           .status(404)
           .json({ success: false, message: "Client not found" });
       }
+      // NEW: the client must be mapped to this case's service.
+      const mapCheck = await assertClientMappedToProduct(
+        nextClientId,
+        existing.product_id,
+        req.user.organizationId,
+      );
+      if (!mapCheck.ok) {
+        return res
+          .status(400)
+          .json({ success: false, message: mapCheck.message });
+      }
     }
 
-    // NEW: Subclient — a client change with no explicit subclient in
-    // the same request clears the old subclient (it belonged to the
-    // previous client and can't be assumed valid under the new one).
+    // A client change with no explicit subclient in the same request
+    // clears the old subclient.
     let nextSubclientId = bodyHasSubclient
       ? req.body.subclientId || null
       : bodyHasClient && String(nextClientId) !== String(existing.client_id)
@@ -1982,9 +2588,6 @@ async function updateServiceCaseClient(req, res) {
         .json({ success: false, message: "Case not found" });
     }
 
-    // PERF FIX: same independent-lookups pattern as listServiceCases —
-    // client and subclient maps don't depend on each other, run them
-    // concurrently instead of back-to-back.
     const [clientMap, subclientMap] = await Promise.all([
       getClientNameMap([data.client_id], req.user.organizationId),
       getSubclientNameMap([data.subclient_id], req.user.organizationId),
@@ -2004,7 +2607,7 @@ async function updateServiceCaseClient(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseClient error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -2012,11 +2615,9 @@ async function updateServiceCaseClient(req, res) {
 // POST /api/service-cases/bulk-profile
 // body: { rows: [{ caseNumber, profile }, ...] }
 //
-// Bulk-upload counterpart of the above — matches each row to an
-// existing case by case_number (within this org) and sets its
-// profile value. Case numbers that don't match any row are reported
-// back as "notFound" rather than failing the whole request, so one
-// typo in a 200-row CSV doesn't block the other 199.
+// Matches each row to an existing case by case_number (within this org)
+// and sets its profile value. Case numbers that don't match are
+// reported back as "notFound" rather than failing the whole request.
 // ------------------------------------------------------------
 async function bulkUpdateServiceCaseProfiles(req, res) {
   try {
@@ -2087,32 +2688,26 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
     });
   } catch (err) {
     console.error("bulkUpdateServiceCaseProfiles error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
-// NEW: Employee self-submit — the "Today's Allocation"/"Past
-// Allocation" table on the Profile page now lists individual cases
-// (case-number wise, like the admin Cases tab) instead of quantity
-// batches. Since a case is one atomic unit of work, submitting it is
-// a single click — no partial quantity or mismatch-reason step like
-// the old daily_work batch flow needed.
+// Employee self-submit — the "Today's Allocation"/"Past Allocation"
+// table on the Profile page lists individual cases. A case is one
+// atomic unit of work, so submitting it is a single click.
 //
-// Requires four columns on service_cases (see migration note):
+// Requires columns on service_cases:
 //   submission_status  text, default 'PENDING' ('PENDING' | 'SUBMITTED')
 //   submission_type    text ('COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' | 'QUERY')
 //   query_text         text, nullable
 //   submitted_at       timestamptz, nullable
 // ------------------------------------------------------------
 
-// Every outcome an employee can report when submitting a case, and how
-// each one is labelled on the Profile page:
+// Every outcome an employee can report when submitting a case:
 //   COMPLETED      -> "Completed"
 //   QUERY          -> "Query"
-//   DONE_BY_TEAM   -> "Completed by Team"   (stored value unchanged, so
-//                                            existing rows keep working —
-//                                            only the label was renamed)
+//   DONE_BY_TEAM   -> "Completed by Team"
 //   DONE_BY_CLIENT -> "Completed by Client"
 const SUBMISSION_TYPES = [
   "COMPLETED",
@@ -2123,16 +2718,29 @@ const SUBMISSION_TYPES = [
 // What an open Query can be turned into once it's sorted out.
 const QUERY_RESOLUTION_TYPES = SUBMISSION_TYPES.filter((t) => t !== "QUERY");
 
+// NEW: Super Admin / Ops Manager can submit work on behalf of another
+// employee (Profile page -> search employee -> open their profile).
+// The frontend sends the employee's id as `onBehalfOf`. Everyone else
+// can only ever act on their OWN cases — a non-privileged caller who
+// sends onBehalfOf for someone else gets a 403, never a silent fallback.
+const ON_BEHALF_ROLES = ["SUPER_ADMIN", "OPS_MANAGER"];
+function getActingEmployeeId(req) {
+  const target = (req.body?.onBehalfOf || "").toString().trim();
+  if (!target || target === req.user.userId) {
+    return { ok: true, employeeId: req.user.userId };
+  }
+  if (!ON_BEHALF_ROLES.includes(req.user.role)) {
+    return {
+      ok: false,
+      message: "You can't submit work on behalf of another employee.",
+    };
+  }
+  return { ok: true, employeeId: target };
+}
+
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/submit
-// body: { submissionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' | 'QUERY', queryText?: string }
-//
-// Every submission records an outcome, not just "submitted":
-//   'COMPLETED'      — completed (by the employee themself).
-//   'DONE_BY_TEAM'   — completed by the team ("Completed by Team").
-//   'DONE_BY_CLIENT' — completed by the client ("Completed by Client").
-//   'QUERY'          — couldn't be completed as-is; queryText carries
-//                      what the query actually is (required in this case).
+// body: { submissionType, queryText?, onBehalfOf? }
 // ------------------------------------------------------------
 async function submitServiceCase(req, res) {
   try {
@@ -2154,6 +2762,13 @@ async function submitServiceCase(req, res) {
       });
     }
 
+    // Whose case is this being submitted for? (yourself, or — for Super
+    // Admin / Ops Manager — the employee whose profile is open.)
+    const acting = getActingEmployeeId(req);
+    if (!acting.ok) {
+      return res.status(403).json({ success: false, message: acting.message });
+    }
+
     const { data, error } = await supabase
       .from("service_cases")
       .update({
@@ -2161,19 +2776,26 @@ async function submitServiceCase(req, res) {
         submission_type: submissionType,
         query_text: submissionType === "QUERY" ? queryText : null,
         submitted_at: new Date().toISOString(),
+        // the person who pressed Submit (may differ from the assigned
+        // employee when a Super Admin / Ops Manager submits on behalf).
+        submitted_by: req.user.userId,
       })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
-      // Self-service — can only ever submit a case assigned to you,
-      // regardless of what id is in the URL.
-      .eq("assigned_employee_id", req.user.userId)
+      // Self-service — can only ever submit a case assigned to you
+      // (or, for Super Admin / Ops Manager, to the employee they are
+      // acting for), regardless of what id is in the URL.
+      .eq("assigned_employee_id", acting.employeeId)
       .select()
       .maybeSingle();
     if (error) throw error;
     if (!data) {
       return res.status(404).json({
         success: false,
-        message: "Case not found or not assigned to you.",
+        message:
+          acting.employeeId === req.user.userId
+            ? "Case not found or not assigned to you."
+            : "Case not found or not assigned to this employee.",
       });
     }
 
@@ -2191,7 +2813,7 @@ async function submitServiceCase(req, res) {
     });
   } catch (err) {
     console.error("submitServiceCase error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -2200,14 +2822,11 @@ async function submitServiceCase(req, res) {
 // body: { resolutionType: 'COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' }
 //
 // Profile page -> "All Query": once a query has been sorted out, the
-// employee marks that case as completed (by themself / the team / the
-// client). Only a case that is CURRENTLY a 'QUERY' and assigned to the
-// caller can be resolved.
+// employee marks that case as completed. Only a case that is CURRENTLY
+// a 'QUERY' and assigned to the caller can be resolved.
 //
-// query_text is deliberately KEPT here (a normal submit clears it for
-// non-query outcomes). That is how "Query Completed" is told apart from
-// a case that was never a query: submission_type is no longer 'QUERY'
-// but query_text is still filled in. No new column / migration needed.
+// query_text is deliberately KEPT here — that is how "Query Completed"
+// is told apart from a case that was never a query.
 // ------------------------------------------------------------
 async function resolveQueryServiceCase(req, res) {
   try {
@@ -2227,8 +2846,7 @@ async function resolveQueryServiceCase(req, res) {
       .update({ submission_type: resolutionType })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
-      // Self-service — can only ever resolve your own query, regardless
-      // of what id is in the URL.
+      // Self-service — can only ever resolve your own query.
       .eq("assigned_employee_id", req.user.userId)
       .eq("submission_status", "SUBMITTED")
       .eq("submission_type", "QUERY")
@@ -2237,9 +2855,7 @@ async function resolveQueryServiceCase(req, res) {
     if (error) throw error;
     if (!data) {
       // Nothing was updated. If it's the caller's own case and it is no
-      // longer a 'QUERY', someone else (a manager / admin) already
-      // completed it — say so, so the page can just refresh instead of
-      // showing a scary error.
+      // longer a 'QUERY', someone else already completed it.
       const { data: current, error: currentError } = await supabase
         .from("service_cases")
         .select("submission_type, assigned_employee_id")
@@ -2279,7 +2895,7 @@ async function resolveQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("resolveQueryServiceCase error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -2287,15 +2903,10 @@ async function resolveQueryServiceCase(req, res) {
 // PATCH /api/service-cases/:id/complete-query
 // body (optional): { resolutionType: 'DONE_BY_TEAM' | 'COMPLETED' | 'DONE_BY_CLIENT' }
 //
-// A manager / admin marks SOMEONE ELSE's open query as completed (Production
-// Reports -> "Mark completed"). Defaults to 'DONE_BY_TEAM' = "Completed by
-// Team". Same permission gate as the other manager-side case actions
-// (QC, audit, allocate). The employee's Profile page picks the change up
-// on its own: the case leaves "In Query" and shows up under "Query
-// Completed" as "Completed by Team".
-//
-// Like resolve-query, query_text is KEPT so the case is still recognised
-// as a completed query.
+// A manager / admin marks SOMEONE ELSE's open query as completed
+// (Production Reports -> "Mark completed", and the Profile page when a
+// Super Admin / Ops Manager has another employee's profile open).
+// Defaults to 'DONE_BY_TEAM'. Like resolve-query, query_text is KEPT.
 // ------------------------------------------------------------
 async function completeQueryServiceCase(req, res) {
   try {
@@ -2362,24 +2973,16 @@ async function completeQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("completeQueryServiceCase error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/qc
 // Quality Scores (QC) page — Pass/Fail a case + optional marks + an
-// optional remarks note. Writes the same qc_status/qc_marks/qc_notes/
-// qc_reviewed_at/qc_employee_id columns the QC & Audit workflow uses,
-// so both features stay in sync on the same source of truth.
+// optional remarks note.
 //   body: { qcStatus: "PASSED" | "FAILED", marks: number | null, notes?: string }
-// A case can only be QC'd once it has actually been submitted
-// (submission_status = 'SUBMITTED') — this is enforced here too, not
-// just in the GET filter above, so the check can't be bypassed by
-// calling this endpoint directly with an arbitrary case id.
-//
-// Requires a new column on service_cases (see migration note):
-//   qc_notes  text, nullable
+// Requires a column on service_cases:  qc_notes  text, nullable
 // ------------------------------------------------------------
 async function updateServiceCaseQc(req, res) {
   try {
@@ -2451,24 +3054,15 @@ async function updateServiceCaseQc(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseQc error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
 // PATCH /api/service-cases/:id/audit
-// QC & Audit page — second pass, Pass/Fail a case + optional marks +
-// an optional remarks note. Only meaningful on a case that has already
-// passed QC (audit is a re-check of QC's work, not a substitute for
-// it), so this refuses to run on anything else.
+// QC & Audit page — second pass; only meaningful on a case that has
+// already passed QC.
 //   body: { auditStatus: "PASSED" | "FAILED", marks: number | null, notes?: string }
-//
-// Requires four new columns on service_cases (see migration note):
-//   audit_status       text, nullable ('PENDING' | 'PASSED' | 'FAILED')
-//   audit_marks        numeric, nullable
-//   audit_notes        text, nullable
-//   audit_employee_id  uuid, nullable, references user_master
-//   audit_reviewed_at  timestamptz, nullable
 // ------------------------------------------------------------
 async function updateServiceCaseAudit(req, res) {
   try {
@@ -2549,17 +3143,15 @@ async function updateServiceCaseAudit(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseAudit error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 // ------------------------------------------------------------
 // POST /api/service-cases/bulk-submit
-// body: { items: [{ id, submissionType, queryText }, ...] }
-// Same as above but for many cases at once — the "Bulk Submit" button
-// on the Profile page. Each case picks its own outcome (every row in
-// the modal has its own dropdown), so this takes an items array rather
-// than a flat list of ids.
+// body: { items: [{ id, submissionType, queryText }, ...], onBehalfOf? }
+// Same as submit but for many cases at once — each case picks its own
+// outcome, so this takes an items array rather than a flat list of ids.
 // ------------------------------------------------------------
 async function bulkSubmitServiceCases(req, res) {
   try {
@@ -2593,11 +3185,18 @@ async function bulkSubmitServiceCases(req, res) {
       }
     }
 
+    // Whose cases are these? (yourself, or — for Super Admin / Ops
+    // Manager — the employee whose profile is open.)
+    const acting = getActingEmployeeId(req);
+    if (!acting.ok) {
+      return res.status(403).json({ success: false, message: acting.message });
+    }
+
     const now = new Date().toISOString();
     let submittedCount = 0;
     // One update per case since each can have a different outcome —
-    // still all scoped to (org, caller) so this can only ever touch
-    // the caller's own cases, same guarantee as the single-submit path.
+    // all scoped to (org, acting employee) so this can only ever touch
+    // that one employee's own cases.
     await Promise.all(
       cleaned.map(async (it) => {
         const { data, error } = await supabase
@@ -2607,10 +3206,12 @@ async function bulkSubmitServiceCases(req, res) {
             submission_type: it.submissionType,
             query_text: it.submissionType === "QUERY" ? it.queryText : null,
             submitted_at: now,
+            // who pressed Submit (see submitServiceCase).
+            submitted_by: req.user.userId,
           })
           .eq("id", it.id)
           .eq("organization_id", req.user.organizationId)
-          .eq("assigned_employee_id", req.user.userId)
+          .eq("assigned_employee_id", acting.employeeId)
           .select("id");
         if (error) throw error;
         if (data && data.length > 0) submittedCount++;
@@ -2624,7 +3225,7 @@ async function bulkSubmitServiceCases(req, res) {
     });
   } catch (err) {
     console.error("bulkSubmitServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
@@ -2632,25 +3233,13 @@ async function bulkSubmitServiceCases(req, res) {
 // POST /api/service-cases/self-allocate
 // Body: { caseIds: string[] }
 //
-// NEW: Profile page's "Self Allocate" flow — an employee picks a
-// service they're aligned to (checked client-side, see
-// GET /api/products + team match in profile.tsx) then ticks one or
-// more still-PENDING cases on it and takes them for themselves. This
-// is the endpoint the frontend already calls; it was missing here,
-// which is why Self Allocate always failed.
-//
-// Same safety model as POST /api/allocations/self:
+// Profile page's "Self Allocate" flow — an employee takes still-PENDING
+// cases for themselves.
 //   1. assigned_employee_id/allocated_by are always req.user.userId —
-//      never taken from the request body — so this can never be used
-//      to allocate a case to anyone else.
-//   2. Each case is only actually claimed if it is STILL pending and
-//      unassigned at the moment of the update (organization_id +
-//      allocation_status=PENDING + assigned_employee_id is null are
-//      all part of the .eq()/.is() filter) — a case someone else grabs
-//      a moment earlier is silently skipped rather than stolen out
-//      from under them.
-// No special permission beyond being logged in — identical rule to
-// bulk-submit above; the query filters are what keep this scoped.
+//      never taken from the request body.
+//   2. Each case is only claimed if it is STILL pending and unassigned
+//      at the moment of the update — a case someone else grabbed a
+//      moment earlier is silently skipped.
 // ------------------------------------------------------------
 async function selfAllocateServiceCases(req, res) {
   try {
@@ -2668,9 +3257,6 @@ async function selfAllocateServiceCases(req, res) {
     let allocatedCount = 0;
     const allocatedCases = [];
 
-    // One update per case (each only succeeds if still PENDING +
-    // unassigned) so a case someone else just took a second ago is
-    // quietly skipped instead of erroring the whole batch out.
     await Promise.all(
       caseIds.map(async (id) => {
         const { data, error } = await supabase
@@ -2710,19 +3296,26 @@ async function selfAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("selfAllocateServiceCases error:", err);
-    sendError(res, err, 500);
+    res.status(500).json({ success: false, message: err.message });
   }
 }
 
 module.exports = {
+  getAutoPrefix,
+  updateServiceCaseNumber,
   listServiceCases,
   createServiceCases,
   manualCreateServiceCases,
+  createCountOnlyEntry,
+  listCountOnlyEntries,
+  deleteCountOnlyEntry,
   uploadCustomServiceCases,
   downloadUploadTemplate,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  // NEW (NOTIFY)
+  notifyAllocation,
   listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
@@ -2734,4 +3327,12 @@ module.exports = {
   selfAllocateServiceCases,
   updateServiceCaseQc,
   updateServiceCaseAudit,
+  // MODIFIED: helpers exported for servicecasecountallocations.controller.js
+  // (without these the count endpoints crashed with "undefined is not a function").
+  getProduct,
+  assertVerticalHeadCanUseProduct,
+  getProductNameMap,
+  getClientNameMap,
+  getSubclientNameMap,
+  getEmployeeNameMap,
 };

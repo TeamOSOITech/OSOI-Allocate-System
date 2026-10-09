@@ -8,6 +8,7 @@ const {
   getEmployeeById,
   updateEmployee,
   deleteEmployee,
+  resetEmployeePassword,
 } = require("./employees.controller");
 
 // FIX: this entire router previously had ZERO authentication —
@@ -26,5 +27,13 @@ router.get("/:id", getEmployeeById);
 router.put("/:id", requirePermission("employees.manage"), updateEmployee);
 router.patch("/:id", requirePermission("employees.manage"), updateEmployee);
 router.delete("/:id", requirePermission("employees.manage"), deleteEmployee);
+
+// Admin sets a new password directly (no email). The controller further
+// restricts this to Super Admin / Ops Manager and to employees they may edit.
+router.post(
+  "/:id/reset-password",
+  requirePermission("employees.manage"),
+  resetEmployeePassword,
+);
 
 module.exports = router;

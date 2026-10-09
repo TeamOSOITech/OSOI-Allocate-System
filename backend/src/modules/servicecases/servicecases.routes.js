@@ -1,9 +1,4 @@
 // src/modules/servicecases/servicecases.routes.js
-//
-// "Case Register" tab (second tab on the Daily Work page). Same
-// permission gate as Daily Work itself (tasks.allocate.team/org), since
-// this is logically the same "log today's work" action, just producing
-// individual case rows instead of one batch row.
 
 const express = require("express");
 const router = express.Router();
@@ -11,14 +6,21 @@ const multer = require("multer");
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
 const {
+  getAutoPrefix,
+  updateServiceCaseNumber,
   listServiceCases,
   createServiceCases,
   manualCreateServiceCases,
+  createCountOnlyEntry,
+  listCountOnlyEntries,
+  deleteCountOnlyEntry,
   uploadCustomServiceCases,
   downloadUploadTemplate,
   deleteServiceCase,
   allocateServiceCase,
   autoAllocateServiceCases,
+  // NEW (NOTIFY)
+  notifyAllocation,
   listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
@@ -32,13 +34,34 @@ const {
   updateServiceCaseAudit,
 } = require("./servicecases.controller");
 
-// Same memory-storage + extension-filter pattern as clients/subclients
-// bulk upload — file never touches disk, only .xlsx/.csv accepted.
-//
-// SECURITY FIX: dropped ".xls" (legacy binary Excel format) — the xlsx
-// package that used to parse it is gone (see
-// src/utils/parseSpreadsheet.js), replaced with an ExcelJS-based reader
-// that only understands the modern .xlsx/.csv formats.
+// count-only allocation endpoints (Today's Allocation -> Counts)
+const {
+  listCountAllocations,
+  autoPreviewCountAllocations,
+  saveCountAllocations,
+  clearCountAllocations,
+} = require("./servicecasecountallocations.controller");
+
+// NEW: employee-side (Profile page) count endpoints — self-allocate a
+// count, add real case numbers to it, and fill an empty client/subclient.
+const {
+  listMyCounts,
+  selfAllocateCounts,
+  addCaseNumbersToCount,
+  fillCaseClient,
+} = require("./servicecasecountself.controller");
+
+// NEW: Service <-> Client mapping (which clients belong to which service).
+const {
+  listClientsForProduct,
+  setProductClients,
+} = require("./serviceClients");
+
+const allocPerm = requireAnyPermission(
+  "tasks.allocate.team",
+  "tasks.allocate.org",
+);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
@@ -54,119 +77,67 @@ const upload = multer({
 router.use(authenticate);
 
 router.get("/", listServiceCases);
-// NEW: sample .xlsx for Upload mode — literal path registered before
-// "/:id/*" routes so it can never be shadowed.
 router.get("/upload/template", downloadUploadTemplate);
-// NEW: Cleared Allocations log — the past record of every case that
-// was allocated and then Cleared, so the History tab has a place to
-// show "who had this before it was cleared" instead of that
-// information just disappearing. Same permission as the rest of this
-// module's allocate actions.
-router.get(
-  "/clear-log",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  listAllocationClearLog,
-);
+router.get("/auto-prefix", getAutoPrefix);
+router.get("/clear-log", allocPerm, listAllocationClearLog);
+
+// ---- NEW: Service <-> Client mapping ----
+// GET  -> clients mapped to a service (powers the Client dropdown in Log Cases)
+// PUT  -> replace the set of clients mapped to a service
+router.get("/product-clients/:productId", listClientsForProduct);
+router.put("/product-clients/:productId", allocPerm, setProductClients);
+
+router.post("/", allocPerm, createServiceCases);
+router.post("/manual", allocPerm, manualCreateServiceCases);
+
+// ---- count-only entries (Case Register -> Counts) ----
+router.post("/count-only", allocPerm, createCountOnlyEntry);
+router.get("/count-only", allocPerm, listCountOnlyEntries);
+router.delete("/count-only/:id", allocPerm, deleteCountOnlyEntry);
+
+// ---- count-only ALLOCATION (Today's Allocation -> Counts) ----
+// Literal paths: must stay ABOVE every "/:id/..." route.
+router.get("/count-allocations", allocPerm, listCountAllocations);
 router.post(
-  "/",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  createServiceCases,
+  "/count-allocations/auto-preview",
+  allocPerm,
+  autoPreviewCountAllocations,
 );
-// NEW: manual case-number entry — person types the case numbers
-// themselves (up to 10+ at once) instead of the system auto-generating
-// them. Literal path registered before "/:id/*" routes so it can never
-// be shadowed.
-router.post(
-  "/manual",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  manualCreateServiceCases,
-);
-// NEW: custom case-number upload — same Service + Date as the regular
-// form, but case numbers come from an uploaded sheet instead of being
-// auto-generated. Literal path registered before "/:id/*" routes so it
-// can never be shadowed.
+router.post("/count-allocations/save", allocPerm, saveCountAllocations);
+router.post("/count-allocations/clear", allocPerm, clearCountAllocations);
+
+// ---- NEW: employee's own counts (Profile page) ----
+// Any logged-in employee; "me" is always req.user.userId inside the
+// handlers, so these can only ever touch the caller's own allocations.
+router.get("/my-counts", listMyCounts);
+router.post("/my-counts/self-allocate", selfAllocateCounts);
+router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
+
 router.post(
   "/upload",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  allocPerm,
   upload.single("file"),
   uploadCustomServiceCases,
 );
-// NEW: Today's Allocation — Cases tab (manual, one case) + Employees tab
-// flow (smart/auto, many cases at once). Literal path "/auto-allocate"
-// registered before "/:id/allocate" so it can never be shadowed.
-router.post(
-  "/auto-allocate",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  autoAllocateServiceCases,
-);
-// NEW: Profile — Case Register page. Literal path "/bulk-profile"
-// registered before "/:id/profile" so it can never be shadowed.
-router.post(
-  "/bulk-profile",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  bulkUpdateServiceCaseProfiles,
-);
-// NEW: employee self-submit on the Profile page — no special
-// permission beyond being logged in, same as /api/allocations/self;
-// the controller itself only ever touches cases assigned to the
-// caller. Literal path "/bulk-submit" registered before "/:id/submit"
-// so it can never be shadowed.
+router.post("/auto-allocate", allocPerm, autoAllocateServiceCases);
+// NEW (NOTIFY): "Your work has been allocated" email, sent after Allocate.
+router.post("/notify-allocation", allocPerm, notifyAllocation);
+router.post("/bulk-profile", allocPerm, bulkUpdateServiceCaseProfiles);
 router.post("/bulk-submit", bulkSubmitServiceCases);
-// NEW: Profile page "Self Allocate" flow — same no-special-permission
-// rule as /bulk-submit above; the controller only ever touches cases
-// that are still PENDING/unassigned and always claims them for the
-// caller, never anyone else. Literal path registered before
-// "/:id/submit" so it can never be shadowed.
 router.post("/self-allocate", selfAllocateServiceCases);
+
 router.patch("/:id/submit", submitServiceCase);
-// NEW: Profile page "All Query" — mark one of the caller's own open
-// queries as completed (by themself / the team / the client). Same
-// no-special-permission rule as /:id/submit; the controller only ever
-// touches a QUERY case assigned to the caller.
 router.patch("/:id/resolve-query", resolveQueryServiceCase);
-// NEW: a manager / admin completes SOMEONE ELSE's open query (Production
-// Reports -> "Mark completed"). Default outcome is "Completed by Team".
-// Same permission gate as the other manager-side case actions below.
-router.patch(
-  "/:id/complete-query",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  completeQueryServiceCase,
-);
-// NEW: Quality Scores (QC) page — Pass/Fail + marks. Fixes the page
-// calling a route that never existed before (was returning Express's
-// HTML 404 page, which the frontend then failed to parse as JSON).
-router.patch(
-  "/:id/qc",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  updateServiceCaseQc,
-);
-// NEW: QC & Audit page's Audit Queue — Pass/Fail + marks + remarks,
-// same shape as /:id/qc above, one step later in the workflow.
-router.patch(
-  "/:id/audit",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  updateServiceCaseAudit,
-);
-router.patch(
-  "/:id/profile",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  updateServiceCaseProfile,
-);
-// NEW: Case Register table's inline-editable Client column.
-router.patch(
-  "/:id/client",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  updateServiceCaseClient,
-);
-router.patch(
-  "/:id/allocate",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  allocateServiceCase,
-);
-router.delete(
-  "/:id",
-  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
-  deleteServiceCase,
-);
+router.patch("/:id/complete-query", allocPerm, completeQueryServiceCase);
+router.patch("/:id/qc", allocPerm, updateServiceCaseQc);
+router.patch("/:id/audit", allocPerm, updateServiceCaseAudit);
+router.patch("/:id/profile", allocPerm, updateServiceCaseProfile);
+router.patch("/:id/case-number", allocPerm, updateServiceCaseNumber);
+// Manager edit (change/clear client + subclient).
+router.patch("/:id/client", allocPerm, updateServiceCaseClient);
+// NEW: employee ADD-only (fills an empty client/subclient on own case).
+router.patch("/:id/client-fill", fillCaseClient);
+router.patch("/:id/allocate", allocPerm, allocateServiceCase);
+router.delete("/:id", allocPerm, deleteServiceCase);
 
 module.exports = router;

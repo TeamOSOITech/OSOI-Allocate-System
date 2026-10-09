@@ -219,6 +219,21 @@ async function deleteEmployeeRow(id, organizationId) {
   }
 }
 
+// Sets a new password for an employee directly, with NO email involved.
+// Used by the admin-side "Reset Password" action on the Employees screen
+// (Super Admin / Ops Manager). The employee's id here is their Supabase
+// Auth user id ("Auth User Id"), same id used everywhere else in this file.
+async function setEmployeePassword(id, newPassword) {
+  const { error } = await supabase.auth.admin.updateUserById(id, {
+    password: newPassword,
+  });
+  if (error) {
+    console.error("Failed to set employee password:", error.message);
+    return { ok: false, message: error.message };
+  }
+  return { ok: true };
+}
+
 module.exports = {
   mapRow,
   normalizeEmail,
@@ -228,4 +243,5 @@ module.exports = {
   fetchTargetRole,
   updateEmployeeRow,
   deleteEmployeeRow,
+  setEmployeePassword,
 };
