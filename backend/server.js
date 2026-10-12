@@ -74,7 +74,9 @@ app.use(
         return callback(null, true);
       }
       console.warn(`CORS: blocked request from disallowed origin: ${origin}`);
-      return callback(new Error("Not allowed by CORS"));
+      // Pass `false` (not an Error) so the browser just gets no CORS
+      // headers, instead of a 500 from the global error handler.
+      return callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -85,7 +87,9 @@ app.use(
   }),
 );
 
-app.options("*", cors());
+// (Preflight requests are already answered by the cors() middleware above,
+// using the same origin whitelist. A second, unconfigured app.options("*",
+// cors()) here was dead code at best, and a wide-open CORS reply at worst.)
 
 // ========================
 // 🛡️ CSRF (double-submit cookie check)
@@ -131,14 +135,9 @@ app.use((req, res, next) => {
 
 function loadRoute(name, path) {
   const route = require(path);
-
-  console.log(`\n====================`);
-  console.log(`${name}`);
-  console.log("Type:", typeof route);
-  console.log("Constructor:", route?.constructor?.name);
-  console.log("Keys:", Object.keys(route));
-  console.log("====================\n");
-
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`Loaded route module: ${name}`);
+  }
   return route;
 }
 

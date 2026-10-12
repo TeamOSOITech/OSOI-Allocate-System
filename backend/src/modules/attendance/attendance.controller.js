@@ -12,6 +12,7 @@
 
 const { sendError } = require("../../utils/response");
 const attendanceService = require("./attendance.service");
+const { allEmployeesInOrg, isIsoDate } = require("../../utils/orgGuards");
 
 // ------------------------------------------------------------
 // GET /api/attendance?date=YYYY-MM-DD
@@ -56,6 +57,12 @@ async function bulkMarkAttendance(req, res) {
       });
     }
 
+    if (!isIsoDate(date)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "date must be YYYY-MM-DD" });
+    }
+
     for (const r of records) {
       if (!r.employeeId || !validStatuses.includes(r.status)) {
         return res.status(400).json({
@@ -63,6 +70,21 @@ async function bulkMarkAttendance(req, res) {
           message: `Each record needs a valid employeeId and status (${validStatuses.join(", ")})`,
         });
       }
+    }
+
+    // SECURITY: the upsert below conflicts on (employee_id, attendance_date)
+    // and the service-role client bypasses RLS — so without this check a
+    // caller could overwrite (and re-assign to their own organization) the
+    // attendance row of an employee that belongs to a DIFFERENT tenant.
+    const ownsAll = await allEmployeesInOrg(
+      records.map((r) => r.employeeId),
+      req.user.organizationId,
+    );
+    if (!ownsAll) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more employees were not found in your organization.",
+      });
     }
 
     const rows = records.map((r) => ({

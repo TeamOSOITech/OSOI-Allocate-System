@@ -68,10 +68,13 @@ const registerOrganizationHandler = async (req, res) => {
       .maybeSingle();
 
     if (existingProfile) {
-      return res.status(409).json({
-        success: false,
+      // SECURITY: answer exactly like a successful signup so this public
+      // endpoint can't be used to find out which emails already have an
+      // account. (Nothing is created and no email is sent.)
+      return res.status(201).json({
+        success: true,
         message:
-          "An account with this email already exists. Please log in instead.",
+          "If this email can be registered, you'll receive an email shortly to set your password.",
       });
     }
 
@@ -148,7 +151,7 @@ const registerOrganizationHandler = async (req, res) => {
     return res.status(201).json({
       success: true,
       message:
-        "Organization created. Check your email to set your password, then log in.",
+        "If this email can be registered, you'll receive an email shortly to set your password.",
     });
   } catch (err) {
     console.error("REGISTER ORGANIZATION ERROR:", err);

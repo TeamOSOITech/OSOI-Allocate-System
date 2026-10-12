@@ -476,9 +476,13 @@ async function createUserAndGenerateResetLink({
     }
   }
 
+  // SECURITY: a working password-reset link is effectively a login for the
+  // new account. It used to be returned to whoever created the user, which
+  // let that person set the new user's password and sign in as them. Now it
+  // is only exposed as a manual fallback when the email could not be sent.
   return {
     user: data.user,
-    resetLink,
+    resetLink: resetEmailSent ? null : resetLink,
     resetLinkGenerated,
     resetLinkError,
     resetEmailSent,
@@ -628,6 +632,12 @@ async function processAddUserRequest(body, requester) {
     };
   }
 
+  if (body.password && String(body.password).length < 8) {
+    return {
+      statusCode: 400,
+      body: { message: "Password must be at least 8 characters." },
+    };
+  }
   const tempPassword = body.password || generateFallbackPassword();
 
   const {
@@ -815,6 +825,14 @@ async function processBulkAddUserRequest(users, requester) {
         continue;
       }
 
+      if (rawUser.password && String(rawUser.password).length < 8) {
+        results.push({
+          email,
+          success: false,
+          message: "Password must be at least 8 characters.",
+        });
+        continue;
+      }
       const tempPassword = rawUser.password || generateFallbackPassword();
 
       const {

@@ -51,8 +51,26 @@ const registerOrgLimiter = rateLimit({
   },
 });
 
+// Per-ACCOUNT limit, on top of the per-IP one above — otherwise an attacker
+// rotating IPs can guess passwords against one email indefinitely.
+const loginAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) =>
+    `acct:${String(req.body?.email || "")
+      .trim()
+      .toLowerCase()}`,
+  skip: (req) => !req.body?.email,
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again in a few minutes.",
+  },
+});
+
 // Login using Supabase Authentication
-router.post("/login", loginLimiter, loginHandler);
+router.post("/login", loginLimiter, loginAccountLimiter, loginHandler);
 
 // Clears the auth cookies. No rate limit needed — it only ever hurts
 // the caller's own session, nothing to abuse.

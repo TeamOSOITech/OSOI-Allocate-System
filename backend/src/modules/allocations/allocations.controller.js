@@ -14,6 +14,7 @@
 const { sendError } = require("../../utils/response");
 const { hasPermission } = require("../../config/permissions");
 const allocationsService = require("./allocations.service");
+const { allEmployeesInOrg } = require("../../utils/orgGuards");
 
 // ------------------------------------------------------------
 // GET /api/allocations/history
@@ -449,6 +450,20 @@ async function manualAllocate(req, res) {
       }
     }
 
+    // SECURITY: employeeId comes from the request body — make sure every
+    // one of them really belongs to the caller's organization.
+    if (
+      !(await allEmployeesInOrg(
+        allocations.map((a) => a.employeeId),
+        req.user.organizationId,
+      ))
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more employees were not found in your organization.",
+      });
+    }
+
     const alreadyAllocated =
       await allocationsService.fetchAllocatedSumForBatch(dailyWorkId);
     const newTotal = allocations.reduce((sum, a) => sum + a.qty, 0);
@@ -690,6 +705,19 @@ async function bulkUpsertAllocations(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Daily work batch not found" });
+    }
+
+    // SECURITY: same ownership check as manualAllocate above.
+    if (
+      !(await allEmployeesInOrg(
+        rows.map((r) => r.employeeId),
+        req.user.organizationId,
+      ))
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more employees were not found in your organization.",
+      });
     }
 
     const allocatedQty = rows.reduce((sum, r) => sum + r.allocatedQty, 0);

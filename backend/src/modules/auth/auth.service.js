@@ -32,18 +32,28 @@ const buildResetPageLink = (linkData) => {
   )}&type=recovery`;
 };
 
-const login = async (email, password) => {
+const login = async (rawEmail, password) => {
+  // Registration stores emails lowercased/trimmed; match that here so a
+  // differently-cased login ("Bob@X.com") finds the same accounts.
+  const email = String(rawEmail || "")
+    .trim()
+    .toLowerCase();
   const { data: candidates, error: candidatesError } = await supabase
     .from("user_master")
     .select("*")
-    .eq("Email", email);
+    .ilike(
+      "Email",
+      email.replace(/[\\%_]/g, (ch) => `\\${ch}`),
+    );
 
   if (candidatesError || !candidates || candidates.length === 0) {
     console.error("NO CANDIDATES FOUND:", candidatesError);
     throw new Error("Invalid email or password");
   }
 
-  console.log(`Found ${candidates.length} account(s) for this email`);
+  // Cap how many parallel sign-in attempts ONE login request can trigger
+  // (one per role-account on the email) — each is a password guess.
+  if (candidates.length > 5) candidates.length = 5;
 
   // PERFORMANCE FIX: this used to try each candidate's password ONE AT A
   // TIME in a for-loop — every attempt is a network round trip to
@@ -76,7 +86,8 @@ const login = async (email, password) => {
       // viewers, making a perfectly successful login look like a
       // failure. Now only logs when there's an actual error to report.
       if (error) {
-        console.log(`Sign-in attempt failed for ${loginEmail}:`, error.message);
+        // Don't log the email itself — keep PII out of the logs.
+        console.log("Sign-in attempt failed:", error.message);
       }
 
       return { candidate, data, error };
@@ -115,12 +126,7 @@ const login = async (email, password) => {
     .toUpperCase()
     .replace(/\s+/g, "_");
 
-  console.log(
-    "Login successful for user:",
-    matchedUser["Auth User Id"],
-    "role:",
-    normalizedRole,
-  );
+  console.log("Login successful, role:", normalizedRole);
 
   return {
     accessToken: authData.session.access_token,

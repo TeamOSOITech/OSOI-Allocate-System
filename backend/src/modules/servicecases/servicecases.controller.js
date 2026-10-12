@@ -58,6 +58,7 @@ const { getRecentLoad, orderByLeastLoad } = require("./fairness");
 // src/utils/parseSpreadsheet.js for why.
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
+const { isIsoDate } = require("../../utils/orgGuards");
 // NEW: a client can only be used on a service it is mapped to.
 const {
   getMappedClientIds,
@@ -570,6 +571,17 @@ async function listServiceCases(req, res) {
       }
     }
 
+    // SECURITY: workDate is interpolated into a PostgREST .or() string
+    // below, where commas/parentheses are filter syntax — so only a real
+    // YYYY-MM-DD value is allowed through (same for the range filters).
+    for (const key of ["workDate", "workDateFrom", "workDateTo"]) {
+      if (req.query[key] && !isIsoDate(String(req.query[key]))) {
+        return res
+          .status(400)
+          .json({ success: false, message: `${key} must be YYYY-MM-DD` });
+      }
+    }
+
     // Applies every filter (productId, date range, client/subclient,
     // the search box's OR clause, etc.) to a freshly-created query
     // builder. Supabase-js query builders aren't cloneable, so this
@@ -609,7 +621,10 @@ async function listServiceCases(req, res) {
       // case-number search for the same History view — partial,
       // case-insensitive match so "b011" finds "CASEB011".
       if (req.query.caseNumber) {
-        filtered = filtered.ilike("case_number", `%${req.query.caseNumber}%`);
+        filtered = filtered.ilike(
+          "case_number",
+          `%${escapeLikeWildcards(String(req.query.caseNumber))}%`,
+        );
       }
       if (req.query.clientId) {
         filtered = filtered.eq("client_id", req.query.clientId);
