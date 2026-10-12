@@ -1341,7 +1341,7 @@ const Landing = () => {
     };
 
     return (
-        <div className="lp-page">
+        <div className="lp-page lp-light">
             <style>{`
                 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -2715,6 +2715,119 @@ const Landing = () => {
                     .lp-mock-stat { flex: 1 1 40%; }
                     .lp-footer { justify-content: center; text-align: center; }
                 }
+
+                /* =====================================================
+                   LIGHT VERSION (try-out)
+                   Everything below is scoped to .lp-light, so the
+                   original dark design is untouched. To go back to
+                   dark, just remove "lp-light" from the root <div>.
+                   ===================================================== */
+
+                /* Nav: always light on this version */
+                .lp-page.lp-light.lp-light .lp-nav { background: #fff; border-bottom-color: var(--lp-border); box-shadow: 0 1px 0 var(--lp-border); }
+                .lp-page.lp-light.lp-light .lp-nav-link { color: #334155; }
+                .lp-page.lp-light.lp-light .lp-nav-link:hover { color: #204297; }
+                .lp-page.lp-light.lp-light .lp-nav-signup-btn,
+                .lp-page.lp-light.lp-light .lp-country-btn { color: #0A1224; border-color: #CBD5E1; }
+                .lp-page.lp-light.lp-light .lp-country-btn i { color: #5B6B85; }
+                .lp-page.lp-light.lp-light .lp-burger { color: #0A1224; border-color: #CBD5E1; }
+                .lp-page.lp-light.lp-light .lp-mobile-panel { background: #fff; box-shadow: 0 12px 28px rgba(16,24,40,0.10); }
+                .lp-page.lp-light.lp-light .lp-mobile-panel a { color: #334155; border-bottom-color: var(--lp-border); }
+
+                /* Hero */
+                .lp-light .lp-hero {
+                    background:
+                        radial-gradient(ellipse at 80% 40%, rgba(8, 161, 206, 0.14), transparent 45%),
+                        radial-gradient(ellipse at 10% 0%, rgba(32, 66, 151, 0.10), transparent 45%),
+                        linear-gradient(135deg, #F7FAFF 0%, #EAF3FF 55%, #E7F8F4 100%);
+                    color: var(--lp-text);
+                }
+                .lp-light .lp-hero::before {
+                    background:
+                        radial-gradient(ellipse at 75% 58%, rgba(8, 161, 206, 0.10), transparent 30%),
+                        radial-gradient(ellipse at 25% 90%, rgba(46, 187, 168, 0.12), transparent 34%);
+                }
+                .lp-light .lp-hero-orbit { border-color: rgba(8, 161, 206, 0.35); box-shadow: none; }
+                .lp-light .lp-hero-orbit::before {
+                    border-top-color: rgba(32, 66, 151, 0.22);
+                    border-left-color: rgba(8, 161, 206, 0.25);
+                    filter: none;
+                }
+                .lp-light .lp-wave-blue { opacity: 0.16; }
+                .lp-light .lp-wave-cyan { opacity: 0.20; }
+                .lp-light .lp-wave-teal { opacity: 0.16; }
+                .lp-light .lp-wave-line { filter: none; opacity: 0.55; }
+                .lp-light .lp-hero-shape { opacity: 0.85; }
+                .lp-light .lp-hero-shape.s1 { box-shadow: 0 10px 28px rgba(46, 187, 168, 0.30); }
+                .lp-light .lp-hero-shape.s2 { box-shadow: 0 10px 24px rgba(32, 66, 151, 0.28); }
+                .lp-light .lp-hero-shape.s3 { box-shadow: 0 8px 20px rgba(8, 161, 206, 0.35); }
+                .lp-light .lp-particle.p3 { background: var(--lp-blue); opacity: 0.25; }
+
+                .lp-light .lp-hero-icon-badge { background: #fff; border-color: var(--lp-border); box-shadow: 0 6px 16px rgba(32,66,151,0.10); backdrop-filter: none; }
+                .lp-light .lp-hero .lp-eyebrow { color: #0E7FA3; border-color: rgba(8,161,206,0.35); background: rgba(8,161,206,0.10); }
+                .lp-light .lp-hero-title { color: var(--lp-ink); }
+                .lp-light .lp-hero-title span {
+                    background: var(--lp-gradient);
+                    -webkit-background-clip: text;
+                    background-clip: text;
+                    color: transparent;
+                }
+                .lp-light .lp-hero-subtitle { color: #44536D; }
+                .lp-light .lp-hero .lp-btn-primary {
+                    color: #fff;
+                    background: var(--lp-gradient);
+                    box-shadow: 0 10px 28px rgba(32, 66, 151, 0.25);
+                }
+                .lp-light .lp-hero .lp-btn-secondary { color: var(--lp-blue); border-color: #C3D0E8; background: #fff; }
+                .lp-light .lp-hero .lp-btn-secondary:hover { background: rgba(8,161,206,0.08); border-color: #08A1CE; }
+                .lp-light .lp-hero-pill { color: #334155; background: #fff; border-color: var(--lp-border); backdrop-filter: none; box-shadow: 0 2px 6px rgba(16,24,40,0.05); }
+
+                /* Hero dashboard mock card */
+                .lp-light .lp-mock-card { background: #fff; border-color: var(--lp-border); box-shadow: 0 24px 60px rgba(32, 66, 151, 0.16); color: var(--lp-text); }
+                .lp-light .lp-mock-stat { background: #F4F8FD; border-color: var(--lp-border); }
+                .lp-light .lp-mock-stat-num {
+                    background: var(--lp-gradient);
+                    -webkit-background-clip: text;
+                    background-clip: text;
+                    color: transparent;
+                }
+                .lp-light .lp-mock-stat-label { color: #5B6B85; }
+                .lp-light .lp-float-card { border: 1px solid var(--lp-border); box-shadow: 0 12px 26px rgba(32, 66, 151, 0.16); }
+
+                /* Stats band that overlaps the hero */
+                .lp-light .lp2-stats { box-shadow: 0 24px 50px -22px rgba(32,66,151,0.30), 0 0 0 1px var(--lp-border); }
+
+                /* "Why choose" dark bento card */
+                .lp-light .lp2-bento-card.dark { background: linear-gradient(150deg, #E6EEFD 0%, #DDF3FA 100%); border-color: #CFDDF5; color: #44536D; }
+                .lp-light .lp2-bento-card.dark::after { opacity: 0.16; }
+                .lp-light .lp2-bento-card.dark h3 { color: var(--lp-ink); }
+                .lp-light .lp2-bento-card.dark p { color: #44536D; }
+
+                /* "Spreadsheet vs system" new-way card */
+                .lp-light .lp2-vs-card.new { background: linear-gradient(150deg, #EAF6FB 0%, #E6F7F3 100%); border: 1px solid #CFE9EF; color: var(--lp-text); box-shadow: 0 24px 50px -28px rgba(32,66,151,0.28); }
+                .lp-light .lp2-vs-card.new::after { opacity: 0.14; }
+                .lp-light .lp2-vs-card.new h3 { color: var(--lp-ink); }
+                .lp-light .lp2-vs-card.new .lp2-vs-sub { color: var(--lp-muted); }
+                .lp-light .lp2-vs-card.new .lp2-vs-list li { color: #334155; }
+                .lp-light .lp2-vs-badge { box-shadow: 0 8px 24px rgba(32,66,151,0.18); border: 1px solid var(--lp-border); }
+
+                /* Bottom CTA */
+                .lp-light .lp2-cta { background: linear-gradient(150deg, #EAF2FE 0%, #E6F7F3 100%); border: 1px solid #D3E3F5; color: #44536D; }
+                .lp-light .lp2-cta .lp-hero-glow { opacity: 0.14; }
+                .lp-light .lp-cta-title { color: var(--lp-ink); }
+                .lp-light .lp-cta-desc { color: #44536D; }
+                .lp-light .lp-cta-btn-secondary { color: var(--lp-blue); border-color: #B7C7E3; background: #fff; }
+                .lp-light .lp-cta-btn-secondary:hover { background: rgba(8,161,206,0.08); }
+                .lp-light .lp2-cta-list { background: #fff; border-color: var(--lp-border); box-shadow: 0 10px 26px rgba(32,66,151,0.08); }
+                .lp-light .lp2-cta-list li { color: #334155; }
+
+                /* Footer */
+                .lp-light .lp-footer { background: var(--lp-bg); color: var(--lp-muted); border-top: 1px solid var(--lp-border); }
+                .lp-light .lp2-foot h4 { color: var(--lp-ink); }
+                .lp-light .lp2-foot button, .lp-light .lp-footer a { color: var(--lp-muted); }
+                .lp-light .lp2-foot button:hover, .lp-light .lp-footer a:hover { color: var(--lp-blue); }
+                .lp-light .lp2-foot-bar { border-top-color: var(--lp-border); }
+                .lp-light .lp-footer-social a { border-color: #CBD5E1; }
             `}</style>
 
             <div className="lp-topline" />
