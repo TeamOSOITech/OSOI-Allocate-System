@@ -894,7 +894,7 @@ export default function ProductionReport() {
                     <div style={styles.cardsHeader}>
                         <span style={styles.cardsTitle}>
                             <i className="ti ti-clock" style={{ marginRight: 6 }} />
-                            Employee-wise Time
+                            Employee-wise Time{totalLabel === "This Month" ? " — Monthly" : ""}
                         </span>
                         <span style={styles.cardsHint}>
                             {totalLabel} · cases allocated to each person × service AMP

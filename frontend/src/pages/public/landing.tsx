@@ -1354,7 +1354,7 @@ const Landing = () => {
                     --lp-ink-soft: #101B34;
                     /* NEW: brighter hero palette picked from the logo
                        (indigo -> royal blue -> sky blue, teal accent). */
-                    --lp-hero-1: #1B2A9A;
+                    --lp-hero-1: #02091f;
                     --lp-hero-2: #2A3DC8;
                     --lp-hero-3: #3B6AE4;
                     --lp-text: #101828;
@@ -1460,10 +1460,10 @@ const Landing = () => {
                    (components/header.tsx): white pill background, contain-
                    fit, fully-rounded ends. */
                 .lp-nav-brand .lp-nav-logo {
-                    width: 125px;
-                    height: 38px;
+                    width: 138px;
+                    height: 42px;
                     object-fit: contain;
-                    border-radius: 19px;
+                    border-radius: 21px;
                     padding: 0 10px;
                     background-color: #fff;
                     flex-shrink: 0;
@@ -1620,10 +1620,79 @@ const Landing = () => {
                     gap: 48px;
                     align-items: center;
                     flex-wrap: wrap;
-                    background: linear-gradient(160deg, var(--lp-hero-1) 0%, var(--lp-hero-2) 52%, var(--lp-hero-3) 100%);
+                    isolation: isolate;
+                    background:
+                        radial-gradient(ellipse at 77% 48%, rgba(0, 91, 255, 0.20), transparent 40%),
+                        radial-gradient(ellipse at 50% 0%, rgba(29, 80, 255, 0.19), transparent 48%),
+                        linear-gradient(120deg, #02091c, #061436 55%, #02091f);
                     color: #fff;
-                    padding: clamp(48px, 8vw, 84px) clamp(20px, 5vw, 56px);
+                    padding: clamp(14px, 2vw, 24px) clamp(20px, 5vw, 56px) clamp(48px, 8vw, 84px);
                 }
+                /* Ambient glow */
+                .lp-hero::before {
+                    content: "";
+                    position: absolute;
+                    inset: -20%;
+                    z-index: 0;
+                    pointer-events: none;
+                    background:
+                        radial-gradient(ellipse at 75% 58%, rgba(0, 216, 255, 0.12), transparent 28%),
+                        radial-gradient(ellipse at 25% 90%, rgba(31, 79, 255, 0.15), transparent 32%);
+                    animation: lp-ambient 10s ease-in-out infinite alternate;
+                }
+                @keyframes lp-ambient {
+                    from { transform: translate(-1%, 0) scale(1); }
+                    to { transform: translate(1%, -2%) scale(1.05); }
+                }
+                @keyframes lp-trace { 0% { stroke-dashoffset: 1600; } 100% { stroke-dashoffset: 0; } }
+                @keyframes lp-shape-float {
+                    0%, 100% { translate: 0 0; }
+                    50% { translate: 0 -18px; }
+                }
+                .lp-hero-art { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+                .lp-hero-orbit {
+                    position: absolute; width: 520px; height: 520px; top: -260px; left: -190px;
+                    border: 2px solid rgba(31, 184, 255, 0.75); border-radius: 50%;
+                    box-shadow: 0 0 35px rgba(0, 191, 255, 0.09), inset 0 0 35px rgba(0, 191, 255, 0.06);
+                }
+                .lp-hero-orbit::before {
+                    content: ""; position: absolute; inset: 35px;
+                    border: 38px solid transparent;
+                    border-top-color: rgba(34, 104, 255, 0.75);
+                    border-left-color: rgba(0, 221, 255, 0.7);
+                    border-radius: 50%; transform: rotate(-35deg);
+                    filter: drop-shadow(0 0 20px rgba(0, 180, 255, 0.2));
+                }
+                .lp-hero-ribbons { position: absolute; width: 100%; height: 58%; bottom: -3%; left: 0; }
+                .lp-hero-ribbons svg { display: block; width: 100%; height: 100%; overflow: visible; }
+                .lp-wave-blue { fill: url(#lpBlueGrad); opacity: 0.68; }
+                .lp-wave-cyan { fill: url(#lpCyanGrad); opacity: 0.75; }
+                .lp-wave-teal { fill: url(#lpTealGrad); opacity: 0.5; }
+                .lp-wave-line {
+                    fill: none; stroke: url(#lpLineGrad); stroke-width: 2;
+                    filter: drop-shadow(0 0 7px rgba(0, 210, 255, 0.8));
+                    stroke-dasharray: 1600; animation: lp-trace 12s linear infinite;
+                }
+                .lp-hero-shape { position: absolute; border-radius: 11px; transform: rotate(35deg); animation: lp-shape-float 7s ease-in-out infinite; }
+                .lp-hero-shape.s1 { width: 44px; height: 44px; top: 12%; right: 8%; background: linear-gradient(135deg, #28ffd8, #00b8c9); box-shadow: 0 0 45px rgba(0, 255, 211, 0.32); }
+                .lp-hero-shape.s2 { width: 28px; height: 28px; top: 22%; right: 4%; background: linear-gradient(135deg, #74d7ff, #2862ff); box-shadow: 0 0 30px rgba(43, 126, 255, 0.5); animation-delay: -2s; }
+                .lp-hero-shape.s3 { width: 18px; height: 18px; bottom: 30%; left: 3%; background: #28dfff; box-shadow: 0 0 28px rgba(0, 210, 255, 0.7); animation-delay: -4s; }
+                @media (max-width: 600px) {
+                    .lp-hero-orbit { width: 340px; height: 340px; top: -210px; left: -200px; }
+                    .lp-hero-ribbons { height: 40%; }
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    .lp-hero::before, .lp-wave-line, .lp-hero-shape { animation: none !important; }
+                }
+                /* hero-only button / eyebrow colours from the new design */
+                .lp-hero .lp-btn-primary {
+                    color: #031128;
+                    background: linear-gradient(110deg, #51e5ff, #56f3d0);
+                    box-shadow: 0 8px 35px rgba(0, 206, 255, 0.17);
+                }
+                .lp-hero .lp-btn-secondary { border-color: rgba(161, 204, 255, 0.25); background: rgba(255, 255, 255, 0.035); }
+                .lp-hero .lp-btn-secondary:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(161, 204, 255, 0.25); }
+                .lp-hero .lp-eyebrow { color: #82eaff; border-color: rgba(49, 207, 255, 0.24); background: rgba(16, 66, 119, 0.24); }
                 .lp-hero-glow {
                     position: absolute;
                     border-radius: 50%;
@@ -1680,7 +1749,7 @@ const Landing = () => {
                     color: #fff;
                 }
                 .lp-hero-title span {
-                    background: linear-gradient(90deg, #8BE9FF, #7CF2CF);
+                    background: linear-gradient(100deg, #ffffff 0%, #a6eaff 35%, #28c9ff 65%, #51f3d0 100%);
                     -webkit-background-clip: text;
                     background-clip: text;
                     color: transparent;
@@ -2623,7 +2692,8 @@ const Landing = () => {
                 html {
                     scroll-padding-top: 76px;
                 }
-                @media (max-width: 900px) {
+                /* 4 tabs now, so the nav switches to the burger menu a bit earlier */
+                @media (max-width: 1000px) {
                     .lp-nav-links { display: none; }
                     .lp-country-desktop { display: none; }
                     .lp-nav-signup-btn, .lp-nav-login-btn { display: none; }
@@ -2656,16 +2726,6 @@ const Landing = () => {
                 </div>
                 <nav className="lp-nav-links">
                     <a
-                        href="#overview"
-                        className="lp-nav-link"
-                        onClick={(e) => {
-                            e.preventDefault();
-                            scrollTo("overview");
-                        }}
-                    >
-                        Overview
-                    </a>
-                    <a
                         href="#features"
                         className="lp-nav-link"
                         onClick={(e) => {
@@ -2674,6 +2734,16 @@ const Landing = () => {
                         }}
                     >
                         Features
+                    </a>
+                    <a
+                        href="#switch"
+                        className="lp-nav-link"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            scrollTo("switch");
+                        }}
+                    >
+                        Why Switch
                     </a>
                     <a
                         href="#screens"
@@ -2723,15 +2793,6 @@ const Landing = () => {
             <div className="lp-nav-spacer" aria-hidden="true" />
             <div className={`lp-mobile-panel${menuOpen ? " open" : ""}`}>
                 <a
-                    href="#overview"
-                    onClick={(e) => {
-                        e.preventDefault();
-                        scrollTo("overview");
-                    }}
-                >
-                    Overview
-                </a>
-                <a
                     href="#features"
                     onClick={(e) => {
                         e.preventDefault();
@@ -2739,6 +2800,15 @@ const Landing = () => {
                     }}
                 >
                     Features
+                </a>
+                <a
+                    href="#switch"
+                    onClick={(e) => {
+                        e.preventDefault();
+                        scrollTo("switch");
+                    }}
+                >
+                    Why Switch
                 </a>
                 <a
                     href="#screens"
@@ -2789,9 +2859,64 @@ const Landing = () => {
 
             {/* ---------- Hero ---------- */}
             <section id="overview" className="lp-hero">
-                <div className="lp-hero-glow g1" />
-                <div className="lp-hero-glow g2" />
-                <div className="lp-hero-glow g3" />
+                <div className="lp-hero-art" aria-hidden="true">
+                    <div className="lp-hero-orbit" />
+                    <div className="lp-hero-shape s1" />
+                    <div className="lp-hero-shape s2" />
+                    <div className="lp-hero-shape s3" />
+                    <div className="lp-hero-ribbons">
+                        <svg
+                            viewBox="0 0 1600 500"
+                            preserveAspectRatio="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                        >
+                            <defs>
+                                <linearGradient id="lpBlueGrad" x1="0" y1="0" x2="1" y2="1">
+                                    <stop stopColor="#071D72" stopOpacity=".05" />
+                                    <stop offset=".5" stopColor="#174BFF" stopOpacity=".8" />
+                                    <stop offset="1" stopColor="#008CFF" stopOpacity=".3" />
+                                </linearGradient>
+                                <linearGradient id="lpCyanGrad" x1="0" y1="0" x2="1" y2="0">
+                                    <stop stopColor="#00C8FF" stopOpacity=".05" />
+                                    <stop offset=".55" stopColor="#06DFFF" stopOpacity=".6" />
+                                    <stop offset="1" stopColor="#00BFFF" stopOpacity=".15" />
+                                </linearGradient>
+                                <linearGradient id="lpTealGrad" x1="0" y1="0" x2="1" y2="0">
+                                    <stop stopColor="#007DFF" stopOpacity=".1" />
+                                    <stop offset=".55" stopColor="#00FFD0" stopOpacity=".8" />
+                                    <stop offset="1" stopColor="#24A8FF" stopOpacity=".1" />
+                                </linearGradient>
+                                <linearGradient id="lpLineGrad" x1="0" y1="0" x2="1" y2="0">
+                                    <stop stopColor="#0678FF" stopOpacity=".05" />
+                                    <stop offset=".45" stopColor="#00DFFF" />
+                                    <stop offset=".75" stopColor="#25FFE1" />
+                                    <stop offset="1" stopColor="#087DFF" />
+                                </linearGradient>
+                            </defs>
+                            <path
+                                className="lp-wave-blue"
+                                d="M0 210 C220 120 340 440 610 365 S1020 90 1280 150 S1480 300 1600 235 L1600 500 L0 500 Z"
+                            />
+                            <path
+                                className="lp-wave-cyan"
+                                d="M0 340 C260 230 400 490 690 390 S1050 175 1290 250 S1500 380 1600 320 L1600 500 L0 500 Z"
+                            />
+                            <path
+                                className="lp-wave-teal"
+                                d="M0 430 C230 320 420 490 680 430 S1070 280 1280 335 S1490 455 1600 400 L1600 500 L0 500 Z"
+                            />
+                            <path
+                                className="lp-wave-line"
+                                d="M0 350 C250 200 420 465 680 385 S1060 145 1320 240 S1490 340 1600 290"
+                            />
+                            <path
+                                className="lp-wave-line"
+                                d="M0 450 C260 330 420 500 720 425 S1120 255 1350 325 S1500 415 1600 375"
+                                style={{ animationDelay: "-4s", opacity: 0.6 }}
+                            />
+                        </svg>
+                    </div>
+                </div>
 
                 <span className="lp-particle p1" />
                 <span className="lp-particle p2" />
@@ -2905,8 +3030,8 @@ const Landing = () => {
                 <div className="lp2-stats">
                     {[
                         ["1 click", "Smart Allocation across everyone marked present"],
-                        ["4 roles", "Super admin, admin, manager and user"],
-                        ["₹0", "to start, on the Free plan"],
+                        ["6 roles", "From Super Admin to Team Member, each with its own access"],
+                        ["Free demo", "Book a walkthrough on data that looks like yours"],
                         ["0 installs", "Runs in any browser, on any device"],
                     ].map(([n, l]) => (
                         <div key={n} className="lp2-stat">

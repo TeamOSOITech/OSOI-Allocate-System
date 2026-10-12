@@ -123,6 +123,8 @@ type LightCase = {
     id: string;
     productId: string;
     assignedEmployeeId: string | null;
+    // when it was allocated — used so the time card shows TODAY only
+    allocatedAt: string | null;
 };
 // NEW (URGENT): a pending case that can be picked in the "Anything Urgent" popup
 type UrgentCase = {
@@ -151,6 +153,7 @@ type CountRow = {
         employeeName: string | null;
         quantity: number;
         fulfilledQuantity: number;
+        allocatedAt?: string | null;
     }[];
 };
 
@@ -164,6 +167,18 @@ function formatDisplayDate(iso: string) {
 // only carries over inside this month — on the 1st it starts fresh.
 function monthStartOf(iso: string) {
     return /^\d{4}-\d{2}/.test(iso || "") ? `${iso.slice(0, 7)}-01` : "";
+}
+
+// local calendar day (YYYY-MM-DD) of a timestamp — used to tell whether an
+// allocation was made on the selected day.
+function localDayOf(ts?: string | null) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
 }
 
 // minutes -> "2h 30m"
@@ -488,6 +503,7 @@ export default function TodaysAllocationCases({
                         id: r.id,
                         productId: String(r.productId),
                         assignedEmployeeId: r.assignedEmployeeId || null,
+                        allocatedAt: r.allocatedAt || null,
                     })
                 );
                 const totalPages = json.pagination?.totalPages ?? 1;
@@ -716,8 +732,11 @@ export default function TodaysAllocationCases({
         [cases]
     );
 
-    // live time per employee (minutes) = case-number cases x AMP
-    //      + count quantities x AMP. Uses the unsaved dropdown picks
+    // DAILY time per employee (minutes) = case-number cases x AMP
+    //      + count quantities x AMP, counting ONLY work allocated on the
+    //      selected day (today). Older allocations are ignored, so the
+    //      card starts again from 0 every new day. The monthly total lives
+    //      on the Production Report page. Uses the unsaved dropdown picks
     //      (pendingSelection) and unsaved count boxes (countDraft), so it
     //      changes as the manager allocates / runs Smart Allocation.
     const employeeLoad = useMemo(() => {
@@ -732,9 +751,12 @@ export default function TodaysAllocationCases({
         };
 
         allCases.forEach((c) => {
-            const emp =
-                c.id in pendingSelection ? pendingSelection[c.id] : c.assignedEmployeeId || "";
-            if (emp) add(emp, 1, 0, ampOf(c.productId));
+            const isUnsaved = c.id in pendingSelection;
+            const emp = isUnsaved ? pendingSelection[c.id] : c.assignedEmployeeId || "";
+            if (!emp) return;
+            // saved allocation from an earlier day -> not part of today's time
+            if (!isUnsaved && localDayOf(c.allocatedAt) !== workDate) return;
+            add(emp, 1, 0, ampOf(c.productId));
         });
 
         countRows.forEach((c) => {
@@ -743,13 +765,25 @@ export default function TodaysAllocationCases({
                 ...Object.keys(countDraft[c.id] || {}),
             ]);
             ids.forEach((empId) => {
-                const q = countDraft[c.id]?.[empId] ?? savedQty(c, empId);
+                const draft = countDraft[c.id]?.[empId];
+                let q: number;
+                if (draft !== undefined) {
+                    q = draft;
+                } else {
+                    const a = c.allocations.find((x) => x.employeeId === empId);
+                    // saved quantity counts only if it was allocated on this day
+                    // (an old server that sends no allocatedAt at all -> keep counting it)
+                    q =
+                        a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate)
+                            ? a.quantity || 0
+                            : 0;
+                }
                 if (q > 0) add(empId, 0, q, q * ampOf(c.productId));
             });
         });
         return map;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [allCases, pendingSelection, countRows, countDraft, ampOf]);
+    }, [allCases, pendingSelection, countRows, countDraft, ampOf, workDate]);
 
     const loadLabel = (empId: string) => {
         const l = employeeLoad[empId];
@@ -1654,7 +1688,7 @@ export default function TodaysAllocationCases({
                     <div style={styles.timeCardHeader}>
                         <span style={styles.sectionTitle}>
                             <i className="ti ti-clock" style={{ marginRight: 6 }} />
-                            Allocation Time per Employee
+                            Allocation Time per Employee — Today ({formatDisplayDate(workDate)})
                         </span>
                         <span style={styles.smallMutedText}>
                             {ampOf(productId) > 0
