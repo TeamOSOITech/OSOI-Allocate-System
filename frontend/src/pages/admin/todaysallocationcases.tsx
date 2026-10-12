@@ -11,6 +11,14 @@
 // Nothing is saved until the user presses the bottom "Allocate" button.
 //
 // MODIFIED in this version:
+//   - FIX (URGENT EMPLOYEES): the "Anything Urgent" popup lists pending cases
+//     of ALL services, but the External Members of a service were only loaded
+//     for the service currently selected on the page. So for an urgent case of
+//     any other service its External employees (and so the whole list) were
+//     missing and the dropdown showed just one person. Now, when the popup
+//     opens, the External Members of EVERY service that has an urgent case are
+//     loaded too, and the employee dropdown shows everyone mapped to that
+//     service - team members AND external members (Absent / Leave excluded).
 //   - NEW (8h WARNING): when the Allocate button is pressed and any employee
 //     would end up with MORE THAN 8 HOURS of work, a warning popup opens first
 //     ("Some employees got more than 8 hours of work") with a button to see
@@ -21,6 +29,19 @@
 //     employee is messaged only once per Allocate press (even if they got
 //     many cases). The message is sent by the backend endpoint
 //     POST /api/service-cases/notify-allocation (see notifyEmployees below).
+//   - NEW (URGENT): an "Anything Urgent" button next to Smart Allocation /
+//     Clear opens a popup. Pick one or more pending case numbers from the
+//     multi-select dropdown, choose the employee for each (the least busy
+//     eligible employee is pre-filled) and press "Allocate Urgently". The
+//     cases are saved straight away and every employee who got one receives
+//     an urgent mail: "An urgent case has been allocated to you. Please
+//     prioritise this first." (backend: POST /api/service-cases/notify-urgent).
+//   - NEW (NOTIFY OVERLOAD): only the FIRST allocation of the day mails an
+//     employee. If their work for the day later goes above 8 hours they get
+//     ONE extra polite "more work" mail (the backend makes sure it is sent
+//     only once per day). This page sends overloadEmployeeIds = the people
+//     who just got new work and are above 8 hours (same number as the 8h
+//     warning popup uses).
 //   - Summary strip: TOTAL still to allocate = today's pending + carried-over
 //     pending (e.g. 10 today + 5 from yesterday = 15).
 //   - MONTH-WISE: carry-over only comes from the same month as the selected
@@ -102,6 +123,15 @@ type LightCase = {
     id: string;
     productId: string;
     assignedEmployeeId: string | null;
+};
+// NEW (URGENT): a pending case that can be picked in the "Anything Urgent" popup
+type UrgentCase = {
+    id: string;
+    caseNumber: string;
+    productId: string;
+    productName: string | null;
+    clientName: string | null;
+    workDate: string;
 };
 // Count-only entry with its current allocations
 type CountRow = {
@@ -334,6 +364,41 @@ export default function TodaysAllocationCases({
     // NEW (8h WARNING): popup state
     const [overloadOpen, setOverloadOpen] = useState(false);
     const [showOverloadList, setShowOverloadList] = useState(false);
+    // NEW (URGENT): "Anything Urgent" popup state
+    const [urgentOpen, setUrgentOpen] = useState(false);
+    const [urgentCases, setUrgentCases] = useState<UrgentCase[]>([]);
+    const [urgentLoading, setUrgentLoading] = useState(false);
+    const [urgentSelected, setUrgentSelected] = useState<string[]>([]); // case ids
+    const [urgentEmp, setUrgentEmp] = useState<Record<string, string>>({}); // caseId -> employeeId
+    const [urgentPickerOpen, setUrgentPickerOpen] = useState(false);
+    const [urgentSearch, setUrgentSearch] = useState("");
+    const [urgentSaving, setUrgentSaving] = useState(false);
+    const [urgentError, setUrgentError] = useState("");
+    // FIX (URGENT EMPLOYEES): External Members of EVERY service that has an
+    // urgent case (productId -> employee ids). Loaded when the popup opens,
+    // because the page itself only loads them for the selected service.
+    const [urgentExternal, setUrgentExternal] = useState<Record<string, Set<string>>>({});
+
+    // FIX (URGENT EMPLOYEES): everyone mapped to this case's service —
+    // team-matched employees AND external members (internal or external),
+    // except those marked Absent / Leave for the date.
+    const getUrgentEmployees = useCallback(
+        (pid: string) => {
+            const base = getEligibleEmployeesForProduct(pid);
+            const ext = urgentExternal[pid];
+            if (!ext || ext.size === 0) return base;
+            const have = new Set(base.map((e) => e.id));
+            const extra = employees.filter(
+                (e) =>
+                    ext.has(e.id) &&
+                    !have.has(e.id) &&
+                    attendanceByEmployee[e.id] !== "ABSENT" &&
+                    attendanceByEmployee[e.id] !== "LEAVE"
+            );
+            return [...base, ...extra];
+        },
+        [getEligibleEmployeesForProduct, urgentExternal, employees, attendanceByEmployee]
+    );
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -777,7 +842,7 @@ export default function TodaysAllocationCases({
     // NEW: sends the "work allocated" message. Only employee ids go to the
     // server (no case counts / details) and every employee appears ONCE, so
     // an employee who got many cases still receives a single message.
-    const notifyEmployees = async (employeeIds: string[]) => {
+    const notifyEmployees = async (employeeIds: string[], overloadEmployeeIds: string[] = []) => {
         const unique = [...new Set(employeeIds.filter(Boolean))];
         if (unique.length === 0) return;
         try {
@@ -787,6 +852,8 @@ export default function TodaysAllocationCases({
                 body: JSON.stringify({
                     employeeIds: unique,
                     workDate,
+                    // NEW: people above 8 hours who just got new work
+                    overloadEmployeeIds: [...new Set(overloadEmployeeIds.filter(Boolean))],
                     message: ALLOC_MESSAGE,
                 }),
             });
@@ -796,6 +863,192 @@ export default function TodaysAllocationCases({
             showToast("Allocated, but the message could not be sent.");
         }
     };
+
+    // ------------------------------------------------------------
+    // NEW (URGENT): "Anything Urgent" popup
+    // ------------------------------------------------------------
+    // every PENDING case (all services, this date + this month's backlog)
+    const loadUrgentCases = async () => {
+        setUrgentLoading(true);
+        try {
+            const out: UrgentCase[] = [];
+            for (let p = 1; p <= 30; p++) {
+                const params = new URLSearchParams();
+                params.set("page", String(p));
+                params.set("pageSize", "100");
+                if (workDate) params.set("workDate", workDate);
+                params.set("includeBacklog", "true");
+                if (monthStart) params.set("workDateFrom", monthStart);
+                params.set("allocationStatus", "PENDING");
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success)
+                    throw new Error(json?.message || "Failed to load cases.");
+                const rows: any[] = json.data || [];
+                rows.forEach((r) =>
+                    out.push({
+                        id: r.id,
+                        caseNumber: String(r.caseNumber ?? ""),
+                        productId: String(r.productId),
+                        productName: r.productName ?? null,
+                        clientName: r.clientName ?? null,
+                        workDate: r.workDate,
+                    })
+                );
+                const totalPages = json.pagination?.totalPages ?? 1;
+                if (p >= totalPages || rows.length === 0) break;
+            }
+            out.sort((a, b) =>
+                a.caseNumber.localeCompare(b.caseNumber, undefined, { numeric: true })
+            );
+            setUrgentCases(out);
+
+            // FIX (URGENT EMPLOYEES): load the External Members of EVERY
+            // service that has an urgent case (not only the service selected
+            // on the page), so internal AND external employees all show up.
+            const urgentProductIds = [...new Set(out.map((c) => c.productId).filter(Boolean))];
+            const entries = await Promise.all(
+                urgentProductIds.map(async (pid) => {
+                    try {
+                        const res = await authFetch(
+                            `${API_BASE}/api/external-members?productId=${pid}&workDate=${workDate}`
+                        );
+                        const json = await res.json();
+                        return [
+                            pid,
+                            new Set<string>(res.ok && json.success ? json.data || [] : []),
+                        ] as const;
+                    } catch {
+                        return [pid, new Set<string>()] as const;
+                    }
+                })
+            );
+            setUrgentExternal(Object.fromEntries(entries));
+        } catch (err: any) {
+            setUrgentCases([]);
+            setUrgentError(err?.message || "Failed to load cases.");
+        } finally {
+            setUrgentLoading(false);
+        }
+    };
+
+    const openUrgent = () => {
+        setUrgentSelected([]);
+        setUrgentEmp({});
+        setUrgentSearch("");
+        setUrgentError("");
+        setUrgentPickerOpen(true);
+        setUrgentOpen(true);
+        void loadUrgentCases();
+    };
+
+    const closeUrgent = () => {
+        if (urgentSaving) return;
+        setUrgentOpen(false);
+        setUrgentPickerOpen(false);
+    };
+
+    // tick / untick a case. A newly ticked case gets the LEAST BUSY eligible
+    // employee pre-filled (counting what is already picked in this popup);
+    // the manager can change it.
+    const toggleUrgentCase = (id: string) => {
+        if (urgentSelected.includes(id)) {
+            setUrgentSelected((prev) => prev.filter((x) => x !== id));
+            setUrgentEmp((prev) => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+            return;
+        }
+        const c = urgentCases.find((x) => x.id === id);
+        if (!c) return;
+        setUrgentSelected((prev) => [...prev, id]);
+        setUrgentEmp((prev) => {
+            const eligible = getUrgentEmployees(c.productId);
+            if (eligible.length === 0) return prev;
+            const loadOf = (empId: string) =>
+                (employeeLoad[empId]?.mins || 0) +
+                Object.entries(prev).reduce(
+                    (sum, [cid, eid]) =>
+                        eid === empId
+                            ? sum + ampOf(urgentCases.find((x) => x.id === cid)?.productId)
+                            : sum,
+                    0
+                );
+            const best = [...eligible].sort((a, b) => loadOf(a.id) - loadOf(b.id))[0];
+            return { ...prev, [id]: best.id };
+        });
+    };
+
+    // one mail per employee who got an urgent case (the server reads the
+    // employee from the saved case, so only the case ids are sent)
+    const notifyUrgent = async (caseIds: string[]) => {
+        if (caseIds.length === 0) return;
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/notify-urgent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ caseIds }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json?.message || "failed");
+        } catch {
+            showToast("Allocated, but the urgent mail could not be sent.");
+        }
+    };
+
+    const handleUrgentAllocate = async () => {
+        if (urgentSelected.length === 0 || urgentSaving) return;
+        if (urgentSelected.some((id) => !urgentEmp[id])) {
+            setUrgentError("Please pick an employee for every selected case.");
+            return;
+        }
+        setUrgentError("");
+        setUrgentSaving(true);
+        try {
+            const results = await Promise.all(
+                urgentSelected.map((id) => handleManualAllocate(id, urgentEmp[id]))
+            );
+            const okIds = urgentSelected.filter((_, i) => results[i]);
+            const failedIds = urgentSelected.filter((_, i) => !results[i]);
+
+            if (okIds.length > 0) {
+                void notifyUrgent(okIds);
+                fetchCases();
+                fetchCaseSummary();
+                fetchAllCases();
+            }
+
+            if (failedIds.length > 0) {
+                // keep the popup open with only the ones that did not save
+                setUrgentCases((prev) => prev.filter((c) => !okIds.includes(c.id)));
+                setUrgentSelected(failedIds);
+                setUrgentError(
+                    `${failedIds.length} case(s) could not be allocated. Please try again.`
+                );
+                if (okIds.length > 0) showToast(`${okIds.length} urgent case(s) allocated.`);
+            } else {
+                setUrgentOpen(false);
+                setUrgentPickerOpen(false);
+                showToast(
+                    `${okIds.length} urgent case(s) allocated. Employees have been notified.`
+                );
+            }
+        } finally {
+            setUrgentSaving(false);
+        }
+    };
+
+    const urgentFiltered = useMemo(() => {
+        const q = urgentSearch.trim().toLowerCase();
+        if (!q) return urgentCases;
+        return urgentCases.filter((c) =>
+            [c.caseNumber, c.productName, c.clientName].some((v) =>
+                (v || "").toLowerCase().includes(q)
+            )
+        );
+    }, [urgentCases, urgentSearch]);
 
     // NEW (8h WARNING): the Allocate button calls this first. If anyone is
     // above 8 hours the warning popup opens; otherwise it allocates directly.
@@ -892,7 +1145,12 @@ export default function TodaysAllocationCases({
             }
 
             // one message per employee, right after the allocation is saved
-            void notifyEmployees([...notifyIds]);
+            // NEW (NOTIFY OVERLOAD): of those who just got new work, who is
+            // now above 8 hours (same live number the 8h warning uses)?
+            const overloadIds = [...notifyIds].filter(
+                (id) => (employeeLoad[id]?.mins || 0) > MAX_WORK_MINUTES
+            );
+            void notifyEmployees([...notifyIds], overloadIds);
 
             setAutoPreviewCaseIds([]);
             setAutoResult(null);
@@ -1191,6 +1449,16 @@ export default function TodaysAllocationCases({
             >
                 <i className="ti ti-eraser" />
                 {clearing ? "Clearing…" : "Clear"}
+            </button>
+            {/* NEW (URGENT) */}
+            <button
+                type="button"
+                style={styles.urgentBtn}
+                onClick={openUrgent}
+                title="Allocate urgent cases right away and mail the employees"
+            >
+                <i className="ti ti-alarm" />
+                Anything Urgent
             </button>
             <div style={{ marginLeft: "auto", minWidth: 220 }}>
                 <input
@@ -1879,6 +2147,215 @@ export default function TodaysAllocationCases({
                 </div>
             )}
 
+            {/* NEW (URGENT): "Anything Urgent" popup */}
+            {urgentOpen && (
+                <div style={styles.overlay}>
+                    <div
+                        style={{
+                            ...styles.modal,
+                            maxWidth: 580,
+                            maxHeight: "92vh",
+                            display: "flex",
+                            flexDirection: "column",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={styles.modalHeader}>
+                            <h2 style={styles.modalTitle}>
+                                <i
+                                    className="ti ti-alarm"
+                                    style={{ color: BRAND.red, marginRight: 8 }}
+                                />
+                                Anything urgent?
+                            </h2>
+                            <button
+                                type="button"
+                                style={styles.modalCloseBtn}
+                                onClick={closeUrgent}
+                                aria-label="Close"
+                            >
+                                <i className="ti ti-x" style={{ fontSize: fontSize.md }} />
+                            </button>
+                        </div>
+                        <div style={styles.modalDivider} />
+
+                        <div style={styles.urgentBody}>
+                            <p style={styles.urgentHint}>
+                                Pick the urgent case numbers. They are allocated right away, and
+                                each employee gets a mail to prioritise them first.
+                            </p>
+
+                            <button
+                                type="button"
+                                style={styles.urgentPickerBtn}
+                                onClick={() => setUrgentPickerOpen((o) => !o)}
+                            >
+                                <span>
+                                    {urgentSelected.length > 0
+                                        ? `${urgentSelected.length} case(s) selected`
+                                        : "Select case numbers…"}
+                                </span>
+                                <i
+                                    className={`ti ${urgentPickerOpen ? "ti-chevron-up" : "ti-chevron-down"}`}
+                                />
+                            </button>
+
+                            {urgentPickerOpen && (
+                                <div style={styles.urgentPickerPanel}>
+                                    <input
+                                        type="text"
+                                        value={urgentSearch}
+                                        onChange={(e) => setUrgentSearch(e.target.value)}
+                                        placeholder="Search case number, service, client…"
+                                        style={{
+                                            ...styles.select,
+                                            width: "100%",
+                                            boxSizing: "border-box",
+                                        }}
+                                    />
+                                    <div style={styles.urgentOptionList}>
+                                        {urgentLoading ? (
+                                            <div style={styles.urgentEmpty}>Loading cases…</div>
+                                        ) : urgentFiltered.length === 0 ? (
+                                            <div style={styles.urgentEmpty}>
+                                                {urgentCases.length === 0
+                                                    ? "No pending cases to allocate."
+                                                    : "No case matches your search."}
+                                            </div>
+                                        ) : (
+                                            urgentFiltered.slice(0, 100).map((c) => {
+                                                const checked = urgentSelected.includes(c.id);
+                                                return (
+                                                    <label
+                                                        key={c.id}
+                                                        style={{
+                                                            ...styles.urgentOption,
+                                                            background: checked
+                                                                ? "rgba(220,38,38,0.07)"
+                                                                : "transparent",
+                                                        }}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={checked}
+                                                            onChange={() => toggleUrgentCase(c.id)}
+                                                        />
+                                                        <span>
+                                                            <strong>{c.caseNumber}</strong>
+                                                            <span style={styles.urgentMeta}>
+                                                                {" · "}
+                                                                {c.productName || "Service"}
+                                                                {c.clientName
+                                                                    ? ` · ${c.clientName}`
+                                                                    : ""}
+                                                            </span>
+                                                        </span>
+                                                    </label>
+                                                );
+                                            })
+                                        )}
+                                        {urgentFiltered.length > 100 && (
+                                            <div style={styles.urgentEmpty}>
+                                                Showing the first 100 — type to narrow down.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {urgentSelected.length > 0 && (
+                                <div style={styles.urgentRows}>
+                                    {urgentSelected.map((id) => {
+                                        const c = urgentCases.find((x) => x.id === id);
+                                        if (!c) return null;
+                                        // FIX (URGENT EMPLOYEES): everyone mapped to this
+                                        // case's service — team members + external members.
+                                        const options = getUrgentEmployees(c.productId);
+                                        return (
+                                            <div key={id} style={styles.urgentRow}>
+                                                <div style={{ flex: 1, minWidth: 140 }}>
+                                                    <div style={styles.urgentRowTitle}>
+                                                        {c.caseNumber}
+                                                    </div>
+                                                    <div style={styles.urgentMeta}>
+                                                        {c.productName || "Service"}
+                                                        {c.clientName ? ` · ${c.clientName}` : ""}
+                                                    </div>
+                                                </div>
+                                                <select
+                                                    value={urgentEmp[id] || ""}
+                                                    onChange={(e) =>
+                                                        setUrgentEmp((prev) => ({
+                                                            ...prev,
+                                                            [id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    style={{
+                                                        ...styles.select,
+                                                        minWidth: 0,
+                                                        width: 210,
+                                                    }}
+                                                >
+                                                    <option value="">
+                                                        {options.length > 0
+                                                            ? "Select employee"
+                                                            : "No eligible employee"}
+                                                    </option>
+                                                    {options.map((e) => (
+                                                        <option key={e.id} value={e.id}>
+                                                            {e.name}
+                                                            {loadLabel(e.id)}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    style={styles.urgentRemoveBtn}
+                                                    onClick={() => toggleUrgentCase(id)}
+                                                    aria-label={`Remove ${c.caseNumber}`}
+                                                >
+                                                    <i className="ti ti-x" />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {urgentError && <div style={styles.errorText}>{urgentError}</div>}
+                        </div>
+
+                        <div style={styles.modalActions}>
+                            <button
+                                type="button"
+                                style={styles.modalCancelBtn}
+                                onClick={closeUrgent}
+                                disabled={urgentSaving}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    ...styles.modalClearBtn,
+                                    opacity: urgentSaving || urgentSelected.length === 0 ? 0.6 : 1,
+                                    cursor:
+                                        urgentSaving || urgentSelected.length === 0
+                                            ? "not-allowed"
+                                            : "pointer",
+                                }}
+                                disabled={urgentSaving || urgentSelected.length === 0}
+                                onClick={handleUrgentAllocate}
+                            >
+                                {urgentSaving
+                                    ? "Allocating…"
+                                    : `Allocate Urgently${urgentSelected.length > 0 ? ` (${urgentSelected.length})` : ""}`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {successPopup && (
                 <div style={styles.overlay}>
                     <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -1979,6 +2456,103 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.base,
         cursor: "pointer",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.3)",
+    },
+    // NEW (URGENT)
+    urgentBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 18px",
+        borderRadius: radius.md,
+        border: "1px solid rgba(220,38,38,0.35)",
+        background: "rgba(220,38,38,0.08)",
+        color: BRAND.red,
+        fontWeight: fontWeight.semibold,
+        fontSize: fontSize.base,
+        cursor: "pointer",
+    },
+    urgentBody: {
+        padding: "16px 20px 16px",
+        overflowY: "auto",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+    },
+    urgentHint: {
+        margin: 0,
+        fontSize: fontSize.base,
+        color: "#4B5563",
+        lineHeight: 1.5,
+    },
+    urgentPickerBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        width: "100%",
+        padding: "11px 14px",
+        borderRadius: radius.sm,
+        border: "1px solid #e2e4f0",
+        background: "#fff",
+        color: "#17181C",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+    },
+    urgentPickerPanel: {
+        border: "1px solid #e2e4f0",
+        borderRadius: radius.sm,
+        padding: 10,
+        background: "#fff",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+    },
+    urgentOptionList: { maxHeight: 150, overflowY: "auto" },
+    urgentOption: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 8px",
+        borderRadius: radius.xs,
+        cursor: "pointer",
+        fontSize: fontSize.base,
+        color: "#17181C",
+    },
+    urgentMeta: { fontSize: fontSize.sm, color: "#6B7280" },
+    urgentEmpty: {
+        padding: "10px 8px",
+        fontSize: fontSize.sm,
+        color: "#6B7280",
+        textAlign: "center",
+    },
+    urgentRows: { display: "flex", flexDirection: "column", gap: 8 },
+    urgentRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        padding: "10px 12px",
+        borderRadius: radius.sm,
+        border: "1px solid rgba(220,38,38,0.18)",
+        background: "rgba(220,38,38,0.04)",
+    },
+    urgentRowTitle: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.semibold,
+        color: "#17181C",
+    },
+    urgentRemoveBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 28,
+        height: 28,
+        borderRadius: radius.circle,
+        border: "none",
+        background: "#f1f2f6",
+        color: "#374151",
+        cursor: "pointer",
+        flexShrink: 0,
     },
     autoSummary: {
         padding: "10px 16px",

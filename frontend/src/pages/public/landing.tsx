@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { CSSProperties } from "react";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/authFetch";
@@ -1351,6 +1352,11 @@ const Landing = () => {
                     --lp-gradient: linear-gradient(135deg, #204297 0%, #08A1CE 55%, #2EBBA8 100%);
                     --lp-ink: #0A1224;
                     --lp-ink-soft: #101B34;
+                    /* NEW: brighter hero palette picked from the logo
+                       (indigo -> royal blue -> sky blue, teal accent). */
+                    --lp-hero-1: #1B2A9A;
+                    --lp-hero-2: #2A3DC8;
+                    --lp-hero-3: #3B6AE4;
                     --lp-text: #101828;
                     --lp-muted: #5B6B85;
                     --lp-bg: #F6F9FC;
@@ -1411,7 +1417,11 @@ const Landing = () => {
                     align-items: center;
                     justify-content: space-between;
                     padding: 16px clamp(20px, 5vw, 56px);
-                    background: var(--lp-ink);
+                    /* CHANGED: nav background dark -> white. Text/button
+                       colours below were switched to dark to match. */
+                    background: #fff;
+                    border-bottom: 1px solid #E2E8F0;
+                    box-shadow: 0 4px 14px rgba(10,18,36,0.06);
                     /* "position: fixed" instead of "sticky": sticky stops
                        working the moment ANY ancestor's overflow isn't
                        "visible" (it then sticks to that ancestor's box
@@ -1479,13 +1489,13 @@ const Landing = () => {
                     min-height: 44px;
                     padding: 4px 6px;
                     box-sizing: border-box;
-                    color: #B9C4DA;
+                    color: #475569;
                     text-decoration: none;
                     font-size: 14px;
                     font-weight: 500;
                     transition: color 0.15s ease;
                 }
-                .lp-nav-link:hover { color: #fff; }
+                .lp-nav-link:hover { color: #204297; }
                 .lp-nav-login-btn {
                     background: var(--lp-gradient);
                     color: #fff;
@@ -1510,8 +1520,8 @@ const Landing = () => {
                 .lp-nav-login-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
                 .lp-nav-signup-btn {
                     background: transparent;
-                    color: #fff;
-                    border: 1px solid #33415F;
+                    color: #0A1224;
+                    border: 1px solid #CBD5E1;
                     border-radius: 8px;
                     padding: 9px 22px;
                     min-height: 44px;
@@ -1530,12 +1540,12 @@ const Landing = () => {
                 .lp-burger {
                     display: none;
                     background: none;
-                    border: 1px solid #26314F;
+                    border: 1px solid #CBD5E1;
                     border-radius: 8px;
                     /* FIX (#1): 38x38 -> 44x44, the full recommended box. */
                     width: 44px;
                     height: 44px;
-                    color: #fff;
+                    color: #0A1224;
                     font-size: 18px;
                     cursor: pointer;
                     align-items: center;
@@ -1544,7 +1554,8 @@ const Landing = () => {
                 .lp-mobile-panel {
                     display: none;
                     flex-direction: column;
-                    background: var(--lp-ink-soft);
+                    background: #fff;
+                    box-shadow: 0 12px 24px rgba(10,18,36,0.10);
                     padding: 14px clamp(20px, 5vw, 56px) 20px;
                     /* Nav is now "position: fixed" (out of document flow),
                        so this panel — its next sibling — no longer lands
@@ -1565,11 +1576,40 @@ const Landing = () => {
                        was ~42px; min-height locks it to 44px. */
                     min-height: 44px;
                     box-sizing: border-box;
-                    color: #DCE4F2;
+                    color: #1E293B;
                     text-decoration: none;
                     padding: 12px 0;
                     font-size: 14.5px;
-                    border-bottom: 1px solid rgba(255,255,255,0.08);
+                    border-bottom: 1px solid #E2E8F0;
+                }
+                /* ---------- Nav: dark variant ----------
+                   Nav is white by default (light mode). When the app is
+                   in dark mode — either the in-app toggle (ThemeProvider
+                   sets data-mode="dark" on <html>) or "system" mode with
+                   an OS/browser that is dark/black (data-mode absent) —
+                   it switches back to the dark navy bar. An explicit
+                   data-mode="light" always stays white. */
+                :root[data-mode="dark"] .lp-nav { background: var(--lp-hero-1); border-bottom-color: transparent; box-shadow: none; }
+                :root[data-mode="dark"] .lp-nav-link { color: #B9C4DA; }
+                :root[data-mode="dark"] .lp-nav-link:hover { color: #fff; }
+                :root[data-mode="dark"] .lp-nav-signup-btn { color: #fff; border-color: #33415F; }
+                :root[data-mode="dark"] .lp-nav-signup-btn:hover { border-color: #08A1CE; }
+                :root[data-mode="dark"] .lp-country-btn { color: #fff; border-color: #33415F; }
+                :root[data-mode="dark"] .lp-country-btn i { color: #B9C4DA; }
+                :root[data-mode="dark"] .lp-burger { color: #fff; border-color: #26314F; }
+                :root[data-mode="dark"] .lp-mobile-panel { background: var(--lp-hero-1); box-shadow: none; }
+                :root[data-mode="dark"] .lp-mobile-panel a { color: #DCE4F2; border-bottom-color: rgba(255,255,255,0.08); }
+                @media (prefers-color-scheme: dark) {
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-nav { background: var(--lp-hero-1); border-bottom-color: transparent; box-shadow: none; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-nav-link { color: #B9C4DA; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-nav-link:hover { color: #fff; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-nav-signup-btn { color: #fff; border-color: #33415F; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-nav-signup-btn:hover { border-color: #08A1CE; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-country-btn { color: #fff; border-color: #33415F; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-country-btn i { color: #B9C4DA; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-burger { color: #fff; border-color: #26314F; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-mobile-panel { background: var(--lp-hero-1); box-shadow: none; }
+                    :root:not([data-mode="light"]):not([data-mode="dark"]) .lp-mobile-panel a { color: #DCE4F2; border-bottom-color: rgba(255,255,255,0.08); }
                 }
 
                 /* ---------- Hero ---------- */
@@ -1580,7 +1620,7 @@ const Landing = () => {
                     gap: 48px;
                     align-items: center;
                     flex-wrap: wrap;
-                    background: linear-gradient(160deg, var(--lp-ink) 0%, var(--lp-ink-soft) 55%, #142146 100%);
+                    background: linear-gradient(160deg, var(--lp-hero-1) 0%, var(--lp-hero-2) 52%, var(--lp-hero-3) 100%);
                     color: #fff;
                     padding: clamp(48px, 8vw, 84px) clamp(20px, 5vw, 56px);
                 }
@@ -1591,9 +1631,9 @@ const Landing = () => {
                     pointer-events: none;
                     z-index: 0;
                 }
-                .lp-hero-glow.g1 { width: 440px; height: 440px; background: #08A1CE; opacity: 0.30; top: -160px; right: -100px; }
-                .lp-hero-glow.g2 { width: 380px; height: 380px; background: #2EBBA8; opacity: 0.22; bottom: -160px; left: -120px; }
-                .lp-hero-glow.g3 { width: 320px; height: 320px; background: #204297; opacity: 0.35; top: 35%; left: 38%; }
+                .lp-hero-glow.g1 { width: 440px; height: 440px; background: #08A1CE; opacity: 0.45; top: -160px; right: -100px; }
+                .lp-hero-glow.g2 { width: 380px; height: 380px; background: #2EBBA8; opacity: 0.38; bottom: -160px; left: -120px; }
+                .lp-hero-glow.g3 { width: 320px; height: 320px; background: #6C8DFF; opacity: 0.40; top: 35%; left: 38%; }
                 .lp-hero-left {
                     flex: 1 1 420px;
                     min-width: 280px;
@@ -1640,14 +1680,14 @@ const Landing = () => {
                     color: #fff;
                 }
                 .lp-hero-title span {
-                    background: linear-gradient(90deg, #08A1CE, #2EBBA8);
+                    background: linear-gradient(90deg, #8BE9FF, #7CF2CF);
                     -webkit-background-clip: text;
                     background-clip: text;
                     color: transparent;
                 }
                 .lp-hero-subtitle {
                     font-size: clamp(14.5px, 1.6vw, 16px);
-                    color: #9FB0CC;
+                    color: #E6EDFB;
                     line-height: 1.65;
                     max-width: 480px;
                     margin: 0 0 28px;
@@ -1675,7 +1715,7 @@ const Landing = () => {
                 .lp-btn-secondary {
                     background: transparent;
                     color: #fff;
-                    border: 1px solid #33415F;
+                    border: 1px solid rgba(255,255,255,0.40);
                     border-radius: 9px;
                     padding: 13px 26px;
                     min-height: 44px;
@@ -1696,8 +1736,8 @@ const Landing = () => {
                     align-items: center;
                     gap: 7px;
                     font-size: 12.5px;
-                    color: #CBD7ED;
-                    background: rgba(255,255,255,0.06);
+                    color: #EAF1FF;
+                    background: rgba(255,255,255,0.10);
                     border: 1px solid rgba(255,255,255,0.13);
                     backdrop-filter: blur(4px);
                     padding: 8px 16px;
@@ -1750,7 +1790,27 @@ const Landing = () => {
                 }
                 .lp-mock-stat-label { font-size: 12px; color: #7C8AA5; margin-top: 4px; }
                 .lp-mock-bars { display: flex; align-items: flex-end; gap: 8px; height: 90px; }
-                .lp-mock-bar { flex: 1; background: var(--lp-gradient); border-radius: 5px 5px 2px 2px; }
+                .lp-mock-bar {
+                    flex: 1;
+                    background: var(--lp-gradient);
+                    border-radius: 5px 5px 2px 2px;
+                    /* NEW: bars keep rising and falling. Each bar walks
+                       through its own 4 heights (--h1..--h4, set inline)
+                       at its own speed/offset, so they never move in
+                       lock-step. */
+                    animation: lp-bar-move 4.5s ease-in-out infinite;
+                    will-change: height;
+                }
+                @keyframes lp-bar-move {
+                    0%   { height: var(--h1); }
+                    25%  { height: var(--h2); }
+                    50%  { height: var(--h3); }
+                    75%  { height: var(--h4); }
+                    100% { height: var(--h1); }
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    .lp-mock-bar { animation: none; }
+                }
 
                 .lp-float-card {
                     position: absolute;
@@ -2515,13 +2575,13 @@ const Landing = () => {
                 .lp-country-btn {
                     display: inline-flex; align-items: center; gap: 8px;
                     min-height: 44px; padding: 0 12px; box-sizing: border-box;
-                    background: transparent; border: 1px solid #33415F; border-radius: 8px;
-                    color: #fff; font: 600 14px 'Inter', sans-serif; cursor: pointer;
+                    background: transparent; border: 1px solid #CBD5E1; border-radius: 8px;
+                    color: #0A1224; font: 600 14px 'Inter', sans-serif; cursor: pointer;
                     transition: border-color 0.15s ease, background 0.15s ease;
                 }
                 .lp-country-btn:hover { border-color: #08A1CE; background: rgba(8,161,206,0.08); }
                 .lp-country-btn img { width: 22px; height: 16px; object-fit: cover; border-radius: 2px; }
-                .lp-country-btn i { font-size: 15px; color: #B9C4DA; }
+                .lp-country-btn i { font-size: 15px; color: #64748B; }
                 .lp-country-backdrop { position: fixed; inset: 0; z-index: 39; }
                 .lp-country-menu {
                     position: absolute; top: calc(100% + 8px); right: 0; z-index: 40;
@@ -2804,11 +2864,30 @@ const Landing = () => {
                                 </div>
                             </div>
                             <div className="lp-mock-bars">
-                                {[60, 90, 40, 75, 55, 100, 35].map((h, i) => (
+                                {/* [h1, h2, h3, h4, seconds per loop] — heights in % */}
+                                {[
+                                    [60, 85, 35, 70, 4.2],
+                                    [90, 45, 80, 100, 5.1],
+                                    [40, 70, 95, 55, 3.8],
+                                    [75, 100, 50, 85, 4.7],
+                                    [55, 30, 75, 95, 5.4],
+                                    [100, 60, 85, 40, 4.0],
+                                    [35, 65, 25, 80, 4.9],
+                                ].map(([h1, h2, h3, h4, dur], i) => (
                                     <div
                                         key={i}
                                         className="lp-mock-bar"
-                                        style={{ height: `${h}%` }}
+                                        style={
+                                            {
+                                                height: `${h1}%`,
+                                                "--h1": `${h1}%`,
+                                                "--h2": `${h2}%`,
+                                                "--h3": `${h3}%`,
+                                                "--h4": `${h4}%`,
+                                                animationDuration: `${dur}s`,
+                                                animationDelay: `-${(i * 0.9).toFixed(1)}s`,
+                                            } as CSSProperties
+                                        }
                                     />
                                 ))}
                             </div>
