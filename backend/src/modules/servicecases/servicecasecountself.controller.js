@@ -70,9 +70,13 @@ function chunkArray(arr, size) {
   return out;
 }
 
-// Case-insensitive, organization-wide duplicate check (case numbers are
-// unique per organization).
-async function findExistingCaseNumbersCI(caseNumbers, organizationId) {
+// Case-insensitive duplicate check, PER SERVICE: the same case number may
+// exist under a different service, but never twice under the same service.
+async function findExistingCaseNumbersCI(
+  caseNumbers,
+  productId,
+  organizationId,
+) {
   const found = new Set();
   const results = await Promise.all(
     chunkArray(caseNumbers, 150).map(async (chunk) => {
@@ -86,6 +90,7 @@ async function findExistingCaseNumbersCI(caseNumbers, organizationId) {
         .from("service_cases")
         .select("case_number")
         .eq("organization_id", organizationId)
+        .eq("product_id", productId)
         .or(orExpr);
       if (error) throw error;
       return data || [];
@@ -548,8 +553,12 @@ async function addCaseNumbersToCount(req, res) {
       subclientId = bodySubclientId;
     }
 
-    // ---- duplicates already in the organization ----
-    const existingSet = await findExistingCaseNumbersCI(candidates, orgId);
+    // ---- duplicates already under the SAME service ----
+    const existingSet = await findExistingCaseNumbersCI(
+      candidates,
+      count.product_id,
+      orgId,
+    );
     const toInsert = [];
     candidates.forEach((cn) => {
       if (existingSet.has(cn.toUpperCase())) {
@@ -557,7 +566,7 @@ async function addCaseNumbersToCount(req, res) {
           caseNumber: cn,
           status: "skipped",
           reason: "already_exists",
-          message: "Case number already exists",
+          message: "Case number already exists for this service",
         });
       } else {
         toInsert.push(cn);

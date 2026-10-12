@@ -264,6 +264,33 @@ async function listClients(req, res) {
   }
 }
 
+// ---------- Inactive client: no services can be added ----------
+// FIX: an Inactive client can't have new Services added to it. Services it
+// already has are kept (the Edit form always sends the full list back), and
+// removing services is still allowed. Returns an error message, or null.
+const INACTIVE_CLIENT_SERVICE_MESSAGE =
+  "This client is inactive. Services can't be added to an inactive client.";
+
+async function inactiveClientServiceError(
+  clientId, // null when the client is being created
+  orgId,
+  nextStatus,
+  productRates,
+) {
+  if (nextStatus !== "Inactive") return null;
+  if (!Array.isArray(productRates) || productRates.length === 0) return null;
+
+  const existing = new Set();
+  if (clientId !== null) {
+    const current = await productsService.getProductsForClient(clientId, orgId);
+    (current || []).forEach((p) => existing.add(String(p.id)));
+  }
+  const hasNew = productRates.some(
+    (r) => r && r.productId != null && !existing.has(String(r.productId)),
+  );
+  return hasNew ? INACTIVE_CLIENT_SERVICE_MESSAGE : null;
+}
+
 // ---------- POST /api/clients ----------
 
 async function createClient(req, res) {
@@ -271,6 +298,15 @@ async function createClient(req, res) {
     if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
     }
+
+    // FIX: no services on an Inactive client
+    const inactiveMsg = await inactiveClientServiceError(
+      null,
+      req.user.organizationId,
+      fromClientBody(req.body).status,
+      req.body.productRates,
+    );
+    if (inactiveMsg) return res.status(400).json({ message: inactiveMsg });
 
     const client = await clientsService.createClient({
       ...fromClientBody(req.body),
@@ -683,6 +719,15 @@ async function updateClient(req, res) {
     if (!req.body?.name || !req.body.name.trim()) {
       return res.status(400).json({ message: "Client name is required" });
     }
+
+    // FIX: no NEW services on an Inactive client (existing ones are kept)
+    const inactiveMsg = await inactiveClientServiceError(
+      id,
+      orgId,
+      fromClientBody(req.body).status,
+      req.body.productRates,
+    );
+    if (inactiveMsg) return res.status(400).json({ message: inactiveMsg });
 
     const client = await clientsService.updateClient(
       id,

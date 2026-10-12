@@ -59,18 +59,21 @@ async function assertClientMappedToProduct(
 }
 
 // GET /api/service-cases/product-clients/:productId
-// -> { success, data: [{ id, name }] } — only clients mapped to the service.
+// -> { success, data: [{ id, name }] } — only ACTIVE clients mapped to the service.
 async function listClientsForProduct(req, res) {
   try {
     const orgId = req.user.organizationId;
     const ids = await getMappedClientIds(req.params.productId, orgId);
     if (ids.length === 0) return res.json({ success: true, data: [] });
 
+    // FIX: Inactive clients are not shown in the Client dropdown. (clients.status
+    // is "Active" / "Inactive"; a missing status counts as Active.)
     const { data, error } = await supabase
       .from("clients")
       .select("id, name")
       .eq("organization_id", orgId)
       .in("id", ids)
+      .or("status.is.null,status.neq.Inactive")
       .order("name", { ascending: true });
     if (error) throw error;
 

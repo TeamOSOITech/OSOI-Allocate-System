@@ -21,6 +21,7 @@ const {
   autoAllocateServiceCases,
   // NEW (NOTIFY)
   notifyAllocation,
+  notifyUrgent,
   listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
@@ -122,6 +123,8 @@ router.post(
 router.post("/auto-allocate", allocPerm, autoAllocateServiceCases);
 // NEW (NOTIFY): "Your work has been allocated" email, sent after Allocate.
 router.post("/notify-allocation", allocPerm, notifyAllocation);
+// NEW (URGENT): "Anything Urgent" mail — sent right after urgent cases are allocated.
+router.post("/notify-urgent", allocPerm, notifyUrgent);
 router.post("/bulk-profile", allocPerm, bulkUpdateServiceCaseProfiles);
 router.post("/bulk-submit", bulkSubmitServiceCases);
 router.post("/self-allocate", selfAllocateServiceCases);

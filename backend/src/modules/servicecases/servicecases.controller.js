@@ -18,6 +18,15 @@
 // untouched by any of this.
 //
 // MODIFIED in this version:
+//   - CHANGED (CASE NUMBERS ARE UNIQUE PER SERVICE): the same case number is
+//     allowed under a DIFFERENT service, but never twice under the SAME
+//     service. Every duplicate check below (Manual Entry, Upload, editing a
+//     case number) now compares only within the case's own service, and the
+//     "duplicate inside the uploaded file" check is per service too.
+//     IMPORTANT: the database's unique rule on service_cases must be
+//     (organization_id, product_id, case_number) — not (organization_id,
+//     case_number) — otherwise the insert of the same number under another
+//     service is still rejected by the database (23505).
 //   - NEW (NOTIFY): POST /api/service-cases/notify-allocation
 //     (notifyAllocation below). Sends every employee who got new work ONE
 //     email: "Your work has been allocated today. Please login to check."
@@ -29,6 +38,17 @@
 //     SQL in the comment above notifyAllocation).
 //   - Email redesign: "Work Allocated Today" heading, pill button
 //     "Login to Alookate", Logo2.png above the message, "Alookate" branding.
+//   - NEW (URGENT): POST /api/service-cases/notify-urgent (notifyUrgent
+//     below). The "Anything Urgent" popup on Today's Allocation allocates
+//     the picked cases right away and then calls this, so every employee
+//     who got an urgent case receives ONE mail: "An urgent case has been
+//     allocated to you. Please prioritise this first." with the urgent
+//     case number(s). It is NOT limited to once a day.
+//   - NEW (NOTIFY OVERLOAD): after the first mail of the day, no more mails
+//     go out - EXCEPT one polite "you have received more work" mail the
+//     first time that employee's work for the day goes above 8 hours.
+//     Tracked in allocation_overload_notifications (SQL below, above
+//     notifyAllocation). The page sends the ids in overloadEmployeeIds.
 
 const supabase = require("../../config/supabaseClient");
 // MODIFIED: fair rotation (extra case goes to whoever got the least work
@@ -122,12 +142,15 @@ function escapeRegExp(str) {
 // `prefix` immediately followed by digits (e.g. prefix "12F0" matches
 // "12F0001", "12F0002", ... but not "12F0OO1"), and returns one past the
 // highest number found — or 1 if this prefix has never been used before.
+//
+// NOTE: this counter stays ORGANIZATION-WIDE on purpose. Case numbers are
+// only required to be unique per service now, but counting across the whole
+// organization can never produce a repeat — at worst it leaves a gap.
 async function getNextPrefixNumber(
   prefix,
   organizationId /*, productId (unused) */,
 ) {
-  // Case numbers are unique per ORGANIZATION (not per service), so the
-  // counter is org-wide. Paged because Supabase returns max 1000 rows
+  // Paged because Supabase returns max 1000 rows
   // per request — without this the max could be under-counted and a
   // duplicate generated once a prefix passes 1000 cases.
   const re = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`, "i");
@@ -287,15 +310,13 @@ function escapeLikeWildcards(value) {
 // candidates into chunks of 150 so a large upload doesn't build one
 // unworkably long filter string.
 //
-// MODIFIED: now checks the WHOLE ORGANIZATION (product_id filter removed).
-// Case numbers are unique per organization everywhere else in this file
-// (updateServiceCaseNumber, getNextPrefixNumber, the DB unique constraint),
-// so a per-service check let a duplicate through and then the insert failed
-// with a 23505 -> HTTP 500 for the whole batch. `productId` is kept in the
-// signature only so existing callers don't change.
+// CHANGED (PER SERVICE): checks only the SAME SERVICE (product_id). The
+// same case number may exist under another service, but never twice under
+// one service. `productId` is therefore required — callers that handle
+// several services at once (the sheet Upload) call this once per service.
 async function findExistingCaseNumbersCI(
   caseNumbers,
-  productId, // unused — case numbers are org-wide unique
+  productId,
   organizationId,
 ) {
   const found = new Set();
@@ -312,6 +333,7 @@ async function findExistingCaseNumbersCI(
         .from("service_cases")
         .select("case_number")
         .eq("organization_id", organizationId)
+        .eq("product_id", productId)
         .or(orExpr);
       if (error) throw error;
       return data || [];
@@ -1011,9 +1033,10 @@ async function downloadUploadTemplate(req, res) {
 // sheet and creates one row per value, verbatim, all under the one
 // Service + Date picked in the form.
 //
-// Case numbers are unique per organization, so any value that already
-// exists anywhere in this org, or repeats within the sheet itself, is
-// skipped and reported back rather than failing the whole upload.
+// Case numbers are unique PER SERVICE: a value that already exists under
+// the same service, or repeats within the sheet for the same service, is
+// skipped and reported back rather than failing the whole upload. The same
+// number under a different service is fine.
 // A row whose client isn't mapped to the selected service is skipped too.
 // ------------------------------------------------------------
 async function uploadCustomServiceCases(req, res) {
@@ -1127,7 +1150,11 @@ async function uploadCustomServiceCases(req, res) {
       results.push({ row, caseNumber, status: "skipped", message });
     };
 
-    // ---- pass 1: empty / duplicate-in-file / service resolve ----
+    // ---- pass 1: empty / service resolve / duplicate-in-file ----
+    // CHANGED (PER SERVICE): the same case number may appear twice in the
+    // sheet if the two rows belong to DIFFERENT services — so the
+    // duplicate-in-file check runs AFTER the row's service is known, and its
+    // key is "<service>::<case number>".
     const seenInFile = new Set();
     const candidates = [];
     for (let i = 0; i < sheetRows.length; i++) {
@@ -1137,11 +1164,6 @@ async function uploadCustomServiceCases(req, res) {
 
       if (!caseNumber) {
         skip(rowNum, "", "Empty case number");
-        continue;
-      }
-      const key = caseNumber.toUpperCase();
-      if (seenInFile.has(key)) {
-        skip(rowNum, caseNumber, "Duplicate within uploaded file");
         continue;
       }
 
@@ -1173,6 +1195,16 @@ async function uploadCustomServiceCases(req, res) {
         continue;
       }
 
+      const key = `${rowProductId}::${caseNumber.toUpperCase()}`;
+      if (seenInFile.has(key)) {
+        skip(
+          rowNum,
+          caseNumber,
+          "Duplicate within uploaded file (same service)",
+        );
+        continue;
+      }
+
       seenInFile.add(key);
       candidates.push({
         row: rowNum,
@@ -1183,20 +1215,35 @@ async function uploadCustomServiceCases(req, res) {
       });
     }
 
-    // ---- org-wide, case-insensitive duplicate check ----
-    const existingSet =
-      candidates.length > 0
-        ? await findExistingCaseNumbersCI(
-            candidates.map((c) => c.caseNumber),
-            candidates[0].productId,
-            orgId,
-          )
-        : new Set();
+    // ---- per-service, case-insensitive duplicate check ----
+    // One lookup per service that appears in the file.
+    const candidatesByProduct = new Map();
+    candidates.forEach((c) => {
+      const list = candidatesByProduct.get(c.productId) || [];
+      list.push(c);
+      candidatesByProduct.set(c.productId, list);
+    });
+    const existingByProduct = new Map();
+    for (const [pid, list] of candidatesByProduct) {
+      existingByProduct.set(
+        pid,
+        await findExistingCaseNumbersCI(
+          list.map((c) => c.caseNumber),
+          pid,
+          orgId,
+        ),
+      );
+    }
 
     const toInsert = [];
     candidates.forEach((c) => {
-      if (existingSet.has(c.caseNumber.toUpperCase())) {
-        skip(c.row, c.caseNumber, "Case number already exists");
+      const existingSet = existingByProduct.get(c.productId);
+      if (existingSet && existingSet.has(c.caseNumber.toUpperCase())) {
+        skip(
+          c.row,
+          c.caseNumber,
+          "Case number already exists for this service",
+        );
       } else {
         toInsert.push(c);
       }
@@ -1356,8 +1403,8 @@ async function uploadCustomServiceCases(req, res) {
 // line/comma in the textarea on the frontend, sent here as an array.
 // (the frontend caps the textarea at 10; this endpoint allows up to 500).
 //
-// Duplicates (within the request or already in the DB) are skipped and
-// reported back rather than failing the whole submission.
+// Duplicates (within the request or already under the same service) are
+// skipped and reported back rather than failing the whole submission.
 // ------------------------------------------------------------
 async function manualCreateServiceCases(req, res) {
   try {
@@ -1464,8 +1511,8 @@ async function manualCreateServiceCases(req, res) {
         .json({ success: false, message: "Enter at least one case number" });
     }
 
-    // MODIFIED: org-wide, case-insensitive duplicate check (see
-    // findExistingCaseNumbersCI).
+    // CHANGED (PER SERVICE): case-insensitive duplicate check against the
+    // SAME service only (see findExistingCaseNumbersCI).
     const existingSet = await findExistingCaseNumbersCI(
       candidates.map((c) => c.caseNumber),
       productId,
@@ -1479,7 +1526,7 @@ async function manualCreateServiceCases(req, res) {
           caseNumber: c.caseNumber,
           status: "skipped",
           reason: "already_exists",
-          message: "Case number already exists",
+          message: "Case number already exists for this service",
         });
       } else {
         toInsert.push(c);
@@ -1536,7 +1583,7 @@ async function manualCreateServiceCases(req, res) {
 
     let message = `${createdCount} case(s) created.`;
     if (alreadyExisting.length) {
-      message += ` This case number already exists: ${alreadyExisting.join(", ")}.`;
+      message += ` This case number already exists for this service: ${alreadyExisting.join(", ")}.`;
     }
     if (duplicateInRequest.length) {
       message += ` Typed more than once: ${duplicateInRequest.join(", ")}.`;
@@ -2136,10 +2183,39 @@ async function autoAllocateServiceCases(req, res) {
 //   );
 //
 // (Use the same type for organization_id as your other tables.)
+//
+// NEW (NOTIFY OVERLOAD): also run this once. It remembers who already got
+// the "more work" mail for a date, so it is sent only ONCE per employee per
+// day. If this table is missing, the normal first-of-the-day mail still
+// works; only the "more work" mail is skipped (an error is logged).
+//
+//   create table if not exists allocation_overload_notifications (
+//     id uuid primary key default gen_random_uuid(),
+//     organization_id uuid not null,
+//     employee_id uuid not null,
+//     work_date date not null,
+//     created_at timestamptz not null default now(),
+//     unique (organization_id, employee_id, work_date)
+//   );
+//
+// Mail rules for one employee on one work date:
+//   1st allocation of the day          -> "Work allocated today" mail
+//   later allocations, still <= 8h     -> no mail
+//   work first goes above 8 hours      -> ONE polite "more work" mail
+//   later allocations (any amount)     -> no mail
+//   1st allocation already above 8h    -> just the first mail (no 2nd mail)
 // ------------------------------------------------------------
 // CHANGED: "allocated today"
 const ALLOC_MESSAGE =
   "Your work has been allocated today. Please login to check.";
+
+// NEW (NOTIFY OVERLOAD): polite "more work" mail. No case counts inside.
+const MORE_WORK_SUBJECT = "A little more work has come your way today";
+const MORE_WORK_HEADING = "More Work Added Today";
+const MORE_WORK_HEADLINE = "You have received some more work today.";
+const MORE_WORK_SUBTEXT =
+  "Thank you for your effort. Please login to review it, and do reach out if you need any support.";
+const MORE_WORK_MESSAGE = `${MORE_WORK_HEADLINE} ${MORE_WORK_SUBTEXT}`;
 
 // App link shown in the email button. Set FRONTEND_URL in .env
 // (e.g. https://your-app.vercel.app). Falls back to "#" if missing.
@@ -2153,7 +2229,16 @@ const LOGO_URL =
 
 // Email-safe HTML (tables + inline styles only — works in Gmail/Outlook).
 // Brand colours match the app (#08A1CE -> #204297). Contains NO case counts.
-function buildAllocationEmailHtml() {
+function buildAllocationEmailHtml({
+  icon = "&#9989;",
+  heading = "Work Allocated Today",
+  headline = "Your work has been allocated.",
+  subtext = "Please login to check.",
+  // NEW (URGENT): optional header colour + extra block under the text
+  headSolid = "#204297",
+  headGradient = "linear-gradient(135deg,#08A1CE,#204297)",
+  detailHtml = "",
+} = {}) {
   return `<!DOCTYPE html>
 <html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -2168,7 +2253,7 @@ function buildAllocationEmailHtml() {
     @media (prefers-color-scheme: dark) {
       .bg-page { background-color: #eef6fb !important; background-image: linear-gradient(#eef6fb,#eef6fb) !important; }
       .bg-card { background-color: #ffffff !important; background-image: linear-gradient(#ffffff,#ffffff) !important; }
-      .bg-head { background-color: #204297 !important; background-image: linear-gradient(135deg,#08A1CE,#204297) !important; }
+      .bg-head { background-color: ${headSolid} !important; background-image: ${headGradient} !important; }
       .bg-btn  { background-color: #204297 !important; background-image: linear-gradient(135deg,#08A1CE,#204297) !important; }
       .txt-title { color: #1e2a4a !important; }
       .txt-sub   { color: #6b7690 !important; }
@@ -2186,9 +2271,9 @@ function buildAllocationEmailHtml() {
 
           <!-- Header -->
           <tr>
-            <td class="bg-head" align="center" bgcolor="#204297" style="background:#204297;background-image:linear-gradient(135deg,#08A1CE,#204297);padding:36px 24px;">
-              <div style="width:60px;height:60px;line-height:60px;border-radius:16px;background:rgba(255,255,255,0.2);color:#ffffff;font-size:30px;text-align:center;margin:0 auto 14px;">&#9989;</div>
-              <div class="txt-white" style="color:#ffffff;font-size:22px;font-weight:800;letter-spacing:0.3px;">Work Allocated Today</div>
+            <td class="bg-head" align="center" bgcolor="${headSolid}" style="background:${headSolid};background-image:${headGradient};padding:36px 24px;">
+              <div style="width:60px;height:60px;line-height:60px;border-radius:16px;background:rgba(255,255,255,0.2);color:#ffffff;font-size:30px;text-align:center;margin:0 auto 14px;">${icon}</div>
+              <div class="txt-white" style="color:#ffffff;font-size:22px;font-weight:800;letter-spacing:0.3px;">${heading}</div>
             </td>
           </tr>
 
@@ -2200,8 +2285,9 @@ function buildAllocationEmailHtml() {
                   ? `<img src="${LOGO_URL}" alt="Alookate" width="120" style="display:block;margin:0 auto 22px;width:120px;max-width:120px;height:auto;border:0;outline:none;text-decoration:none;" />`
                   : ""
               }
-              <p class="txt-title" style="margin:0 0 10px;color:#1e2a4a;font-size:18px;font-weight:700;">Your work has been allocated.</p>
-              <p class="txt-sub" style="margin:0 0 26px;color:#6b7690;font-size:15px;line-height:1.6;">Please login to check.</p>
+              <p class="txt-title" style="margin:0 0 10px;color:#1e2a4a;font-size:18px;font-weight:700;">${headline}</p>
+              <p class="txt-sub" style="margin:0 0 ${detailHtml ? 16 : 26}px;color:#6b7690;font-size:15px;line-height:1.6;">${subtext}</p>
+              ${detailHtml}
 
               <!-- Outlook desktop: real rounded button (VML) -->
               <!--[if mso]>
@@ -2279,7 +2365,21 @@ async function notifyAllocation(req, res) {
         .json({ success: false, message: "No matching employees found." });
     }
 
-    // NEW (NOTIFY ONCE): try to "claim" (employee, date). Rows that
+    // NEW (NOTIFY OVERLOAD): ids the page says are above 8 hours after this
+    // allocation. Only ids that are in this request AND belong to this
+    // organization are used.
+    const validSet = new Set(validIds);
+    const overloadIds = Array.isArray(req.body.overloadEmployeeIds)
+      ? [
+          ...new Set(
+            req.body.overloadEmployeeIds
+              .map((x) => (x || "").toString().trim())
+              .filter((x) => validSet.has(x)),
+          ),
+        ]
+      : [];
+
+    // (1) FIRST MAIL OF THE DAY. Try to "claim" (employee, date). Rows that
     // already exist are ignored, so .select() returns ONLY the employees
     // who have NOT been mailed yet for this date. The unique key does the
     // check, so two people pressing Allocate at the same moment can't
@@ -2301,16 +2401,57 @@ async function notifyAllocation(req, res) {
     if (claimError) throw claimError;
 
     const toSend = (claimed || []).map((r) => r.employee_id);
-    const skipped = validIds.length - toSend.length;
+    const firstSet = new Set(toSend);
 
-    // everyone was already mailed earlier for this date — nothing to
-    // do, and NOT an error (the frontend must not show a failure toast)
-    if (toSend.length === 0) {
-      return res.json({ success: true, data: { sent: 0, failed: 0, skipped } });
+    // (2) "MORE WORK" MAIL (NEW). Claim the overload mail for everyone who
+    // is above 8 hours. Anyone who already had it today is skipped (so it
+    // goes only ONCE per day). People getting their FIRST mail right now are
+    // claimed too but get no second mail: the first mail already covers
+    // them. A problem here (e.g. table not created yet) never blocks the
+    // normal first-of-the-day mail.
+    let toSendMore = [];
+    if (overloadIds.length > 0) {
+      const { data: claimedMore, error: moreError } = await supabase
+        .from("allocation_overload_notifications")
+        .upsert(
+          overloadIds.map((id) => ({
+            organization_id: req.user.organizationId,
+            employee_id: id,
+            work_date: workDate,
+          })),
+          {
+            onConflict: "organization_id,employee_id,work_date",
+            ignoreDuplicates: true,
+          },
+        )
+        .select("employee_id");
+      if (moreError) {
+        console.error("[notify] overload claim failed:", moreError);
+      } else {
+        toSendMore = (claimedMore || [])
+          .map((r) => r.employee_id)
+          .filter((id) => !firstSet.has(id));
+      }
+    }
+
+    const jobs = [
+      ...toSend.map((id) => ({ id, kind: "first" })),
+      ...toSendMore.map((id) => ({ id, kind: "more" })),
+    ];
+    const skipped = validIds.length - jobs.length;
+
+    // everyone was already mailed earlier for this date (and nobody newly
+    // crossed 8 hours) — nothing to do, and NOT an error (the frontend
+    // must not show a failure toast)
+    if (jobs.length === 0) {
+      return res.json({
+        success: true,
+        data: { sent: 0, failed: 0, skipped, moreSent: 0 },
+      });
     }
 
     const results = await Promise.allSettled(
-      toSend.map(async (authId) => {
+      jobs.map(async ({ id: authId, kind }) => {
         const { data, error: userErr } =
           await supabase.auth.admin.getUserById(authId);
         if (userErr || !data?.user?.email) {
@@ -2321,21 +2462,38 @@ async function notifyAllocation(req, res) {
         // hai to yaha wahi "real mailbox nikalne wala" helper lagao jo
         // reset-password mail bhejte waqt use hota hai.
         const to = data.user.email;
-        console.log("[notify] sending to:", to);
+        console.log(`[notify] sending (${kind}) to:`, to);
 
-        await sendEmail({
-          to,
-          // CHANGED: "Work allocated today"
-          subject: "Work allocated today",
-          text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
-          html: buildAllocationEmailHtml(),
-        });
-        console.log("[notify] sent to:", to);
+        if (kind === "more") {
+          await sendEmail({
+            to,
+            subject: MORE_WORK_SUBJECT,
+            text: `${MORE_WORK_MESSAGE} ${APP_LOGIN_URL}`,
+            html: buildAllocationEmailHtml({
+              icon: "&#10133;",
+              heading: MORE_WORK_HEADING,
+              headline: MORE_WORK_HEADLINE,
+              subtext: MORE_WORK_SUBTEXT,
+            }),
+          });
+        } else {
+          await sendEmail({
+            to,
+            // CHANGED: "Work allocated today"
+            subject: "Work allocated today",
+            text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
+            html: buildAllocationEmailHtml(),
+          });
+        }
+        console.log(`[notify] sent (${kind}) to:`, to);
       }),
     );
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.length - sent;
+    const moreSent = results.filter(
+      (r, i) => r.status === "fulfilled" && jobs[i].kind === "more",
+    ).length;
     if (failed > 0) {
       console.error(
         "notifyAllocation failures:",
@@ -2343,17 +2501,38 @@ async function notifyAllocation(req, res) {
       );
       // a mail that FAILED must not count as "already mailed" — release
       // the claim so the next Allocate can try that employee again.
-      const failedIds = toSend.filter(
-        (_, i) => results[i].status === "rejected",
-      );
-      const { error: releaseError } = await supabase
-        .from("allocation_notifications")
-        .delete()
-        .eq("organization_id", req.user.organizationId)
-        .eq("work_date", workDate)
-        .in("employee_id", failedIds);
-      if (releaseError) {
-        console.error("Failed to release notification claim:", releaseError);
+      const failedFirst = jobs
+        .filter(
+          (j, i) => j.kind === "first" && results[i].status === "rejected",
+        )
+        .map((j) => j.id);
+      const failedMore = jobs
+        .filter((j, i) => j.kind === "more" && results[i].status === "rejected")
+        .map((j) => j.id);
+      if (failedFirst.length > 0) {
+        const { error: releaseError } = await supabase
+          .from("allocation_notifications")
+          .delete()
+          .eq("organization_id", req.user.organizationId)
+          .eq("work_date", workDate)
+          .in("employee_id", failedFirst);
+        if (releaseError) {
+          console.error("Failed to release notification claim:", releaseError);
+        }
+      }
+      if (failedMore.length > 0) {
+        const { error: releaseMoreError } = await supabase
+          .from("allocation_overload_notifications")
+          .delete()
+          .eq("organization_id", req.user.organizationId)
+          .eq("work_date", workDate)
+          .in("employee_id", failedMore);
+        if (releaseMoreError) {
+          console.error(
+            "Failed to release overload notification claim:",
+            releaseMoreError,
+          );
+        }
       }
     }
 
@@ -2364,9 +2543,150 @@ async function notifyAllocation(req, res) {
         .json({ success: false, message: "Could not send messages." });
     }
 
-    res.json({ success: true, data: { sent, failed, skipped } });
+    res.json({ success: true, data: { sent, failed, skipped, moreSent } });
   } catch (err) {
     console.error("notifyAllocation error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ------------------------------------------------------------
+// NEW (URGENT): POST /api/service-cases/notify-urgent
+// body: { caseIds: string[] }
+//
+// Called by the "Anything Urgent" popup on Today's Allocation right after
+// the urgent cases were allocated. Every employee who now holds one of
+// those cases gets ONE mail:
+//   "An urgent case has been allocated to you. Please prioritise this
+//    first."  + the urgent case number(s).
+//
+//   - Unlike the normal allocation mail this is NOT once-a-day: every
+//     urgent allocation sends a mail.
+//   - The employee is read from the database (never from the request),
+//     and the wording is fixed on the server, so this endpoint can't be
+//     used to send custom mail or to mail someone arbitrarily.
+//   - Only cases the CALLER allocated in the last 15 minutes are used, so
+//     the endpoint can't be replayed later to spam an employee.
+//   - A mail failure never affects the allocation itself (already saved).
+// ------------------------------------------------------------
+const URGENT_SUBJECT = "Urgent: a case has been allocated to you";
+const URGENT_HEADING = "Urgent Case Allocated";
+
+function escapeEmailHtml(v) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function notifyUrgent(req, res) {
+  try {
+    const caseIds = Array.isArray(req.body.caseIds)
+      ? [
+          ...new Set(
+            req.body.caseIds
+              .map((x) => (x || "").toString().trim())
+              .filter(Boolean),
+          ),
+        ]
+      : [];
+    if (caseIds.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No cases provided." });
+    }
+    if (caseIds.length > 200) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Too many cases." });
+    }
+
+    const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const { data: rows, error } = await supabase
+      .from("service_cases")
+      .select("id, case_number, assigned_employee_id")
+      .eq("organization_id", req.user.organizationId)
+      .eq("allocated_by", req.user.userId)
+      .gte("allocated_at", since)
+      .not("assigned_employee_id", "is", null)
+      .in("id", caseIds);
+    if (error) throw error;
+
+    // group the case numbers by the employee who holds them
+    const byEmployee = new Map();
+    (rows || []).forEach((r) => {
+      const list = byEmployee.get(r.assigned_employee_id) || [];
+      list.push(r.case_number);
+      byEmployee.set(r.assigned_employee_id, list);
+    });
+    if (byEmployee.size === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No allocated urgent cases found." });
+    }
+
+    const jobs = [...byEmployee.entries()];
+    const results = await Promise.allSettled(
+      jobs.map(async ([authId, numbers]) => {
+        const { data, error: userErr } =
+          await supabase.auth.admin.getUserById(authId);
+        if (userErr || !data?.user?.email) {
+          throw userErr || new Error(`No email for ${authId}`);
+        }
+        const to = data.user.email;
+
+        // short + structured: heading, 2 short lines, case number box, button
+        const many = numbers.length > 1;
+        const headline = many
+          ? "Urgent cases have been allocated to you."
+          : "An urgent case has been allocated to you.";
+        const subtext = many
+          ? "Please prioritise these first."
+          : "Please prioritise this first.";
+        const shown = numbers.slice(0, 20).map(escapeEmailHtml);
+        const extra =
+          numbers.length > 20 ? ` +${numbers.length - 20} more` : "";
+        const label = many ? "Case numbers" : "Case number";
+        const detailHtml = `<div style="margin:0 0 26px;padding:12px 14px;background:#EEF4FF;border:1px solid #C9D8F5;border-radius:12px;color:#204297;font-size:14px;font-weight:700;line-height:1.6;">${label}: ${shown.join(", ")}${extra}</div>`;
+
+        console.log("[notify-urgent] sending to:", to);
+        await sendEmail({
+          to,
+          subject: URGENT_SUBJECT,
+          text: `${headline} ${subtext} ${label}: ${numbers
+            .slice(0, 20)
+            .join(", ")}${extra} ${APP_LOGIN_URL}`,
+          html: buildAllocationEmailHtml({
+            // same blue brand theme as the other mails; only the siren
+            // icon shows that it is urgent
+            icon: "&#128680;",
+            heading: URGENT_HEADING,
+            headline,
+            subtext,
+            detailHtml,
+          }),
+        });
+        console.log("[notify-urgent] sent to:", to);
+      }),
+    );
+
+    const sent = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.length - sent;
+    if (failed > 0) {
+      console.error(
+        "notifyUrgent failures:",
+        results.filter((r) => r.status === "rejected").map((r) => r.reason),
+      );
+    }
+    if (sent === 0) {
+      return res
+        .status(502)
+        .json({ success: false, message: "Could not send messages." });
+    }
+    res.json({ success: true, data: { sent, failed } });
+  } catch (err) {
+    console.error("notifyUrgent error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -2419,8 +2739,9 @@ async function updateServiceCaseProfile(req, res) {
 // body: { caseNumber }
 //
 // Cases can be generated first (auto number / placeholder) and the real
-// case number added later. Case numbers stay unique per organization,
-// so a value already used by another case is rejected.
+// case number added later. Case numbers stay unique PER SERVICE, so a value
+// already used by another case of the SAME service is rejected (the same
+// number under a different service is fine).
 // ------------------------------------------------------------
 async function updateServiceCaseNumber(req, res) {
   try {
@@ -2438,11 +2759,27 @@ async function updateServiceCaseNumber(req, res) {
       });
     }
 
-    // Duplicate check (case-insensitive, exact match, other rows only).
+    // CHANGED (PER SERVICE): the duplicate check needs this case's service.
+    const { data: current, error: currentError } = await supabase
+      .from("service_cases")
+      .select("id, product_id")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Case not found" });
+    }
+
+    // Duplicate check (case-insensitive, exact match, other rows of the
+    // SAME service only).
     const { data: dupes, error: dupError } = await supabase
       .from("service_cases")
       .select("id")
       .eq("organization_id", req.user.organizationId)
+      .eq("product_id", current.product_id)
       .ilike("case_number", caseNumber.replace(/[\\%_]/g, "\\$&"))
       .neq("id", id)
       .limit(1);
@@ -2450,7 +2787,7 @@ async function updateServiceCaseNumber(req, res) {
     if (dupes && dupes.length > 0) {
       return res.status(409).json({
         success: false,
-        message: `Case number "${caseNumber}" already exists.`,
+        message: `Case number "${caseNumber}" already exists for this service.`,
       });
     }
 
@@ -2465,7 +2802,7 @@ async function updateServiceCaseNumber(req, res) {
       if (error.code === "23505") {
         return res.status(409).json({
           success: false,
-          message: `Case number "${caseNumber}" already exists.`,
+          message: `Case number "${caseNumber}" already exists for this service.`,
         });
       }
       throw error;
@@ -3316,6 +3653,7 @@ module.exports = {
   autoAllocateServiceCases,
   // NEW (NOTIFY)
   notifyAllocation,
+  notifyUrgent,
   listAllocationClearLog,
   updateServiceCaseProfile,
   updateServiceCaseClient,
