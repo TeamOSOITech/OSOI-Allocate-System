@@ -2209,6 +2209,12 @@ async function autoAllocateServiceCases(req, res) {
 const ALLOC_MESSAGE =
   "Your work has been allocated today. Please login to check.";
 
+// NEW: when false, the "more work" mail goes EVERY time an Allocate press
+// leaves an employee above 8 hours (not just the first time that day).
+// Set to true to go back to the old "only once per day" rule (that rule
+// also needs the allocation_overload_notifications table).
+const OVERLOAD_MAIL_ONCE_PER_DAY = false;
+
 // NEW (NOTIFY OVERLOAD): polite "more work" mail. No case counts inside.
 const MORE_WORK_SUBJECT = "A little more work has come your way today";
 const MORE_WORK_HEADING = "More Work Added Today";
@@ -2410,7 +2416,11 @@ async function notifyAllocation(req, res) {
     // them. A problem here (e.g. table not created yet) never blocks the
     // normal first-of-the-day mail.
     let toSendMore = [];
-    if (overloadIds.length > 0) {
+    if (overloadIds.length > 0 && !OVERLOAD_MAIL_ONCE_PER_DAY) {
+      // every press that leaves them above 8h mails them again (except
+      // people getting their first mail of the day right now)
+      toSendMore = overloadIds.filter((id) => !firstSet.has(id));
+    } else if (overloadIds.length > 0) {
       const { data: claimedMore, error: moreError } = await supabase
         .from("allocation_overload_notifications")
         .upsert(

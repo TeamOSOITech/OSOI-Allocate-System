@@ -52,7 +52,9 @@ async function loadCounts(orgId, { productId, workDate }) {
   for (let i = 0; i < ids.length; i += 150) {
     const { data: a, error: aErr } = await supabase
       .from("service_case_count_allocations")
-      .select("count_id, employee_id, quantity, fulfilled_quantity")
+      .select(
+        "count_id, employee_id, quantity, fulfilled_quantity, allocated_at",
+      )
       .eq("organization_id", orgId)
       .in("count_id", ids.slice(i, i + 150));
     if (aErr) throw aErr;
@@ -99,6 +101,7 @@ async function loadCounts(orgId, { productId, workDate }) {
         employeeName: employeeMap[a.employee_id] || null,
         quantity: a.quantity,
         fulfilledQuantity: a.fulfilled_quantity || 0,
+        allocatedAt: a.allocated_at || null,
       })),
     };
   });
