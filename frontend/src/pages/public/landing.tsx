@@ -2737,9 +2737,9 @@ const Landing = () => {
                 /* Hero */
                 .lp-light .lp-hero {
                     background:
-                        radial-gradient(ellipse at 80% 40%, rgba(8, 161, 206, 0.14), transparent 45%),
-                        radial-gradient(ellipse at 10% 0%, rgba(32, 66, 151, 0.10), transparent 45%),
-                        linear-gradient(135deg, #F7FAFF 0%, #EAF3FF 55%, #E7F8F4 100%);
+                        radial-gradient(ellipse at 80% 40%, rgba(8, 161, 206, 0.22), transparent 48%),
+                        radial-gradient(ellipse at 10% 0%, rgba(32, 66, 151, 0.16), transparent 48%),
+                        linear-gradient(135deg, #D9E6FA 0%, #C9DDF6 52%, #C3E8E6 100%);
                     color: var(--lp-text);
                 }
                 .lp-light .lp-hero::before {
@@ -2747,7 +2747,7 @@ const Landing = () => {
                         radial-gradient(ellipse at 75% 58%, rgba(8, 161, 206, 0.10), transparent 30%),
                         radial-gradient(ellipse at 25% 90%, rgba(46, 187, 168, 0.12), transparent 34%);
                 }
-                .lp-light .lp-hero-orbit { border-color: rgba(8, 161, 206, 0.35); box-shadow: none; }
+                .lp-light .lp-hero-orbit { border-color: rgba(8, 161, 206, 0.45); box-shadow: none; }
                 .lp-light .lp-hero-orbit::before {
                     border-top-color: rgba(32, 66, 151, 0.22);
                     border-left-color: rgba(8, 161, 206, 0.25);
@@ -2764,7 +2764,7 @@ const Landing = () => {
                 .lp-light .lp-particle.p3 { background: var(--lp-blue); opacity: 0.25; }
 
                 .lp-light .lp-hero-icon-badge { background: #fff; border-color: var(--lp-border); box-shadow: 0 6px 16px rgba(32,66,151,0.10); backdrop-filter: none; }
-                .lp-light .lp-hero .lp-eyebrow { color: #0E7FA3; border-color: rgba(8,161,206,0.35); background: rgba(8,161,206,0.10); }
+                .lp-light .lp-hero .lp-eyebrow { color: #0B6F92; border-color: rgba(8,161,206,0.40); background: rgba(255,255,255,0.55); }
                 .lp-light .lp-hero-title { color: var(--lp-ink); }
                 .lp-light .lp-hero-title span {
                     background: var(--lp-gradient);
@@ -2772,7 +2772,7 @@ const Landing = () => {
                     background-clip: text;
                     color: transparent;
                 }
-                .lp-light .lp-hero-subtitle { color: #44536D; }
+                .lp-light .lp-hero-subtitle { color: #3A4A66; }
                 .lp-light .lp-hero .lp-btn-primary {
                     color: #fff;
                     background: var(--lp-gradient);
@@ -2835,7 +2835,7 @@ const Landing = () => {
             {/* ---------- Nav ---------- */}
             <header className="lp-nav">
                 <div className="lp-nav-brand">
-                    <img src="/Logo.jpg" alt="Alookate" className="lp-nav-logo" />
+                    <img src="/Allookate.png" alt="Alookate" className="lp-nav-logo" />
                 </div>
                 <nav className="lp-nav-links">
                     <a

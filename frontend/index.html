@@ -28,7 +28,7 @@
             property="og:description"
             content="OSOI Allocate — work allocation, tracking and reporting system."
         />
-        <meta property="og:image" content="/Logo.jpg" />
+        <meta property="og:image" content="/Alookate.png" />
         <meta property="og:url" content="https://osoi-allocate-system.vercel.app/" />
 
         <meta name="twitter:card" content="summary" />
@@ -37,14 +37,18 @@
             name="twitter:description"
             content="OSOI Allocate — work allocation, tracking and reporting system."
         />
-        <meta name="twitter:image" content="/Logo.jpg" />
+        <meta name="twitter:image" content="/Alookate.png" />
     </head>
     <body>
         <div id="root"></div>
         <script type="module" src="/src/main.jsx"></script>
+        <!-- SECURITY: pinned version + Subresource Integrity, so a tampered CDN
+             file is refused by the browser instead of running in your app. -->
         <link
             rel="stylesheet"
             href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css"
+            integrity="sha384-PwEnNZvp50/uDLtKrd1s2D4Xe/y+fCVtEigigjik/PgHlDXUF1uJ32m7guk/XWYV"
+            crossorigin="anonymous"
         />
     </body>
 </html>

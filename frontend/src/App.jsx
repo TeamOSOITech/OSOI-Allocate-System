@@ -183,7 +183,7 @@ const AppLayout = ({ children, onLogout }) => {
     }, [user?.id, user?.userId]);
 
     // Org-branded logo shown in the header everywhere (falls back to the
-    // default /Logo.jpg on the header side if this is null/not yet
+    // default /Alookate.png on the header side if this is null/not yet
     // loaded). Fetched for every role, since the header itself is
     // shared — only the ability to CHANGE it is restricted below.
     const [logoUrl, setLogoUrl] = useState(null);

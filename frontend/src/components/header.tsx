@@ -9,7 +9,7 @@ interface HeaderProps {
     userName?: string;
     photoUrl?: string | null;
     logoSrc?: string;
-    // Org-branded logo (falls back to the default /Logo.jpg when unset).
+    // Org-branded logo (falls back to the default /Alookate.png when unset).
     // canEditLogo/onLogoChange are only passed in from AppLayout on the
     // home page, and only for SUPER_ADMIN — everywhere/everyone else the
     // logo is shown but not editable.
@@ -153,7 +153,7 @@ export default function Header({
                     Only the `src` changes when an org logo is set. */}
                     <div style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
                         <img
-                            src={logoUrl || "/Logo.jpg"}
+                            src="/Allookate.png"
                             alt="Logo"
                             style={{
                                 width: isMobile ? 30 : 125,

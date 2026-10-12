@@ -547,7 +547,7 @@ const Login = () => {
                     {/* NEW: desktop logo, top-right corner of the whole card */}
                     {!isMobile && (
                         <img
-                            src="/Logo.png"
+                            src="/Allookate.png"
                             alt="Alookate"
                             draggable={false}
                             style={{
