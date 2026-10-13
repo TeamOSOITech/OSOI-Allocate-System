@@ -113,11 +113,23 @@ async function registerPush(onStep: (text: string) => void = () => {}): Promise<
         sub = null;
     }
     if (!sub) {
-        sub = await withTimeout(
-            reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }),
-            25000,
-            "Step 3 of 4 failed: this browser could not reach its notification service (internet / firewall / VPN / Brave setting). Try another network, e.g. a mobile hotspot."
-        );
+        const trySubscribe = (r: ServiceWorkerRegistration) =>
+            withTimeout(
+                r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }),
+                25000,
+                "Step 3 of 4 failed: this browser could not reach its notification service (internet / firewall / VPN / Brave setting). Try another network, e.g. a mobile hotspot."
+            );
+        try {
+            sub = await trySubscribe(reg);
+        } catch {
+            // stale/stuck service worker or a push-service hiccup: reset the
+            // worker once and try again before giving up
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+            const fresh = await navigator.serviceWorker.register("/sw.js");
+            await navigator.serviceWorker.ready;
+            sub = await trySubscribe(fresh);
+        }
     }
 
     onStep("Step 4 of 4: saving this device...");
@@ -198,6 +210,16 @@ export default function NotificationBell({
         } catch (e: any) {
             setPushSaved(false);
             setPushError(e?.message || "Could not turn on alerts.");
+            // tell the server WHY (shows in backend logs) — never blocks the UI
+            authFetch(`${API_BASE}/api/notifications/push-error`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: String(e?.message || e || "unknown").slice(0, 500),
+                    permission: Notification.permission,
+                    userAgent: navigator.userAgent.slice(0, 300),
+                }),
+            }).catch(() => {});
         } finally {
             registeringRef.current = false;
             setRegistering(false);
