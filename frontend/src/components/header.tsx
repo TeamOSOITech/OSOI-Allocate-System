@@ -107,93 +107,6 @@ export default function Header({
             /* ignore storage errors */
         }
     };
-
-    // Bell panel: list of recent notifications written by the allocation
-    // page (localStorage "allocNotifyLog"). The red count = entries newer
-    // than the last time the panel was opened ("allocNotifySeen").
-    type NotifyItem = { id: number; text: string; kind: "ok" | "off" | "fail"; time: number };
-    const readLog = (): NotifyItem[] => {
-        try {
-            const v = JSON.parse(localStorage.getItem("allocNotifyLog") || "[]");
-            return Array.isArray(v) ? v : [];
-        } catch {
-            return [];
-        }
-    };
-    const readSeen = (): number => {
-        try {
-            return Number(localStorage.getItem("allocNotifySeen") || 0);
-        } catch {
-            return 0;
-        }
-    };
-    const [notifyLog, setNotifyLog] = useState<NotifyItem[]>(readLog);
-    const [notifySeen, setNotifySeen] = useState<number>(readSeen);
-    const [bellOpen, setBellOpen] = useState(false);
-    const bellRef = useRef<HTMLDivElement>(null);
-    const unreadCount = notifyLog.filter((n) => n.time > notifySeen).length;
-
-    useEffect(() => {
-        const refresh = () => setNotifyLog(readLog());
-        window.addEventListener("allocNotifyLogChanged", refresh);
-        window.addEventListener("storage", refresh);
-        return () => {
-            window.removeEventListener("allocNotifyLogChanged", refresh);
-            window.removeEventListener("storage", refresh);
-        };
-    }, []);
-
-    const markNotifySeen = () => {
-        const now = Date.now();
-        setNotifySeen(now);
-        try {
-            localStorage.setItem("allocNotifySeen", String(now));
-        } catch {
-            /* ignore storage errors */
-        }
-    };
-    const toggleBell = () => {
-        setBellOpen((v) => !v);
-        markNotifySeen();
-    };
-    const clearNotifyLog = () => {
-        setNotifyLog([]);
-        try {
-            localStorage.removeItem("allocNotifyLog");
-        } catch {
-            /* ignore storage errors */
-        }
-    };
-
-    useEffect(() => {
-        if (!bellOpen) return;
-        const onClickOutside = (e: MouseEvent) => {
-            if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
-                setBellOpen(false);
-                markNotifySeen();
-            }
-        };
-        const onEsc = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-                setBellOpen(false);
-                markNotifySeen();
-            }
-        };
-        document.addEventListener("mousedown", onClickOutside);
-        document.addEventListener("keydown", onEsc);
-        return () => {
-            document.removeEventListener("mousedown", onClickOutside);
-            document.removeEventListener("keydown", onEsc);
-        };
-    }, [bellOpen]);
-
-    const formatNotifyTime = (t: number) =>
-        new Date(t).toLocaleString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-        });
     const displayName = userName || "Administrator";
     const firstName = displayName.split(" ")[0];
 
@@ -323,169 +236,33 @@ export default function Header({
 
             {/* RIGHT */}
             <div style={isMobile ? styles.rightMobile : styles.right}>
-                {/* Notification bell: opens a panel with the recent
-                    notifications and the ON/OFF switch for allocation mails */}
-                <div style={{ position: "relative" }} ref={bellRef}>
-                    <button
-                        type="button"
-                        style={{
-                            ...(isMobile ? styles.iconBtnSmall : styles.iconBtn),
-                            opacity: notifyEnabled ? 1 : 0.65,
-                        }}
-                        onClick={toggleBell}
-                        aria-label="Notifications"
-                        aria-expanded={bellOpen}
-                        title={notifyEnabled ? "Notifications (ON)" : "Notifications (OFF)"}
-                    >
-                        <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
-                        {unreadCount > 0 && (
-                            <span style={styles.notifBadge}>
-                                {unreadCount > 9 ? "9+" : unreadCount}
-                            </span>
-                        )}
-                    </button>
+                {/* REMOVED: Help (?) and Notifications (bell) icon buttons
+                    per request — neither had a working page/panel behind
+                    it yet, so they were removed from the header entirely
+                    (desktop + small-mobile variants). onHelp/
+                    onNotificationsClick/notificationCount props are left
+                    in place in case they're wired up again later. */}
 
-                    {bellOpen && (
-                        <div
-                            style={{
-                                ...styles.menu,
-                                width: isMobile ? 280 : 320,
-                                padding: 0,
-                                overflow: "hidden",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    gap: 10,
-                                    padding: "12px 14px",
-                                    borderBottom: "1px solid #eef1f7",
-                                }}
-                            >
-                                <div>
-                                    <div
-                                        style={{ fontWeight: 700, color: "#16233c", fontSize: 14 }}
-                                    >
-                                        Notifications
-                                    </div>
-                                    <div style={{ fontSize: 12, color: "#6b7280" }}>
-                                        {notifyEnabled
-                                            ? "Employees get a mail when work is allocated"
-                                            : "Turned OFF. No mails will be sent"}
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={notifyEnabled}
-                                    aria-label="Turn notifications on or off"
-                                    onClick={toggleNotify}
-                                    style={{
-                                        width: 42,
-                                        height: 24,
-                                        borderRadius: 999,
-                                        border: "none",
-                                        padding: 2,
-                                        cursor: "pointer",
-                                        flexShrink: 0,
-                                        background: notifyEnabled ? "#2EBBA8" : "#d1d5db",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: notifyEnabled ? "flex-end" : "flex-start",
-                                        transition: "background .15s",
-                                    }}
-                                >
-                                    <span
-                                        style={{
-                                            width: 20,
-                                            height: 20,
-                                            borderRadius: "50%",
-                                            background: "#fff",
-                                            boxShadow: "0 1px 3px rgba(0,0,0,.25)",
-                                        }}
-                                    />
-                                </button>
-                            </div>
-
-                            <div style={{ maxHeight: 280, overflowY: "auto" }}>
-                                {notifyLog.length === 0 ? (
-                                    <div
-                                        style={{
-                                            padding: "22px 14px",
-                                            textAlign: "center",
-                                            color: "#6b7280",
-                                            fontSize: 13,
-                                        }}
-                                    >
-                                        No notifications yet
-                                    </div>
-                                ) : (
-                                    notifyLog.map((n) => (
-                                        <div
-                                            key={n.id}
-                                            style={{
-                                                display: "flex",
-                                                gap: 10,
-                                                padding: "10px 14px",
-                                                borderBottom: "1px solid #f3f4f6",
-                                            }}
-                                        >
-                                            <i
-                                                className={
-                                                    n.kind === "ok"
-                                                        ? "ti ti-circle-check"
-                                                        : n.kind === "off"
-                                                          ? "ti ti-bell-off"
-                                                          : "ti ti-alert-circle"
-                                                }
-                                                style={{
-                                                    fontSize: 18,
-                                                    marginTop: 1,
-                                                    color:
-                                                        n.kind === "ok"
-                                                            ? "#2EBBA8"
-                                                            : n.kind === "off"
-                                                              ? "#6b7280"
-                                                              : "#DC2626",
-                                                }}
-                                            />
-                                            <div>
-                                                <div style={{ fontSize: 13, color: "#16233c" }}>
-                                                    {n.text}
-                                                </div>
-                                                <div style={{ fontSize: 11, color: "#9ca3af" }}>
-                                                    {formatNotifyTime(n.time)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-
-                            {notifyLog.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={clearNotifyLog}
-                                    style={{
-                                        width: "100%",
-                                        padding: "10px 14px",
-                                        border: "none",
-                                        borderTop: "1px solid #eef1f7",
-                                        background: "#fafbfd",
-                                        color: "#6b7280",
-                                        fontSize: 12,
-                                        fontWeight: 600,
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    Clear all
-                                </button>
-                            )}
-                        </div>
-                    )}
-                </div>
+                {/* Notification bell — click to turn allocation mails ON/OFF */}
+                <button
+                    type="button"
+                    style={{
+                        ...(isMobile ? styles.iconBtnSmall : styles.iconBtn),
+                        opacity: notifyEnabled ? 1 : 0.65,
+                    }}
+                    onClick={toggleNotify}
+                    role="switch"
+                    aria-checked={notifyEnabled}
+                    aria-label={notifyEnabled ? "Turn notifications off" : "Turn notifications on"}
+                    title={
+                        notifyEnabled
+                            ? "Notifications ON — click to turn OFF"
+                            : "Notifications OFF — click to turn ON"
+                    }
+                >
+                    <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
+                    {notifyEnabled && <span style={styles.notifDot} />}
+                </button>
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>
@@ -923,7 +700,7 @@ function getStyles(BRAND: {
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: 6 - 2,
+            gap: 4,
         },
         swatchBtn: {
             width: 36,
