@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme, THEMES } from "../context/themecontext";
 import type { ThemeName } from "../context/themecontext";
+import NotificationBell from "./notificationbell";
 
 interface HeaderProps {
     userName?: string;
@@ -243,26 +244,16 @@ export default function Header({
                     onNotificationsClick/notificationCount props are left
                     in place in case they're wired up again later. */}
 
-                {/* Notification bell — click to turn allocation mails ON/OFF */}
-                <button
-                    type="button"
-                    style={{
-                        ...(isMobile ? styles.iconBtnSmall : styles.iconBtn),
-                        opacity: notifyEnabled ? 1 : 0.65,
-                    }}
-                    onClick={toggleNotify}
-                    role="switch"
-                    aria-checked={notifyEnabled}
-                    aria-label={notifyEnabled ? "Turn notifications off" : "Turn notifications on"}
-                    title={
-                        notifyEnabled
-                            ? "Notifications ON — click to turn OFF"
-                            : "Notifications OFF — click to turn ON"
-                    }
-                >
-                    <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
-                    {notifyEnabled && <span style={styles.notifDot} />}
-                </button>
+                {/* Notification bell: the employee's in-app notifications and
+                    "Turn on alerts" (push) live in NotificationBell. The ON/OFF
+                    switch for allocation mails is inside its popup. */}
+                <NotificationBell
+                    buttonStyle={isMobile ? styles.iconBtnSmall : styles.iconBtn}
+                    badgeStyle={styles.notifBadge}
+                    isMobile={isMobile}
+                    notifyEnabled={notifyEnabled}
+                    onToggleNotify={toggleNotify}
+                />
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>

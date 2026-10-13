@@ -23,6 +23,10 @@ interface Props {
     buttonStyle: CSSProperties;
     badgeStyle: CSSProperties;
     isMobile?: boolean;
+    // Optional ON/OFF switch (allocation mails). When onToggleNotify is
+    // given, the switch is shown at the top of the popup.
+    notifyEnabled?: boolean;
+    onToggleNotify?: () => void;
 }
 
 // Browser push (works even when logged out / browser closed)
@@ -143,7 +147,13 @@ function timeAgo(iso: string) {
     return new Date(iso).toLocaleDateString();
 }
 
-export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = false }: Props) {
+export default function NotificationBell({
+    buttonStyle,
+    badgeStyle,
+    isMobile = false,
+    notifyEnabled = true,
+    onToggleNotify,
+}: Props) {
     const [open, setOpen] = useState(false);
     const [items, setItems] = useState<NotificationItem[]>([]);
     const [unread, setUnread] = useState(0);
@@ -279,7 +289,7 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                 aria-expanded={open}
                 title="Notifications"
             >
-                <i className="ti ti-bell" />
+                <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
                 {unread > 0 && <span style={badgeStyle}>{unread > 9 ? "9+" : unread}</span>}
             </button>
 
@@ -306,9 +316,61 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                             fontSize: fontSize.md,
                             fontWeight: fontWeight.bold,
                             borderBottom: "1px solid #eef0f5",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
                         }}
                     >
-                        Notifications
+                        <div>
+                            Notifications
+                            {onToggleNotify && (
+                                <div
+                                    style={{
+                                        fontSize: fontSize.xs,
+                                        fontWeight: fontWeight.medium,
+                                        color: "#6b7690",
+                                    }}
+                                >
+                                    {notifyEnabled
+                                        ? "Employees get a mail when work is allocated"
+                                        : "Turned OFF. No mails will be sent"}
+                                </div>
+                            )}
+                        </div>
+                        {onToggleNotify && (
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={notifyEnabled}
+                                aria-label="Turn notifications on or off"
+                                onClick={onToggleNotify}
+                                style={{
+                                    width: 42,
+                                    height: 24,
+                                    borderRadius: 999,
+                                    border: "none",
+                                    padding: 2,
+                                    cursor: "pointer",
+                                    flexShrink: 0,
+                                    background: notifyEnabled ? "#2EBBA8" : "#d1d5db",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: notifyEnabled ? "flex-end" : "flex-start",
+                                    transition: "background .15s",
+                                }}
+                            >
+                                <span
+                                    style={{
+                                        width: 20,
+                                        height: 20,
+                                        borderRadius: "50%",
+                                        background: "#fff",
+                                        boxShadow: "0 1px 3px rgba(0,0,0,.25)",
+                                    }}
+                                />
+                            </button>
+                        )}
                     </div>
 
                     {pushSupported && (permission !== "granted" || pushError || registering) && (
