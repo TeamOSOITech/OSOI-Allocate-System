@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme, THEMES } from "../context/themecontext";
 import type { ThemeName } from "../context/themecontext";
+import NotificationBell from "./notificationbell";
 
 interface HeaderProps {
     userName?: string;
@@ -217,12 +218,13 @@ export default function Header({
 
             {/* RIGHT */}
             <div style={isMobile ? styles.rightMobile : styles.right}>
-                {/* REMOVED: Help (?) and Notifications (bell) icon buttons
-                    per request — neither had a working page/panel behind
-                    it yet, so they were removed from the header entirely
-                    (desktop + small-mobile variants). onHelp/
-                    onNotificationsClick/notificationCount props are left
-                    in place in case they're wired up again later. */}
+                {/* Notifications bell — in-app alerts (e.g. "more than 8 hours
+                    of work today"). Self-contained: fetches/polls its own data. */}
+                <NotificationBell
+                    buttonStyle={isMobile ? styles.iconBtnSmall : styles.iconBtn}
+                    badgeStyle={styles.notifBadge}
+                    isMobile={isMobile}
+                />
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>

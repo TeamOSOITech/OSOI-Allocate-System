@@ -3,7 +3,6 @@ import type { CSSProperties, ChangeEvent, ReactNode } from "react";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
-import { useRoleLabels } from "../context/roleLabelsContext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -177,6 +176,9 @@ type EmployeeData = {
     photoUrl: string | null;
     phone?: string | null;
     bio?: string | null;
+    // NEW: shown in the compact profile header
+    employeeCode?: string | null;
+    location?: string | null;
 };
 
 // NEW: one entry in the employee search dropdown (Super Admin / Ops Manager).
@@ -406,39 +408,34 @@ const PhoneIcon = () => (
         <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.7a2 2 0 0 1-.5 2.1L8 9.7a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.6a2 2 0 0 1 2 2.3Z" />
     </Icon>
 );
-const TeamIcon = () => (
-    <Icon>
-        <circle cx="9" cy="7" r="4" />
-        <path d="M17 11a4 4 0 1 0 0-8" />
-        <path d="M1 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2" />
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-    </Icon>
-);
 const DeptIcon = () => (
     <Icon>
         <rect x="2" y="7" width="20" height="14" rx="2" />
         <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
     </Icon>
 );
-const UserIcon = () => (
+// NEW: location pin + employee-code badge for the compact header
+const PinIcon = () => (
     <Icon>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+        <path d="M12 21s7-6.2 7-11.5a7 7 0 1 0-14 0C5 14.8 12 21 12 21Z" />
+        <circle cx="12" cy="9.5" r="2.5" />
     </Icon>
 );
-const ShieldIcon = () => (
+const BadgeIcon = () => (
     <Icon>
-        <path d="M12 2 4 5v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V5Z" />
+        <rect x="4" y="3" width="16" height="18" rx="2" />
+        <circle cx="12" cy="10" r="2.5" />
+        <path d="M8 17c.6-2 2.2-3 4-3s3.4 1 4 3" />
     </Icon>
 );
 const CameraIcon = () => (
-    <Icon size={17}>
+    <Icon size={14}>
         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z" />
         <circle cx="12" cy="13" r="4" />
     </Icon>
 );
 const PencilIcon = () => (
-    <Icon size={18}>
+    <Icon size={14}>
         <path d="M12 20h9" />
         <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
     </Icon>
@@ -519,7 +516,6 @@ export default function Profile({ onLogout }: ProfileProps) {
     void onLogout;
     const isMobile = useIsMobile();
     const { colors: themeColors } = useTheme();
-    const { getRoleLabel } = useRoleLabels();
     const BRAND = {
         blue: themeColors.blue,
         lightBlue: themeColors.lightBlue,
@@ -984,12 +980,14 @@ export default function Profile({ onLogout }: ProfileProps) {
                   : fallbackUser?.email || "User");
 
     const email = profile?.email || employee?.email || fallbackUser?.email || "-";
-    const role = profile?.role || employee?.role || fallbackUser?.role || "-";
     const department = profile?.department || employee?.department || "-";
-    const team = employee?.workedInTeams || "-";
-    const manager = employee?.reportingManager || "-";
     const phone = employee?.phone || profile?.phone || "-";
-    const bio = employee?.bio || profile?.bio || "";
+    // NEW: shown in the compact header (backend sends employeeCode; location
+    // shows "-" until the backend sends a `location` field)
+    const location = employee?.location || profile?.location || "-";
+    const empCode = employee?.employeeCode || profile?.employeeCode || "-";
+    // Phone: own profile always; someone else's only for Super Admin / Ops Manager.
+    const showPhone = !isViewingOther || canViewOthers;
     const photoUrl = photoPreview || employee?.photoUrl || null;
 
     const initials = name
@@ -1871,8 +1869,6 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            <div style={styles.topBar} />
-
             <style>{hoverCss}</style>
 
             {/* ---- NEW: Employee search (Super Admin / Ops Manager only) ---- */}
@@ -1994,272 +1990,101 @@ export default function Profile({ onLogout }: ProfileProps) {
 
             {error && <div style={styles.noteWarning}>{error}</div>}
 
-            {/* ---- Identity card ---- */}
+            {/* ---- Compact profile header: banner + name, then one row of values ---- */}
             <div className="pf-card-hover" style={styles.identityCard}>
-                <div style={isMobile ? styles.identityTopMobile : styles.identityTop}>
-                    <div style={styles.avatarBlock}>
-                        <div style={styles.avatarWrap}>
-                            <span aria-hidden="true" style={styles.avatarBlob} />
-                            <svg
-                                aria-hidden="true"
-                                width="58"
-                                height="48"
-                                viewBox="0 0 58 48"
-                                fill="none"
-                                style={styles.avatarSpark}
-                            >
-                                <path
-                                    d="M30 6 36 18"
-                                    stroke="#9DB4F5"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <path
-                                    d="M43 3 44 12"
-                                    stroke="#B9A6F0"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <path
-                                    d="M18 14 26 22"
-                                    stroke="#9DB4F5"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <circle cx="11" cy="30" r="5" stroke="#B9A6F0" strokeWidth="2.5" />
-                                <circle cx="24" cy="38" r="3" stroke="#9DB4F5" strokeWidth="2.5" />
-                            </svg>
-                            {photoUrl ? (
-                                <img
-                                    src={photoUrl}
-                                    alt={name}
-                                    style={{ ...styles.avatarImg, cursor: "pointer" }}
-                                    onClick={() => setIsAvatarPreviewOpen(true)}
-                                    title="View photo"
-                                />
-                            ) : (
-                                <div style={styles.avatar}>{initials || "?"}</div>
-                            )}
-                            {!isViewingOther && (
-                                <button
-                                    type="button"
-                                    style={styles.avatarEditBtn}
-                                    className="pf-avatar-edit"
-                                    onClick={handlePhotoClick}
-                                    disabled={uploadingPhoto}
-                                    title="Change photo"
-                                >
-                                    <CameraIcon />
-                                </button>
-                            )}
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                style={{ display: "none" }}
-                                onChange={handlePhotoChange}
+                <div style={styles.hdrTopRow}>
+                    <div style={styles.hdrAvatarWrap}>
+                        {photoUrl ? (
+                            <img
+                                src={photoUrl}
+                                alt={name}
+                                style={styles.hdrAvatarImg}
+                                onClick={() => setIsAvatarPreviewOpen(true)}
+                                title="View photo"
                             />
-                        </div>
-                        <div style={styles.nameBlock}>
-                            <span style={styles.name}>{loading ? "Loading..." : name}</span>
-                            <span style={styles.activePill}>
-                                <span style={styles.activeDot} />
-                                Active
-                            </span>
-                            {uploadingPhoto && (
-                                <div style={styles.smallMuted}>Uploading photo…</div>
-                            )}
-                            {photoError && <p style={styles.rowError}>{photoError}</p>}
-                        </div>
+                        ) : (
+                            <div style={styles.hdrAvatar}>{initials || "?"}</div>
+                        )}
+                        {!isViewingOther && (
+                            <button
+                                type="button"
+                                style={styles.hdrCamBtn}
+                                className="pf-avatar-edit"
+                                onClick={handlePhotoClick}
+                                disabled={uploadingPhoto}
+                                title="Change photo"
+                                aria-label="Change photo"
+                            >
+                                <CameraIcon />
+                            </button>
+                        )}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            style={{ display: "none" }}
+                            onChange={handlePhotoChange}
+                        />
                     </div>
 
-                    {!isMobile && <div style={styles.identityDivider} />}
-
-                    <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
-                        <div style={styles.identityColumn}>
-                            <InfoIconRow
-                                icon={<ShieldIcon />}
-                                label="Role"
-                                value={role && role !== "-" ? getRoleLabel(role) : "-"}
-                                tone={ROW_TONES.role}
-                                styles={styles}
-                            />
-                            <InfoIconRow
-                                icon={<MailIcon />}
-                                label="Email"
-                                value={email}
-                                href={email && email !== "-" ? `mailto:${email}` : undefined}
-                                tone={ROW_TONES.email}
-                                styles={styles}
-                            />
-                            {editingProfile && !isViewingOther ? (
-                                <div style={styles.editField}>
-                                    <label style={styles.smallLabel}>Phone</label>
-                                    <input
-                                        style={styles.textInput}
-                                        value={profileDraft.phone}
-                                        onChange={(e) =>
-                                            setProfileDraft((p) => ({
-                                                ...p,
-                                                phone: e.target.value,
-                                            }))
-                                        }
-                                        placeholder="Phone number"
-                                    />
-                                </div>
-                            ) : (
-                                <InfoIconRow
-                                    icon={<PhoneIcon />}
-                                    label="Phone"
-                                    value={phone}
-                                    href={
-                                        phone && phone !== "-"
-                                            ? `tel:${phone.replace(/\s+/g, "")}`
-                                            : undefined
-                                    }
-                                    tone={ROW_TONES.phone}
-                                    styles={styles}
-                                />
-                            )}
-                        </div>
-
-                        <div style={styles.identityColumn}>
-                            <InfoIconRow
-                                icon={<TeamIcon />}
-                                label="Team"
-                                value={team}
-                                tone={ROW_TONES.team}
-                                styles={styles}
-                            />
-                            <InfoIconRow
-                                icon={<DeptIcon />}
-                                label="Department"
-                                value={department}
-                                tone={ROW_TONES.dept}
-                                styles={styles}
-                            />
-                            <InfoIconRow
-                                icon={<UserIcon />}
-                                label="Manager"
-                                value={manager}
-                                tone={ROW_TONES.manager}
-                                styles={styles}
-                            />
-                        </div>
-
-                        <div style={styles.aboutBox}>
-                            <svg
-                                aria-hidden="true"
-                                width="34"
-                                height="34"
-                                viewBox="0 0 34 34"
-                                fill="none"
-                                style={styles.aboutSpark}
-                            >
-                                <path
-                                    d="M6 22 12 17"
-                                    stroke="#5B8DEF"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <path
-                                    d="M14 9 17 15"
-                                    stroke="#5B8DEF"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <path
-                                    d="M25 7 24 13"
-                                    stroke="#5B8DEF"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                            </svg>
-                            <svg
-                                aria-hidden="true"
-                                width="150"
-                                height="90"
-                                viewBox="0 0 150 90"
-                                fill="none"
-                                style={styles.aboutWave}
-                            >
-                                <path
-                                    d="M150 0C120 20 100 48 70 62 50 72 25 80 0 90H150Z"
-                                    fill="rgba(125,160,245,0.28)"
-                                />
-                                <path
-                                    d="M150 30C128 46 112 66 88 78 72 85 56 88 40 90H150Z"
-                                    fill="rgba(125,160,245,0.32)"
-                                />
-                            </svg>
-                            <div style={styles.aboutHeader}>
-                                <span style={styles.aboutIcon}>
-                                    <UserIcon />
-                                </span>
-                                <div style={styles.aboutTitle}>About Me</div>
-                            </div>
-                            <div style={styles.aboutRule} />
-                            {editingProfile && !isViewingOther ? (
-                                <textarea
-                                    style={{
-                                        ...styles.aboutTextarea,
-                                        position: "relative",
-                                        zIndex: 1,
-                                    }}
-                                    rows={3}
-                                    value={profileDraft.bio}
-                                    onChange={(e) =>
-                                        setProfileDraft((p) => ({ ...p, bio: e.target.value }))
-                                    }
-                                    placeholder="Tell your team a bit about yourself…"
-                                />
-                            ) : (
-                                <p style={styles.aboutText}>{bio || "No bio added yet."}</p>
-                            )}
-                        </div>
+                    <div style={styles.hdrNameBlock}>
+                        <span style={styles.hdrName}>{loading ? "Loading..." : name}</span>
+                        <span style={styles.hdrActive}>
+                            <span style={styles.hdrActiveDot} />
+                            Active
+                        </span>
+                        {uploadingPhoto && <span style={styles.smallMuted}>Uploading photo…</span>}
+                        {photoError && <span style={styles.rowError}>{photoError}</span>}
                     </div>
 
                     {!isViewingOther && (
-                        <div
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 10,
-                                alignSelf: isMobile ? "flex-start" : "center",
-                            }}
-                        >
-                            {editingProfile && (
-                                <button
-                                    type="button"
-                                    className="pf-btn pf-btn-outline"
-                                    style={styles.cancelEditBtn}
-                                    disabled={savingProfile}
-                                    onClick={cancelEditProfile}
-                                >
-                                    Cancel
-                                </button>
-                            )}
+                        <div style={styles.hdrActions}>
                             <button
                                 type="button"
-                                style={styles.editProfileBtn}
                                 className="pf-btn pf-btn-outline"
-                                disabled={savingProfile}
-                                onClick={() =>
-                                    editingProfile ? handleSaveProfile() : setEditingProfile(true)
-                                }
+                                style={styles.hdrEditBtn}
+                                onClick={() => setEditingProfile(true)}
                             >
-                                {!editingProfile && <PencilIcon />}
-                                {editingProfile
-                                    ? savingProfile
-                                        ? "Saving…"
-                                        : "Save"
-                                    : "Edit Profile"}
+                                <PencilIcon />
+                                Edit Profile
                             </button>
                         </div>
                     )}
                 </div>
 
-                {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
+                <div style={isMobile ? styles.hdrInfoRowMobile : styles.hdrInfoRow}>
+                    <HdrItem icon={<MailIcon />} title="Email" styles={styles}>
+                        {email && email !== "-" ? (
+                            <a href={`mailto:${email}`} style={styles.hdrLink}>
+                                {email}
+                            </a>
+                        ) : (
+                            "-"
+                        )}
+                    </HdrItem>
+
+                    {showPhone && (
+                        <HdrItem icon={<PhoneIcon />} title="Contact number" styles={styles}>
+                            {phone && phone !== "-" ? (
+                                <a href={`tel:${phone.replace(/\s+/g, "")}`} style={styles.hdrLink}>
+                                    {phone}
+                                </a>
+                            ) : (
+                                "-"
+                            )}
+                        </HdrItem>
+                    )}
+
+                    <HdrItem icon={<PinIcon />} title="Location" styles={styles}>
+                        {location || "-"}
+                    </HdrItem>
+                    <HdrItem icon={<BadgeIcon />} title="Employee code" styles={styles}>
+                        {empCode || "-"}
+                    </HdrItem>
+                    <HdrItem icon={<DeptIcon />} title="Department" styles={styles}>
+                        {department || "-"}
+                    </HdrItem>
+                </div>
             </div>
 
             {/* ---- Stats ---- */}
@@ -3982,6 +3807,118 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
             )}
 
+            {/* ---- Edit Profile popup: labelled fields (only phone is editable) ---- */}
+            {editingProfile && !isViewingOther && (
+                <div
+                    style={styles.bulkOverlay}
+                    onClick={() => {
+                        if (!savingProfile) cancelEditProfile();
+                    }}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        style={{ ...styles.bulkModal, width: 520, textAlign: "left" }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={styles.bulkModalHeader}>
+                            <div>
+                                <h3 style={styles.bulkModalTitle}>Edit Profile</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    You can change your contact number. The other details are set by
+                                    your admin.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                style={styles.closeBtn}
+                                onClick={cancelEditProfile}
+                                disabled={savingProfile}
+                                aria-label="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                            <div style={styles.filterField}>
+                                <label style={styles.smallLabel}>Email</label>
+                                <input
+                                    style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                    value={email === "-" ? "" : email}
+                                    disabled
+                                />
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.smallLabel}>Contact Number</label>
+                                <input
+                                    style={styles.textInput}
+                                    value={profileDraft.phone}
+                                    autoFocus
+                                    onChange={(e) =>
+                                        setProfileDraft((p) => ({ ...p, phone: e.target.value }))
+                                    }
+                                    placeholder="Phone number"
+                                />
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.smallLabel}>Location</label>
+                                <input
+                                    style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                    value={location === "-" ? "" : location}
+                                    disabled
+                                />
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.smallLabel}>Employee Code</label>
+                                <input
+                                    style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                    value={empCode === "-" ? "" : empCode}
+                                    disabled
+                                />
+                            </div>
+                            <div style={styles.filterField}>
+                                <label style={styles.smallLabel}>Department</label>
+                                <input
+                                    style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                    value={department === "-" ? "" : department}
+                                    disabled
+                                />
+                            </div>
+                        </div>
+
+                        {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
+
+                        <div style={styles.bulkModalFooter}>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.bulkCancelBtn}
+                                onClick={cancelEditProfile}
+                                disabled={savingProfile}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-solid"
+                                style={{
+                                    ...styles.submitBtn,
+                                    width: "auto",
+                                    flex: 1,
+                                    opacity: savingProfile ? 0.6 : 1,
+                                    cursor: savingProfile ? "not-allowed" : "pointer",
+                                }}
+                                onClick={handleSaveProfile}
+                                disabled={savingProfile}
+                            >
+                                {savingProfile ? "Saving…" : "Save changes"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {selfAllocToast && <div style={styles.toast}>{selfAllocToast}</div>}
             {toastMsg && (
                 <div
@@ -4028,46 +3965,23 @@ export default function Profile({ onLogout }: ProfileProps) {
 /*  Small presentational subcomponents                                     */
 /* ---------------------------------------------------------------------- */
 
-const ROW_TONES = {
-    role: { bg: "#E3F1FC", fg: "#2F9BE6" },
-    email: { bg: "#DDF6EC", fg: "#18B67F" },
-    phone: { bg: "#E4E8FB", fg: "#4A5BD4" },
-    team: { bg: "#EBE3FA", fg: "#8A5CE0" },
-    dept: { bg: "#FDEEDC", fg: "#F29A2E" },
-    manager: { bg: "#FCE4EF", fg: "#E8479A" },
-};
-
-function InfoIconRow({
+// One icon + value in the compact profile header row (no label).
+function HdrItem({
     icon,
-    label,
-    value,
+    title,
+    children,
     styles,
-    tone,
-    href,
 }: {
     icon: React.ReactNode;
-    label: string;
-    value: string;
+    title: string;
+    children: ReactNode;
     styles: Record<string, CSSProperties>;
-    tone: { bg: string; fg: string };
-    href?: string;
 }) {
     return (
-        <div style={styles.infoIconRow}>
-            <span style={{ ...styles.infoChip, background: tone.bg, color: tone.fg }}>
-                <span style={{ display: "flex", transform: "scale(1.05)" }}>{icon}</span>
-            </span>
-            <div style={styles.infoStack}>
-                <span style={styles.infoLabelTop}>{label}</span>
-                {href ? (
-                    <a href={href} style={{ ...styles.infoValue, textDecoration: "none" }}>
-                        {value}
-                    </a>
-                ) : (
-                    <span style={styles.infoValue}>{value}</span>
-                )}
-            </div>
-        </div>
+        <span style={styles.hdrItem} title={title}>
+            <span style={styles.hdrItemIcon}>{icon}</span>
+            {children}
+        </span>
     );
 }
 
@@ -4480,100 +4394,104 @@ function getStyles(
             marginTop: 4,
         },
 
-        /* Identity card */
+        /* Compact profile header (banner + name, then one row of values) */
         identityCard: {
-            background: "linear-gradient(135deg, #F4F7FE 0%, #FFFFFF 62%)",
+            background: "#fff",
             borderRadius: radius.xl,
-            padding: "16px 22px",
             border: "1px solid #EEF0F8",
             boxShadow: CARD_SHADOW,
             position: "relative",
             overflow: "hidden",
         },
-        identityTop: {
-            display: "flex",
-            alignItems: "center",
-            gap: 20,
-        },
-        identityTopMobile: { display: "flex", flexDirection: "column", gap: 16 },
-        identityDivider: {
-            width: 1,
-            alignSelf: "stretch",
-            background: "#E6E9F3",
-            flexShrink: 0,
-            marginLeft: 48,
-            marginRight: 20,
-        },
-        avatarBlock: { display: "flex", alignItems: "center", gap: 16, flexShrink: 0 },
-        avatarWrap: { position: "relative", flexShrink: 0, width: 88, height: 88 },
-        avatarBlob: {
-            position: "absolute",
-            left: -18,
-            bottom: -14,
-            width: 106,
-            height: 90,
-            borderRadius: "50%",
-            background:
-                "radial-gradient(circle at 40% 40%, rgba(167,139,250,0.32), rgba(147,197,253,0.2) 65%, transparent 80%)",
-            zIndex: 0,
-        },
-        avatarSpark: {
-            position: "absolute",
-            left: -18,
-            top: -14,
-            zIndex: 0,
-            transform: "scale(0.7)",
-            transformOrigin: "top left",
-        },
-        avatar: {
+        hdrBanner: {
             position: "relative",
-            zIndex: 1,
-            width: 88,
-            height: 88,
-            borderRadius: radius.circle,
+            height: 60,
+            background: GRADIENT,
+            overflow: "hidden",
+        },
+        hdrOrbA: {
+            position: "absolute",
+            right: -30,
+            top: -50,
+            width: 170,
+            height: 170,
+            borderRadius: "50%",
+            background: "rgba(255,255,255,0.14)",
+        },
+        hdrOrbB: {
+            position: "absolute",
+            right: 120,
+            bottom: -70,
+            width: 130,
+            height: 130,
+            borderRadius: "50%",
+            background: "rgba(255,255,255,0.09)",
+        },
+        hdrTopRow: {
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 14,
+            padding: "16px 22px 0",
+            flexWrap: "wrap",
+        },
+        hdrAvatarWrap: { position: "relative", width: 72, height: 72, flexShrink: 0 },
+        hdrAvatar: {
+            width: 72,
+            height: 72,
+            borderRadius: "50%",
+            border: "4px solid #fff",
+            boxSizing: "border-box",
             background: GRADIENT,
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: fontSize["6xl"],
+            fontSize: fontSize["5xl"],
             fontWeight: fontWeight.semibold,
+            boxShadow: "0 6px 16px rgba(23,44,84,0.18)",
+        },
+        hdrAvatarImg: {
+            width: 72,
+            height: 72,
+            borderRadius: "50%",
             border: "4px solid #fff",
             boxSizing: "border-box",
-            boxShadow: "0 8px 20px rgba(80,90,200,0.22)",
-        },
-        avatarImg: {
-            position: "relative",
-            zIndex: 1,
-            width: 88,
-            height: 88,
-            borderRadius: radius.circle,
             objectFit: "cover",
-            border: "4px solid #fff",
-            boxSizing: "border-box",
-            boxShadow: "0 8px 20px rgba(80,90,200,0.22)",
+            cursor: "pointer",
+            boxShadow: "0 6px 16px rgba(23,44,84,0.18)",
         },
-        avatarEditBtn: {
+        hdrCamBtn: {
             position: "absolute",
-            zIndex: 2,
-            right: -4,
+            right: -2,
             bottom: 0,
-            width: 30,
-            height: 30,
-            borderRadius: radius.circle,
-            background: "#3F3D9E",
-            color: "#fff",
+            width: 26,
+            height: 26,
+            borderRadius: "50%",
             border: "2px solid #fff",
+            background: BRAND.blue,
+            color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             cursor: "pointer",
             padding: 0,
-            boxShadow: "0 6px 14px rgba(63,61,158,0.35)",
         },
-        nameBlock: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 },
-        name: { fontSize: 18, fontWeight: fontWeight.medium, color: "#1B1F4B", lineHeight: 1.2 },
-        activePill: {
+        hdrNameBlock: {
+            flex: 1,
+            minWidth: 160,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            paddingBottom: 4,
+        },
+        hdrName: {
+            fontSize: 18,
+            fontWeight: fontWeight.semibold,
+            color: "#1B1F4B",
+            lineHeight: 1.2,
+        },
+        hdrActive: {
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
@@ -4581,171 +4499,82 @@ function getStyles(
             fontWeight: fontWeight.medium,
             color: "#10936B",
             background: "#DDF7EE",
-            padding: "4px 12px 4px 10px",
+            padding: "3px 10px 3px 8px",
             borderRadius: radius.pill,
         },
-        activeDot: {
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: "#19C48F",
-            display: "inline-block",
-        },
-        editProfileBtn: {
+        hdrActiveDot: { width: 7, height: 7, borderRadius: "50%", background: "#19C48F" },
+        hdrActions: { display: "flex", gap: 8, alignItems: "center", paddingBottom: 4 },
+        hdrEditBtn: {
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
-            border: `1px solid ${withAlpha(BRAND.blue, 0.22)}`,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
             background: "#fff",
             color: BRAND.blue,
             fontWeight: fontWeight.medium,
             fontSize: 13,
-            padding: "8px 16px",
-            borderRadius: radius["2xl"],
+            padding: "6px 14px",
+            borderRadius: radius.pill,
             cursor: "pointer",
             whiteSpace: "nowrap",
-            boxShadow: "0 3px 10px rgba(70,80,190,0.08)",
         },
-        cancelEditBtn: {
+        hdrCancelBtn: {
             border: "1px solid #e5e7eb",
             background: "#fff",
             color: "#767F92",
             fontWeight: fontWeight.medium,
-            fontSize: fontSize.sm,
-            padding: "8px 14px",
-            borderRadius: radius["2xl"],
+            fontSize: 13,
+            padding: "6px 14px",
+            borderRadius: radius.pill,
             cursor: "pointer",
         },
-
-        identityGrid: {
-            display: "grid",
-            gridTemplateColumns: "auto auto minmax(220px, 1fr)",
-            columnGap: 56,
+        hdrInfoRow: {
+            display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            flex: 1,
-            minWidth: 0,
+            columnGap: 32,
+            rowGap: 10,
+            padding: "12px 22px 16px",
+            marginTop: 10,
+            borderTop: "1px solid #F0F2F8",
         },
-        identityGridMobile: {
+        hdrInfoRowMobile: {
             display: "flex",
-            flexDirection: "column",
-            gap: 18,
-            order: 3,
-            borderTop: "1px solid #EEF0F6",
-            paddingTop: 18,
-        },
-        identityColumn: {
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            justifyContent: "center",
-        },
-        infoIconRow: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
-        infoChip: {
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            flexShrink: 0,
-            display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            justifyContent: "center",
+            columnGap: 18,
+            rowGap: 10,
+            padding: "12px 16px 14px",
+            marginTop: 10,
+            borderTop: "1px solid #F0F2F8",
         },
-        infoStack: { display: "flex", flexDirection: "column", gap: 0, minWidth: 0 },
-        infoLabelTop: { fontSize: 11, color: "#8C94A8", textAlign: "left", lineHeight: 1.3 },
-        infoValue: {
+        hdrItem: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
             fontSize: 13,
             color: "#1B1F4B",
             fontWeight: fontWeight.medium,
-            lineHeight: 1.35,
-            textAlign: "left",
-            whiteSpace: "nowrap",
+            minWidth: 0,
         },
-        aboutBox: {
-            position: "relative",
-            overflow: "hidden",
-            background: "linear-gradient(135deg, #EEF3FD 0%, #E2EAFB 100%)",
-            border: "1px solid #E0E8F9",
-            borderRadius: 16,
-            padding: "12px 16px 14px",
-            textAlign: "left",
-            minHeight: 0,
-            boxSizing: "border-box",
-        },
-        aboutSpark: {
-            position: "absolute",
-            top: 8,
-            right: 12,
-            transform: "scale(0.7)",
-            transformOrigin: "top right",
-        },
-        aboutWave: {
-            position: "absolute",
-            right: 0,
-            bottom: 0,
-            pointerEvents: "none",
-            transform: "scale(0.65)",
-            transformOrigin: "bottom right",
-        },
-        aboutHeader: { position: "relative", display: "flex", alignItems: "center", gap: 8 },
-        aboutIcon: {
-            width: 30,
-            height: 30,
-            borderRadius: "50%",
-            background: "#DCE5FA",
-            color: "#4A5BD4",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-        },
-        aboutTitle: {
-            fontSize: 14,
-            fontWeight: fontWeight.medium,
-            color: "#1B1F4B",
-            textAlign: "left",
-        },
-        aboutRule: {
-            position: "relative",
-            width: 30,
-            height: 2,
-            borderRadius: 2,
-            background: "#B9CBF2",
-            margin: "8px 0 8px 2px",
-        },
-        aboutText: {
-            position: "relative",
-            margin: 0,
-            fontSize: 12.5,
-            color: "#5B6475",
-            lineHeight: 1.5,
-            textAlign: "left",
-        },
-        aboutTextarea: {
-            width: "100%",
+        hdrItemIcon: { color: BRAND.blue, display: "flex", flexShrink: 0 },
+        hdrLink: { color: "inherit", textDecoration: "none" },
+        hdrPhoneInput: {
+            width: 150,
+            padding: "5px 9px",
             border: "1px solid #ececf5",
-            borderRadius: radius.sm,
-            padding: 10,
-            fontSize: fontSize.base,
+            borderRadius: 8,
+            background: "#fafafa",
+            fontSize: 13,
             fontFamily: "inherit",
             color: "#17181C",
-            resize: "vertical",
-            boxSizing: "border-box",
-            background: "#fafafa",
+            outline: "none",
         },
-        editField: { display: "flex", flexDirection: "column", gap: 4 },
-        logoutRow: {
-            display: "flex",
-            justifyContent: "flex-end",
-            marginTop: 18,
-        },
-        logoutButton: {
-            padding: "10px 18px",
-            borderRadius: radius.sm,
-            border: `1px solid ${BRAND.red}`,
-            background: "#fff",
+        hdrError: {
+            margin: "0 22px 12px",
+            fontSize: fontSize.xs,
             color: BRAND.red,
             fontWeight: fontWeight.medium,
-            fontSize: fontSize.base,
-            cursor: "pointer",
         },
 
         /* Stats — 4 cards now (Total / Submitted / Pending / Allocated Time) */
