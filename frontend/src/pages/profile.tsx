@@ -4752,35 +4752,36 @@ function getStyles(
         statsGrid: {
             display: "grid",
             gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 16,
+            gap: 10,
         },
-        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+        statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
+        // COMPACT stat cards (was padding 16 / icon 40 / value 3xl)
         statCard: {
             background: "#fff",
-            borderRadius: radius.lg,
-            padding: 16,
+            borderRadius: radius.md,
+            padding: "8px 12px",
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: 8,
             boxShadow: CARD_SHADOW,
         },
         statIconWrap: {
-            width: 40,
-            height: 40,
-            borderRadius: radius.md,
+            width: 28,
+            height: 28,
+            borderRadius: radius.sm,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
         },
-        statValue: { fontSize: fontSize["3xl"], fontWeight: fontWeight.bold, lineHeight: 1.1 },
+        statValue: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, lineHeight: 1.1 },
         statLabel: {
-            fontSize: fontSize.sm,
+            fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             color: "#17181C",
-            marginTop: 2,
+            marginTop: 1,
         },
-        statSub: { fontSize: fontSize.xxs, color: "#9099AC", marginTop: 1 },
+        statSub: { fontSize: fontSize.xxs, color: "#9099AC", marginTop: 0, lineHeight: 1.2 },
 
         /* Tabs */
         tabsRow: {
