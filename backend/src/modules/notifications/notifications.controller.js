@@ -164,7 +164,19 @@ async function getPushStatus(req, res) {
   }
 }
 
+// POST /api/notifications/push-error  body: { message, permission, userAgent }
+// The browser reports WHY it could not turn on alerts, so it shows up in the
+// backend logs without anyone having to screenshot or open the console.
+function reportPushError(req, res) {
+  const clip = (v, n) => String(v || "").slice(0, n);
+  console.warn(
+    `[webpush][client-error] user ${req.user.userId} (org ${req.user.organizationId}) permission=${clip(req.body?.permission, 20)} :: ${clip(req.body?.message, 500)} :: ${clip(req.body?.userAgent, 300)}`,
+  );
+  res.json({ success: true });
+}
+
 module.exports = {
+  reportPushError,
   listMyNotifications,
   markRead,
   getPushKey,
