@@ -38,7 +38,29 @@ function urlBase64ToUint8Array(base64: string) {
     return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-async function registerPush(): Promise<boolean> {
+// The VAPID PUBLIC key is not a secret. If it is set as VITE_VAPID_PUBLIC_KEY
+// (frontend .env / Vercel env) we skip the extra backend call — which matters
+// a lot when the backend is "asleep" (Render free tier cold start).
+const ENV_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const t = window.setTimeout(() => reject(new Error(message)), ms);
+        p.then(
+            (v) => {
+                window.clearTimeout(t);
+                resolve(v);
+            },
+            (e) => {
+                window.clearTimeout(t);
+                reject(e);
+            }
+        );
+    });
+}
+
+async function getPublicKey(): Promise<string> {
+    if (ENV_PUBLIC_KEY) return ENV_PUBLIC_KEY;
     const keyRes = await authFetch(`${API_BASE}/api/notifications/push-key`);
     const keyJson = await keyRes.json().catch(() => ({}));
     if (!keyRes.ok || !keyJson.success) {
@@ -46,15 +68,39 @@ async function registerPush(): Promise<boolean> {
             "Alerts are not set up on the server yet (VAPID keys missing). Please tell your admin."
         );
     }
+    return keyJson.data.publicKey;
+}
 
-    const reg = await navigator.serviceWorker.register("/sw.js");
-    await navigator.serviceWorker.ready;
+function sameKey(a: ArrayBuffer | null | undefined, b: Uint8Array) {
+    if (!a) return false;
+    const x = new Uint8Array(a);
+    return x.length === b.length && x.every((v, i) => v === b[i]);
+}
+
+async function registerPush(): Promise<boolean> {
+    // key lookup and service-worker start run in PARALLEL (was one after another)
+    const [publicKey, reg] = await Promise.all([
+        getPublicKey(),
+        navigator.serviceWorker.register("/sw.js").then(async (r) => {
+            await navigator.serviceWorker.ready;
+            return r;
+        }),
+    ]);
+    const appKey = urlBase64ToUint8Array(publicKey);
+
     let sub = await reg.pushManager.getSubscription();
+    // a subscription made with a DIFFERENT key (e.g. old/local keys) can never
+    // receive pushes from this server — drop it and subscribe again
+    if (sub && !sameKey(sub.options.applicationServerKey, appKey)) {
+        await sub.unsubscribe();
+        sub = null;
+    }
     if (!sub) {
-        sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(keyJson.data.publicKey),
-        });
+        sub = await withTimeout(
+            reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }),
+            20000,
+            "Your browser could not reach its notification service. Check the internet / firewall and try again."
+        );
     }
     const res = await authFetch(`${API_BASE}/api/notifications/push-subscribe`, {
         method: "POST",
