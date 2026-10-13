@@ -119,6 +119,9 @@ async function subscribePush(req, res) {
       { onConflict: "endpoint" },
     );
     if (error) throw error;
+    console.log(
+      `[webpush] device saved for user ${userId} (org ${organizationId}) endpoint …${endpoint.slice(-20)}`,
+    );
     res.json({ success: true });
   } catch (err) {
     console.error("subscribePush error:", err);
@@ -128,4 +131,43 @@ async function subscribePush(req, res) {
   }
 }
 
-module.exports = { listMyNotifications, markRead, getPushKey, subscribePush };
+// GET /api/notifications/push-status?endpoint=<this device's endpoint>
+// Lets the browser CONFIRM that the server really saved this device for the
+// logged-in user (browser permission "Allow" alone does not prove that).
+async function getPushStatus(req, res) {
+  try {
+    const { userId, organizationId } = req.user;
+    const endpoint = String(req.query?.endpoint || "");
+
+    const { data, error } = await supabase
+      .from("push_subscriptions")
+      .select("endpoint")
+      .eq("organization_id", organizationId)
+      .eq("user_id", userId);
+    if (error) throw error;
+
+    const devices = data || [];
+    res.json({
+      success: true,
+      data: {
+        deviceCount: devices.length,
+        thisDeviceSaved: endpoint
+          ? devices.some((d) => d.endpoint === endpoint)
+          : null,
+      },
+    });
+  } catch (err) {
+    console.error("getPushStatus error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Could not check alert status." });
+  }
+}
+
+module.exports = {
+  listMyNotifications,
+  markRead,
+  getPushKey,
+  subscribePush,
+  getPushStatus,
+};

@@ -50,8 +50,19 @@ async function sendPushToUsers({ organizationId, userIds, title, body, url }) {
       .in("user_id", userIds);
     if (error) throw error;
     if (!subs?.length) {
+      // Diagnose WHY: is the device saved under another org, or not saved at all?
+      const { data: anyOrg } = await supabase
+        .from("push_subscriptions")
+        .select("user_id, organization_id")
+        .in("user_id", userIds);
+      const otherOrg = (anyOrg || []).filter(
+        (r) => r.organization_id !== organizationId,
+      );
       console.log(
-        `[webpush] no subscribed device for ${userIds.length} user(s) — employee has not clicked "Turn on alerts" yet`,
+        `[webpush] no subscribed device for user(s) ${userIds.join(", ")} in org ${organizationId}.` +
+          (otherOrg.length
+            ? ` BUT ${otherOrg.length} device(s) exist under a DIFFERENT organization_id (${[...new Set(otherOrg.map((r) => r.organization_id))].join(", ")}) — org mismatch.`
+            : ` No device saved for these user ids at all: the employee's browser never saved it, or the device was moved to another login (one browser = one user, last login wins).`),
       );
       return { sent: 0, removed: 0 };
     }

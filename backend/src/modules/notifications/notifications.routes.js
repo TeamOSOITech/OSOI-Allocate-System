@@ -7,6 +7,7 @@ const {
   markRead,
   getPushKey,
   subscribePush,
+  getPushStatus,
 } = require("./notifications.controller");
 
 // Any logged-in user; handlers only ever touch req.user's own rows.
@@ -15,5 +16,6 @@ router.get("/", listMyNotifications);
 router.patch("/read", markRead);
 router.get("/push-key", getPushKey);
 router.post("/push-subscribe", subscribePush);
+router.get("/push-status", getPushStatus);
 
 module.exports = router;
