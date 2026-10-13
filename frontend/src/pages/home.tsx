@@ -690,7 +690,6 @@ export default function Home({ user }: { user: HomeUser }) {
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            <div style={styles.topBar} />
             <div style={isMobile ? styles.contentBodyMobile : styles.contentBody}>
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div>

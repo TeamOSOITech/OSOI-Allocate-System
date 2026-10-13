@@ -58,6 +58,25 @@ import autoTable from "jspdf-autotable";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
+// Scrolls ONLY the page's own scroll area. element.scrollIntoView() would also
+// scroll the height-locked app shell, pushing header + sidebar up and leaving a
+// blank strip at the bottom.
+function scrollWithinPage(el: HTMLElement | null, offset = 12) {
+    if (!el) return;
+    let parent: HTMLElement | null = el.parentElement;
+    while (parent) {
+        const oy = getComputedStyle(parent).overflowY;
+        if ((oy === "auto" || oy === "scroll") && parent.scrollHeight > parent.clientHeight) break;
+        parent = parent.parentElement;
+    }
+    if (!parent) return;
+    const top =
+        el.getBoundingClientRect().top -
+        parent.getBoundingClientRect().top +
+        parent.scrollTop -
+        offset;
+    parent.scrollTo({ top, behavior: "smooth" });
+}
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -630,10 +649,7 @@ export default function Billing() {
     const detailRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         if (openClient === null) return;
-        const t = setTimeout(
-            () => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-            60
-        );
+        const t = setTimeout(() => scrollWithinPage(detailRef.current), 60);
         return () => clearTimeout(t);
     }, [openClient]);
 

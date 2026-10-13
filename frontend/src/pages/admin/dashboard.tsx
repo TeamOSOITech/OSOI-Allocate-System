@@ -714,9 +714,6 @@ export default function Dashboard({ user }: DashboardProps) {
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
-            {/* Thin three-color brand rail — same signature strip used in header.tsx */}
-            <div style={styles.topBar} />
-
             <div style={isMobile ? styles.contentBodyMobile : styles.contentBody}>
                 {/* NEW: Manager / Quality Manager toggle — only shown when the
                     person actually has more than one view available (Super

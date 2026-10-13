@@ -1831,136 +1831,283 @@ export default function TodaysAllocationCases({
                             </span>
                         </div>
                         <div style={styles.tableScroll}>
-                            <div style={styles.tableHeadRow}>
-                                <span style={styles.colCase}>Case #</span>
-                                <span style={styles.colClient}>Client</span>
-                                <span style={styles.colSubclient}>Sub-Client</span>
-                                <span style={styles.colService}>Service</span>
-                                <span style={styles.colDate}>Date</span>
-                                <span style={styles.colStatus}>Status</span>
-                                <span style={styles.colAssign}>Allocate to (qty)</span>
-                            </div>
-                            {countsLoading ? (
-                                <div style={styles.emptyNote}>Loading counts…</div>
-                            ) : visibleCountRows.length === 0 ? (
-                                <div style={styles.emptyNote}>
-                                    No pending counts for this filter.
+                            <div style={styles.cgWrap}>
+                                <div style={styles.cgHead}>
+                                    <span>Client</span>
+                                    <span>Sub-client</span>
+                                    <span>Date</span>
+                                    <span>Status</span>
+                                    <span style={{ textAlign: "right" }}>Allocated</span>
                                 </div>
-                            ) : null}
-                            {visibleCountRows.map((c) => {
-                                const total = draftTotal(c);
-                                const left = c.quantity - total;
-                                const over = left < 0;
-                                const rowAmp = ampOf(c.productId);
-                                return (
-                                    <div key={c.id} style={styles.countBlock}>
-                                        <div style={styles.countRowTop}>
-                                            <span style={{ ...styles.colCase, color: BRAND.blue }}>
-                                                {c.pendingCount} cases
-                                                {rowAmp > 0 && (
-                                                    <span style={styles.carryTag}>
-                                                        {formatMinutes(c.pendingCount * rowAmp)}
-                                                    </span>
-                                                )}
-                                            </span>
-                                            <span style={styles.colClient}>
-                                                {c.clientName || "—"}
-                                            </span>
-                                            <span style={styles.colSubclient}>
-                                                {c.subclientName || "—"}
-                                            </span>
-                                            <span style={styles.colService}>
-                                                {c.productName || "—"}
-                                            </span>
-                                            <span style={styles.colDate}>
-                                                {c.workDate}
-                                                {c.workDate < workDate && (
-                                                    <span style={styles.carryTag}>Carry-over</span>
-                                                )}
-                                            </span>
-                                            <span style={styles.colStatus}>
-                                                <span
-                                                    style={{
-                                                        ...styles.statusPill,
-                                                        background:
-                                                            left === 0
-                                                                ? "rgba(var(--brand-green-rgb),0.12)"
-                                                                : "rgba(156,163,175,0.15)",
-                                                        color:
-                                                            left === 0 ? BRAND.green : BRAND.grey,
-                                                    }}
-                                                >
-                                                    {left === 0 ? "Allocated" : `${left} left`}
-                                                </span>
-                                            </span>
-                                            <span
-                                                style={{
-                                                    ...styles.colAssign,
-                                                    fontSize: fontSize.sm,
-                                                    color: over ? BRAND.red : "#767F92",
-                                                }}
-                                            >
-                                                {total} / {c.quantity} allocated
-                                                {rowAmp > 0 &&
-                                                    ` · ${formatMinutes(total * rowAmp)}`}
-                                                {c.fulfilledCount > 0 &&
-                                                    ` · ${c.fulfilledCount} submitted`}
-                                            </span>
-                                        </div>
-                                        <div style={styles.countEmpGrid}>
-                                            {employeesForCount(c).map((emp) => {
-                                                const done = fulfilledQty(c, emp.id);
-                                                const qty = draftQty(c, emp.id);
-                                                return (
-                                                    <label key={emp.id} style={styles.countEmpItem}>
-                                                        <span style={styles.countEmpName}>
-                                                            {emp.name}
-                                                        </span>
-                                                        <input
-                                                            type="number"
-                                                            min={done}
-                                                            max={c.quantity}
-                                                            style={styles.qtyInput}
-                                                            disabled={bulkSaving}
-                                                            value={qty}
-                                                            title={
-                                                                done > 0
-                                                                    ? `${done} already submitted`
-                                                                    : undefined
-                                                            }
-                                                            onChange={(e) => {
-                                                                const v = Math.max(
-                                                                    done,
-                                                                    Math.floor(
-                                                                        Number(e.target.value) || 0
-                                                                    )
-                                                                );
-                                                                setCountDraft((prev) => ({
-                                                                    ...prev,
-                                                                    [c.id]: {
-                                                                        ...(prev[c.id] || {}),
-                                                                        [emp.id]: v,
-                                                                    },
-                                                                }));
+                                {countsLoading ? (
+                                    <div style={styles.emptyNote}>Loading counts…</div>
+                                ) : visibleCountRows.length === 0 ? (
+                                    <div style={styles.emptyNote}>
+                                        No pending counts for this filter.
+                                    </div>
+                                ) : null}
+                                {(() => {
+                                    // group the counts by service so it reads in clean blocks
+                                    const groups = new Map<string, CountRow[]>();
+                                    visibleCountRows.forEach((c) => {
+                                        const k = c.productName || "No service";
+                                        if (!groups.has(k)) groups.set(k, []);
+                                        groups.get(k)!.push(c);
+                                    });
+                                    const dots = [BRAND.blue, "#6C8EF5", BRAND.green, "#F59E0B"];
+                                    return Array.from(groups.entries()).map(
+                                        ([service, rows], gi) => {
+                                            const gAlloc = rows.reduce(
+                                                (t, r) => t + draftTotal(r),
+                                                0
+                                            );
+                                            const gQty = rows.reduce((t, r) => t + r.quantity, 0);
+                                            return (
+                                                <div key={service} style={styles.cgGroup}>
+                                                    <div style={styles.cgGroupHead}>
+                                                        <span
+                                                            style={{
+                                                                ...styles.cgDot,
+                                                                background: dots[gi % dots.length],
                                                             }}
                                                         />
-                                                        {rowAmp > 0 && qty > 0 && (
-                                                            <span style={styles.qtyTime}>
-                                                                = {formatMinutes(qty * rowAmp)}
-                                                            </span>
-                                                        )}
-                                                    </label>
-                                                );
-                                            })}
-                                        </div>
-                                        {over && (
-                                            <p style={{ ...styles.errorText, margin: "4px 0 0" }}>
-                                                Allocated is {-left} more than the pending count.
-                                            </p>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                                        <span style={styles.cgGroupName}>
+                                                            {service}
+                                                        </span>
+                                                        <span style={styles.cgCountPill}>
+                                                            {rows.length}{" "}
+                                                            {rows.length === 1 ? "Case" : "Cases"}
+                                                        </span>
+                                                        <span style={{ flex: 1 }} />
+                                                        <span style={styles.smallMutedText}>
+                                                            Total Allocated
+                                                        </span>
+                                                        <span style={styles.cgGroupTotal}>
+                                                            {gAlloc} / {gQty}
+                                                        </span>
+                                                    </div>
+                                                    {rows.map((c, ri) => {
+                                                        const total = draftTotal(c);
+                                                        const left = c.quantity - total;
+                                                        const over = left < 0;
+                                                        const rowAmp = ampOf(c.productId);
+                                                        return (
+                                                            <div
+                                                                key={c.id}
+                                                                style={{
+                                                                    ...styles.cgRowWrap,
+                                                                    borderTop:
+                                                                        ri === 0
+                                                                            ? "none"
+                                                                            : "1px solid #eef0f6",
+                                                                }}
+                                                            >
+                                                                <div style={styles.cgRow}>
+                                                                    <div style={styles.cgCell}>
+                                                                        <span
+                                                                            style={styles.cgClient}
+                                                                        >
+                                                                            {c.clientName || "—"}
+                                                                        </span>
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMutedText
+                                                                            }
+                                                                        >
+                                                                            {c.pendingCount} cases
+                                                                            {rowAmp > 0 &&
+                                                                                ` · ${formatMinutes(c.pendingCount * rowAmp)}`}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div style={styles.cgText}>
+                                                                        {c.subclientName || "—"}
+                                                                    </div>
+                                                                    <div style={styles.cgCell}>
+                                                                        <span style={styles.cgText}>
+                                                                            {c.workDate}
+                                                                        </span>
+                                                                        {c.workDate < workDate && (
+                                                                            <span
+                                                                                style={
+                                                                                    styles.cgCarry
+                                                                                }
+                                                                            >
+                                                                                ↻ Carry-over
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div>
+                                                                        <span
+                                                                            style={{
+                                                                                ...styles.statusPill,
+                                                                                background:
+                                                                                    left === 0
+                                                                                        ? "rgba(var(--brand-green-rgb),0.12)"
+                                                                                        : "rgba(156,163,175,0.15)",
+                                                                                color:
+                                                                                    left === 0
+                                                                                        ? BRAND.green
+                                                                                        : BRAND.grey,
+                                                                            }}
+                                                                        >
+                                                                            {left === 0
+                                                                                ? "Allocated"
+                                                                                : `${left} left`}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div
+                                                                        style={{
+                                                                            ...styles.cgRight,
+                                                                            color: over
+                                                                                ? BRAND.red
+                                                                                : "#767F92",
+                                                                        }}
+                                                                    >
+                                                                        <strong
+                                                                            style={{
+                                                                                color: over
+                                                                                    ? BRAND.red
+                                                                                    : "#1B1F4B",
+                                                                            }}
+                                                                        >
+                                                                            {total} / {c.quantity}
+                                                                        </strong>
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMutedText
+                                                                            }
+                                                                        >
+                                                                            allocated
+                                                                            {rowAmp > 0 &&
+                                                                                ` · ${formatMinutes(total * rowAmp)}`}
+                                                                            {c.fulfilledCount > 0 &&
+                                                                                ` · ${c.fulfilledCount} submitted`}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <div style={styles.cgEmpGrid}>
+                                                                    {employeesForCount(c).map(
+                                                                        (emp) => {
+                                                                            const done =
+                                                                                fulfilledQty(
+                                                                                    c,
+                                                                                    emp.id
+                                                                                );
+                                                                            const qty = draftQty(
+                                                                                c,
+                                                                                emp.id
+                                                                            );
+                                                                            return (
+                                                                                <label
+                                                                                    key={emp.id}
+                                                                                    style={{
+                                                                                        ...styles.cgEmpItem,
+                                                                                        ...(qty > 0
+                                                                                            ? styles.cgEmpItemOn
+                                                                                            : {}),
+                                                                                    }}
+                                                                                >
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.cgEmpName
+                                                                                        }
+                                                                                        title={
+                                                                                            emp.name
+                                                                                        }
+                                                                                    >
+                                                                                        {emp.name}
+                                                                                    </span>
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        min={done}
+                                                                                        max={
+                                                                                            c.quantity
+                                                                                        }
+                                                                                        style={
+                                                                                            styles.qtyInput
+                                                                                        }
+                                                                                        disabled={
+                                                                                            bulkSaving
+                                                                                        }
+                                                                                        value={qty}
+                                                                                        title={
+                                                                                            done > 0
+                                                                                                ? `${done} already submitted`
+                                                                                                : undefined
+                                                                                        }
+                                                                                        onChange={(
+                                                                                            e
+                                                                                        ) => {
+                                                                                            const v =
+                                                                                                Math.max(
+                                                                                                    done,
+                                                                                                    Math.floor(
+                                                                                                        Number(
+                                                                                                            e
+                                                                                                                .target
+                                                                                                                .value
+                                                                                                        ) ||
+                                                                                                            0
+                                                                                                    )
+                                                                                                );
+                                                                                            setCountDraft(
+                                                                                                (
+                                                                                                    prev
+                                                                                                ) => ({
+                                                                                                    ...prev,
+                                                                                                    [c.id]:
+                                                                                                        {
+                                                                                                            ...(prev[
+                                                                                                                c
+                                                                                                                    .id
+                                                                                                            ] ||
+                                                                                                                {}),
+                                                                                                            [emp.id]:
+                                                                                                                v,
+                                                                                                        },
+                                                                                                })
+                                                                                            );
+                                                                                        }}
+                                                                                    />
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.cgEmpTime
+                                                                                        }
+                                                                                    >
+                                                                                        {rowAmp >
+                                                                                            0 &&
+                                                                                        qty > 0
+                                                                                            ? formatMinutes(
+                                                                                                  qty *
+                                                                                                      rowAmp
+                                                                                              )
+                                                                                            : ""}
+                                                                                    </span>
+                                                                                </label>
+                                                                            );
+                                                                        }
+                                                                    )}
+                                                                </div>
+                                                                {over && (
+                                                                    <p
+                                                                        style={{
+                                                                            ...styles.errorText,
+                                                                            margin: "6px 0 0",
+                                                                        }}
+                                                                    >
+                                                                        Allocated is {-left} more
+                                                                        than the pending count.
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        }
+                                    );
+                                })()}
+                            </div>
                         </div>
                         {allocateBar}
                     </div>
@@ -2535,6 +2682,9 @@ export default function TodaysAllocationCases({
     );
 }
 
+// clean grid for the grouped Counts view
+const CG_COLS = "1.3fr 1.1fr 130px 110px 1.5fr";
+
 const styles: Record<string, CSSProperties> = {
     root: { display: "flex", flexDirection: "column" },
     topBar: {
@@ -2998,6 +3148,99 @@ const styles: Record<string, CSSProperties> = {
         color: "#fff",
         border: "1px solid transparent",
         boxShadow: "0 6px 16px rgba(var(--brand-blue-rgb),0.28)",
+    },
+    // ---- grouped Counts view ----
+    cgWrap: {
+        minWidth: 900,
+        padding: "0 20px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+    },
+    cgHead: {
+        display: "grid",
+        gridTemplateColumns: CG_COLS,
+        gap: 14,
+        padding: "10px 18px",
+        background: "#F4F8FD",
+        borderRadius: radius.sm,
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#767F92",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+    },
+    cgGroup: {
+        border: "1px solid #E6E9F3",
+        borderRadius: radius.md,
+        background: "#fff",
+        overflow: "hidden",
+    },
+    cgGroupHead: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "11px 18px",
+        background: "#F7F9FE",
+        borderBottom: "1px solid #E6E9F3",
+    },
+    cgDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
+    cgGroupName: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: "#17181C" },
+    cgCountPill: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        background: "rgba(var(--brand-blue-rgb),0.1)",
+        borderRadius: radius.pill,
+        padding: "2px 10px",
+    },
+    cgGroupTotal: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: "#1B1F4B" },
+    cgRowWrap: { padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 },
+    cgRow: {
+        display: "grid",
+        gridTemplateColumns: CG_COLS,
+        gap: 14,
+        alignItems: "center",
+    },
+    cgCell: { display: "flex", flexDirection: "column", gap: 3 },
+    cgClient: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: "#1B1F4B" },
+    cgText: { fontSize: fontSize.base, color: "#17181C" },
+    cgCarry: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: "#B45309" },
+    cgRight: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 2,
+        textAlign: "right",
+    },
+    cgEmpGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+        gap: 8,
+    },
+    cgEmpItem: {
+        display: "grid",
+        gridTemplateColumns: "1fr 64px 54px",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        border: "1px solid #ececf5",
+        borderRadius: radius.sm,
+        background: "#fafafa",
+        fontSize: fontSize.sm,
+        color: "#17181C",
+    },
+    cgEmpItemOn: {
+        background: "rgba(var(--brand-blue-rgb),0.05)",
+        borderColor: "rgba(var(--brand-blue-rgb),0.25)",
+    },
+    cgEmpName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    cgEmpTime: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.blue,
+        textAlign: "right",
+        whiteSpace: "nowrap",
     },
     countBlock: {
         borderTop: "1px solid #f1f1f1",
