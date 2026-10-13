@@ -16,7 +16,10 @@
 
     font: 18px/145% var(--sans);
     letter-spacing: 0.18px;
-    color-scheme: light dark;
+    /* FIX: was `light dark`, which let the browser paint its own BLACK
+       canvas/scrollbars/form controls whenever the system theme is dark.
+       The app has no dark theme, so it stays light always. */
+    color-scheme: light;
     color: var(--text);
     background: var(--bg);
     font-synthesis: none;

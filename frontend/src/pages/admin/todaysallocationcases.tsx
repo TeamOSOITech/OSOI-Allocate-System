@@ -381,10 +381,29 @@ export default function TodaysAllocationCases({
             return true;
         }
     };
+    // Adds a line to the header bell's notification list (kept in
+    // localStorage "allocNotifyLog", last 20 only) and tells the header.
+    const logNotify = (text: string, kind: "ok" | "off" | "fail" = "ok") => {
+        try {
+            const old = JSON.parse(localStorage.getItem("allocNotifyLog") || "[]");
+            const list = Array.isArray(old) ? old : [];
+            list.unshift({ id: Date.now() + Math.random(), text, kind, time: Date.now() });
+            localStorage.setItem("allocNotifyLog", JSON.stringify(list.slice(0, 20)));
+        } catch {
+            /* ignore storage errors */
+        }
+        window.dispatchEvent(new Event("allocNotifyLogChanged"));
+    };
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [clearing, setClearing] = useState(false);
     const [autoPreviewCaseIds, setAutoPreviewCaseIds] = useState<string[]>([]);
     const [successPopup, setSuccessPopup] = useState<{ count: number } | null>(null);
+    // Result of the employee mail, shown inside the "Allocated successfully"
+    // popup so the notification status is visible in the alert too.
+    const [notifyStatus, setNotifyStatus] = useState<{
+        kind: "sending" | "ok" | "off" | "fail";
+        text: string;
+    } | null>(null);
     // NEW (8h WARNING): popup state
     const [overloadOpen, setOverloadOpen] = useState(false);
     const [showOverloadList, setShowOverloadList] = useState(false);
@@ -886,9 +905,24 @@ export default function TodaysAllocationCases({
     // server (no case counts / details) and every employee appears ONCE, so
     // an employee who got many cases still receives a single message.
     const notifyEmployees = async (employeeIds: string[], overloadEmployeeIds: string[] = []) => {
-        if (!isNotifyOn()) return; // notifications are turned OFF
         const unique = [...new Set(employeeIds.filter(Boolean))];
-        if (unique.length === 0) return;
+        if (unique.length === 0) {
+            setNotifyStatus(null);
+            return;
+        }
+        if (!isNotifyOn()) {
+            // notifications are turned OFF
+            logNotify(`Notifications OFF. Mail not sent to ${unique.length} employee(s).`, "off");
+            setNotifyStatus({
+                kind: "off",
+                text: `Notifications are OFF. Mail not sent to ${unique.length} employee(s).`,
+            });
+            return;
+        }
+        setNotifyStatus({
+            kind: "sending",
+            text: `Sending notification to ${unique.length} employee(s)…`,
+        });
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/notify-allocation`, {
                 method: "POST",
@@ -903,7 +937,17 @@ export default function TodaysAllocationCases({
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json?.message || "failed");
+            logNotify(`Work allocated mail sent to ${unique.length} employee(s).`);
+            setNotifyStatus({
+                kind: "ok",
+                text: `Notification sent to ${unique.length} employee(s).`,
+            });
         } catch {
+            logNotify("Allocated, but the mail could not be sent.", "fail");
+            setNotifyStatus({
+                kind: "fail",
+                text: "Allocated, but the notification could not be sent.",
+            });
             showToast("Allocated, but the message could not be sent.");
         }
     };
@@ -1028,8 +1072,15 @@ export default function TodaysAllocationCases({
     // one mail per employee who got an urgent case (the server reads the
     // employee from the saved case, so only the case ids are sent)
     const notifyUrgent = async (caseIds: string[]) => {
-        if (!isNotifyOn()) return; // notifications are turned OFF
         if (caseIds.length === 0) return;
+        if (!isNotifyOn()) {
+            // notifications are turned OFF
+            logNotify(
+                `Notifications OFF. Urgent mail not sent (${caseIds.length} case(s)).`,
+                "off"
+            );
+            return;
+        }
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/notify-urgent`, {
                 method: "POST",
@@ -1038,7 +1089,9 @@ export default function TodaysAllocationCases({
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json?.message || "failed");
+            logNotify(`Urgent mail sent for ${caseIds.length} case(s).`);
         } catch {
+            logNotify("Allocated, but the urgent mail could not be sent.", "fail");
             showToast("Allocated, but the urgent mail could not be sent.");
         }
     };
@@ -2430,6 +2483,39 @@ export default function TodaysAllocationCases({
                             />
                             <strong>{successPopup.count}</strong> case
                             {successPopup.count === 1 ? "" : "s"} allocated successfully.
+                            {notifyStatus && (
+                                <span
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        marginTop: 12,
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color:
+                                            notifyStatus.kind === "ok"
+                                                ? "#0f766e"
+                                                : notifyStatus.kind === "fail"
+                                                  ? "#DC2626"
+                                                  : "#6b7280",
+                                    }}
+                                >
+                                    <i
+                                        className={
+                                            notifyStatus.kind === "ok"
+                                                ? "ti ti-bell-ringing"
+                                                : notifyStatus.kind === "off"
+                                                  ? "ti ti-bell-off"
+                                                  : notifyStatus.kind === "fail"
+                                                    ? "ti ti-alert-circle"
+                                                    : "ti ti-loader-2"
+                                        }
+                                        style={{ fontSize: 16 }}
+                                    />
+                                    {notifyStatus.text}
+                                </span>
+                            )}
                         </p>
                         <div style={styles.modalActions}>
                             <button
