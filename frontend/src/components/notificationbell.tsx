@@ -40,8 +40,12 @@ function urlBase64ToUint8Array(base64: string) {
 
 async function registerPush(): Promise<boolean> {
     const keyRes = await authFetch(`${API_BASE}/api/notifications/push-key`);
-    const keyJson = await keyRes.json();
-    if (!keyRes.ok || !keyJson.success) return false;
+    const keyJson = await keyRes.json().catch(() => ({}));
+    if (!keyRes.ok || !keyJson.success) {
+        throw new Error(
+            "Alerts are not set up on the server yet (VAPID keys missing). Please tell your admin."
+        );
+    }
 
     const reg = await navigator.serviceWorker.register("/sw.js");
     await navigator.serviceWorker.ready;
@@ -57,7 +61,8 @@ async function registerPush(): Promise<boolean> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(sub.toJSON()),
     });
-    return res.ok;
+    if (!res.ok) throw new Error("Could not save this device on the server. Please try again.");
+    return true;
 }
 
 function timeAgo(iso: string) {
@@ -79,23 +84,25 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
         pushSupported ? Notification.permission : "denied"
     );
     const [enabling, setEnabling] = useState(false);
+    const [pushError, setPushError] = useState("");
 
     // Already allowed earlier? Quietly re-link this device to the current
     // user (e.g. a different employee logged in on the same browser).
     useEffect(() => {
         if (pushSupported && Notification.permission === "granted") {
-            registerPush().catch(() => {});
+            registerPush().catch((e) => setPushError(e?.message || "Could not turn on alerts."));
         }
     }, []);
 
     const enablePush = async () => {
         setEnabling(true);
+        setPushError("");
         try {
             const result = await Notification.requestPermission();
             setPermission(result);
             if (result === "granted") await registerPush();
-        } catch {
-            // ignore — user can try again
+        } catch (e: any) {
+            setPushError(e?.message || "Could not turn on alerts.");
         } finally {
             setEnabling(false);
         }
@@ -205,7 +212,7 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                         Notifications
                     </div>
 
-                    {pushSupported && permission !== "granted" && (
+                    {pushSupported && (permission !== "granted" || pushError) && (
                         <div
                             style={{
                                 padding: "10px 14px",
@@ -218,6 +225,29 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                         >
                             {permission === "denied" ? (
                                 "Alerts are blocked in this browser. Allow notifications for this site in browser settings to get alerts even when logged out."
+                            ) : pushError ? (
+                                <>
+                                    <span style={{ color: "#b42318" }}>{pushError}</span>
+                                    <div style={{ marginTop: 6 }}>
+                                        <button
+                                            type="button"
+                                            onClick={enablePush}
+                                            disabled={enabling}
+                                            style={{
+                                                background: "#204297",
+                                                color: "#fff",
+                                                border: "none",
+                                                borderRadius: radius.md,
+                                                padding: "6px 12px",
+                                                fontSize: fontSize.sm,
+                                                fontWeight: fontWeight.semibold,
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            {enabling ? "Trying..." : "Try again"}
+                                        </button>
+                                    </div>
+                                </>
                             ) : (
                                 <>
                                     Get alerts on this device even when you are logged out.
