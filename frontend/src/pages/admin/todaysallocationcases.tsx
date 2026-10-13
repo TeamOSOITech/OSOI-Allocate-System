@@ -372,6 +372,15 @@ export default function TodaysAllocationCases({
         perEmployee: { employeeId: string; quantity: number }[];
     } | null>(null);
     const [toast, setToast] = useState("");
+    // NEW (NOTIFY TOGGLE): ON/OFF lives in the header bell, which saves it
+    // in localStorage. This page just reads it when it is about to send.
+    const isNotifyOn = () => {
+        try {
+            return localStorage.getItem("allocNotifyEnabled") !== "false";
+        } catch {
+            return true;
+        }
+    };
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [clearing, setClearing] = useState(false);
     const [autoPreviewCaseIds, setAutoPreviewCaseIds] = useState<string[]>([]);
@@ -877,6 +886,7 @@ export default function TodaysAllocationCases({
     // server (no case counts / details) and every employee appears ONCE, so
     // an employee who got many cases still receives a single message.
     const notifyEmployees = async (employeeIds: string[], overloadEmployeeIds: string[] = []) => {
+        if (!isNotifyOn()) return; // notifications are turned OFF
         const unique = [...new Set(employeeIds.filter(Boolean))];
         if (unique.length === 0) return;
         try {
@@ -1018,6 +1028,7 @@ export default function TodaysAllocationCases({
     // one mail per employee who got an urgent case (the server reads the
     // employee from the saved case, so only the case ids are sent)
     const notifyUrgent = async (caseIds: string[]) => {
+        if (!isNotifyOn()) return; // notifications are turned OFF
         if (caseIds.length === 0) return;
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/notify-urgent`, {
@@ -1066,7 +1077,9 @@ export default function TodaysAllocationCases({
                 setUrgentOpen(false);
                 setUrgentPickerOpen(false);
                 showToast(
-                    `${okIds.length} urgent case(s) allocated. Employees have been notified.`
+                    isNotifyOn()
+                        ? `${okIds.length} urgent case(s) allocated. Employees have been notified.`
+                        : `${okIds.length} urgent case(s) allocated. Notifications are OFF.`
                 );
             }
         } finally {

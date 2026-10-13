@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme, THEMES } from "../context/themecontext";
 import type { ThemeName } from "../context/themecontext";
-import NotificationBell from "./notificationbell";
 
 interface HeaderProps {
     userName?: string;
@@ -89,6 +88,25 @@ export default function Header({
     const { isMobile } = useBreakpoint();
     const { colors: BRAND, themeName, setThemeName } = useTheme();
     const navigate = useNavigate();
+    // ON/OFF for the "work allocated" employee mails. Saved in
+    // localStorage ("allocNotifyEnabled"); the allocation page reads the
+    // same key right before it sends a mail.
+    const [notifyEnabled, setNotifyEnabled] = useState<boolean>(() => {
+        try {
+            return localStorage.getItem("allocNotifyEnabled") !== "false";
+        } catch {
+            return true;
+        }
+    });
+    const toggleNotify = () => {
+        const next = !notifyEnabled;
+        setNotifyEnabled(next);
+        try {
+            localStorage.setItem("allocNotifyEnabled", String(next));
+        } catch {
+            /* ignore storage errors */
+        }
+    };
     const displayName = userName || "Administrator";
     const firstName = displayName.split(" ")[0];
 
@@ -218,13 +236,33 @@ export default function Header({
 
             {/* RIGHT */}
             <div style={isMobile ? styles.rightMobile : styles.right}>
-                {/* Notifications bell — in-app alerts (e.g. "more than 8 hours
-                    of work today"). Self-contained: fetches/polls its own data. */}
-                <NotificationBell
-                    buttonStyle={isMobile ? styles.iconBtnSmall : styles.iconBtn}
-                    badgeStyle={styles.notifBadge}
-                    isMobile={isMobile}
-                />
+                {/* REMOVED: Help (?) and Notifications (bell) icon buttons
+                    per request — neither had a working page/panel behind
+                    it yet, so they were removed from the header entirely
+                    (desktop + small-mobile variants). onHelp/
+                    onNotificationsClick/notificationCount props are left
+                    in place in case they're wired up again later. */}
+
+                {/* Notification bell — click to turn allocation mails ON/OFF */}
+                <button
+                    type="button"
+                    style={{
+                        ...(isMobile ? styles.iconBtnSmall : styles.iconBtn),
+                        opacity: notifyEnabled ? 1 : 0.65,
+                    }}
+                    onClick={toggleNotify}
+                    role="switch"
+                    aria-checked={notifyEnabled}
+                    aria-label={notifyEnabled ? "Turn notifications off" : "Turn notifications on"}
+                    title={
+                        notifyEnabled
+                            ? "Notifications ON — click to turn OFF"
+                            : "Notifications OFF — click to turn ON"
+                    }
+                >
+                    <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
+                    {notifyEnabled && <span style={styles.notifDot} />}
+                </button>
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>
