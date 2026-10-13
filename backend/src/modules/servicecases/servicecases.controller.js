@@ -2273,9 +2273,9 @@ const OVERLOAD_MAIL_ONCE_PER_DAY = false;
 
 // NEW (NOTIFY OVERLOAD): polite in-app notification (bell icon). It is NOT
 // emailed. No case counts inside.
-const OVERLOAD_NOTIF_TITLE = "More work added today";
-const OVERLOAD_NOTIF_MESSAGE =
-  "You have received more than 8 hours of work today. Thank you for your effort - please check your allocation, and reach out if you need any support.";
+// SHORT on purpose: "More work allocated" + an upside-down smiley.
+const OVERLOAD_NOTIF_TITLE = "More work allocated 🙃";
+const OVERLOAD_NOTIF_MESSAGE = "Please check.";
 
 // App link shown in the email button. Set FRONTEND_URL in .env
 // (e.g. https://your-app.vercel.app). Falls back to "#" if missing.
