@@ -130,9 +130,23 @@ async function registerPush(onStep: (text: string) => void = () => {}): Promise<
         45000,
         "Step 4 of 4 failed: the server did not respond while saving this device."
     );
-    if (!res.ok)
+    const saveJson = await res.json().catch(() => ({}));
+    if (!res.ok || saveJson.success === false)
         throw new Error(
-            `Step 4 of 4 failed: the server refused to save this device (status ${res.status}).`
+            `Step 4 of 4 failed: the server refused to save this device (status ${res.status}${
+                saveJson.message ? `: ${saveJson.message}` : ""
+            }).`
+        );
+
+    // Do not trust "Allow" in the browser alone: ask the server if THIS device
+    // is really saved for THIS logged-in user.
+    const checkRes = await authFetch(
+        `${API_BASE}/api/notifications/push-status?endpoint=${encodeURIComponent(sub.endpoint)}`
+    );
+    const checkJson = await checkRes.json().catch(() => ({}));
+    if (checkRes.ok && checkJson?.data?.thisDeviceSaved === false)
+        throw new Error(
+            "The server answered OK but this device was not found in its list. Please press Try again; if it repeats, tell your admin."
         );
     return true;
 }
@@ -166,16 +180,26 @@ export default function NotificationBell({
 
     const [registering, setRegistering] = useState(false);
     const [pushStep, setPushStep] = useState("");
+    // true only after the SERVER confirmed this device is saved for this user
+    const [pushSaved, setPushSaved] = useState(false);
+    const registeringRef = useRef(false);
+    const lastRegisterAt = useRef(0);
 
     // one place that runs the registration and keeps the progress text updated
     const runRegister = async () => {
+        if (registeringRef.current) return; // never run two at once
+        registeringRef.current = true;
         setRegistering(true);
         setPushError("");
         try {
             await registerPush(setPushStep);
+            setPushSaved(true);
+            lastRegisterAt.current = Date.now();
         } catch (e: any) {
+            setPushSaved(false);
             setPushError(e?.message || "Could not turn on alerts.");
         } finally {
+            registeringRef.current = false;
             setRegistering(false);
             setPushStep("");
         }
@@ -200,6 +224,26 @@ export default function NotificationBell({
                 })
                 .catch((e) => setPushError(e?.message || "Could not turn on alerts."));
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Self-heal: one browser can belong to only ONE user at a time (last login
+    // wins). Re-link this device whenever the tab is used again (at most every
+    // 5 minutes), so it always follows the user who is logged in right now.
+    useEffect(() => {
+        if (!pushSupported) return;
+        const relink = () => {
+            if (document.visibilityState !== "visible") return;
+            if (Notification.permission !== "granted") return;
+            if (Date.now() - lastRegisterAt.current < 5 * 60_000) return;
+            void runRegister();
+        };
+        window.addEventListener("focus", relink);
+        document.addEventListener("visibilitychange", relink);
+        return () => {
+            window.removeEventListener("focus", relink);
+            document.removeEventListener("visibilitychange", relink);
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -291,6 +335,21 @@ export default function NotificationBell({
             >
                 <i className={notifyEnabled ? "ti ti-bell" : "ti ti-bell-off"} />
                 {unread > 0 && <span style={badgeStyle}>{unread > 9 ? "9+" : unread}</span>}
+                {pushSupported && pushError && !registering && (
+                    <span
+                        title="Alerts are NOT working on this device"
+                        style={{
+                            position: "absolute",
+                            bottom: 2,
+                            right: 2,
+                            width: 9,
+                            height: 9,
+                            borderRadius: "50%",
+                            background: "#f59e0b",
+                            border: "1.5px solid #fff",
+                        }}
+                    />
+                )}
             </button>
 
             {open && (
@@ -372,6 +431,24 @@ export default function NotificationBell({
                             </button>
                         )}
                     </div>
+
+                    {pushSupported &&
+                        permission === "granted" &&
+                        pushSaved &&
+                        !pushError &&
+                        !registering && (
+                            <div
+                                style={{
+                                    padding: "8px 14px",
+                                    background: "#ecfdf3",
+                                    borderBottom: "1px solid #c6f0d8",
+                                    fontSize: fontSize.xs,
+                                    color: "#067647",
+                                }}
+                            >
+                                ✓ Alerts are ON for this device (confirmed by server)
+                            </div>
+                        )}
 
                     {pushSupported && (permission !== "granted" || pushError || registering) && (
                         <div
