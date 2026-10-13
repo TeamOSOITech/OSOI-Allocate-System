@@ -86,11 +86,25 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
     const [enabling, setEnabling] = useState(false);
     const [pushError, setPushError] = useState("");
 
-    // Already allowed earlier? Quietly re-link this device to the current
-    // user (e.g. a different employee logged in on the same browser).
+    // On every app open / refresh:
+    //  - already allowed  -> quietly (re)link this device to the logged-in user
+    //  - not asked yet    -> show the browser's "Allow notifications?" popup
+    //                        automatically (no button click needed)
+    //  - blocked          -> nothing (only the user can unblock it in browser settings)
+    // Safari/iPhone and Firefox only show the popup after a click; for them the
+    // "Turn on alerts" button in the bell stays as the fallback.
     useEffect(() => {
-        if (pushSupported && Notification.permission === "granted") {
-            registerPush().catch((e) => setPushError(e?.message || "Could not turn on alerts."));
+        if (!pushSupported) return;
+        const fail = (e: any) => setPushError(e?.message || "Could not turn on alerts.");
+        if (Notification.permission === "granted") {
+            registerPush().catch(fail);
+        } else if (Notification.permission === "default") {
+            Notification.requestPermission()
+                .then((result) => {
+                    setPermission(result);
+                    if (result === "granted") return registerPush();
+                })
+                .catch(fail);
         }
     }, []);
 
