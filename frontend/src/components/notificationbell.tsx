@@ -77,17 +77,30 @@ function sameKey(a: ArrayBuffer | null | undefined, b: Uint8Array) {
     return x.length === b.length && x.every((v, i) => v === b[i]);
 }
 
-async function registerPush(): Promise<boolean> {
-    // key lookup and service-worker start run in PARALLEL (was one after another)
-    const [publicKey, reg] = await Promise.all([
-        getPublicKey(),
+async function registerPush(onStep: (text: string) => void = () => {}): Promise<boolean> {
+    // key lookup starts right away and runs in PARALLEL with the steps below
+    const keyPromise = getPublicKey();
+    keyPromise.catch(() => {}); // avoid "unhandled" noise; awaited in step 2
+
+    onStep("Step 1 of 4: starting the alerts helper (sw.js)...");
+    const reg = await withTimeout(
         navigator.serviceWorker.register("/sw.js").then(async (r) => {
             await navigator.serviceWorker.ready;
             return r;
         }),
-    ]);
+        15000,
+        "Step 1 of 4 failed: the alerts helper (sw.js) could not start. Hard refresh (Ctrl+Shift+R) and try again."
+    );
+
+    onStep("Step 2 of 4: contacting the server (may take up to 30 sec if it was asleep)...");
+    const publicKey = await withTimeout(
+        keyPromise,
+        45000,
+        "Step 2 of 4 failed: the server did not respond. Check internet and try again."
+    );
     const appKey = urlBase64ToUint8Array(publicKey);
 
+    onStep("Step 3 of 4: connecting to your browser's notification service...");
     let sub = await reg.pushManager.getSubscription();
     // a subscription made with a DIFFERENT key (e.g. old/local keys) can never
     // receive pushes from this server — drop it and subscribe again
@@ -98,16 +111,25 @@ async function registerPush(): Promise<boolean> {
     if (!sub) {
         sub = await withTimeout(
             reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }),
-            20000,
-            "Your browser could not reach its notification service. Check the internet / firewall and try again."
+            25000,
+            "Step 3 of 4 failed: this browser could not reach its notification service (internet / firewall / VPN / Brave setting). Try another network, e.g. a mobile hotspot."
         );
     }
-    const res = await authFetch(`${API_BASE}/api/notifications/push-subscribe`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sub.toJSON()),
-    });
-    if (!res.ok) throw new Error("Could not save this device on the server. Please try again.");
+
+    onStep("Step 4 of 4: saving this device...");
+    const res = await withTimeout(
+        authFetch(`${API_BASE}/api/notifications/push-subscribe`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sub.toJSON()),
+        }),
+        45000,
+        "Step 4 of 4 failed: the server did not respond while saving this device."
+    );
+    if (!res.ok)
+        throw new Error(
+            `Step 4 of 4 failed: the server refused to save this device (status ${res.status}).`
+        );
     return true;
 }
 
@@ -132,6 +154,23 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
     const [enabling, setEnabling] = useState(false);
     const [pushError, setPushError] = useState("");
 
+    const [registering, setRegistering] = useState(false);
+    const [pushStep, setPushStep] = useState("");
+
+    // one place that runs the registration and keeps the progress text updated
+    const runRegister = async () => {
+        setRegistering(true);
+        setPushError("");
+        try {
+            await registerPush(setPushStep);
+        } catch (e: any) {
+            setPushError(e?.message || "Could not turn on alerts.");
+        } finally {
+            setRegistering(false);
+            setPushStep("");
+        }
+    };
+
     // On every app open / refresh:
     //  - already allowed  -> quietly (re)link this device to the logged-in user
     //  - not asked yet    -> show the browser's "Allow notifications?" popup
@@ -141,17 +180,17 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
     // "Turn on alerts" button in the bell stays as the fallback.
     useEffect(() => {
         if (!pushSupported) return;
-        const fail = (e: any) => setPushError(e?.message || "Could not turn on alerts.");
         if (Notification.permission === "granted") {
-            registerPush().catch(fail);
+            void runRegister();
         } else if (Notification.permission === "default") {
             Notification.requestPermission()
                 .then((result) => {
                     setPermission(result);
-                    if (result === "granted") return registerPush();
+                    if (result === "granted") return runRegister();
                 })
-                .catch(fail);
+                .catch((e) => setPushError(e?.message || "Could not turn on alerts."));
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const enablePush = async () => {
@@ -160,7 +199,7 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
         try {
             const result = await Notification.requestPermission();
             setPermission(result);
-            if (result === "granted") await registerPush();
+            if (result === "granted") await runRegister();
         } catch (e: any) {
             setPushError(e?.message || "Could not turn on alerts.");
         } finally {
@@ -272,7 +311,7 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                         Notifications
                     </div>
 
-                    {pushSupported && (permission !== "granted" || pushError) && (
+                    {pushSupported && (permission !== "granted" || pushError || registering) && (
                         <div
                             style={{
                                 padding: "10px 14px",
@@ -285,6 +324,23 @@ export default function NotificationBell({ buttonStyle, badgeStyle, isMobile = f
                         >
                             {permission === "denied" ? (
                                 "Alerts are blocked in this browser. Allow notifications for this site in browser settings to get alerts even when logged out."
+                            ) : registering ? (
+                                <>
+                                    <strong>Turning on alerts...</strong>
+                                    <div style={{ marginTop: 4 }}>
+                                        {pushStep || "Please wait..."}
+                                    </div>
+                                    <div
+                                        style={{
+                                            marginTop: 6,
+                                            fontSize: fontSize.xs,
+                                            opacity: 0.8,
+                                        }}
+                                    >
+                                        If this stays stuck, take a screenshot of this box and send
+                                        it to your admin.
+                                    </div>
+                                </>
                             ) : pushError ? (
                                 <>
                                     <span style={{ color: "#b42318" }}>{pushError}</span>
