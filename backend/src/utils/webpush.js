@@ -37,7 +37,11 @@ if (pushEnabled) {
 
 // Never throws: a push problem must never break allocation.
 async function sendPushToUsers({ organizationId, userIds, title, body, url }) {
-  if (!pushEnabled || !userIds?.length) return { sent: 0, removed: 0 };
+  if (!pushEnabled) {
+    console.warn("[webpush] skipped: VAPID keys are not set in .env");
+    return { sent: 0, removed: 0 };
+  }
+  if (!userIds?.length) return { sent: 0, removed: 0 };
   try {
     const { data: subs, error } = await supabase
       .from("push_subscriptions")
@@ -45,7 +49,12 @@ async function sendPushToUsers({ organizationId, userIds, title, body, url }) {
       .eq("organization_id", organizationId)
       .in("user_id", userIds);
     if (error) throw error;
-    if (!subs?.length) return { sent: 0, removed: 0 };
+    if (!subs?.length) {
+      console.log(
+        `[webpush] no subscribed device for ${userIds.length} user(s) — employee has not clicked "Turn on alerts" yet`,
+      );
+      return { sent: 0, removed: 0 };
+    }
 
     const payload = JSON.stringify({ title, body, url: url || "/" });
     const dead = [];
@@ -72,6 +81,9 @@ async function sendPushToUsers({ organizationId, userIds, title, body, url }) {
     if (dead.length > 0) {
       await supabase.from("push_subscriptions").delete().in("id", dead);
     }
+    console.log(
+      `[webpush] devices: ${subs.length}, sent: ${sent}, removed: ${dead.length}`,
+    );
     return { sent, removed: dead.length };
   } catch (err) {
     console.error("[webpush] sendPushToUsers error:", err);
