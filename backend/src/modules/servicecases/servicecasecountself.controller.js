@@ -247,7 +247,12 @@ async function listMyCounts(req, res) {
     res.json({ success: true, data: { mine, available } });
   } catch (err) {
     console.error("listMyCounts error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -365,7 +370,12 @@ async function selfAllocateCounts(req, res) {
     });
   } catch (err) {
     console.error("selfAllocateCounts error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -689,7 +699,12 @@ async function addCaseNumbersToCount(req, res) {
     });
   } catch (err) {
     console.error("addCaseNumbersToCount error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -834,7 +849,12 @@ async function fillCaseClient(req, res) {
     });
   } catch (err) {
     console.error("fillCaseClient error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 

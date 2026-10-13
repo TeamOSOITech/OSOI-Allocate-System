@@ -119,8 +119,8 @@ function approvalGate(
       }
 
       const payload = includeParamsId
-        ? { id: req.params.id, ...extra, ...req.body }
-        : { ...extra, ...req.body };
+        ? { ...req.body, ...extra, id: req.params.id }
+        : { ...req.body, ...extra };
 
       // When this rule is meant to go specifically to the requester's own
       // reporting manager (rather than any Ops Manager broadly), resolve

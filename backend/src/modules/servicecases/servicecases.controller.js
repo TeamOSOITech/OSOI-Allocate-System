@@ -228,7 +228,10 @@ async function getAutoPrefix(req, res) {
     });
   } catch (err) {
     console.error("getAutoPrefix error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -807,7 +810,10 @@ async function listServiceCases(req, res) {
     });
   } catch (err) {
     console.error("listServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -999,7 +1005,10 @@ async function createServiceCases(req, res) {
     });
   } catch (err) {
     console.error("createServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1036,7 +1045,10 @@ async function downloadUploadTemplate(req, res) {
     res.send(Buffer.from(buf));
   } catch (err) {
     console.error("downloadUploadTemplate error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 // ------------------------------------------------------------
@@ -1406,7 +1418,10 @@ async function uploadCustomServiceCases(req, res) {
     });
   } catch (err) {
     console.error("uploadCustomServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1616,7 +1631,10 @@ async function manualCreateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("manualCreateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1732,7 +1750,10 @@ async function createCountOnlyEntry(req, res) {
     });
   } catch (err) {
     console.error("createCountOnlyEntry error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1795,7 +1816,10 @@ async function listCountOnlyEntries(req, res) {
     });
   } catch (err) {
     console.error("listCountOnlyEntries error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1822,7 +1846,10 @@ async function deleteCountOnlyEntry(req, res) {
     res.json({ success: true, message: "Count entry deleted." });
   } catch (err) {
     console.error("deleteCountOnlyEntry error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1854,7 +1881,10 @@ async function deleteServiceCase(req, res) {
     res.json({ success: true, message: `${data.case_number} deleted.` });
   } catch (err) {
     console.error("deleteServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -1975,7 +2005,10 @@ async function allocateServiceCase(req, res) {
     });
   } catch (err) {
     console.error("allocateServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2050,7 +2083,10 @@ async function listAllocationClearLog(req, res) {
     });
   } catch (err) {
     console.error("listAllocationClearLog error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2161,7 +2197,10 @@ async function autoAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("autoAllocateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2571,7 +2610,10 @@ async function notifyAllocation(req, res) {
     res.json({ success: true, data: { sent, failed, skipped, moreSent } });
   } catch (err) {
     console.error("notifyAllocation error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2712,7 +2754,10 @@ async function notifyUrgent(req, res) {
     res.json({ success: true, data: { sent, failed } });
   } catch (err) {
     console.error("notifyUrgent error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2755,7 +2800,10 @@ async function updateServiceCaseProfile(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseProfile error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2844,7 +2892,10 @@ async function updateServiceCaseNumber(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseNumber error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -2969,7 +3020,10 @@ async function updateServiceCaseClient(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseClient error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3050,7 +3104,10 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
     });
   } catch (err) {
     console.error("bulkUpdateServiceCaseProfiles error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3175,7 +3232,10 @@ async function submitServiceCase(req, res) {
     });
   } catch (err) {
     console.error("submitServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3257,7 +3317,10 @@ async function resolveQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("resolveQueryServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3335,7 +3398,10 @@ async function completeQueryServiceCase(req, res) {
     });
   } catch (err) {
     console.error("completeQueryServiceCase error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3416,7 +3482,10 @@ async function updateServiceCaseQc(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseQc error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3505,7 +3574,10 @@ async function updateServiceCaseAudit(req, res) {
     });
   } catch (err) {
     console.error("updateServiceCaseAudit error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3530,6 +3602,12 @@ async function bulkSubmitServiceCases(req, res) {
       return res
         .status(400)
         .json({ success: false, message: "No cases provided." });
+    }
+    if (cleaned.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "You can submit at most 500 cases at a time.",
+      });
     }
     for (const it of cleaned) {
       if (!SUBMISSION_TYPES.includes(it.submissionType)) {
@@ -3587,7 +3665,10 @@ async function bulkSubmitServiceCases(req, res) {
     });
   } catch (err) {
     console.error("bulkSubmitServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -3613,6 +3694,12 @@ async function selfAllocateServiceCases(req, res) {
       return res
         .status(400)
         .json({ success: false, message: "Select at least one case first." });
+    }
+    if (caseIds.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: "You can allocate at most 200 cases at a time.",
+      });
     }
 
     const now = new Date().toISOString();
@@ -3658,7 +3745,10 @@ async function selfAllocateServiceCases(req, res) {
     });
   } catch (err) {
     console.error("selfAllocateServiceCases error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 

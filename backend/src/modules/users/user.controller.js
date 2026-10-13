@@ -53,6 +53,11 @@ async function bulkAddUser(req, res) {
     if (users.length === 0) {
       return res.status(400).json({ message: "No users provided." });
     }
+    if (users.length > 500) {
+      return res
+        .status(400)
+        .json({ message: "You can add at most 500 users at a time." });
+    }
 
     const results = await userService.processBulkAddUserRequest(users, {
       role: req.user.role,

@@ -46,6 +46,15 @@ async function createRequest(req, res) {
       });
     }
 
+    if (targetUserId) {
+      const { allEmployeesInOrg } = require("../../utils/orgGuards");
+      if (!(await allEmployeesInOrg([targetUserId], req.user.organizationId))) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Target user not found." });
+      }
+    }
+
     // Business rule for QC_PERMISSION_GRANT: target user must not
     // already be doing QC in any vertical (within this org).
     if (type === "QC_PERMISSION_GRANT" && targetUserId) {
@@ -251,33 +260,44 @@ async function decideRequest(req, res) {
       });
     }
 
+    // Atomic claim: only flips PENDING -> decided if nobody else got there
+    // first (prevents double-apply when two approvers click together).
     const { data: updated, error: updateError } = await supabase
       .from("approval_requests")
       .update({
         status: decision === "APPROVE" ? "APPROVED" : "REJECTED",
         approved_by: req.user.userId,
         decided_at: new Date().toISOString(),
-        // FIX: this used to always send `remarks` (even null) on every
-        // decision, including APPROVE — which broke Approve entirely on
-        // any org that hasn't run the "ALTER TABLE approval_requests ADD
-        // COLUMN remarks text" migration yet (Postgrest errors on an
-        // unknown column in the update body). Only touch the column when
-        // there's an actual remark to store — Approve never sends one, so
-        // it no longer depends on that column existing at all.
         ...(typeof remarks === "string" && remarks.trim()
           ? { remarks: remarks.trim() }
           : {}),
       })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
+      .eq("status", "PENDING")
       .select()
-      .single();
+      .maybeSingle();
 
     if (updateError) throw updateError;
+    if (!updated) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Request was already decided." });
+    }
 
-    // Apply the side effect only on approval.
+    // Apply the side effect only on approval. If it fails, put the request
+    // back to PENDING so it is not stuck as APPROVED-but-never-applied.
     if (decision === "APPROVE") {
-      await applyApprovedAction(request);
+      try {
+        await applyApprovedAction(request);
+      } catch (applyErr) {
+        await supabase
+          .from("approval_requests")
+          .update({ status: "PENDING", approved_by: null, decided_at: null })
+          .eq("id", id)
+          .eq("organization_id", req.user.organizationId);
+        throw applyErr;
+      }
     }
 
     res.json({ success: true, data: updated });
@@ -314,19 +334,25 @@ async function applyApprovedAction(request) {
 
   switch (request.type) {
     case "QC_PERMISSION_GRANT":
-      await supabase.from("qc_assignments").insert({
-        user_id: request.target_user_id,
-        vertical_id: request.payload?.verticalId || null,
-        granted_via_request_id: request.id,
-        organization_id: request.organization_id,
-      });
+      {
+        const { error: qcErr } = await supabase.from("qc_assignments").insert({
+          user_id: request.target_user_id,
+          vertical_id: request.payload?.verticalId || null,
+          granted_via_request_id: request.id,
+          organization_id: request.organization_id,
+        });
+        if (qcErr) throw qcErr;
+      }
       break;
     case "NEW_VERTICAL":
-      await supabase.from("verticals").insert({
-        name: request.payload?.name,
-        created_via_request_id: request.id,
-        organization_id: request.organization_id,
-      });
+      {
+        const { error: vErr } = await supabase.from("verticals").insert({
+          name: request.payload?.name,
+          created_via_request_id: request.id,
+          organization_id: request.organization_id,
+        });
+        if (vErr) throw vErr;
+      }
       break;
     case "HIDE_TASK": {
       // FIX: table name was "products_master" (typo — doesn't exist;
@@ -340,9 +366,7 @@ async function applyApprovedAction(request) {
         .eq("id", request.payload?.taskId)
         .eq("organization_id", request.organization_id);
 
-      if (hideError) {
-        console.error("HIDE_TASK failed to apply:", hideError);
-      }
+      if (hideError) throw hideError;
       break;
     }
 

@@ -91,7 +91,12 @@ async function clientSummary(req, res) {
     res.json({ success: true, data: rows });
   } catch (err) {
     console.error("clientSummary error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 

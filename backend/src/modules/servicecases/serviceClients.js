@@ -80,7 +80,12 @@ async function listClientsForProduct(req, res) {
     res.json({ success: true, data: data || [] });
   } catch (err) {
     console.error("listClientsForProduct error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -158,7 +163,12 @@ async function setProductClients(req, res) {
     });
   } catch (err) {
     console.error("setProductClients error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 

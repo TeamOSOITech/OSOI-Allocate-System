@@ -123,7 +123,12 @@ async function listCountAllocations(req, res) {
     res.json({ success: true, data });
   } catch (err) {
     console.error("listCountAllocations error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -189,7 +194,12 @@ async function autoPreviewCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("autoPreviewCountAllocations error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -319,7 +329,12 @@ async function saveCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("saveCountAllocations error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 
@@ -390,7 +405,12 @@ async function clearCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("clearCountAllocations error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
   }
 }
 

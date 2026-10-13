@@ -166,7 +166,9 @@ const registerOrganizationHandler = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: err.message || "Something went wrong. Please try again.",
+      message:
+        "Something went wrong on our end. Please try again." ||
+        "Something went wrong. Please try again.",
     });
   }
 };

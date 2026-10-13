@@ -169,7 +169,10 @@ async function listQcTeam(req, res) {
     });
   } catch (err) {
     console.error("listQcTeam error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -198,7 +201,10 @@ async function listAuditManagers(req, res) {
     });
   } catch (err) {
     console.error("listAuditManagers error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -342,7 +348,10 @@ async function getSummary(req, res) {
     });
   } catch (err) {
     console.error("getSummary error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -418,7 +427,10 @@ async function listQcQueue(req, res) {
     });
   } catch (err) {
     console.error("listQcQueue error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -470,6 +482,23 @@ async function assignQc(req, res) {
       });
     }
 
+    // Segregation of duties: nobody reviews their own work.
+    {
+      const { data: own } = await supabase
+        .from("service_cases")
+        .select("assigned_employee_id")
+        .eq("id", id)
+        .eq("organization_id", req.user.organizationId)
+        .maybeSingle();
+      if (own && own.assigned_employee_id === qcEmployeeId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A case can't be sent to QC with the person who worked on it.",
+        });
+      }
+    }
+
     // Confirm this person is actually on the QC team for this org.
     const { data: membership, error: memErr } = await supabase
       .from("qc_assignments")
@@ -511,7 +540,10 @@ async function assignQc(req, res) {
     });
   } catch (err) {
     console.error("assignQc error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -555,7 +587,9 @@ async function recordQcResult(req, res) {
 
     let query = supabase
       .from("service_cases")
-      .select("id, case_number, qc_employee_id, qc_status")
+      .select(
+        "id, case_number, qc_employee_id, qc_status, assigned_employee_id",
+      )
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
       .maybeSingle();
@@ -570,6 +604,12 @@ async function recordQcResult(req, res) {
       return res.status(409).json({
         success: false,
         message: "This case is not currently waiting on a QC decision.",
+      });
+    }
+    if (existing.assigned_employee_id === req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can't QC a case you worked on yourself.",
       });
     }
     if (existing.qc_employee_id !== req.user.userId && !isOverride) {
@@ -605,7 +645,10 @@ async function recordQcResult(req, res) {
     });
   } catch (err) {
     console.error("recordQcResult error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -680,7 +723,10 @@ async function listAuditQueue(req, res) {
     });
   } catch (err) {
     console.error("listAuditQueue error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -744,7 +790,10 @@ async function assignAudit(req, res) {
     });
   } catch (err) {
     console.error("assignAudit error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -824,7 +873,10 @@ async function recordAuditResult(req, res) {
     });
   } catch (err) {
     console.error("recordAuditResult error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
