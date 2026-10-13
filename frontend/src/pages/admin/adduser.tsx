@@ -4,6 +4,7 @@ import { useRoleLabels } from "../../context/roleLabelsContext";
 import { getCurrentUser } from "../../utils/auth";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
+import { safeSheet } from "../../utils/safeSheet";
 import { useNavigate } from "react-router-dom";
 //import VoiceAssistant from "../../components/voiceAssistant";
 //import { speak } from "../../utils/speak";
@@ -630,7 +631,7 @@ export default function AddUser() {
             },
         ];
 
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
+        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Users");
         XLSX.writeFile(workbook, "bulk_add_users_template.xlsx");

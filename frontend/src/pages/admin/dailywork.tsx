@@ -451,7 +451,6 @@ export default function DailyWork() {
             ) : (
                 <div style={isMobile ? styles.rootMobile : styles.root}>
                     {/* Top gradient accent bar */}
-                    <div style={styles.topBar} />
 
                     <div style={styles.contentBody}>
                         {/* Header row: icon + title + breadcrumb */}
@@ -466,16 +465,6 @@ export default function DailyWork() {
                                     </p>
                                 </div>
                             </div>
-
-                            {!isMobile && (
-                                <div style={styles.breadcrumb}>
-                                    <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
-                                    <span style={styles.breadcrumbSep}>/</span>
-                                    <span style={styles.breadcrumbItem}>Dashboard</span>
-                                    <span style={styles.breadcrumbSep}>/</span>
-                                    <span style={styles.breadcrumbActive}>Daily Work</span>
-                                </div>
-                            )}
                         </div>
 
                         {/* KPI cards */}

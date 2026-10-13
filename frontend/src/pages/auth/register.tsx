@@ -107,7 +107,7 @@ const Register = () => {
                     navigate("/dashboard");
                     break;
                 case "VERTICAL_HEAD":
-                    navigate("/workinprogress");
+                    navigate("/todays-allocation");
                     break;
                 case "TEAM_MEMBER":
                     navigate("/report");

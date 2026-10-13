@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import * as XLSX from "xlsx";
+import { safeSheet } from "../utils/safeSheet";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
@@ -2107,7 +2108,7 @@ function HolidaysModal({
             { "Festival Name": "Gandhi Jayanti", Date: "02-Oct-2026" },
             { "Festival Name": "Diwali", Date: "2026-11-08" },
         ];
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
+        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Holidays");
         XLSX.writeFile(workbook, "bulk_holidays_template.xlsx");

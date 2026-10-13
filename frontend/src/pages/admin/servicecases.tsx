@@ -1268,7 +1268,6 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
 
     return (
         <div style={styles.root}>
-            <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 {/* ---- header ---- */}
                 <div style={styles.headerRow}>
@@ -1280,18 +1279,6 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 count when case numbers aren't available yet.
                             </p>
                         </div>
-                    </div>
-
-                    <div style={styles.headerRight}>
-                        {!isMobile && (
-                            <div style={styles.breadcrumb}>
-                                <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
-                                <span style={styles.breadcrumbSep}>/</span>
-                                <span style={styles.breadcrumbItem}>Dashboard</span>
-                                <span style={styles.breadcrumbSep}>/</span>
-                                <span style={styles.breadcrumbActive}>Case Register</span>
-                            </div>
-                        )}
                     </div>
                 </div>
 

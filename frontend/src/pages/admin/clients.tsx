@@ -250,9 +250,10 @@ const BULK_ENDPOINT_MAP: Record<TabKey, string> = {
 const GLOBAL_CSS = `
 .cl-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .cl-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb), .12);
-  border-color: #cfe0f5;
+  transform: translateY(-3px) !important;
+  box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb), .18) !important;
+  border-color: var(--brand-light-blue) !important;
+  z-index: 2;
 }
 .cl-row:nth-child(even) { background: #fbfcfe; }
 .cl-row { box-shadow: inset 3px 0 0 0 transparent; }
@@ -3405,15 +3406,19 @@ const styles: Record<string, CSSProperties> = {
         overflowY: "auto",
     },
 
+    // Small padding so the hover lift/shadow of the first row, last row and
+    // edge columns isn't clipped by the scroll container (overflowY: auto).
     cardGrid: {
         display: "grid",
         gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
         gap: 14,
+        padding: "6px 4px 16px",
     },
     cardGridMobile: {
         display: "grid",
         gridTemplateColumns: "1fr",
         gap: 12,
+        padding: "6px 4px 16px",
     },
 
     emptyState: {

@@ -88,7 +88,7 @@ const menuItems: MenuItem[] = [
     /*{
         label: "Today's Allocation",
         icon: "ti ti-hand-stop",
-        path: "/today's-allocation",
+        path: "/todays-allocation",
         // FIX: this was still SUPER_ADMIN_ONLY even though the actual
         // route in App.jsx allows ADMIN_AND_VERTICAL_HEAD_ROLES +
         // TEAM_MEMBER — so everyone else could open the page directly by
@@ -151,7 +151,7 @@ const pathToLabel: Record<string, string> = {
     "/services": "Services",
     "/daily-work": "Daily Work",
     "/production-reports": "Production Reports",
-    //"/today's-allocation": "Today's Allocation",
+    //"/todays-allocation": "Today's Allocation",
     "/clients": "Clients Preview",
     "/employees": "Employee Preview",
     "/admin/add-user": "Add User",

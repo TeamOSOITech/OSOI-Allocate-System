@@ -1075,14 +1075,13 @@ export default function Billing() {
         <div style={isMobile ? styles.rootMobile : styles.root}>
             <style>{HOVER_CSS}</style>
             {/* Top gradient accent bar */}
-            <div style={styles.topBar} />
 
             <div style={styles.contentBody}>
                 {/* Header row: title + breadcrumb / invoice button */}
                 <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div>
-                            <h1 style={styles.pageTitle}>Billing</h1>
+                            <h2 style={styles.pageTitle}>Billing</h2>
                             <p style={styles.headerSubtext}>
                                 Earning = completed cases × the rate set for each client's service.
                                 See the total for a period first, narrow it down by service, client
@@ -1092,15 +1091,6 @@ export default function Billing() {
                     </div>
 
                     <div style={isMobile ? styles.headerRightMobile : styles.headerRight}>
-                        {!isMobile && (
-                            <div style={styles.breadcrumb}>
-                                <i className="ti ti-home" style={{ fontSize: fontSize.md }} />
-                                <span style={styles.breadcrumbSep}>/</span>
-                                <span style={styles.breadcrumbItem}>Dashboard</span>
-                                <span style={styles.breadcrumbSep}>/</span>
-                                <span style={styles.breadcrumbActive}>Billing</span>
-                            </div>
-                        )}
                         <button
                             type="button"
                             className="bl-btn"

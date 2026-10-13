@@ -5,6 +5,7 @@ import Sidebar from "./components/sidebar";
 import { ThemeProvider } from "./context/themecontext";
 import { RoleLabelsProvider } from "./context/roleLabelsContext";
 import { authFetch } from "./utils/authFetch";
+import { getCurrentUser } from "./utils/auth";
 
 // FIX (loading time): every page below was imported eagerly, so a user
 // landing on /login downloaded the JS for every admin page too —
@@ -89,7 +90,7 @@ const NORMAL_USER_ALLOWED_PATHS = [
     // NEW: Team Member can now reach Today's Allocation — but only ever
     // sees the self-allocation view (see the route below), never the
     // admin-tier bulk allocation grid.
-    "/today's-allocation",
+    "/todays-allocation",
     // NEW: Subscription page opened up to everyone (view-only for
     // anyone who isn't Super Admin/Ops Manager — see subscription.tsx),
     // so Team Member needs to be allow-listed here too or this route's
@@ -116,7 +117,7 @@ const NORMAL_USER_HOME = "/report";
 // without a valid cookie.
 const PrivateRoute = ({ children, requiredRole = null }) => {
     const location = useLocation();
-    const user = JSON.parse(localStorage.getItem("user") || "null");
+    const user = getCurrentUser();
     if (!user) return <Navigate to="/login" replace />;
 
     // Role-based access, Phase 1: Normal User can only ever reach the
@@ -137,7 +138,7 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
             // longer exist after migrating to the 6-tier system, so these
             // fallbacks never matched and everyone got bounced to /login.
             if (user?.role === "TEAM_MEMBER") return <Navigate to={NORMAL_USER_HOME} replace />;
-            if (user?.role === "VERTICAL_HEAD") return <Navigate to="/workinprogress" replace />;
+            if (user?.role === "VERTICAL_HEAD") return <Navigate to="/todays-allocation" replace />;
             return <Navigate to="/login" replace />;
         }
     }
@@ -153,7 +154,7 @@ const ADMIN_AND_VERTICAL_HEAD_ROLES = [...ADMIN_TIER_ROLES, "VERTICAL_HEAD"];
 
 const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
-    const user = JSON.parse(localStorage.getItem("user") || "null");
+    const user = getCurrentUser();
     const location = useLocation();
 
     // The login response doesn't include a profile photo — that only
@@ -179,7 +180,6 @@ const AppLayout = ({ children, onLogout }) => {
         return () => {
             cancelled = true;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, user?.userId]);
 
     // Org-branded logo shown in the header everywhere (falls back to the
@@ -329,7 +329,7 @@ const AppLayout = ({ children, onLogout }) => {
 };
 
 function App() {
-    const user = JSON.parse(localStorage.getItem("user") || "null");
+    const user = getCurrentUser();
 
     // COOKIE-AUTH: logging out now has to tell the SERVER to clear the
     // httpOnly accessToken/refreshToken/csrfToken cookies — clearing only
@@ -435,7 +435,7 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         caller's own id regardless of anything in the
                         request body). */}
                         <Route
-                            path="/today's-allocation"
+                            path="/todays-allocation"
                             element={
                                 <PrivateRoute
                                     requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
@@ -496,6 +496,10 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         {/* Old URL — keeps existing bookmarks/links working by
                             bouncing straight to the new /services path. */}
                         <Route path="/products" element={<Navigate to="/services" replace />} />
+                        <Route
+                            path="/today's-allocation"
+                            element={<Navigate to="/todays-allocation" replace />}
+                        />
 
                         <Route
                             path="/admin/add-user"

@@ -155,7 +155,15 @@ export default function Header({
                         <img
                             src="/Allookate.png"
                             alt="Logo"
+                            role="link"
+                            tabIndex={0}
+                            title="Home"
+                            onClick={() => navigate("/report")}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") navigate("/report");
+                            }}
                             style={{
+                                cursor: "pointer",
                                 width: isMobile ? 30 : 125,
                                 height: isMobile ? 9 : 38,
                                 objectFit: "contain",

@@ -492,7 +492,6 @@ export default function QualityCheck() {
 
     return (
         <div style={styles.root}>
-            <div style={styles.topBar} />
             <div style={styles.contentBody}>
                 <div>
                     <h2 style={styles.pageTitle}>{mode === "qc" ? "Quality Check" : "Audit"}</h2>

@@ -437,6 +437,12 @@ const CameraIcon = () => (
         <circle cx="12" cy="13" r="4" />
     </Icon>
 );
+const PencilIcon = () => (
+    <Icon size={18}>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </Icon>
+);
 const BoxIcon = () => (
     <Icon>
         <path d="m21 8-9-5-9 5 9 5 9-5Z" />
@@ -1136,12 +1142,19 @@ export default function Profile({ onLogout }: ProfileProps) {
     }, [selectedId]);
 
     const handlePickForSubmit = (c: CaseRow) => {
+        // Opens the Submit Work popup right where the user clicked.
         setSelectedId(c.id);
-        setTimeout(
-            () => panelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
-            50
-        );
     };
+
+    // Esc closes the Submit Work popup (unless a submit is in flight).
+    useEffect(() => {
+        if (!selectedId) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape" && !submitting) setSelectedId(null);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [selectedId, submitting]);
 
     const canSubmitSingle =
         !!selected && !!submitType && (submitType !== "QUERY" || submitQueryText.trim() !== "");
@@ -1868,8 +1881,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                     <div ref={empBoxRef} style={styles.empPillWrap}>
                         <div className="pf-emp-pill" style={styles.empPill}>
                             <svg
-                                width="18"
-                                height="18"
+                                width="15"
+                                height="15"
                                 viewBox="0 0 24 24"
                                 fill="none"
                                 stroke="currentColor"
@@ -1986,6 +1999,36 @@ export default function Profile({ onLogout }: ProfileProps) {
                 <div style={isMobile ? styles.identityTopMobile : styles.identityTop}>
                     <div style={styles.avatarBlock}>
                         <div style={styles.avatarWrap}>
+                            <span aria-hidden="true" style={styles.avatarBlob} />
+                            <svg
+                                aria-hidden="true"
+                                width="58"
+                                height="48"
+                                viewBox="0 0 58 48"
+                                fill="none"
+                                style={styles.avatarSpark}
+                            >
+                                <path
+                                    d="M30 6 36 18"
+                                    stroke="#9DB4F5"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <path
+                                    d="M43 3 44 12"
+                                    stroke="#B9A6F0"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <path
+                                    d="M18 14 26 22"
+                                    stroke="#9DB4F5"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <circle cx="11" cy="30" r="5" stroke="#B9A6F0" strokeWidth="2.5" />
+                                <circle cx="24" cy="38" r="3" stroke="#9DB4F5" strokeWidth="2.5" />
+                            </svg>
                             {photoUrl ? (
                                 <img
                                     src={photoUrl}
@@ -2017,11 +2060,12 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 onChange={handlePhotoChange}
                             />
                         </div>
-                        <div>
-                            <div style={styles.nameRow}>
-                                <span style={styles.name}>{loading ? "Loading..." : name}</span>
-                                <span style={styles.activePill}>Active</span>
-                            </div>
+                        <div style={styles.nameBlock}>
+                            <span style={styles.name}>{loading ? "Loading..." : name}</span>
+                            <span style={styles.activePill}>
+                                <span style={styles.activeDot} />
+                                Active
+                            </span>
                             {uploadingPhoto && (
                                 <div style={styles.smallMuted}>Uploading photo…</div>
                             )}
@@ -2029,8 +2073,161 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                     </div>
 
+                    {!isMobile && <div style={styles.identityDivider} />}
+
+                    <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
+                        <div style={styles.identityColumn}>
+                            <InfoIconRow
+                                icon={<ShieldIcon />}
+                                label="Role"
+                                value={role && role !== "-" ? getRoleLabel(role) : "-"}
+                                tone={ROW_TONES.role}
+                                styles={styles}
+                            />
+                            <InfoIconRow
+                                icon={<MailIcon />}
+                                label="Email"
+                                value={email}
+                                href={email && email !== "-" ? `mailto:${email}` : undefined}
+                                tone={ROW_TONES.email}
+                                styles={styles}
+                            />
+                            {editingProfile && !isViewingOther ? (
+                                <div style={styles.editField}>
+                                    <label style={styles.smallLabel}>Phone</label>
+                                    <input
+                                        style={styles.textInput}
+                                        value={profileDraft.phone}
+                                        onChange={(e) =>
+                                            setProfileDraft((p) => ({
+                                                ...p,
+                                                phone: e.target.value,
+                                            }))
+                                        }
+                                        placeholder="Phone number"
+                                    />
+                                </div>
+                            ) : (
+                                <InfoIconRow
+                                    icon={<PhoneIcon />}
+                                    label="Phone"
+                                    value={phone}
+                                    href={
+                                        phone && phone !== "-"
+                                            ? `tel:${phone.replace(/\s+/g, "")}`
+                                            : undefined
+                                    }
+                                    tone={ROW_TONES.phone}
+                                    styles={styles}
+                                />
+                            )}
+                        </div>
+
+                        <div style={styles.identityColumn}>
+                            <InfoIconRow
+                                icon={<TeamIcon />}
+                                label="Team"
+                                value={team}
+                                tone={ROW_TONES.team}
+                                styles={styles}
+                            />
+                            <InfoIconRow
+                                icon={<DeptIcon />}
+                                label="Department"
+                                value={department}
+                                tone={ROW_TONES.dept}
+                                styles={styles}
+                            />
+                            <InfoIconRow
+                                icon={<UserIcon />}
+                                label="Manager"
+                                value={manager}
+                                tone={ROW_TONES.manager}
+                                styles={styles}
+                            />
+                        </div>
+
+                        <div style={styles.aboutBox}>
+                            <svg
+                                aria-hidden="true"
+                                width="34"
+                                height="34"
+                                viewBox="0 0 34 34"
+                                fill="none"
+                                style={styles.aboutSpark}
+                            >
+                                <path
+                                    d="M6 22 12 17"
+                                    stroke="#5B8DEF"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <path
+                                    d="M14 9 17 15"
+                                    stroke="#5B8DEF"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <path
+                                    d="M25 7 24 13"
+                                    stroke="#5B8DEF"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                            </svg>
+                            <svg
+                                aria-hidden="true"
+                                width="150"
+                                height="90"
+                                viewBox="0 0 150 90"
+                                fill="none"
+                                style={styles.aboutWave}
+                            >
+                                <path
+                                    d="M150 0C120 20 100 48 70 62 50 72 25 80 0 90H150Z"
+                                    fill="rgba(125,160,245,0.28)"
+                                />
+                                <path
+                                    d="M150 30C128 46 112 66 88 78 72 85 56 88 40 90H150Z"
+                                    fill="rgba(125,160,245,0.32)"
+                                />
+                            </svg>
+                            <div style={styles.aboutHeader}>
+                                <span style={styles.aboutIcon}>
+                                    <UserIcon />
+                                </span>
+                                <div style={styles.aboutTitle}>About Me</div>
+                            </div>
+                            <div style={styles.aboutRule} />
+                            {editingProfile && !isViewingOther ? (
+                                <textarea
+                                    style={{
+                                        ...styles.aboutTextarea,
+                                        position: "relative",
+                                        zIndex: 1,
+                                    }}
+                                    rows={3}
+                                    value={profileDraft.bio}
+                                    onChange={(e) =>
+                                        setProfileDraft((p) => ({ ...p, bio: e.target.value }))
+                                    }
+                                    placeholder="Tell your team a bit about yourself…"
+                                />
+                            ) : (
+                                <p style={styles.aboutText}>{bio || "No bio added yet."}</p>
+                            )}
+                        </div>
+                    </div>
+
                     {!isViewingOther && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 10,
+                                alignSelf: isMobile ? "flex-start" : "center",
+                            }}
+                        >
                             {editingProfile && (
                                 <button
                                     type="button"
@@ -2051,6 +2248,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     editingProfile ? handleSaveProfile() : setEditingProfile(true)
                                 }
                             >
+                                {!editingProfile && <PencilIcon />}
                                 {editingProfile
                                     ? savingProfile
                                         ? "Saving…"
@@ -2059,99 +2257,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             </button>
                         </div>
                     )}
-                </div>
-
-                <div style={isMobile ? styles.identityGridMobile : styles.identityGrid}>
-                    <div style={styles.identityColumn}>
-                        <InfoIconRow
-                            icon={<ShieldIcon />}
-                            label="Role"
-                            value={role && role !== "-" ? getRoleLabel(role) : "-"}
-                            styles={styles}
-                        />
-                        <div style={styles.contactRow}>
-                            <span style={styles.contactIcon}>
-                                <MailIcon />
-                            </span>
-                            {email && email !== "-" ? (
-                                <a
-                                    href={`mailto:${email}`}
-                                    style={{ ...styles.contactValue, textDecoration: "none" }}
-                                >
-                                    {email}
-                                </a>
-                            ) : (
-                                <span style={styles.contactValue}>{email}</span>
-                            )}
-                        </div>
-                        {editingProfile && !isViewingOther ? (
-                            <div style={styles.editField}>
-                                <label style={styles.smallLabel}>Phone</label>
-                                <input
-                                    style={styles.textInput}
-                                    value={profileDraft.phone}
-                                    onChange={(e) =>
-                                        setProfileDraft((p) => ({ ...p, phone: e.target.value }))
-                                    }
-                                    placeholder="Phone number"
-                                />
-                            </div>
-                        ) : (
-                            <div style={styles.contactRow}>
-                                <span style={styles.contactIcon}>
-                                    <PhoneIcon />
-                                </span>
-                                {phone && phone !== "-" ? (
-                                    <a
-                                        href={`tel:${phone.replace(/\s+/g, "")}`}
-                                        style={{ ...styles.contactValue, textDecoration: "none" }}
-                                    >
-                                        {phone}
-                                    </a>
-                                ) : (
-                                    <span style={styles.contactValue}>{phone}</span>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    <div style={styles.identityColumn}>
-                        <InfoIconRow
-                            icon={<TeamIcon />}
-                            label="Team"
-                            value={team}
-                            styles={styles}
-                        />
-                        <InfoIconRow
-                            icon={<DeptIcon />}
-                            label="Department"
-                            value={department}
-                            styles={styles}
-                        />
-                        <InfoIconRow
-                            icon={<UserIcon />}
-                            label="Manager"
-                            value={manager}
-                            styles={styles}
-                        />
-                    </div>
-
-                    <div style={styles.aboutBox}>
-                        <div style={styles.aboutTitle}>About Me</div>
-                        {editingProfile && !isViewingOther ? (
-                            <textarea
-                                style={styles.aboutTextarea}
-                                rows={4}
-                                value={profileDraft.bio}
-                                onChange={(e) =>
-                                    setProfileDraft((p) => ({ ...p, bio: e.target.value }))
-                                }
-                                placeholder="Tell your team a bit about yourself…"
-                            />
-                        ) : (
-                            <p style={styles.aboutText}>{bio || "No bio added yet."}</p>
-                        )}
-                    </div>
                 </div>
 
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
@@ -2645,107 +2750,162 @@ export default function Profile({ onLogout }: ProfileProps) {
                         {clientCellError && <p style={styles.rowError}>{clientCellError}</p>}
                     </div>
 
-                    {/* ---- Submit Your Work ---- */}
-                    <div ref={panelRef} className="pf-card-hover" style={styles.submitPanel}>
-                        <div style={styles.submitPanelTitle}>
-                            {isViewingOther ? `Submit Work for ${name}` : "Submit Your Work"}
-                        </div>
-                        <div style={styles.submitPanelSub}>
-                            {selected
-                                ? `Confirm submission for case "${selected.caseNumber}"`
-                                : "Select a case from the table above to submit your work."}
-                        </div>
+                    {/* ---- Submit Your Work (popup, opens right where "Submit" is clicked) ---- */}
+                    {selected && (
+                        <div
+                            style={styles.bulkOverlay}
+                            onClick={() => {
+                                if (!submitting) setSelectedId(null);
+                            }}
+                        >
+                            <div
+                                ref={panelRef}
+                                role="dialog"
+                                aria-modal="true"
+                                style={{ ...styles.bulkModal, width: 640, textAlign: "left" }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div style={styles.bulkModalHeader}>
+                                    <div style={{ textAlign: "left" }}>
+                                        <h3 style={{ ...styles.bulkModalTitle, textAlign: "left" }}>
+                                            {isViewingOther
+                                                ? `Submit Work for ${name}`
+                                                : "Submit Your Work"}
+                                        </h3>
+                                        <p
+                                            style={{
+                                                ...styles.bulkModalSubtitle,
+                                                textAlign: "left",
+                                            }}
+                                        >
+                                            Confirm submission for case "{selected.caseNumber}"
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={() => setSelectedId(null)}
+                                        disabled={submitting}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
 
-                        {selected && (
-                            <div style={isMobile ? styles.submitGridMobile : styles.submitGrid}>
-                                <div style={styles.filterField}>
-                                    <label style={styles.smallLabel}>Case No.</label>
-                                    <input
-                                        style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                        value={selected.caseNumber}
-                                        disabled
-                                    />
-                                </div>
-                                <div style={styles.filterField}>
-                                    <label style={styles.smallLabel}>Service</label>
-                                    <input
-                                        style={{ ...styles.textInput, background: "#f5f5fa" }}
-                                        value={selected.productName || "-"}
-                                        disabled
-                                    />
-                                </div>
-                                <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
-                                    <label style={styles.smallLabel}>Status *</label>
-                                    <select
-                                        style={styles.textInput}
-                                        value={submitType}
-                                        onChange={(e) => {
-                                            const v = e.target.value as "" | SubmissionType;
-                                            setSubmitType(v);
-                                            if (v !== "QUERY") setSubmitQueryText("");
-                                        }}
-                                    >
-                                        <option value="">Select status</option>
-                                        {SUBMISSION_OPTIONS.map((o) => (
-                                            <option key={o.value} value={o.value}>
-                                                {o.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                {submitType === "QUERY" && (
-                                    <div
-                                        style={{
-                                            ...styles.filterField,
-                                            flex: 1,
-                                            minWidth: 220,
-                                        }}
-                                    >
-                                        <label style={styles.smallLabel}>Query *</label>
+                                <div style={isMobile ? styles.submitGridMobile : styles.submitGrid}>
+                                    <div style={styles.filterField}>
+                                        <label style={styles.smallLabel}>Case No.</label>
                                         <input
-                                            style={styles.textInput}
-                                            value={submitQueryText}
-                                            onChange={(e) => setSubmitQueryText(e.target.value)}
-                                            placeholder="Describe the query…"
+                                            style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                            value={selected.caseNumber}
+                                            disabled
                                         />
                                     </div>
-                                )}
-                            </div>
-                        )}
+                                    <div style={styles.filterField}>
+                                        <label style={styles.smallLabel}>Service</label>
+                                        <input
+                                            style={{ ...styles.textInput, background: "#f5f5fa" }}
+                                            value={selected.productName || "-"}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div style={{ ...styles.filterField, flex: 1, minWidth: 180 }}>
+                                        <label style={styles.smallLabel}>Status *</label>
+                                        <select
+                                            style={styles.textInput}
+                                            value={submitType}
+                                            autoFocus
+                                            onChange={(e) => {
+                                                const v = e.target.value as "" | SubmissionType;
+                                                setSubmitType(v);
+                                                if (v !== "QUERY") setSubmitQueryText("");
+                                            }}
+                                        >
+                                            <option value="">Select status</option>
+                                            {SUBMISSION_OPTIONS.map((o) => (
+                                                <option key={o.value} value={o.value}>
+                                                    {o.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    {submitType === "QUERY" && (
+                                        <div
+                                            style={{
+                                                ...styles.filterField,
+                                                flex: "1 1 100%",
+                                                minWidth: 220,
+                                            }}
+                                        >
+                                            <label style={styles.smallLabel}>Query *</label>
+                                            <input
+                                                style={styles.textInput}
+                                                value={submitQueryText}
+                                                onChange={(e) => setSubmitQueryText(e.target.value)}
+                                                placeholder="Describe the query…"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
 
-                        {submitError && <p style={styles.rowError}>{submitError}</p>}
+                                {submitError && <p style={styles.rowError}>{submitError}</p>}
 
-                        <div style={styles.infoBox}>
-                            <span style={styles.infoBoxIcon}>
-                                <InfoIcon />
-                            </span>
-                            <div>
-                                <strong>How it works?</strong>
-                                <p style={{ margin: "4px 0 0" }}>
-                                    Pick a case from the table above, choose its status — Completed,
-                                    Completed by Team, Completed by Client or Query — and submit.
-                                    "Query" needs a short note on what the query is; you can track
-                                    and complete your queries later from "All Query" up top. Use
-                                    "Bulk Submit" to submit every pending case for today in one
-                                    click.
-                                </p>
+                                <div style={{ ...styles.infoBox, marginTop: 14 }}>
+                                    <span style={styles.infoBoxIcon}>
+                                        <InfoIcon />
+                                    </span>
+                                    <div>
+                                        <strong>How it works?</strong>
+                                        <p style={{ margin: "4px 0 0" }}>
+                                            Choose the status — Completed, Completed by Team,
+                                            Completed by Client or Query — and submit. "Query" needs
+                                            a short note on what the query is; you can track and
+                                            complete your queries later from "All Query" up top. Use
+                                            "Bulk Submit" to submit every pending case for today in
+                                            one click.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: "flex", gap: 10 }}>
+                                    <button
+                                        type="button"
+                                        className="pf-btn"
+                                        style={{
+                                            ...styles.closeBtn,
+                                            width: "auto",
+                                            height: "auto",
+                                            borderRadius: radius.md,
+                                            padding: "13px 22px",
+                                            fontWeight: fontWeight.semibold,
+                                        }}
+                                        onClick={() => setSelectedId(null)}
+                                        disabled={submitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-solid"
+                                        style={{
+                                            ...styles.submitBtn,
+                                            width: "auto",
+                                            flex: 1,
+                                            opacity: !canSubmitSingle || submitting ? 0.6 : 1,
+                                            cursor:
+                                                !canSubmitSingle || submitting
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                        disabled={!canSubmitSingle || submitting}
+                                        onClick={handleSubmitWork}
+                                    >
+                                        {submitting ? "Submitting…" : "Submit Work"}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-
-                        <button
-                            type="button"
-                            className="pf-btn pf-btn-solid"
-                            style={{
-                                ...styles.submitBtn,
-                                opacity: !canSubmitSingle || submitting ? 0.6 : 1,
-                                cursor: !canSubmitSingle || submitting ? "not-allowed" : "pointer",
-                            }}
-                            disabled={!canSubmitSingle || submitting}
-                            onClick={handleSubmitWork}
-                        >
-                            {submitting ? "Submitting…" : "Submit Work"}
-                        </button>
-                    </div>
+                    )}
                 </>
             )}
 
@@ -3868,23 +4028,44 @@ export default function Profile({ onLogout }: ProfileProps) {
 /*  Small presentational subcomponents                                     */
 /* ---------------------------------------------------------------------- */
 
+const ROW_TONES = {
+    role: { bg: "#E3F1FC", fg: "#2F9BE6" },
+    email: { bg: "#DDF6EC", fg: "#18B67F" },
+    phone: { bg: "#E4E8FB", fg: "#4A5BD4" },
+    team: { bg: "#EBE3FA", fg: "#8A5CE0" },
+    dept: { bg: "#FDEEDC", fg: "#F29A2E" },
+    manager: { bg: "#FCE4EF", fg: "#E8479A" },
+};
+
 function InfoIconRow({
     icon,
     label,
     value,
     styles,
+    tone,
+    href,
 }: {
     icon: React.ReactNode;
     label: string;
     value: string;
     styles: Record<string, CSSProperties>;
+    tone: { bg: string; fg: string };
+    href?: string;
 }) {
     return (
         <div style={styles.infoIconRow}>
-            <span style={styles.contactIcon}>{icon}</span>
-            <div style={styles.infoTextWrap}>
-                <span style={styles.infoLabel}>{label}:</span>
-                <span style={styles.infoValue}>{value}</span>
+            <span style={{ ...styles.infoChip, background: tone.bg, color: tone.fg }}>
+                <span style={{ display: "flex", transform: "scale(1.05)" }}>{icon}</span>
+            </span>
+            <div style={styles.infoStack}>
+                <span style={styles.infoLabelTop}>{label}</span>
+                {href ? (
+                    <a href={href} style={{ ...styles.infoValue, textDecoration: "none" }}>
+                        {value}
+                    </a>
+                ) : (
+                    <span style={styles.infoValue}>{value}</span>
+                )}
             </div>
         </div>
     );
@@ -4177,18 +4358,18 @@ function getStyles(
             alignItems: "center",
             flexWrap: "wrap",
         },
-        empPillWrap: { position: "relative", width: "100%", maxWidth: 420 },
+        empPillWrap: { position: "relative", width: "100%", maxWidth: 320 },
         empPill: {
             display: "flex",
             alignItems: "center",
-            gap: 10,
-            height: 46,
+            gap: 8,
+            height: 36,
             boxSizing: "border-box",
-            padding: "0 10px 0 16px",
+            padding: "0 8px 0 14px",
             background: "#fff",
             border: "1px solid #E3E8F2",
             borderRadius: 999,
-            boxShadow: "0 4px 14px rgba(23,44,84,.08)",
+            boxShadow: "0 2px 8px rgba(23,44,84,.06)",
         },
         empPillInput: {
             flex: 1,
@@ -4196,18 +4377,18 @@ function getStyles(
             border: "none",
             outline: "none",
             background: "transparent",
-            fontSize: fontSize.base,
+            fontSize: 13,
             color: "#17181C",
             fontFamily: "inherit",
         },
         empKbd: {
             flexShrink: 0,
-            fontSize: fontSize.xs,
-            fontWeight: fontWeight.semibold,
+            fontSize: 11,
+            fontWeight: fontWeight.medium,
             color: "#3D4459",
             background: "#EEF1F6",
-            borderRadius: 8,
-            padding: "5px 10px",
+            borderRadius: 6,
+            padding: "3px 8px",
             whiteSpace: "nowrap",
         },
         empDropdown: {
@@ -4301,24 +4482,54 @@ function getStyles(
 
         /* Identity card */
         identityCard: {
-            background: "#fff",
+            background: "linear-gradient(135deg, #F4F7FE 0%, #FFFFFF 62%)",
             borderRadius: radius.xl,
-            padding: 24,
-            border: "1px solid #F0F1F7",
+            padding: "16px 22px",
+            border: "1px solid #EEF0F8",
             boxShadow: CARD_SHADOW,
+            position: "relative",
+            overflow: "hidden",
         },
         identityTop: {
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            marginBottom: 20,
+            alignItems: "center",
+            gap: 20,
         },
-        identityTopMobile: { display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 },
-        avatarBlock: { display: "flex", alignItems: "center", gap: 16 },
-        avatarWrap: { position: "relative", flexShrink: 0 },
+        identityTopMobile: { display: "flex", flexDirection: "column", gap: 16 },
+        identityDivider: {
+            width: 1,
+            alignSelf: "stretch",
+            background: "#E6E9F3",
+            flexShrink: 0,
+            marginLeft: 48,
+            marginRight: 20,
+        },
+        avatarBlock: { display: "flex", alignItems: "center", gap: 16, flexShrink: 0 },
+        avatarWrap: { position: "relative", flexShrink: 0, width: 88, height: 88 },
+        avatarBlob: {
+            position: "absolute",
+            left: -18,
+            bottom: -14,
+            width: 106,
+            height: 90,
+            borderRadius: "50%",
+            background:
+                "radial-gradient(circle at 40% 40%, rgba(167,139,250,0.32), rgba(147,197,253,0.2) 65%, transparent 80%)",
+            zIndex: 0,
+        },
+        avatarSpark: {
+            position: "absolute",
+            left: -18,
+            top: -14,
+            zIndex: 0,
+            transform: "scale(0.7)",
+            transformOrigin: "top left",
+        },
         avatar: {
-            width: 96,
-            height: 96,
+            position: "relative",
+            zIndex: 1,
+            width: 88,
+            height: 88,
             borderRadius: radius.circle,
             background: GRADIENT,
             color: "#fff",
@@ -4327,23 +4538,30 @@ function getStyles(
             justifyContent: "center",
             fontSize: fontSize["6xl"],
             fontWeight: fontWeight.semibold,
-            boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
+            border: "4px solid #fff",
+            boxSizing: "border-box",
+            boxShadow: "0 8px 20px rgba(80,90,200,0.22)",
         },
         avatarImg: {
-            width: 96,
-            height: 96,
+            position: "relative",
+            zIndex: 1,
+            width: 88,
+            height: 88,
             borderRadius: radius.circle,
             objectFit: "cover",
-            boxShadow: `0 0 0 4px ${withAlpha(BRAND.blue, 0.08)}`,
+            border: "4px solid #fff",
+            boxSizing: "border-box",
+            boxShadow: "0 8px 20px rgba(80,90,200,0.22)",
         },
         avatarEditBtn: {
             position: "absolute",
-            right: -2,
-            bottom: -2,
-            width: 32,
-            height: 32,
+            zIndex: 2,
+            right: -4,
+            bottom: 0,
+            width: 30,
+            height: 30,
             borderRadius: radius.circle,
-            background: BRAND.blue,
+            background: "#3F3D9E",
             color: "#fff",
             border: "2px solid #fff",
             display: "flex",
@@ -4351,27 +4569,42 @@ function getStyles(
             justifyContent: "center",
             cursor: "pointer",
             padding: 0,
+            boxShadow: "0 6px 14px rgba(63,61,158,0.35)",
         },
-        nameRow: { display: "flex", alignItems: "center", gap: 8 },
-        name: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
+        nameBlock: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 },
+        name: { fontSize: 18, fontWeight: fontWeight.medium, color: "#1B1F4B", lineHeight: 1.2 },
         activePill: {
-            fontSize: fontSize.xxs,
-            fontWeight: fontWeight.semibold,
-            color: BRAND.green,
-            background: withAlpha(BRAND.green, 0.12),
-            padding: "2px 9px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            fontWeight: fontWeight.medium,
+            color: "#10936B",
+            background: "#DDF7EE",
+            padding: "4px 12px 4px 10px",
             borderRadius: radius.pill,
         },
+        activeDot: {
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "#19C48F",
+            display: "inline-block",
+        },
         editProfileBtn: {
-            border: `1px solid ${withAlpha(BRAND.blue, 0.25)}`,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            border: `1px solid ${withAlpha(BRAND.blue, 0.22)}`,
             background: "#fff",
             color: BRAND.blue,
-            fontWeight: fontWeight.semibold,
-            fontSize: fontSize.base,
-            padding: "9px 18px",
+            fontWeight: fontWeight.medium,
+            fontSize: 13,
+            padding: "8px 16px",
             borderRadius: radius["2xl"],
             cursor: "pointer",
             whiteSpace: "nowrap",
+            boxShadow: "0 3px 10px rgba(70,80,190,0.08)",
         },
         cancelEditBtn: {
             border: "1px solid #e5e7eb",
@@ -4379,46 +4612,113 @@ function getStyles(
             color: "#767F92",
             fontWeight: fontWeight.medium,
             fontSize: fontSize.sm,
-            padding: "9px 16px",
+            padding: "8px 14px",
             borderRadius: radius["2xl"],
             cursor: "pointer",
         },
 
         identityGrid: {
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1.2fr",
-            gap: 20,
-            borderTop: "1px solid #f1f1f1",
-            paddingTop: 18,
+            gridTemplateColumns: "auto auto minmax(220px, 1fr)",
+            columnGap: 56,
+            alignItems: "center",
+            flex: 1,
+            minWidth: 0,
         },
         identityGridMobile: {
             display: "flex",
             flexDirection: "column",
-            gap: 16,
-            borderTop: "1px solid #f1f1f1",
-            paddingTop: 16,
+            gap: 18,
+            order: 3,
+            borderTop: "1px solid #EEF0F6",
+            paddingTop: 18,
         },
-        identityColumn: { display: "flex", flexDirection: "column", gap: 14 },
-        contactRow: { display: "flex", alignItems: "center", gap: 10 },
-        contactIcon: { color: BRAND.lightBlue, flexShrink: 0, display: "flex" },
-        contactValue: { fontSize: fontSize.base, color: "#3D4459", fontWeight: fontWeight.regular },
-        infoIconRow: { display: "flex", alignItems: "center", gap: 10 },
-        infoTextWrap: { display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 },
-        infoLabel: { fontSize: fontSize.xs, color: "#9099AC" },
-        infoValue: { fontSize: fontSize.base, color: "#17181C", fontWeight: fontWeight.medium },
+        identityColumn: {
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            justifyContent: "center",
+        },
+        infoIconRow: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
+        infoChip: {
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        infoStack: { display: "flex", flexDirection: "column", gap: 0, minWidth: 0 },
+        infoLabelTop: { fontSize: 11, color: "#8C94A8", textAlign: "left", lineHeight: 1.3 },
+        infoValue: {
+            fontSize: 13,
+            color: "#1B1F4B",
+            fontWeight: fontWeight.medium,
+            lineHeight: 1.35,
+            textAlign: "left",
+            whiteSpace: "nowrap",
+        },
         aboutBox: {
-            background: "#EEF1FB",
-            borderRadius: radius.lg,
-            padding: 16,
-            borderLeft: `3px solid ${BRAND.blue}`,
+            position: "relative",
+            overflow: "hidden",
+            background: "linear-gradient(135deg, #EEF3FD 0%, #E2EAFB 100%)",
+            border: "1px solid #E0E8F9",
+            borderRadius: 16,
+            padding: "12px 16px 14px",
+            textAlign: "left",
+            minHeight: 0,
+            boxSizing: "border-box",
+        },
+        aboutSpark: {
+            position: "absolute",
+            top: 8,
+            right: 12,
+            transform: "scale(0.7)",
+            transformOrigin: "top right",
+        },
+        aboutWave: {
+            position: "absolute",
+            right: 0,
+            bottom: 0,
+            pointerEvents: "none",
+            transform: "scale(0.65)",
+            transformOrigin: "bottom right",
+        },
+        aboutHeader: { position: "relative", display: "flex", alignItems: "center", gap: 8 },
+        aboutIcon: {
+            width: 30,
+            height: 30,
+            borderRadius: "50%",
+            background: "#DCE5FA",
+            color: "#4A5BD4",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
         },
         aboutTitle: {
-            fontSize: fontSize.sm,
-            fontWeight: fontWeight.semibold,
-            color: BRAND.blue,
-            marginBottom: 6,
+            fontSize: 14,
+            fontWeight: fontWeight.medium,
+            color: "#1B1F4B",
+            textAlign: "left",
         },
-        aboutText: { margin: 0, fontSize: fontSize.base, color: "#3D4459", lineHeight: 1.5 },
+        aboutRule: {
+            position: "relative",
+            width: 30,
+            height: 2,
+            borderRadius: 2,
+            background: "#B9CBF2",
+            margin: "8px 0 8px 2px",
+        },
+        aboutText: {
+            position: "relative",
+            margin: 0,
+            fontSize: 12.5,
+            color: "#5B6475",
+            lineHeight: 1.5,
+            textAlign: "left",
+        },
         aboutTextarea: {
             width: "100%",
             border: "1px solid #ececf5",

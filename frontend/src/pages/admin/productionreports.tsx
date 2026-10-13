@@ -699,7 +699,6 @@ export default function ProductionReport() {
 
     return (
         <div style={styles.root}>
-            <div style={styles.topBar} />
             <div
                 style={{
                     ...styles.contentBody,

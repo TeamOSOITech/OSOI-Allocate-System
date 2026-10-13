@@ -1243,8 +1243,7 @@ const Products = () => {
                         >
                             <option value="team">My Services</option>
                             <option value="org">Organisation</option>
-                        </select>{" "}
-                        v
+                        </select>
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every row/card
                             all the time. Tapping it again exits select mode and clears

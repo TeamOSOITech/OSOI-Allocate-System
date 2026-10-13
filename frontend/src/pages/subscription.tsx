@@ -17,6 +17,7 @@
 // POST /api/billing/upgrade/verify-payment instead — see
 // createUpgradeOrderHandler / verifyUpgradePaymentHandler on the backend.
 
+import { getCurrentUser } from "../utils/auth";
 import { useEffect, useState, useCallback } from "react";
 import { authFetch } from "../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../styles/theme";
@@ -128,7 +129,7 @@ export default function Subscription() {
     // never opens for them. Same localStorage-read pattern already used
     // by clients.tsx/employees.tsx/products.tsx (AuthContext isn't wired
     // into App.jsx yet — see authcontext.tsx's header comment).
-    const currentUser = JSON.parse(localStorage.getItem("user") || "null");
+    const currentUser = getCurrentUser();
     const canManagePlan =
         currentUser?.role === "SUPER_ADMIN" || currentUser?.role === "OPS_MANAGER";
 
