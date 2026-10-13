@@ -244,6 +244,14 @@ app.use("/api", loadRoute("profile", "./src/modules/profiles/profile.route"));
 // "Birthdays" card next to it on the Home page needs no new module —
 // it reads dateOfBirth straight off GET /api/employees, already open to
 // every logged-in user.
+// NEW: in-app notifications (bell icon) — e.g. "more than 8 hours" alert.
+app.use(
+  "/api/notifications",
+  loadRoute(
+    "notifications",
+    "./src/modules/notifications/notifications.routes",
+  ),
+);
 app.use(
   "/api/holidays",
   loadRoute("holidays", "./src/modules/holidays/holidays.routes"),
