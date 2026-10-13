@@ -51,8 +51,6 @@
 //     notifyAllocation). The page sends the ids in overloadEmployeeIds.
 
 const supabase = require("../../config/supabaseClient");
-// NEW: free browser push (works when logged out) — see utils/webpush.js
-const { sendPushToUsers } = require("../../utils/webpush");
 // MODIFIED: fair rotation (extra case goes to whoever got the least work
 // in the last 30 days) — now used by the case-number Smart Allocation too.
 const { getRecentLoad, orderByLeastLoad } = require("./fairness");
@@ -2271,11 +2269,13 @@ const ALLOC_MESSAGE =
 // also needs the allocation_overload_notifications table).
 const OVERLOAD_MAIL_ONCE_PER_DAY = false;
 
-// NEW (NOTIFY OVERLOAD): polite in-app notification (bell icon). It is NOT
-// emailed. No case counts inside.
-const OVERLOAD_NOTIF_TITLE = "More work added today";
-const OVERLOAD_NOTIF_MESSAGE =
-  "You have received more than 8 hours of work today. Thank you for your effort - please check your allocation, and reach out if you need any support.";
+// NEW (NOTIFY OVERLOAD): polite "more work" mail. No case counts inside.
+// SHORT on purpose: just "More work allocated" + an upside-down smiley.
+const MORE_WORK_SUBJECT = "More work allocated 🙃";
+const MORE_WORK_HEADING = "More Work Allocated";
+const MORE_WORK_HEADLINE = "More work allocated 🙃";
+const MORE_WORK_SUBTEXT = "";
+const MORE_WORK_MESSAGE = MORE_WORK_HEADLINE;
 
 // App link shown in the email button. Set FRONTEND_URL in .env
 // (e.g. https://your-app.vercel.app). Falls back to "#" if missing.
@@ -2498,60 +2498,19 @@ async function notifyAllocation(req, res) {
       }
     }
 
-    // CHANGED: the "more than 8 hours" alert is now an IN-APP notification
-    // (bell icon in the header), NOT a mail. It is saved in
-    // app_notifications (see notifications.controller.js for the SQL).
-    // Only the first-of-the-day "work allocated" mail is still emailed.
-    let moreSent = 0;
-    if (toSendMore.length > 0) {
-      const { error: notifError } = await supabase
-        .from("app_notifications")
-        .insert(
-          toSendMore.map((id) => ({
-            organization_id: req.user.organizationId,
-            user_id: id,
-            type: "OVERLOAD",
-            title: OVERLOAD_NOTIF_TITLE,
-            message: OVERLOAD_NOTIF_MESSAGE,
-            work_date: workDate,
-          })),
-        );
-      if (notifError) {
-        console.error(
-          "[notify] overload notification insert failed:",
-          notifError,
-        );
-        // release the once-per-day claim so the next Allocate can retry
-        if (OVERLOAD_MAIL_ONCE_PER_DAY) {
-          await supabase
-            .from("allocation_overload_notifications")
-            .delete()
-            .eq("organization_id", req.user.organizationId)
-            .eq("work_date", workDate)
-            .in("employee_id", toSendMore);
-        }
-      } else {
-        moreSent = toSendMore.length;
-        // also pop a system notification on their device (never throws)
-        await sendPushToUsers({
-          organizationId: req.user.organizationId,
-          userIds: toSendMore,
-          title: OVERLOAD_NOTIF_TITLE,
-          body: OVERLOAD_NOTIF_MESSAGE,
-          url: APP_URL ? `${APP_URL}/` : "/",
-        });
-      }
-    }
+    const jobs = [
+      ...toSend.map((id) => ({ id, kind: "first" })),
+      ...toSendMore.map((id) => ({ id, kind: "more" })),
+    ];
+    const skipped = validIds.length - jobs.length;
 
-    const jobs = toSend.map((id) => ({ id, kind: "first" }));
-    const skipped = validIds.length - jobs.length - moreSent;
-
-    // everyone was already mailed earlier for this date — nothing more to
-    // mail, and NOT an error (the frontend must not show a failure toast)
+    // everyone was already mailed earlier for this date (and nobody newly
+    // crossed 8 hours) — nothing to do, and NOT an error (the frontend
+    // must not show a failure toast)
     if (jobs.length === 0) {
       return res.json({
         success: true,
-        data: { sent: 0, failed: 0, skipped, moreSent },
+        data: { sent: 0, failed: 0, skipped, moreSent: 0 },
       });
     }
 
@@ -2569,19 +2528,36 @@ async function notifyAllocation(req, res) {
         const to = data.user.email;
         console.log(`[notify] sending (${kind}) to:`, to);
 
-        await sendEmail({
-          to,
-          // CHANGED: "Work allocated today"
-          subject: "Work allocated today",
-          text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
-          html: buildAllocationEmailHtml(),
-        });
+        if (kind === "more") {
+          await sendEmail({
+            to,
+            subject: MORE_WORK_SUBJECT,
+            text: `${MORE_WORK_MESSAGE} ${APP_LOGIN_URL}`,
+            html: buildAllocationEmailHtml({
+              icon: "&#10133;",
+              heading: MORE_WORK_HEADING,
+              headline: MORE_WORK_HEADLINE,
+              subtext: MORE_WORK_SUBTEXT,
+            }),
+          });
+        } else {
+          await sendEmail({
+            to,
+            // CHANGED: "Work allocated today"
+            subject: "Work allocated today",
+            text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
+            html: buildAllocationEmailHtml(),
+          });
+        }
         console.log(`[notify] sent (${kind}) to:`, to);
       }),
     );
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.length - sent;
+    const moreSent = results.filter(
+      (r, i) => r.status === "fulfilled" && jobs[i].kind === "more",
+    ).length;
     if (failed > 0) {
       console.error(
         "notifyAllocation failures:",
@@ -2594,6 +2570,9 @@ async function notifyAllocation(req, res) {
           (j, i) => j.kind === "first" && results[i].status === "rejected",
         )
         .map((j) => j.id);
+      const failedMore = jobs
+        .filter((j, i) => j.kind === "more" && results[i].status === "rejected")
+        .map((j) => j.id);
       if (failedFirst.length > 0) {
         const { error: releaseError } = await supabase
           .from("allocation_notifications")
@@ -2605,10 +2584,24 @@ async function notifyAllocation(req, res) {
           console.error("Failed to release notification claim:", releaseError);
         }
       }
+      if (failedMore.length > 0) {
+        const { error: releaseMoreError } = await supabase
+          .from("allocation_overload_notifications")
+          .delete()
+          .eq("organization_id", req.user.organizationId)
+          .eq("work_date", workDate)
+          .in("employee_id", failedMore);
+        if (releaseMoreError) {
+          console.error(
+            "Failed to release overload notification claim:",
+            releaseMoreError,
+          );
+        }
+      }
     }
 
     // koi bhi mail chali gayi to success; sab fail hui to frontend ko toast dikhe
-    if (sent === 0 && moreSent === 0) {
+    if (sent === 0) {
       return res
         .status(502)
         .json({ success: false, message: "Could not send messages." });
