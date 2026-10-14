@@ -50,6 +50,15 @@ function getHoverCss(BRAND: { blue: string }) {
 .pf-emp-item:hover { background: ${withAlpha(BRAND.blue, 0.08)}; }
 .pf-emp-go { opacity: 0; transform: translateX(-4px); transition: opacity .15s ease, transform .15s ease; }
 .pf-emp-item:hover .pf-emp-go { opacity: 1; transform: translateX(0); }
+@keyframes pf-today-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--brand-green-rgb), 0.35), 0 6px 18px rgba(var(--brand-green-rgb), 0.12); }
+  50% { box-shadow: 0 0 0 7px rgba(var(--brand-green-rgb), 0), 0 10px 26px rgba(var(--brand-green-rgb), 0.22); }
+}
+@keyframes pf-today-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes pf-today-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+.pf-today-card { animation: pf-today-glow 2.2s ease-in-out infinite, pf-today-float 3.2s ease-in-out infinite; background: linear-gradient(180deg, rgba(var(--brand-green-rgb), 0.08), #fff 40%) !important; }
+.pf-today-dot { animation: pf-today-dot 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .pf-today-card, .pf-today-dot { animation: none; } }
 @keyframes pf-emp-pop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 `;
 }
@@ -566,6 +575,11 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [submitQueryText, setSubmitQueryText] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
+    // Row-level submit (Status dropdown inside the table, Submit button at the end)
+    const [rowTypeById, setRowTypeById] = useState<Record<string, "" | SubmissionType>>({});
+    const [rowQueryById, setRowQueryById] = useState<Record<string, string>>({});
+    const [rowSubmittingId, setRowSubmittingId] = useState<string | null>(null);
+    const [rowError, setRowError] = useState<string | null>(null);
     const panelRef = useRef<HTMLDivElement>(null);
 
     // ---- Bulk Submit (every pending case for today, in one click) ----
@@ -1154,6 +1168,25 @@ export default function Profile({ onLogout }: ProfileProps) {
         };
     }, [pastCases, myCounts]);
 
+    // Whole-month total: every case submitted this calendar month (an open
+    // Query is not finished work, so it is not counted) and the time it
+    // took = number of cases x each service's AMP.
+    const monthStats = useMemo(() => {
+        const month = todayStr().slice(0, 7);
+        const done = cases.filter(
+            (c) =>
+                isSubmitted(c) &&
+                c.submissionType !== "QUERY" &&
+                (localDateStr(c.submittedAt) || "").slice(0, 7) === month
+        );
+        return {
+            count: done.length,
+            mins: done.reduce((sum, c) => sum + ampOf(c.productId), 0),
+            monthName: new Date().toLocaleString("en-US", { month: "long" }),
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cases, productAmp]);
+
     // All Query: scoped to ALL of the employee's cases (every date).
     const { openQueries, resolvedQueries } = useMemo(() => {
         const newestFirst = (a: CaseRow, b: CaseRow) =>
@@ -1230,6 +1263,48 @@ export default function Profile({ onLogout }: ProfileProps) {
             setSubmitError(err?.message || "Failed to submit work");
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    // ---- Row submit: pick the status in the table, press Submit at the end ----
+    const canSubmitRow = (c: CaseRow) => {
+        const t = rowTypeById[c.id] || "";
+        return !!t && (t !== "QUERY" || (rowQueryById[c.id] || "").trim() !== "");
+    };
+
+    const handleRowSubmit = async (c: CaseRow) => {
+        if (rowSubmittingId || !canSubmitRow(c)) return;
+        const t = rowTypeById[c.id] as SubmissionType;
+        setRowError(null);
+        setRowSubmittingId(c.id);
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/submit`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    submissionType: t,
+                    queryText: t === "QUERY" ? (rowQueryById[c.id] || "").trim() : undefined,
+                    onBehalfOf: isViewingOther ? viewingId : undefined,
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json.message || "Failed to submit work");
+            setRowTypeById((prev) => {
+                const next = { ...prev };
+                delete next[c.id];
+                return next;
+            });
+            setRowQueryById((prev) => {
+                const next = { ...prev };
+                delete next[c.id];
+                return next;
+            });
+            showToast(`${c.caseNumber} submitted successfully — ${outcomeLabel(t)}.`);
+            await loadAll();
+        } catch (err: any) {
+            setRowError(err?.message || "Failed to submit work");
+        } finally {
+            setRowSubmittingId(null);
         }
     };
 
@@ -2414,6 +2489,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                     }
                     styles={styles}
                 />
+                {/* whole month: cases completed + hours they took */}
+                <StatCard
+                    icon={<CheckIcon />}
+                    tint={BRAND.blue}
+                    value={monthStats.count}
+                    label={`${monthStats.monthName} Total`}
+                    sub={`${monthStats.mins > 0 ? formatMinutes(monthStats.mins) : "0m"} worked this month`}
+                    styles={styles}
+                />
             </div>
 
             {/* ---- Case-wise cards (click View Details -> cases table opens) ---- */}
@@ -2479,14 +2563,52 @@ export default function Profile({ onLogout }: ProfileProps) {
                     ].map((c) => (
                         <div
                             key={c.key}
-                            className="pf-card-hover"
+                            className={
+                                c.key === "today" ? "pf-card-hover pf-today-card" : "pf-card-hover"
+                            }
                             style={{
                                 ...styles.caseCard,
-                                borderColor: c.active ? BRAND.blue : "#e5e9f0",
+                                borderColor:
+                                    c.key === "today"
+                                        ? BRAND.green
+                                        : c.active
+                                          ? BRAND.blue
+                                          : "#e5e9f0",
                             }}
                         >
                             <div style={styles.caseCardTop}>
-                                <div style={styles.caseCardName}>{c.title}</div>
+                                <div style={styles.caseCardName}>
+                                    {c.title}
+                                    {c.key === "today" && (
+                                        <span
+                                            style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 5,
+                                                marginLeft: 8,
+                                                padding: "2px 8px",
+                                                borderRadius: 999,
+                                                background: "rgba(var(--brand-green-rgb),0.12)",
+                                                color: BRAND.green,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                letterSpacing: "0.05em",
+                                                verticalAlign: "middle",
+                                            }}
+                                        >
+                                            <span
+                                                className="pf-today-dot"
+                                                style={{
+                                                    width: 6,
+                                                    height: 6,
+                                                    borderRadius: "50%",
+                                                    background: BRAND.green,
+                                                }}
+                                            />
+                                            LIVE
+                                        </span>
+                                    )}
+                                </div>
                                 <div style={styles.caseTotalBox}>
                                     <div style={styles.caseTotalNum}>{c.total}</div>
                                     <div style={styles.smallMuted}>{c.totalLabel}</div>
@@ -2621,85 +2743,71 @@ export default function Profile({ onLogout }: ProfileProps) {
                         )}
                     </div>
 
-                    {/* ---- Counts / Cases toggle (works for Today's AND Past) ---- */}
-                    {!isViewingOther && (
-                        <div style={styles.allocViewRow}>
-                            <button
-                                type="button"
-                                className="pf-btn"
-                                style={
-                                    allocView === "counts"
-                                        ? styles.allocViewBtnActive
-                                        : styles.allocViewBtn
-                                }
-                                onClick={() => setAllocView("counts")}
-                            >
-                                Counts ({filteredCounts.length})
-                            </button>
-                            <button
-                                type="button"
-                                className="pf-btn"
-                                style={
-                                    allocView === "cases"
-                                        ? styles.allocViewBtnActive
-                                        : styles.allocViewBtn
-                                }
-                                onClick={() => setAllocView("cases")}
-                            >
-                                Cases ({filteredRows.length})
-                            </button>
+                    {/* ---- Counts / Cases toggle (left) + Search (right) ---- */}
+                    <div
+                        style={{
+                            ...styles.allocViewRow,
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                        }}
+                    >
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {!isViewingOther && (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="pf-btn"
+                                        style={
+                                            allocView === "counts"
+                                                ? styles.allocViewBtnActive
+                                                : styles.allocViewBtn
+                                        }
+                                        onClick={() => setAllocView("counts")}
+                                    >
+                                        Counts ({filteredCounts.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn"
+                                        style={
+                                            allocView === "cases"
+                                                ? styles.allocViewBtnActive
+                                                : styles.allocViewBtn
+                                        }
+                                        onClick={() => setAllocView("cases")}
+                                    >
+                                        Cases ({filteredRows.length})
+                                    </button>
+                                </>
+                            )}
                         </div>
-                    )}
-
-                    {/* ---- Filters ---- */}
-                    <div style={isMobile ? styles.filterRowMobile : styles.filterRow}>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Date</label>
-                            <input
-                                type="date"
-                                style={styles.textInput}
-                                value={dateFilter}
-                                onChange={(e) => setDateFilter(e.target.value)}
-                            />
-                        </div>
-                        <div style={styles.filterField}>
-                            <label style={styles.smallLabel}>Service</label>
-                            <select
-                                style={styles.textInput}
-                                value={productFilter}
-                                onChange={(e) => setProductFilter(e.target.value)}
-                            >
-                                <option value="all">All Services</option>
-                                {products.map((p) => (
-                                    <option key={p} value={p}>
-                                        {p}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        {allocView === "cases" && (
-                            <div style={styles.filterField}>
-                                <label style={styles.smallLabel}>Status</label>
+                        <div
+                            style={{
+                                display: "flex",
+                                gap: 10,
+                                alignItems: "center",
+                                width: isMobile ? "100%" : "auto",
+                            }}
+                        >
+                            {allocView === "cases" && (
                                 <select
-                                    style={styles.textInput}
+                                    style={{ ...styles.textInput, minWidth: 130 }}
                                     value={statusFilter}
                                     onChange={(e) => setStatusFilter(e.target.value as any)}
+                                    aria-label="Status"
                                 >
-                                    <option value="all">All</option>
+                                    <option value="all">All Status</option>
                                     <option value="PENDING">Pending</option>
                                     <option value="SUBMITTED">Submitted</option>
                                 </select>
-                            </div>
-                        )}
-                        <div style={{ ...styles.filterField, flex: 1 }}>
-                            <label style={styles.smallLabel}>Search</label>
+                            )}
                             <input
-                                style={styles.textInput}
+                                style={{ ...styles.textInput, width: isMobile ? "100%" : 300 }}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder={
                                     allocView === "cases"
-                                        ? "Search by case number, service or profile…"
+                                        ? "Search by case number or service…"
                                         : "Search by service or client…"
                                 }
                             />
@@ -3013,15 +3121,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 ) : (
                                     <table style={styles.table}>
                                         <colgroup>
-                                            <col style={{ width: "4%" }} />
-                                            <col style={{ width: "10%" }} />
+                                            <col style={{ width: "5%" }} />
+                                            <col style={{ width: "12%" }} />
+                                            <col style={{ width: "12%" }} />
                                             <col style={{ width: "11%" }} />
-                                            <col style={{ width: "12%" }} />
-                                            <col style={{ width: "12%" }} />
-                                            <col style={{ width: "8%" }} />
-                                            <col style={{ width: "15%" }} />
-                                            <col style={{ width: "9%" }} />
-                                            <col style={{ width: "9%" }} />
+                                            <col style={{ width: "17%" }} />
+                                            <col style={{ width: "22%" }} />
+                                            <col style={{ width: "11%" }} />
                                             <col style={{ width: "10%" }} />
                                         </colgroup>
                                         <thead>
@@ -3029,8 +3135,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 <th style={styles.th}>#</th>
                                                 <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Service</th>
-                                                <th style={styles.th}>Client</th>
-                                                <th style={styles.th}>Subclient</th>
                                                 <th style={styles.th}>Date</th>
                                                 <th style={styles.th}>Allocated At</th>
                                                 <th style={{ ...styles.th, textAlign: "center" }}>
@@ -3070,55 +3174,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         <td style={styles.td}>
                                                             {c.productName || "-"}
                                                         </td>
-                                                        {/* FIX: part="client" -> only the client shows here
-                                                    (subclient has its own column) */}
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                whiteSpace: "normal",
-                                                            }}
-                                                        >
-                                                            <ClientCell
-                                                                c={c}
-                                                                part="client"
-                                                                clients={clients}
-                                                                subclients={subclients}
-                                                                saving={savingClientCaseId === c.id}
-                                                                onChange={(kind, v) =>
-                                                                    handleCaseClientChange(
-                                                                        c,
-                                                                        kind,
-                                                                        v
-                                                                    )
-                                                                }
-                                                                readOnly={isViewingOther}
-                                                                styles={styles}
-                                                            />
-                                                        </td>
-
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                whiteSpace: "normal",
-                                                            }}
-                                                        >
-                                                            <ClientCell
-                                                                c={c}
-                                                                part="subclient"
-                                                                clients={clients}
-                                                                subclients={subclients}
-                                                                saving={savingClientCaseId === c.id}
-                                                                onChange={(kind, v) =>
-                                                                    handleCaseClientChange(
-                                                                        c,
-                                                                        kind,
-                                                                        v
-                                                                    )
-                                                                }
-                                                                readOnly={isViewingOther}
-                                                                styles={styles}
-                                                            />
-                                                        </td>
                                                         <td style={styles.td}>
                                                             {formatDisplayDate(c.workDate)}
                                                         </td>
@@ -3152,17 +3207,108 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 textAlign: "center",
                                                             }}
                                                         >
-                                                            <span
-                                                                style={
-                                                                    submitted
-                                                                        ? styles.statusDone
-                                                                        : styles.statusPending
-                                                                }
-                                                            >
-                                                                {submitted
-                                                                    ? "Submitted"
-                                                                    : "Pending"}
-                                                            </span>
+                                                            {submitted ? (
+                                                                <span style={styles.statusDone}>
+                                                                    Submitted
+                                                                </span>
+                                                            ) : (
+                                                                <div
+                                                                    style={{
+                                                                        display: "flex",
+                                                                        alignItems: "center",
+                                                                        justifyContent: "center",
+                                                                        gap: 8,
+                                                                        flexWrap: "wrap",
+                                                                    }}
+                                                                >
+                                                                    <select
+                                                                        value={
+                                                                            rowTypeById[c.id] || ""
+                                                                        }
+                                                                        disabled={
+                                                                            rowSubmittingId === c.id
+                                                                        }
+                                                                        onChange={(e) =>
+                                                                            setRowTypeById(
+                                                                                (prev) => ({
+                                                                                    ...prev,
+                                                                                    [c.id]: e.target
+                                                                                        .value as
+                                                                                        | ""
+                                                                                        | SubmissionType,
+                                                                                })
+                                                                            )
+                                                                        }
+                                                                        style={{
+                                                                            width: 150,
+                                                                            height: 34,
+                                                                            padding: "0 10px",
+                                                                            borderRadius: 8,
+                                                                            border: "1px solid #dfe3ee",
+                                                                            outline: "none",
+                                                                            fontSize: 13,
+                                                                            background: "#fafafa",
+                                                                            color: "#17181C",
+                                                                            cursor: "pointer",
+                                                                            boxSizing: "border-box",
+                                                                        }}
+                                                                    >
+                                                                        <option value="">
+                                                                            Pending
+                                                                        </option>
+                                                                        {SUBMISSION_OPTIONS.map(
+                                                                            (o) => (
+                                                                                <option
+                                                                                    key={o.value}
+                                                                                    value={o.value}
+                                                                                >
+                                                                                    {o.label}
+                                                                                </option>
+                                                                            )
+                                                                        )}
+                                                                    </select>
+                                                                    {rowTypeById[c.id] ===
+                                                                        "QUERY" && (
+                                                                        <input
+                                                                            type="text"
+                                                                            autoFocus
+                                                                            placeholder="Query reason…"
+                                                                            value={
+                                                                                rowQueryById[
+                                                                                    c.id
+                                                                                ] || ""
+                                                                            }
+                                                                            disabled={
+                                                                                rowSubmittingId ===
+                                                                                c.id
+                                                                            }
+                                                                            onChange={(e) =>
+                                                                                setRowQueryById(
+                                                                                    (prev) => ({
+                                                                                        ...prev,
+                                                                                        [c.id]:
+                                                                                            e.target
+                                                                                                .value,
+                                                                                    })
+                                                                                )
+                                                                            }
+                                                                            style={{
+                                                                                width: 150,
+                                                                                height: 34,
+                                                                                padding: "0 10px",
+                                                                                borderRadius: 8,
+                                                                                border: "1px solid #dfe3ee",
+                                                                                outline: "none",
+                                                                                fontSize: 13,
+                                                                                background: "#fff",
+                                                                                color: "#17181C",
+                                                                                boxSizing:
+                                                                                    "border-box",
+                                                                            }}
+                                                                        />
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td
                                                             style={{
@@ -3221,12 +3367,30 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             ) : (
                                                                 <button
                                                                     type="button"
-                                                                    style={styles.rowSubmitBtn}
+                                                                    style={{
+                                                                        ...styles.rowSubmitBtn,
+                                                                        opacity:
+                                                                            canSubmitRow(c) &&
+                                                                            rowSubmittingId !== c.id
+                                                                                ? 1
+                                                                                : 0.5,
+                                                                        cursor:
+                                                                            canSubmitRow(c) &&
+                                                                            rowSubmittingId !== c.id
+                                                                                ? "pointer"
+                                                                                : "not-allowed",
+                                                                    }}
+                                                                    disabled={
+                                                                        !canSubmitRow(c) ||
+                                                                        rowSubmittingId !== null
+                                                                    }
                                                                     onClick={() =>
-                                                                        handlePickForSubmit(c)
+                                                                        handleRowSubmit(c)
                                                                     }
                                                                 >
-                                                                    Submit
+                                                                    {rowSubmittingId === c.id
+                                                                        ? "Submitting…"
+                                                                        : "Submit"}
                                                                 </button>
                                                             )}
                                                         </td>
@@ -3239,6 +3403,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 {clientCellError && (
                                     <p style={styles.rowError}>{clientCellError}</p>
                                 )}
+                                {rowError && <p style={styles.rowError}>{rowError}</p>}
                             </div>
 
                             {/* ---- Submit Your Work (popup, opens right where "Submit" is clicked) ---- */}
@@ -5329,7 +5494,7 @@ function getStyles(
         /* Stats — 4 cards now (Total / Submitted / Pending / Allocated Time) */
         statsGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(5, 1fr)",
+            gridTemplateColumns: "repeat(6, 1fr)",
             gap: 10,
         },
         statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
@@ -5481,6 +5646,7 @@ function getStyles(
         },
         tr: {},
         td: {
+            verticalAlign: "middle",
             textAlign: "left",
             fontSize: fontSize.base,
             color: "#3D4459",

@@ -2683,7 +2683,7 @@ export default function TodaysAllocationCases({
 }
 
 // clean grid for the grouped Counts view
-const CG_COLS = "1.3fr 1.1fr 130px 110px 1.5fr";
+const CG_COLS = "220px 200px 130px 120px 1fr";
 
 const styles: Record<string, CSSProperties> = {
     root: { display: "flex", flexDirection: "column" },
@@ -3075,6 +3075,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
+        textAlign: "left",
     },
     tableRow: {
         display: "flex",
@@ -3085,10 +3086,11 @@ const styles: Record<string, CSSProperties> = {
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
+        textAlign: "left",
     },
     colCase: { width: 120, flexShrink: 0, fontWeight: fontWeight.medium },
-    colClient: { width: 150, flexShrink: 0 },
-    colSubclient: { width: 150, flexShrink: 0 },
+    colClient: { width: 150, flexShrink: 0, textAlign: "left" },
+    colSubclient: { width: 150, flexShrink: 0, textAlign: "left" },
     colService: { width: 140, flexShrink: 0 },
     colDate: { width: 100, flexShrink: 0 },
     colTime: { width: 70, flexShrink: 0 },
@@ -3169,6 +3171,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
+        textAlign: "left",
     },
     cgGroup: {
         border: "1px solid #E6E9F3",
@@ -3201,10 +3204,22 @@ const styles: Record<string, CSSProperties> = {
         gridTemplateColumns: CG_COLS,
         gap: 14,
         alignItems: "center",
+        textAlign: "left",
     },
-    cgCell: { display: "flex", flexDirection: "column", gap: 3 },
-    cgClient: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: "#1B1F4B" },
-    cgText: { fontSize: fontSize.base, color: "#17181C" },
+    cgCell: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 3,
+        textAlign: "left",
+    },
+    cgClient: {
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.bold,
+        color: "#1B1F4B",
+        textAlign: "left",
+    },
+    cgText: { fontSize: fontSize.base, color: "#17181C", textAlign: "left" },
     cgCarry: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold, color: "#B45309" },
     cgRight: {
         display: "flex",

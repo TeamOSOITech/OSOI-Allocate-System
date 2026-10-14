@@ -603,7 +603,10 @@ export default function Employees() {
                 method: "DELETE",
             });
 
-            if (!response.ok) throw new Error("Delete failed");
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                throw new Error(data?.message || data?.error || "Delete failed");
+            }
 
             setEmployees((prev) => prev.filter((emp) => emp.id !== employeeToDelete.id));
 
@@ -614,7 +617,7 @@ export default function Employees() {
             setSelectedEmployee((prev) => (prev?.id === employeeToDelete.id ? null : prev));
         } catch (error) {
             console.error(error);
-            alert("Unable to delete employee.");
+            alert((error as Error)?.message || "Unable to delete employee.");
         } finally {
             setDeleting(false);
         }
