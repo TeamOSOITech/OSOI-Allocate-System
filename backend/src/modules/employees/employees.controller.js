@@ -198,11 +198,15 @@ async function deleteEmployee(req, res) {
   }
 
   try {
-    await employeesService.deleteEmployeeRow(id, orgId);
-    res.json({ success: true });
+    const outcome = await employeesService.deleteEmployeeRow(id, orgId);
+    res.json({ success: true, ...(outcome || {}) });
   } catch (error) {
     console.error("Failed to delete employee:", error);
-    res.status(500).json({ error: "Failed to delete employee" });
+    const msg = error?.message?.startsWith("Employee was removed")
+      ? error.message
+      : "Failed to delete employee";
+    // "error" for existing callers, "message" for the bulk-delete UI
+    res.status(500).json({ error: msg, message: msg });
   }
 }
 

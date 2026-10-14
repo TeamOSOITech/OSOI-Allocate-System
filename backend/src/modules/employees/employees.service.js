@@ -166,57 +166,79 @@ async function deleteEmployeeRow(id, organizationId) {
 
   if (dbError) throw dbError;
 
-  // RETRY: the Auth delete call can fail on a purely transient network
-  // hiccup (seen in testing as AuthRetryableFetchError — the request
-  // never even reached Supabase, nothing to do with FKs/data). Since
-  // this is the actual account removal that unblocks re-adding the same
-  // email, we don't want one dropped packet to leave it permanently
-  // orphaned. Retry a few times with a short backoff before giving up.
+  // The user_master row is gone. Now remove the Supabase Auth account so
+  // the same email can be added again.
+  const result = await removeAuthAccount(id);
+  if (!result.ok) {
+    // Never swallow this silently any more — an Auth account left behind
+    // is exactly what made "already exists" appear on re-adding.
+    throw new Error(
+      `Employee was removed, but the login account could not be cleaned up: ${result.message}`,
+    );
+  }
+  return { authCleanup: result.mode }; // "deleted" | "released-email"
+}
+
+function isAuthUserGone(authError) {
+  return (
+    authError &&
+    (authError.status === 404 || /not.?found/i.test(authError.message || ""))
+  );
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Removes the employee's Supabase Auth account.
+//
+// 1) Try a real delete (retried — transient network errors happen).
+// 2) If Supabase refuses the delete (typically a database error because
+//    ANOTHER table still has a foreign key to auth.users, e.g. attendance /
+//    service_cases history), the account can't be deleted without losing
+//    that history. In that case we RELEASE THE EMAIL instead: rename the Auth
+//    user to an unused address and ban it. The old login can no longer be
+//    used and the real email is free to be added again.
+async function removeAuthAccount(id) {
   const MAX_ATTEMPTS = 3;
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const { error: authError } = await supabase.auth.admin.deleteUser(id);
-
-    if (!authError) {
-      lastError = null;
-      break;
+    const { error } = await supabase.auth.admin.deleteUser(id);
+    if (!error || isAuthUserGone(error)) {
+      return { ok: true, mode: "deleted" };
     }
-
-    // "User not found" just means it was already removed from Auth in a
-    // previous attempt (or never had a real Auth account) — not a real
-    // failure, since the goal (email free to re-add) is already met.
-    // No point retrying this one.
-    const alreadyGone =
-      authError.status === 404 || /not.?found/i.test(authError.message || "");
-    if (alreadyGone) {
-      lastError = null;
-      break;
-    }
-
-    lastError = authError;
-    if (attempt < MAX_ATTEMPTS) {
-      // Short exponential backoff: 300ms, 900ms.
-      await new Promise((resolve) =>
-        setTimeout(resolve, 300 * 3 ** (attempt - 1)),
-      );
-    }
-  }
-
-  if (lastError) {
-    // The user_master row is already gone at this point — the employee
-    // has disappeared from the app either way. We only log here (not
-    // throw) so the caller still sees delete as successful; an Auth
-    // account stuck behind after all retries needs manual cleanup in
-    // the Supabase dashboard, but it no longer blocks anything else in
-    // the app itself.
+    lastError = error;
     console.error(
-      `deleteEmployeeRow: user_master row ${id} was deleted, but the ` +
-        `Supabase Auth account could not be removed after ${MAX_ATTEMPTS} ` +
-        `attempts. It needs manual cleanup in the Supabase dashboard:`,
-      lastError,
+      `removeAuthAccount: delete attempt ${attempt}/${MAX_ATTEMPTS} failed for ${id}:`,
+      error.status,
+      error.message,
     );
+    if (attempt < MAX_ATTEMPTS) await sleep(300 * 3 ** (attempt - 1));
   }
+
+  // Real delete is blocked -> release the email instead.
+  const { error: renameError } = await supabase.auth.admin.updateUserById(id, {
+    email: `deleted_${id}@deleted.invalid`,
+    email_confirm: true,
+    ban_duration: "876000h", // ~100 years: this login can never be used
+    user_metadata: { deleted: true, deletedAt: new Date().toISOString() },
+  });
+
+  if (!renameError || isAuthUserGone(renameError)) {
+    console.warn(
+      `removeAuthAccount: could not delete Auth user ${id} (${lastError?.message}); ` +
+        `email released by renaming + banning the account instead.`,
+    );
+    return { ok: true, mode: "released-email" };
+  }
+
+  console.error(
+    `removeAuthAccount: could not delete OR rename Auth user ${id}:`,
+    renameError.message,
+  );
+  return {
+    ok: false,
+    message: `${lastError?.message || "delete failed"} / ${renameError.message}`,
+  };
 }
 
 // Sets a new password for an employee directly, with NO email involved.
@@ -243,5 +265,6 @@ module.exports = {
   fetchTargetRole,
   updateEmployeeRow,
   deleteEmployeeRow,
+  removeAuthAccount,
   setEmployeePassword,
 };
