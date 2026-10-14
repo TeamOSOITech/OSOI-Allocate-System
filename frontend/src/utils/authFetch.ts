@@ -55,26 +55,55 @@ function sleep(ms: number) {
 // running on our own frontend," which localStorage already guarantees
 // just as well as a cookie would (a malicious cross-site page can't read
 // either one).
-let csrfToken: string | null =
-    typeof window !== "undefined" ? localStorage.getItem(CSRF_STORAGE_KEY) : null;
+// iPhone FIX: Safari (private mode / "Block all cookies" / storage blocked) can
+// THROW on localStorage access. At module top level that crashes the whole
+// app before React mounts = blank page. Always go through these guards.
+function safeGet(key: string): string | null {
+    try {
+        return typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+    } catch {
+        return null;
+    }
+}
+function safeSet(key: string, value: string) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch {
+        /* storage blocked - keep token in memory only */
+    }
+}
+function safeRemove(key: string) {
+    try {
+        window.localStorage.removeItem(key);
+    } catch {
+        /* ignore */
+    }
+}
+
+let csrfToken: string | null = safeGet(CSRF_STORAGE_KEY);
 
 export function setCsrfToken(token: string | null) {
     csrfToken = token;
     if (typeof window === "undefined") return;
-    if (token) localStorage.setItem(CSRF_STORAGE_KEY, token);
-    else localStorage.removeItem(CSRF_STORAGE_KEY);
+    if (token) safeSet(CSRF_STORAGE_KEY, token);
+    else safeRemove(CSRF_STORAGE_KEY);
 }
 
 function getCsrfToken(): string | null {
     return csrfToken;
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+// "ok"      = cookies refreshed, retry the request
+// "expired" = server said the session is really gone (401/403/400) -> log out
+// "error"   = network problem / 5xx / Render cold start -> do NOT log out
+type RefreshResult = "ok" | "expired" | "error";
+
+let refreshInFlight: Promise<RefreshResult> | null = null;
 
 // Calls the backend's refresh route. On success the backend has already
 // set fresh Set-Cookie headers on the response — there is nothing for us
 // to store locally, we just signal "ok, retry the original request now".
-async function refreshSession(): Promise<boolean> {
+async function refreshSession(): Promise<RefreshResult> {
     // De-dupe: if 3 requests 401 at once, only refresh once, not 3 times.
     if (refreshInFlight) return refreshInFlight;
 
@@ -86,7 +115,7 @@ async function refreshSession(): Promise<boolean> {
                 credentials: "include",
                 headers: csrf ? { "X-CSRF-Token": csrf } : {},
             });
-            if (!res.ok) return false;
+            if (!res.ok) return res.status >= 500 ? "error" : "expired";
 
             // The refreshed csrfToken cookie is a NEW value (see
             // authCookies.js — generateCsrfToken() runs again on every
@@ -101,10 +130,10 @@ async function refreshSession(): Promise<boolean> {
                 // fails and triggers another refresh cycle.
             }
 
-            return true;
+            return "ok";
         } catch (err) {
             console.error("authFetch: session refresh failed:", err);
-            return false;
+            return "error";
         }
     })();
 
@@ -125,7 +154,7 @@ function goToLogin() {
     // "user" here is just cached profile info for UI (name/role display),
     // never a credential — safe to keep in localStorage, but stale on
     // logout so it should still be cleared.
-    localStorage.removeItem("user");
+    safeRemove("user");
     setCsrfToken(null);
     window.location.href = "/login";
 }
@@ -229,7 +258,7 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
 
         if (isCsrfFailure) {
             const refreshed = await refreshSession();
-            if (refreshed) {
+            if (refreshed === "ok") {
                 res = await fetchWithColdStartRetry(url, buildInit());
             }
             // If refresh itself failed, res stays the original 403 —
@@ -239,7 +268,13 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
 
     if (res.status === 401) {
         const refreshed = await refreshSession();
-        if (!refreshed) {
+        if (refreshed === "error") {
+            // Server unreachable / 5xx - not proof the session is dead.
+            // Do NOT bounce to /login (this was logging users out 1-2s
+            // after login whenever the backend was slow or cold).
+            throw new Error("Server is not responding. Please try again in a moment.");
+        }
+        if (refreshed === "expired") {
             goToLogin();
             // goToLogin navigates away; throw so callers' .then()/await
             // chains don't keep running against a dead response.

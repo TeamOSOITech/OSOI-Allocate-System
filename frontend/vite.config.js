@@ -18,6 +18,13 @@ export default defineConfig(({ mode }) => ({
     // VITE_API_URL value set in the Vercel dashboard. Local dev is unchanged.
     define: mode === "production" ? { "import.meta.env.VITE_API_URL": JSON.stringify("") } : {},
 
+    // Older iPhones (iOS 14/15) blank-screen on newer JS syntax. Vite 8's default
+    // target needs Safari 16.4+, so compile down for Safari 14 / es2020.
+    build: {
+        target: ["es2020", "safari14"],
+        cssTarget: "safari14",
+    },
+
     server: {
         proxy: {
             "/api": {

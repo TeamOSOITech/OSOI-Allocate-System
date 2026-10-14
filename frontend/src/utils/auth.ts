@@ -35,11 +35,19 @@ export function isAuthenticated(): boolean {
 }
 
 export function saveSession(session: { user: CurrentUser }) {
-    localStorage.setItem("user", JSON.stringify(session.user));
+    try {
+        localStorage.setItem("user", JSON.stringify(session.user));
+    } catch {
+        /* Safari with storage blocked - ignore, don't crash */
+    }
 }
 
 export function clearSession() {
-    localStorage.removeItem("user");
+    try {
+        localStorage.removeItem("user");
+    } catch {
+        /* ignore */
+    }
 }
 
 // Role-group helpers — single source of truth for "who counts as

@@ -74,7 +74,11 @@ const Login = () => {
             // with no purpose. Only the (non-sensitive) user profile is
             // kept client-side, for displaying name/role in the UI and as
             // the PrivateRoute "am I logged in" signal in App.jsx.
-            localStorage.setItem("user", JSON.stringify(data.data.user));
+            try {
+                localStorage.setItem("user", JSON.stringify(data.data.user));
+            } catch {
+                /* storage blocked */
+            }
 
             // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
             // (onrender.com) are different domains, so our JS can never
