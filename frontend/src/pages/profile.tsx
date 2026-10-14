@@ -459,6 +459,29 @@ const BoxIcon = () => (
         <path d="M12 13v8" />
     </Icon>
 );
+const CalendarIcon = () => (
+    <Icon>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M16 3v4M8 3v4M3 11h18" />
+    </Icon>
+);
+const ChatIcon = () => (
+    <Icon>
+        <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12Z" />
+        <path d="M9 11h6M9 14h4" />
+    </Icon>
+);
+const LayersIcon = () => (
+    <Icon>
+        <path d="m12 3 9 5-9 5-9-5 9-5Z" />
+        <path d="m3 13 9 5 9-5" />
+    </Icon>
+);
+const ArrowRightIcon = () => (
+    <Icon>
+        <path d="M5 12h14M13 6l6 6-6 6" />
+    </Icon>
+);
 const CheckIcon = () => (
     <Icon>
         <path d="M20 6 9 17l-5-5" />
@@ -568,6 +591,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     // Which stat card's table is open (null = table hidden, like the
     // Production Report's "View Details").
     const [openCard, setOpenCard] = useState<null | "all" | "submitted" | "pending">(null);
+    // Top 5 cards: "daily" = today only, "monthly" = whole current month.
+    const [statPeriod, setStatPeriod] = useState<"daily" | "monthly">("daily");
     const detailRef = useRef<HTMLDivElement>(null);
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1168,24 +1193,45 @@ export default function Profile({ onLogout }: ProfileProps) {
         };
     }, [pastCases, myCounts]);
 
-    // Whole-month total: every case submitted this calendar month (an open
-    // Query is not finished work, so it is not counted) and the time it
-    // took = number of cases x each service's AMP.
-    const monthStats = useMemo(() => {
-        const month = todayStr().slice(0, 7);
-        const done = cases.filter(
-            (c) =>
-                isSubmitted(c) &&
-                c.submissionType !== "QUERY" &&
-                (localDateStr(c.submittedAt) || "").slice(0, 7) === month
+    // Numbers for the 5 cards at the top, for the period picked in the
+    // Daily / Monthly dropdown:
+    //   daily   = only work allocated TODAY
+    //   monthly = everything allocated this calendar month (a new month
+    //             starts from 0)
+    const topStats = useMemo(() => {
+        const today = todayStr();
+        const month = today.slice(0, 7);
+        const inMonth = (a?: string | null, w?: string | null) => {
+            const d = allocDay(a, w) || "";
+            return statPeriod === "daily" ? d === today : d.slice(0, 7) === month;
+        };
+        const monthCases = [...todaysCases, ...pastCases].filter((c) =>
+            inMonth(c.allocatedAt, c.workDate)
         );
+        const submittedList = monthCases.filter(isSubmitted);
+        const waitingCounts = myCounts.filter((m) => inMonth(m.allocatedAt, m.workDate));
+        const waiting = waitingCounts.reduce((sum, m) => sum + m.remaining, 0);
+        const allocatedMins =
+            monthCases.reduce((sum, c) => sum + ampOf(c.productId), 0) +
+            waitingCounts.reduce((sum, m) => sum + ampOf(m.productId) * m.remaining, 0);
+        const utilisedMins = submittedList
+            .filter((c) => c.submissionType !== "QUERY")
+            .reduce((sum, c) => sum + ampOf(c.productId), 0);
         return {
-            count: done.length,
-            mins: done.reduce((sum, c) => sum + ampOf(c.productId), 0),
+            allocatedTotal: monthCases.length + waiting,
+            withNo: monthCases.length,
+            waiting,
+            submittedCount: submittedList.length,
+            pendingCount: monthCases.length - submittedList.length,
+            allocatedMins,
+            utilisedMins,
             monthName: new Date().toLocaleString("en-US", { month: "long" }),
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cases, productAmp]);
+    }, [todaysCases, pastCases, myCounts, productAmp, statPeriod]);
+
+    const isDaily = statPeriod === "daily";
+    const periodLabel = isDaily ? "Today" : topStats.monthName;
 
     // All Query: scoped to ALL of the employee's cases (every date).
     const { openQueries, resolvedQueries } = useMemo(() => {
@@ -2424,78 +2470,104 @@ export default function Profile({ onLogout }: ProfileProps) {
             </div>
 
             {/* ---- Stats (click a card -> its cases table opens below) ---- */}
+            <div
+                style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: 8,
+                }}
+            >
+                <span style={styles.smallMuted}>Show</span>
+                <select
+                    value={statPeriod}
+                    onChange={(e) => {
+                        setStatPeriod(e.target.value as "daily" | "monthly");
+                        setOpenCard(null);
+                    }}
+                    aria-label="Stats period"
+                    style={{
+                        height: 34,
+                        padding: "0 30px 0 12px",
+                        borderRadius: 8,
+                        border: "1px solid #e2e4f0",
+                        background: "#fff",
+                        color: "#17181C",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        outline: "none",
+                    }}
+                >
+                    <option value="daily">Daily</option>
+                    <option value="monthly">Monthly</option>
+                </select>
+            </div>
             <div style={isMobile ? styles.statsGridMobile : styles.statsGrid}>
                 <StatCard
                     icon={<BoxIcon />}
                     tint={BRAND.blue}
-                    value={stats.allocatedTotal}
+                    value={topStats.allocatedTotal}
                     label="Cases Allocated"
                     sub={
-                        stats.waitingToday > 0
-                            ? `${stats.total} with case no. · ${stats.waitingToday} waiting`
-                            : "Allocated today"
+                        topStats.waiting > 0
+                            ? `${topStats.withNo} with case no. · ${topStats.waiting} waiting`
+                            : periodLabel
                     }
-                    active={openCard === "all" && activeTab === "today"}
-                    onClick={() => openStatCard("all")}
+                    active={isDaily && openCard === "all" && activeTab === "today"}
+                    onClick={isDaily ? () => openStatCard("all") : undefined}
                     styles={styles}
                 />
                 <StatCard
                     icon={<CheckIcon />}
                     tint={BRAND.green}
-                    value={stats.submittedCount}
+                    value={topStats.submittedCount}
                     label="Submitted"
-                    sub="Completed & submitted"
-                    active={openCard === "submitted" && activeTab === "today"}
-                    onClick={() => openStatCard("submitted")}
+                    sub={`${periodLabel} · completed & submitted`}
+                    active={isDaily && openCard === "submitted" && activeTab === "today"}
+                    onClick={isDaily ? () => openStatCard("submitted") : undefined}
                     styles={styles}
                 />
                 <StatCard
                     icon={<ClockIcon />}
                     tint={BRAND.amber}
-                    value={stats.pendingCount}
+                    value={topStats.pendingCount}
                     label="Pending"
-                    sub="Awaiting submission"
-                    active={openCard === "pending" && activeTab === "today"}
-                    onClick={() => openStatCard("pending")}
+                    sub={`${periodLabel} · awaiting submission`}
+                    active={isDaily && openCard === "pending" && activeTab === "today"}
+                    onClick={isDaily ? () => openStatCard("pending") : undefined}
                     styles={styles}
                 />
-                {/* total hours allocated today = cases x service AMP */}
+                {/* total hours allocated = cases x service AMP */}
                 <StatCard
                     icon={<ClockIcon />}
                     tint={BRAND.lightBlue}
-                    value={stats.allocatedMins > 0 ? formatMinutes(stats.allocatedMins) : "0m"}
+                    value={
+                        topStats.allocatedMins > 0 ? formatMinutes(topStats.allocatedMins) : "0m"
+                    }
                     label="Allocated Hours"
-                    sub="Cases × service AMP"
+                    sub={`${periodLabel} · cases × service AMP`}
                     styles={styles}
                 />
-                {/* time utilised so far = AMP of submitted cases, out of allocated time */}
+                {/* time utilised = AMP of submitted cases, out of allocated time */}
                 <StatCard
                     icon={<ClockIcon />}
                     tint={BRAND.green}
-                    value={stats.utilisedMins > 0 ? formatMinutes(stats.utilisedMins) : "0m"}
+                    value={topStats.utilisedMins > 0 ? formatMinutes(topStats.utilisedMins) : "0m"}
                     label="Time Utilised"
                     sub={
-                        stats.allocatedMins > 0
-                            ? `of ${formatMinutes(stats.allocatedMins)} allocated`
+                        topStats.allocatedMins > 0
+                            ? `of ${formatMinutes(topStats.allocatedMins)} allocated`
                             : "Submitted cases × AMP"
                     }
                     progress={
-                        stats.allocatedMins > 0
+                        topStats.allocatedMins > 0
                             ? Math.min(
                                   100,
-                                  Math.round((stats.utilisedMins / stats.allocatedMins) * 100)
+                                  Math.round((topStats.utilisedMins / topStats.allocatedMins) * 100)
                               )
                             : 0
                     }
-                    styles={styles}
-                />
-                {/* whole month: cases completed + hours they took */}
-                <StatCard
-                    icon={<CheckIcon />}
-                    tint={BRAND.blue}
-                    value={monthStats.count}
-                    label={`${monthStats.monthName} Total`}
-                    sub={`${monthStats.mins > 0 ? formatMinutes(monthStats.mins) : "0m"} worked this month`}
                     styles={styles}
                 />
             </div>
@@ -2503,7 +2575,21 @@ export default function Profile({ onLogout }: ProfileProps) {
             {/* ---- Case-wise cards (click View Details -> cases table opens) ---- */}
             <div style={styles.caseSection}>
                 <div style={styles.caseSectionHead}>
-                    <span style={styles.detailTitle}>Allocation Summary</span>
+                    <span
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 10,
+                            fontSize: 20,
+                            fontWeight: 700,
+                            color: "#17181C",
+                        }}
+                    >
+                        <span style={{ color: BRAND.green, display: "inline-flex" }}>
+                            <LayersIcon />
+                        </span>
+                        Allocation Summary
+                    </span>
                     <span style={styles.smallMuted}>Click View Details to open the cases</span>
                 </div>
                 <div
@@ -2568,32 +2654,70 @@ export default function Profile({ onLogout }: ProfileProps) {
                             }
                             style={{
                                 ...styles.caseCard,
-                                borderColor:
+                                padding: "14px 16px",
+                                gap: 10,
+                                borderRadius: 14,
+                                border:
                                     c.key === "today"
-                                        ? BRAND.green
-                                        : c.active
-                                          ? BRAND.blue
-                                          : "#e5e9f0",
+                                        ? "1px solid rgba(var(--brand-green-rgb),0.35)"
+                                        : "1px solid #eef0f6",
+                                borderLeft:
+                                    c.key === "today"
+                                        ? "1px solid rgba(var(--brand-green-rgb),0.35)"
+                                        : "1px solid #eef0f6",
+                                borderTop:
+                                    c.key === "today"
+                                        ? `3px solid ${BRAND.green}`
+                                        : "1px solid #eef0f6",
                             }}
                         >
-                            <div style={styles.caseCardTop}>
-                                <div style={styles.caseCardName}>
-                                    {c.title}
+                            {/* header: icon + title (+ LIVE) ........ total */}
+                            <div style={{ ...styles.caseCardTop, alignItems: "center" }}>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        minWidth: 0,
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            color: c.key === "today" ? BRAND.green : BRAND.blue,
+                                            display: "inline-flex",
+                                        }}
+                                    >
+                                        {c.key === "today" ? (
+                                            <CalendarIcon />
+                                        ) : c.key === "past" ? (
+                                            <ClockIcon />
+                                        ) : (
+                                            <ChatIcon />
+                                        )}
+                                    </span>
+                                    <span
+                                        style={{
+                                            fontSize: 15,
+                                            fontWeight: 700,
+                                            color: "#17181C",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        {c.title}
+                                    </span>
                                     {c.key === "today" && (
                                         <span
                                             style={{
                                                 display: "inline-flex",
                                                 alignItems: "center",
                                                 gap: 5,
-                                                marginLeft: 8,
-                                                padding: "2px 8px",
+                                                padding: "2px 9px",
                                                 borderRadius: 999,
                                                 background: "rgba(var(--brand-green-rgb),0.12)",
                                                 color: BRAND.green,
                                                 fontSize: 10,
                                                 fontWeight: 700,
                                                 letterSpacing: "0.05em",
-                                                verticalAlign: "middle",
                                             }}
                                         >
                                             <span
@@ -2609,14 +2733,24 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         </span>
                                     )}
                                 </div>
-                                <div style={styles.caseTotalBox}>
-                                    <div style={styles.caseTotalNum}>{c.total}</div>
-                                    <div style={styles.smallMuted}>{c.totalLabel}</div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "baseline",
+                                        gap: 6,
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    <span style={{ ...styles.caseTotalNum, fontSize: 26 }}>
+                                        {c.total}
+                                    </span>
+                                    <span style={styles.smallMuted}>{c.totalLabel}</span>
                                 </div>
                             </div>
-                            {/* progress: how much of the total is done */}
-                            <div>
-                                <div style={styles.caseBarTrack}>
+
+                            {/* progress + % */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <div style={{ ...styles.caseBarTrack, flex: 1 }}>
                                     <div
                                         style={{
                                             ...styles.caseBarFill,
@@ -2624,22 +2758,62 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         }}
                                     />
                                 </div>
-                                <div style={{ ...styles.smallMuted, marginTop: 4 }}>
+                                <span
+                                    style={{
+                                        ...styles.smallMuted,
+                                        whiteSpace: "nowrap",
+                                        fontWeight: 600,
+                                    }}
+                                >
                                     {c.total > 0 ? Math.round((c.done / c.total) * 100) : 0}%{" "}
                                     {c.doneLabel}
-                                </div>
+                                </span>
                             </div>
-                            {c.rows.map(([label, value, color]) => (
-                                <div key={label} style={styles.caseStatRow}>
-                                    <span>{label}</span>
-                                    <strong style={{ color }}>{value}</strong>
-                                </div>
-                            ))}
+
+                            {/* stat tiles (2 x 2) */}
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "1fr 1fr",
+                                    gap: 8,
+                                }}
+                            >
+                                {c.rows.map(([label, value, color]) => (
+                                    <div
+                                        key={label}
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 2,
+                                            padding: "8px 12px",
+                                            borderRadius: 10,
+                                            background: "#F7F9FE",
+                                            borderLeft: `3px solid ${color}`,
+                                            minWidth: 0,
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 12, color: "#5B6479" }}>
+                                            {label}
+                                        </span>
+                                        <strong style={{ fontSize: 20, lineHeight: 1.15, color }}>
+                                            {value}
+                                        </strong>
+                                    </div>
+                                ))}
+                            </div>
+
                             <button
                                 type="button"
                                 className="pf-btn pf-btn-outline"
                                 style={{
                                     ...styles.caseViewBtn,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 8,
+                                    padding: "8px 12px",
+                                    fontSize: 13,
+                                    borderRadius: 10,
                                     ...(c.active && c.key !== "query"
                                         ? { background: BRAND.blue, color: "#fff" }
                                         : {}),
@@ -2647,6 +2821,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 onClick={c.onClick}
                             >
                                 {c.active && c.key !== "query" ? "Hide Details" : "View Details"}
+                                <ArrowRightIcon />
                             </button>
                         </div>
                     ))}
@@ -5494,7 +5669,7 @@ function getStyles(
         /* Stats — 4 cards now (Total / Submitted / Pending / Allocated Time) */
         statsGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(6, 1fr)",
+            gridTemplateColumns: "repeat(5, 1fr)",
             gap: 10,
         },
         statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
