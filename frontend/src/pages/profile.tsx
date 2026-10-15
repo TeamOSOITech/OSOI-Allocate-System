@@ -713,6 +713,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     // viewingId is state so the UI re-renders.
     // ---------------------------------------------------------------
     const canViewOthers = VIEW_OTHERS_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
+    // NEW: "Allocated At" shows date + time + AMP time + age on the manager side;
+    // everyone else sees the date only.
+    const showAllocatedAt = TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
     const viewingRef = useRef<string | null>(null);
     const [viewingId, setViewingId] = useState<string | null>(null);
     const isViewingOther = !!viewingId && viewingId !== myId;
@@ -2124,7 +2127,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             "Case No.",
             "Service",
             "Date",
-            "Allocated At",
+            showAllocatedAt ? "Allocated At" : "Allocated",
             "Time (AMP)",
             "Status",
             "Outcome",
@@ -2134,7 +2137,9 @@ export default function Profile({ onLogout }: ProfileProps) {
             c.caseNumber,
             c.productName || "-",
             c.workDate,
-            `"${formatDateTime(c.allocatedAt)}"`,
+            showAllocatedAt
+                ? `"${formatDateTime(c.allocatedAt)}"`
+                : formatDisplayDate(allocDay(c.allocatedAt, c.workDate)),
             ampOf(c.productId) ? formatMinutes(ampOf(c.productId)) : "-",
             isSubmitted(c) ? "Submitted" : "Pending",
             isSubmitted(c) ? outcomeLabel(c.submissionType) : "-",
@@ -3450,6 +3455,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 index={i + 1}
                                                 c={c}
                                                 ampMins={ampOf(c.productId)}
+                                                showAllocatedAt={showAllocatedAt}
                                                 onSubmit={() => handlePickForSubmit(c)}
                                                 onResolveQuery={openQueryModal}
                                                 clientCell={
@@ -3487,7 +3493,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Service</th>
                                                 <th style={styles.th}>Date</th>
-                                                <th style={styles.th}>Allocated At</th>
+                                                <th style={styles.th}>
+                                                    {showAllocatedAt ? "Allocated At" : "Allocated"}
+                                                </th>
                                                 <th style={{ ...styles.th, textAlign: "center" }}>
                                                     Status
                                                 </th>
@@ -3528,7 +3536,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         <td style={styles.td}>
                                                             {formatDisplayDate(c.workDate)}
                                                         </td>
-                                                        {/* NEW: allocation date + time, AMP time and age */}
+                                                        {/* NEW: allocation date + time, AMP time and age (manager side only) */}
                                                         <td
                                                             style={{
                                                                 ...styles.td,
@@ -3536,21 +3544,29 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             }}
                                                         >
                                                             <div>
-                                                                {formatDateTime(c.allocatedAt)}
+                                                                {showAllocatedAt
+                                                                    ? formatDateTime(c.allocatedAt)
+                                                                    : formatDisplayDate(
+                                                                          allocDay(
+                                                                              c.allocatedAt,
+                                                                              c.workDate
+                                                                          )
+                                                                      )}
                                                             </div>
-                                                            {(rowAmp > 0 || c.allocatedAt) && (
-                                                                <div style={styles.smallMuted}>
-                                                                    {rowAmp > 0
-                                                                        ? `Time: ${formatMinutes(rowAmp)}`
-                                                                        : ""}
-                                                                    {rowAmp > 0 && c.allocatedAt
-                                                                        ? " · "
-                                                                        : ""}
-                                                                    {c.allocatedAt
-                                                                        ? allocAgeLabel(c)
-                                                                        : ""}
-                                                                </div>
-                                                            )}
+                                                            {showAllocatedAt &&
+                                                                (rowAmp > 0 || c.allocatedAt) && (
+                                                                    <div style={styles.smallMuted}>
+                                                                        {rowAmp > 0
+                                                                            ? `Time: ${formatMinutes(rowAmp)}`
+                                                                            : ""}
+                                                                        {rowAmp > 0 && c.allocatedAt
+                                                                            ? " · "
+                                                                            : ""}
+                                                                        {c.allocatedAt
+                                                                            ? allocAgeLabel(c)
+                                                                            : ""}
+                                                                    </div>
+                                                                )}
                                                         </td>
                                                         <td
                                                             style={{
@@ -5072,6 +5088,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                     !!myId &&
                     TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase())
                 }
+                // NEW: "Go to this profile" -> opens that employee's profile with
+                // the All Query popup already open. Only roles that can view
+                // other profiles get the button.
+                onOpenProfile={
+                    canViewOthers
+                        ? (employeeId: string) => {
+                              openEmployee(employeeId);
+                              setShowQueryModal(true);
+                          }
+                        : undefined
+                }
             />
 
             {queryReminder !== null && (
@@ -5417,7 +5444,13 @@ const tqBtnRed: React.CSSProperties = {
     color: "#fff",
 };
 
-function TeamQueriesPopup({ enabled }: { enabled: boolean }) {
+function TeamQueriesPopup({
+    enabled,
+    onOpenProfile,
+}: {
+    enabled: boolean;
+    onOpenProfile?: (employeeId: string) => void;
+}) {
     const [data, setData] = useState<TeamQueryData | null>(null);
     const [showSummary, setShowSummary] = useState(false);
     const [showDetails, setShowDetails] = useState(false);
@@ -5697,15 +5730,56 @@ function TeamQueriesPopup({ enabled }: { enabled: boolean }) {
 
                                         {isOpen && (
                                             <div style={{ padding: "4px 14px 12px" }}>
+                                                {onOpenProfile && (
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            justifyContent: "flex-end",
+                                                            padding: "8px 0",
+                                                        }}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            style={tqBtnRed}
+                                                            onClick={() => {
+                                                                setShowDetails(false);
+                                                                setShowSummary(false);
+                                                                setOpenEmp(null);
+                                                                onOpenProfile(m.employeeId);
+                                                            }}
+                                                        >
+                                                            Go to {m.name}'s profile →
+                                                        </button>
+                                                    </div>
+                                                )}
                                                 {mine.map((q) => (
                                                     <div
                                                         key={q.id}
+                                                        // NEW: clicking a query row also opens that profile
+                                                        onClick={
+                                                            onOpenProfile
+                                                                ? () => {
+                                                                      setShowDetails(false);
+                                                                      setShowSummary(false);
+                                                                      setOpenEmp(null);
+                                                                      onOpenProfile(q.employeeId);
+                                                                  }
+                                                                : undefined
+                                                        }
+                                                        title={
+                                                            onOpenProfile
+                                                                ? "Go to this profile"
+                                                                : undefined
+                                                        }
                                                         style={{
                                                             padding: "10px 0",
                                                             borderTop: "1px solid #EEF0F6",
                                                             display: "flex",
                                                             flexDirection: "column",
                                                             gap: 3,
+                                                            cursor: onOpenProfile
+                                                                ? "pointer"
+                                                                : "default",
                                                         }}
                                                     >
                                                         <div
@@ -5923,6 +5997,7 @@ function MobileRow({
     index,
     c,
     ampMins,
+    showAllocatedAt,
     onSubmit,
     onResolveQuery,
     clientCell,
@@ -5932,6 +6007,7 @@ function MobileRow({
     index: number;
     c: CaseRow;
     ampMins: number;
+    showAllocatedAt?: boolean;
     onSubmit: () => void;
     onResolveQuery: () => void;
     clientCell: ReactNode;
@@ -5956,9 +6032,16 @@ function MobileRow({
             {/* NEW: allocation date + time, AMP time and age */}
             {(c.allocatedAt || ampMins > 0) && (
                 <div style={styles.mobileMetaRow}>
-                    {c.allocatedAt && <span>Allocated {formatDateTime(c.allocatedAt)}</span>}
-                    {ampMins > 0 && <span>Time: {formatMinutes(ampMins)}</span>}
-                    {c.allocatedAt && <span>{allocAgeLabel(c)}</span>}
+                    {c.allocatedAt && (
+                        <span>
+                            Allocated{" "}
+                            {showAllocatedAt
+                                ? formatDateTime(c.allocatedAt)
+                                : formatDisplayDate(allocDay(c.allocatedAt, c.workDate))}
+                        </span>
+                    )}
+                    {showAllocatedAt && ampMins > 0 && <span>Time: {formatMinutes(ampMins)}</span>}
+                    {showAllocatedAt && c.allocatedAt && <span>{allocAgeLabel(c)}</span>}
                 </div>
             )}
             <div style={{ margin: "6px 0" }}>{clientCell}</div>
