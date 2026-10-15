@@ -7,6 +7,7 @@
 //   POST /api/service-cases/count-allocations/clear
 
 const supabase = require("../../config/supabaseClient");
+const { fetchAll } = require("../../utils/fetchAll");
 const { getRecentLoad, distributeFairly } = require("./fairness");
 const {
   getProduct,
@@ -31,16 +32,19 @@ async function guardProduct(req, productId) {
 
 // Count rows still open (fulfilled < quantity), with their allocations.
 async function loadCounts(orgId, { productId, workDate }) {
-  let q = supabase
-    .from("service_case_counts")
-    .select("*")
-    .eq("organization_id", orgId)
-    .order("work_date", { ascending: true })
-    .order("created_at", { ascending: true })
-    .limit(1000);
-  if (productId) q = q.eq("product_id", productId);
-  if (workDate) q = q.lte("work_date", workDate); // backlog included
-  const { data, error } = await q;
+  // FIX: paged — see fetchAll.js (a plain .limit(1000) silently cut off rows).
+  const { data, error } = await fetchAll(() => {
+    let q = supabase
+      .from("service_case_counts")
+      .select("*")
+      .eq("organization_id", orgId);
+    if (productId) q = q.eq("product_id", productId);
+    if (workDate) q = q.lte("work_date", workDate); // backlog included
+    return q
+      .order("work_date", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+  });
   if (error) throw error;
 
   const open = (data || []).filter(
@@ -123,12 +127,10 @@ async function listCountAllocations(req, res) {
     res.json({ success: true, data });
   } catch (err) {
     console.error("listCountAllocations error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -194,12 +196,10 @@ async function autoPreviewCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("autoPreviewCountAllocations error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -329,12 +329,10 @@ async function saveCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("saveCountAllocations error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -405,12 +403,10 @@ async function clearCountAllocations(req, res) {
     });
   } catch (err) {
     console.error("clearCountAllocations error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 

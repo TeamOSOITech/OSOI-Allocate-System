@@ -589,6 +589,8 @@ export default function Dashboard({ user }: DashboardProps) {
     // that view is actually the one on screen.
     useEffect(() => {
         const interval = setInterval(() => {
+            // PERF: skip the 4-5 request refresh while the tab is hidden
+            if (document.hidden) return;
             fetchEmployeeCount();
             fetchTodayBatches(true);
             fetchBatchHistory(true);

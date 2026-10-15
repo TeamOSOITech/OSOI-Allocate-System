@@ -26,6 +26,7 @@
 // allocated to the caller) so the Profile page can show allocation time.
 
 const supabase = require("../../config/supabaseClient");
+const { fetchAll } = require("../../utils/fetchAll");
 const {
   getProductNameMap,
   getClientNameMap,
@@ -135,14 +136,19 @@ async function validateSubclient(subclientId, organizationId, clientId) {
 // included — same rule as the manager's Today's Allocation page) plus
 // every allocation row on them.
 async function loadOpenCountsWithAllocations(orgId, workDate) {
-  const { data, error } = await supabase
-    .from("service_case_counts")
-    .select("*")
-    .eq("organization_id", orgId)
-    .lte("work_date", workDate)
-    .order("work_date", { ascending: true })
-    .order("created_at", { ascending: true })
-    .limit(1000);
+  // FIX: paged — a plain .limit(1000) silently drops everything past the
+  // first 1000 rows (oldest-first), which would hide TODAY's counts once
+  // fulfilled rows pile up.
+  const { data, error } = await fetchAll(() =>
+    supabase
+      .from("service_case_counts")
+      .select("*")
+      .eq("organization_id", orgId)
+      .lte("work_date", workDate)
+      .order("work_date", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
+  );
   if (error) throw error;
 
   const open = (data || []).filter(
@@ -247,12 +253,10 @@ async function listMyCounts(req, res) {
     res.json({ success: true, data: { mine, available } });
   } catch (err) {
     console.error("listMyCounts error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -370,12 +374,10 @@ async function selfAllocateCounts(req, res) {
     });
   } catch (err) {
     console.error("selfAllocateCounts error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -699,12 +701,10 @@ async function addCaseNumbersToCount(req, res) {
     });
   } catch (err) {
     console.error("addCaseNumbersToCount error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -849,12 +849,10 @@ async function fillCaseClient(req, res) {
     });
   } catch (err) {
     console.error("fillCaseClient error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 

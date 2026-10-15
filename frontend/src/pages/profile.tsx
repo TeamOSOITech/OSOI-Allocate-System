@@ -1025,7 +1025,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     useEffect(() => {
         if (!showQueryModal) return;
         const timer = window.setInterval(() => {
-            if (!resolvingId) refreshCases();
+            // PERF: skip while the tab is hidden (it re-checks on focus anyway)
+            if (!resolvingId && !document.hidden) refreshCases();
         }, 15000);
         return () => window.clearInterval(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps

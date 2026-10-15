@@ -155,7 +155,8 @@ const login = async (rawEmail, password) => {
 // waiting on every email to actually be delivered before getting a reply.
 const forgotPassword = async (email) => {
   console.log("==================================");
-  console.log("Forgot password request for:", email);
+  // (email intentionally not logged — PII)
+  console.log("Forgot password request received");
 
   const { data: rows, error } = await supabase
     .from("user_master")

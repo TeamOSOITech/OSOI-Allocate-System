@@ -5,6 +5,7 @@ const {
   clearAuthCookies,
 } = require("../../config/authCookies");
 const supabase = require("../../config/supabaseClient");
+const { invalidateAuthCache } = require("../../middlewares/auth");
 
 //
 // LOGIN HANDLER
@@ -62,6 +63,9 @@ const loginHandler = async (req, res) => {
 // not every device the user is logged into elsewhere).
 const logoutHandler = async (req, res) => {
   const accessToken = req.cookies?.accessToken;
+
+  // PERF cache: stop honouring this token immediately
+  invalidateAuthCache(accessToken);
 
   if (accessToken) {
     const { error } = await supabase.auth.admin.signOut(accessToken, "local");

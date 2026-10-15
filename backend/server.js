@@ -49,6 +49,41 @@ app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // ========================
+// 🚦 General API rate limit
+// ========================
+// Only the auth routes had a limiter before; every other /api route could be
+// hammered without limit. This is a generous per-USER cap (the access-token
+// cookie is the key, so a whole office behind ONE shared IP does not share a
+// single bucket); requests with no token fall back to the client IP.
+// Tune with API_RATE_LIMIT_MAX (requests per minute, default 600).
+const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: Number(process.env.API_RATE_LIMIT_MAX) || 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) =>
+      req.method === "OPTIONS" || req.path.startsWith("/billing/webhook"),
+    keyGenerator: (req) => {
+      const t =
+        req.cookies?.accessToken ||
+        req.headers.authorization?.replace("Bearer ", "");
+      return t
+        ? "u:" +
+            crypto.createHash("sha256").update(t).digest("hex").slice(0, 32)
+        : "ip:" + req.ip;
+    },
+    message: {
+      success: false,
+      message: "Too many requests. Please slow down and try again shortly.",
+    },
+  }),
+);
+
+// ========================
 // 🌐 CORS
 // ========================
 // SECURITY FIX: this used to be `origin: true` with `credentials: true`,

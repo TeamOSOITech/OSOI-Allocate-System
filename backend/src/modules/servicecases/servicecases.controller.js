@@ -687,34 +687,54 @@ async function listServiceCases(req, res) {
       return filtered;
     };
 
-    // Guards against a 416 "Requested range not satisfiable" from
-    // PostgREST — clamp the requested page down to the last valid one
-    // for this filtered set.
-    const { count: filteredCount, error: countError } = await applyFilters(
-      supabase
-        .from("service_cases")
-        .select("*", { count: "exact", head: true }),
-    );
-    if (countError) throw countError;
-
-    const totalCount = filteredCount || 0;
-    const lastValidPage = Math.max(Math.ceil(totalCount / pageSize), 1);
-    const effectivePage = Math.min(page, lastValidPage);
+    // PERF: the separate head-count query only exists to clamp a too-high
+    // page (PostgREST answers 416 for a range past the end). Page 1 can
+    // never be past the end, so it skips that extra round trip — the data
+    // query below already returns the exact total.
+    let effectivePage = page;
+    if (page > 1) {
+      const { count: filteredCount, error: countError } = await applyFilters(
+        supabase
+          .from("service_cases")
+          .select("*", { count: "exact", head: true }),
+      );
+      if (countError) throw countError;
+      const lastValidPage = Math.max(
+        Math.ceil((filteredCount || 0) / pageSize),
+        1,
+      );
+      effectivePage = Math.min(page, lastValidPage);
+    }
     const from = (effectivePage - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    const query = applyFilters(
-      supabase.from("service_cases").select("*", { count: "exact" }),
-    )
-      // FIX: sequence_number as a tiebreaker (also descending) makes the
-      // order deterministic when a whole batch is inserted in the same
-      // instant.
-      .order("created_at", { ascending: false })
-      .order("sequence_number", { ascending: false })
-      .range(from, to);
-
-    const { data, error, count } = await query;
-    if (error) throw error;
+    // FIX: PostgREST caps ONE response at its "Max Rows" setting (default
+    // 1000). "mine=true" / employeeId asks for up to 2000, which used to be
+    // silently cut to 1000 for anyone with a long history. Fetch in
+    // chunks of 1000 so nothing is lost, whatever the Max Rows setting is.
+    const CHUNK = 1000;
+    const data = [];
+    let count = 0;
+    for (let f = from; f <= to; f += CHUNK) {
+      const t = Math.min(f + CHUNK - 1, to);
+      const r = await applyFilters(
+        supabase.from("service_cases").select("*", { count: "exact" }),
+      )
+        // FIX: sequence_number as a tiebreaker (also descending) makes the
+        // order deterministic when a whole batch is inserted in the same
+        // instant.
+        .order("created_at", { ascending: false })
+        .order("sequence_number", { ascending: false })
+        .range(f, t);
+      if (r.error) {
+        // empty result set on page 1 -> nothing to return, not a failure
+        if (r.error.code === "PGRST103" && f === 0) break;
+        throw r.error;
+      }
+      if (typeof r.count === "number") count = r.count;
+      if (r.data && r.data.length) data.push(...r.data);
+      if (!r.data || r.data.length < t - f + 1) break;
+    }
 
     const rows = data || [];
     // PERF FIX: these 4 lookups don't depend on each other, so they run

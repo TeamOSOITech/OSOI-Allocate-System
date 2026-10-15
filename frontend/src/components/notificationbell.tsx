@@ -298,7 +298,11 @@ export default function NotificationBell({
 
     useEffect(() => {
         void load();
-        const t = window.setInterval(() => void load(), POLL_MS);
+        // PERF: don't poll while the tab is in the background; the "focus"
+        // listener below refreshes as soon as the user comes back.
+        const t = window.setInterval(() => {
+            if (!document.hidden) void load();
+        }, POLL_MS);
         const onFocus = () => void load();
         window.addEventListener("focus", onFocus);
         return () => {
