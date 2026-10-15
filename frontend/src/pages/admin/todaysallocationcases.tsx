@@ -169,6 +169,11 @@ function monthStartOf(iso: string) {
     return /^\d{4}-\d{2}/.test(iso || "") ? `${iso.slice(0, 7)}-01` : "";
 }
 
+// today's local date (YYYY-MM-DD) — the Date filter can't go past this
+function todayStr() {
+    return localDayOf(new Date().toISOString());
+}
+
 // local calendar day (YYYY-MM-DD) of a timestamp — used to tell whether an
 // allocation was made on the selected day.
 function localDayOf(ts?: string | null) {
@@ -1658,7 +1663,14 @@ export default function TodaysAllocationCases({
                                     type="date"
                                     style={styles.select}
                                     value={workDate}
-                                    onChange={(e) => onChangeWorkDate(e.target.value)}
+                                    max={todayStr()}
+                                    onChange={(e) =>
+                                        onChangeWorkDate(
+                                            e.target.value > todayStr()
+                                                ? todayStr()
+                                                : e.target.value
+                                        )
+                                    }
                                 />
                             </div>
                             <div>

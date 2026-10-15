@@ -24,6 +24,11 @@
 //     employee it was allocated to (e.g. a manager submitting on behalf),
 //     it is flagged "On behalf". Needs submittedById + submittedByName from
 //     /api/service-cases.
+//   - NEW (VIEWS): the summary cards now have 3 views — Client-wise (as
+//     before), Employee-wise and Daily-wise (one card per day).
+//   - NEW (TODAY): when the range is TODAY only (the "Today" button, or
+//     From = To = today) the client cards are replaced by a Work-wise
+//     summary: only today's totals, one card per work / service.
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
@@ -215,6 +220,60 @@ function firstOfMonthStr() {
 
 const clientKey = (name: string | null) => (name || "").trim() || NO_CLIENT;
 
+const NO_SERVICE = "No service";
+const UNALLOCATED = "Unallocated";
+
+// "work" is only used automatically when the range is Today (kaam-wise).
+type ViewMode = "client" | "employee" | "daily" | "work";
+const VIEW_OPTIONS: { id: "client" | "employee" | "daily"; label: string; icon: string }[] = [
+    { id: "client", label: "Client-wise", icon: "ti-building" },
+    { id: "employee", label: "Employee-wise", icon: "ti-users" },
+    { id: "daily", label: "Daily-wise", icon: "ti-calendar-stats" },
+];
+
+// Which card a case belongs to, for the current view.
+function caseGroupKey(c: ServiceCaseRow, view: ViewMode) {
+    switch (view) {
+        case "employee":
+            return (c.assignedEmployeeName || "").trim() || UNALLOCATED;
+        case "daily":
+            return c.workDate;
+        case "work":
+            return (c.productName || "").trim() || NO_SERVICE;
+        default:
+            return clientKey(c.clientName);
+    }
+}
+// Same for count-only work (not used for the employee view — that goes
+// through c.allocations instead).
+function countGroupKey(c: CountRow, view: ViewMode) {
+    switch (view) {
+        case "daily":
+            return c.workDate;
+        case "work":
+            return (c.productName || "").trim() || NO_SERVICE;
+        default:
+            return clientKey(c.clientName);
+    }
+}
+// Count units with no case number that are not allocated to anyone yet.
+function countUnallocated(c: CountRow) {
+    const fulfilledSum = c.allocations.reduce((s, a) => s + a.fulfilledQuantity, 0);
+    return Math.max(0, c.pendingCount - Math.max(0, c.allocatedTotal - fulfilledSum));
+}
+
+// "2026-10-15" -> "Thu, 15 Oct 2026" (local, no timezone shift)
+function prettyDate(d: string) {
+    const [y, m, day] = d.split("-").map(Number);
+    if (!y || !m || !day) return d;
+    return new Date(y, m - 1, day).toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    });
+}
+
 // NEW: minutes -> "2h 30m"
 function formatMinutes(mins: number) {
     const total = Math.round(mins);
@@ -245,6 +304,12 @@ export default function ProductionReport() {
     const [searchInput, setSearchInput] = useState(""); // debounced input
     const [searchQuery, setSearchQuery] = useState("");
 
+    // Which summary the cards show (Client / Employee / Daily).
+    const [viewMode, setViewMode] = useState<"client" | "employee" | "daily">("client");
+    // Range = today only -> client cards are replaced by Work-wise totals.
+    const isToday = fromDate === todayStr() && toDate === todayStr();
+    const effectiveView: ViewMode = isToday ? "work" : viewMode;
+
     const [error, setError] = useState("");
     const [page, setPage] = useState(1);
     const [exporting, setExporting] = useState(false);
@@ -254,15 +319,15 @@ export default function ProductionReport() {
     const [cardCases, setCardCases] = useState<ServiceCaseRow[]>([]);
     const [cardCounts, setCardCounts] = useState<CountRow[]>([]);
     const [cardsLoading, setCardsLoading] = useState(true);
-    const [openClient, setOpenClient] = useState<string | null>(null);
+    const [openGroup, setOpenGroup] = useState<string | null>(null);
     // After "View Details" is clicked the table opens BELOW all the cards;
     // jump straight to it so the user doesn't have to scroll.
     const detailRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
-        if (!openClient) return;
+        if (!openGroup) return;
         const t = setTimeout(() => scrollWithinPage(detailRef.current), 60);
         return () => clearTimeout(t);
-    }, [openClient]);
+    }, [openGroup]);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -368,8 +433,14 @@ export default function ProductionReport() {
         clientId,
         searchQuery,
         submissionFilter,
-        openClient,
+        openGroup,
+        effectiveView,
     ]);
+
+    // switching view (or entering / leaving Today) closes the open detail table
+    useEffect(() => {
+        setOpenGroup(null);
+    }, [effectiveView]);
 
     // ---- cards data: every case in the date range (service / employee /
     // client filters apply; Status / Submission / search do NOT, because the
@@ -440,42 +511,78 @@ export default function ProductionReport() {
         fetchCards();
     }, [fetchCards]);
 
-    // MODIFIED: per client —
-    //   total    = every case in the selected date range (month-wise by default)
+    // Summary cards for the current view (client / employee / daily / work).
+    //   total    = every case in the selected date range
     //   today    = ONLY cases whose date is today (never the total)
-    const cards = useMemo(() => {
+    //   mins     = time (cases allocated x service AMP) — used by employee view
+    const groupCards = useMemo(() => {
         const today = todayStr();
-        const map = new Map<
-            string,
-            { receiving: number; today: number; allocated: number; submitted: number }
-        >();
-        const bucket = (name: string | null) => {
-            const key = clientKey(name);
-            if (!map.has(key)) map.set(key, { receiving: 0, today: 0, allocated: 0, submitted: 0 });
+        type G = {
+            total: number;
+            today: number;
+            allocated: number;
+            submitted: number;
+            mins: number;
+        };
+        const map = new Map<string, G>();
+        const bucket = (key: string) => {
+            if (!map.has(key))
+                map.set(key, { total: 0, today: 0, allocated: 0, submitted: 0, mins: 0 });
             return map.get(key)!;
         };
+
         cardCases.forEach((c) => {
-            const b = bucket(c.clientName);
-            b.receiving += 1;
+            const b = bucket(caseGroupKey(c, effectiveView));
+            b.total += 1;
             if (c.workDate === today) b.today += 1;
             if (c.allocationStatus === "ALLOCATED") b.allocated += 1;
             if (c.submissionStatus === "SUBMITTED") b.submitted += 1;
+            if (c.assignedEmployeeName) b.mins += ampOf(c.productId);
         });
+
         cardCounts.forEach((c) => {
-            const b = bucket(c.clientName);
+            if (effectiveView === "employee") {
+                // units still allocated to a person (no case number yet)
+                c.allocations.forEach((a) => {
+                    const q = Math.max(0, a.quantity - a.fulfilledQuantity);
+                    if (!a.employeeName || q <= 0) return;
+                    const b = bucket(a.employeeName.trim());
+                    b.total += q;
+                    b.allocated += q;
+                    if (c.workDate === today) b.today += q;
+                    b.mins += q * ampOf(c.productId);
+                });
+                const un = countUnallocated(c);
+                if (un > 0) {
+                    const b = bucket(UNALLOCATED);
+                    b.total += un;
+                    if (c.workDate === today) b.today += un;
+                }
+                return;
+            }
+            const b = bucket(countGroupKey(c, effectiveView));
             const fulfilledSum = c.allocations.reduce((s, a) => s + a.fulfilledQuantity, 0);
-            b.receiving += c.pendingCount; // units that have no case number yet
+            b.total += c.pendingCount; // units that have no case number yet
             if (c.workDate === today) b.today += c.pendingCount;
             b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum);
         });
+
         return Array.from(map.entries())
-            .map(([client, v]) => ({
-                client,
+            .map(([key, v]) => ({
+                key,
                 ...v,
-                pending: Math.max(0, v.receiving - v.allocated),
+                pending: Math.max(0, v.total - v.allocated),
+                notSubmitted: Math.max(0, v.total - v.submitted),
             }))
-            .sort((a, b) => b.receiving - a.receiving);
-    }, [cardCases, cardCounts]);
+            .sort((a, b) => {
+                if (effectiveView === "daily") return b.key.localeCompare(a.key); // newest day first
+                if (effectiveView === "employee") {
+                    if (a.key === UNALLOCATED) return 1;
+                    if (b.key === UNALLOCATED) return -1;
+                }
+                return b.total - a.total;
+            });
+    }, [cardCases, cardCounts, effectiveView, ampOf]);
 
     // NEW: time PER EMPLOYEE = cases assigned to them x service AMP
     //      (+ count quantities still allocated to them x AMP).
@@ -507,24 +614,56 @@ export default function ProductionReport() {
 
     // Label under the big number: "This month" when the range is the
     // current month (default), otherwise the plain date range.
-    const totalLabel =
-        fromDate === firstOfMonthStr() && toDate === todayStr()
-            ? "This Month"
-            : `${fromDate} to ${toDate}`;
+    const totalLabel = isToday
+        ? "Today"
+        : fromDate === firstOfMonthStr() && toDate === todayStr()
+          ? "This Month"
+          : `${fromDate} to ${toDate}`;
+
+    const summaryTitle =
+        effectiveView === "work"
+            ? "Today's Work-wise Summary"
+            : effectiveView === "employee"
+              ? "Employee-wise Summary"
+              : effectiveView === "daily"
+                ? "Daily-wise Summary"
+                : "Client-wise Summary";
+    const summaryHint =
+        effectiveView === "work"
+            ? "Today's totals only · one card per work (service)"
+            : effectiveView === "employee"
+              ? `${totalLabel} · cases allocated to each employee · Time = cases × service AMP`
+              : effectiveView === "daily"
+                ? `${totalLabel} · one card per day`
+                : totalLabel === "This Month"
+                  ? "Total = this month · Today's Receiving = today only"
+                  : `Total = ${totalLabel} · Today's Receiving = today only`;
 
     // The table below the cards is hidden until a card's "View Details" is
     // clicked. It shows that client's cases, narrowed by the Status /
     // Submission / Search filters, paginated client-side (cardCases already
     // holds every case in the date range).
-    const detailCounts = useMemo(
-        () => (openClient ? cardCounts.filter((c) => clientKey(c.clientName) === openClient) : []),
-        [cardCounts, openClient]
-    );
+    // count-only units of the open card that don't have case numbers yet
+    const countsNoNumber = useMemo(() => {
+        if (!openGroup) return 0;
+        return cardCounts.reduce((sum, c) => {
+            if (effectiveView === "employee") {
+                if (openGroup === UNALLOCATED) return sum + countUnallocated(c);
+                return (
+                    sum +
+                    c.allocations
+                        .filter((a) => (a.employeeName || "").trim() === openGroup)
+                        .reduce((x, a) => x + Math.max(0, a.quantity - a.fulfilledQuantity), 0)
+                );
+            }
+            return countGroupKey(c, effectiveView) === openGroup ? sum + c.pendingCount : sum;
+        }, 0);
+    }, [cardCounts, openGroup, effectiveView]);
     const tableRows = useMemo(() => {
-        if (!openClient) return [];
+        if (!openGroup) return [];
         const q = searchQuery.toLowerCase();
         return cardCases
-            .filter((c) => clientKey(c.clientName) === openClient)
+            .filter((c) => caseGroupKey(c, effectiveView) === openGroup)
             .filter((c) => !statusFilter || c.allocationStatus === statusFilter)
             .filter((c) => !submissionFilter || c.submissionStatus === submissionFilter)
             .filter(
@@ -538,11 +677,10 @@ export default function ProductionReport() {
                         .toLowerCase()
                         .includes(q)
             );
-    }, [cardCases, openClient, statusFilter, submissionFilter, searchQuery]);
+    }, [cardCases, openGroup, effectiveView, statusFilter, submissionFilter, searchQuery]);
     const totalCount = tableRows.length;
     const rows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     const loading = cardsLoading;
-    const countsNoNumber = detailCounts.reduce((s, c) => s + c.pendingCount, 0);
 
     // Pull every matching row across all pages for export, not just what's
     // currently on screen.
@@ -672,7 +810,28 @@ export default function ProductionReport() {
         setClientId("");
         setSearchInput("");
         setSearchQuery("");
-        setOpenClient(null);
+        setOpenGroup(null);
+        setViewMode("client");
+    };
+
+    // Dates after today can't be selected. The date input's max= only stops
+    // the picker — a typed / pasted future date still gets through — so the
+    // value is clamped here as well.
+    const handleFromChange = (v: string) => {
+        if (v && v > todayStr()) {
+            showToast("Future date can't be selected.");
+            v = todayStr();
+        }
+        setFromDate(v);
+        if (v && toDate && v > toDate) setToDate(v);
+    };
+    const handleToChange = (v: string) => {
+        if (v && v > todayStr()) {
+            showToast("Future date can't be selected.");
+            v = todayStr();
+        }
+        setToDate(v);
+        if (v && fromDate && v < fromDate) setFromDate(v);
     };
 
     // On the 2-column mobile filter grid, select/input's fixed minWidth
@@ -732,9 +891,10 @@ export default function ProductionReport() {
                             Production Report
                         </h2>
                         <p style={styles.headerSubtext}>
-                            Case-number-wise production across all services — filter by service,
-                            date range, employee, status, or client, then browse on screen or export
-                            to Excel.
+                            Case-number-wise production across all services — see it client-wise,
+                            employee-wise or daily-wise, filter by service, date, status or client,
+                            then browse on screen or export to Excel. Pick Today to see only today's
+                            totals work-wise.
                         </p>
                     </div>
                     <button
@@ -821,8 +981,8 @@ export default function ProductionReport() {
                             type="date"
                             style={filterFieldStyle}
                             value={fromDate}
-                            max={toDate || undefined}
-                            onChange={(e) => setFromDate(e.target.value)}
+                            max={toDate && toDate < todayStr() ? toDate : todayStr()}
+                            onChange={(e) => handleFromChange(e.target.value)}
                         />
                     </div>
                     <div style={isMobile ? { minWidth: 0 } : undefined}>
@@ -832,7 +992,8 @@ export default function ProductionReport() {
                             style={filterFieldStyle}
                             value={toDate}
                             min={fromDate || undefined}
-                            onChange={(e) => setToDate(e.target.value)}
+                            max={todayStr()}
+                            onChange={(e) => handleToChange(e.target.value)}
                         />
                     </div>
                     <div style={isMobile ? { minWidth: 0 } : undefined}>
@@ -889,6 +1050,46 @@ export default function ProductionReport() {
                             ))}
                         </select>
                     </div>
+                    <div
+                        style={
+                            isMobile
+                                ? { gridColumn: "1 / -1", display: "flex", gap: 8 }
+                                : { display: "flex", gap: 8 }
+                        }
+                    >
+                        <button
+                            type="button"
+                            style={{
+                                ...styles.quickBtn,
+                                ...(isToday ? styles.quickBtnActive : {}),
+                            }}
+                            onClick={() => {
+                                setFromDate(todayStr());
+                                setToDate(todayStr());
+                            }}
+                        >
+                            <i className="ti ti-calendar-event" />
+                            Today
+                        </button>
+                        <button
+                            type="button"
+                            style={{
+                                ...styles.quickBtn,
+                                ...(!isToday &&
+                                fromDate === firstOfMonthStr() &&
+                                toDate === todayStr()
+                                    ? styles.quickBtnActive
+                                    : {}),
+                            }}
+                            onClick={() => {
+                                setFromDate(firstOfMonthStr());
+                                setToDate(todayStr());
+                            }}
+                        >
+                            <i className="ti ti-calendar-month" />
+                            This Month
+                        </button>
+                    </div>
                     <button
                         type="button"
                         style={{
@@ -905,61 +1106,81 @@ export default function ProductionReport() {
                 {error && <p style={styles.errorText}>{error}</p>}
 
                 {/* ============ NEW: Employee-wise time (cases x service AMP) ============ */}
-                <div style={styles.empTimeCard}>
-                    <div style={styles.cardsHeader}>
-                        <span style={styles.cardsTitle}>
-                            <i className="ti ti-clock" style={{ marginRight: 6 }} />
-                            Employee-wise Time{totalLabel === "This Month" ? " — Monthly" : ""}
-                        </span>
-                        <span style={styles.cardsHint}>
-                            {totalLabel} · cases allocated to each person × service AMP
-                        </span>
-                    </div>
-                    {cardsLoading ? (
-                        <div style={styles.emptyNote}>Loading…</div>
-                    ) : employeeTime.length === 0 ? (
-                        <div style={styles.emptyNote}>No allocated cases in this date range.</div>
-                    ) : (
-                        <div style={styles.empTimeGrid}>
-                            {employeeTime.map((e) => {
-                                const total = e.cases + e.counts;
-                                return (
-                                    <div key={e.name} style={styles.empTimeItem}>
-                                        <div style={styles.empTimeName} title={e.name}>
-                                            {e.name}
-                                        </div>
-                                        <div
-                                            style={{
-                                                ...styles.empTimeValue,
-                                                color: e.mins > 0 ? BRAND.blue : BRAND.grey,
-                                            }}
-                                        >
-                                            {e.mins > 0 ? formatMinutes(e.mins) : "0m"}
-                                        </div>
-                                        <div style={styles.cardsHint}>
-                                            {total} case{total === 1 ? "" : "s"}
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                {effectiveView !== "employee" && (
+                    <div style={styles.empTimeCard}>
+                        <div style={styles.cardsHeader}>
+                            <span style={styles.cardsTitle}>
+                                <i className="ti ti-clock" style={{ marginRight: 6 }} />
+                                Employee-wise Time{totalLabel === "This Month" ? " — Monthly" : ""}
+                            </span>
+                            <span style={styles.cardsHint}>
+                                {totalLabel} · cases allocated to each person × service AMP
+                            </span>
                         </div>
-                    )}
-                </div>
+                        {cardsLoading ? (
+                            <div style={styles.emptyNote}>Loading…</div>
+                        ) : employeeTime.length === 0 ? (
+                            <div style={styles.emptyNote}>
+                                No allocated cases in this date range.
+                            </div>
+                        ) : (
+                            <div style={styles.empTimeGrid}>
+                                {employeeTime.map((e) => {
+                                    const total = e.cases + e.counts;
+                                    return (
+                                        <div key={e.name} style={styles.empTimeItem}>
+                                            <div style={styles.empTimeName} title={e.name}>
+                                                {e.name}
+                                            </div>
+                                            <div
+                                                style={{
+                                                    ...styles.empTimeValue,
+                                                    color: e.mins > 0 ? BRAND.blue : BRAND.grey,
+                                                }}
+                                            >
+                                                {e.mins > 0 ? formatMinutes(e.mins) : "0m"}
+                                            </div>
+                                            <div style={styles.cardsHint}>
+                                                {total} case{total === 1 ? "" : "s"}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
 
-                {/* ============ Client-wise cards (simple design) ============ */}
+                {/* ============ Summary cards: Client / Employee / Daily — Work-wise on Today ============ */}
                 <div style={styles.cardsSection}>
                     <div style={styles.cardsHeader}>
-                        <span style={styles.cardsTitle}>Client-wise Summary</span>
-                        <span style={styles.cardsHint}>
-                            {totalLabel === "This Month"
-                                ? "Total = this month · Today's Receiving = today only"
-                                : `Total = ${totalLabel} · Today's Receiving = today only`}
-                        </span>
+                        <span style={styles.cardsTitle}>{summaryTitle}</span>
+                        <span style={styles.cardsHint}>{summaryHint}</span>
                     </div>
+                    {!isToday && (
+                        <div style={styles.viewTabs}>
+                            {VIEW_OPTIONS.map((o) => (
+                                <button
+                                    key={o.id}
+                                    type="button"
+                                    style={{
+                                        ...styles.viewTab,
+                                        ...(viewMode === o.id ? styles.viewTabActive : {}),
+                                    }}
+                                    onClick={() => setViewMode(o.id)}
+                                >
+                                    <i className={`ti ${o.icon}`} />
+                                    {o.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     {cardsLoading ? (
-                        <div style={styles.emptyNote}>Loading client summary…</div>
-                    ) : cards.length === 0 ? (
-                        <div style={styles.emptyNote}>No cases in this date range.</div>
+                        <div style={styles.emptyNote}>Loading summary…</div>
+                    ) : groupCards.length === 0 ? (
+                        <div style={styles.emptyNote}>
+                            {isToday ? "No work today." : "No cases in this date range."}
+                        </div>
                     ) : (
                         <div
                             style={{
@@ -968,11 +1189,13 @@ export default function ProductionReport() {
                                 gridTemplateColumns: `repeat(${cardCols}, minmax(0, 1fr))`,
                             }}
                         >
-                            {cards.map((c) => {
-                                const active = openClient === c.client;
+                            {groupCards.map((c) => {
+                                const active = openGroup === c.key;
+                                const isDaily = effectiveView === "daily";
+                                const name = isDaily ? prettyDate(c.key) : c.key;
                                 return (
                                     <div
-                                        key={c.client}
+                                        key={c.key}
                                         style={{
                                             ...styles.clientCard,
                                             // only top/right/bottom — keeps the blue left accent
@@ -985,35 +1208,75 @@ export default function ProductionReport() {
                                         }}
                                     >
                                         <div style={styles.clientCardTop}>
-                                            <div style={styles.clientCardName} title={c.client}>
-                                                {c.client}
+                                            <div style={styles.clientCardName} title={name}>
+                                                {name}
+                                                {isDaily && c.key === todayStr() && (
+                                                    <span style={styles.todayChip}>Today</span>
+                                                )}
                                             </div>
                                             <div style={styles.totalBox}>
-                                                <div style={styles.totalNum}>{c.receiving}</div>
-                                                <div style={styles.totalLbl}>{totalLabel}</div>
+                                                <div style={styles.totalNum}>{c.total}</div>
+                                                <div style={styles.totalLbl}>
+                                                    {isDaily ? "Cases" : totalLabel}
+                                                </div>
                                             </div>
                                         </div>
                                         <div style={styles.statList}>
-                                            <StatRow
-                                                label="Today's Receiving"
-                                                value={c.today}
-                                                color={BRAND.blue}
-                                            />
-                                            <StatRow
-                                                label="Allocated"
-                                                value={c.allocated}
-                                                color={BRAND.cyan}
-                                            />
-                                            <StatRow
-                                                label="Pending"
-                                                value={c.pending}
-                                                color={BRAND.amber}
-                                            />
-                                            <StatRow
-                                                label="Submitted"
-                                                value={c.submitted}
-                                                color={BRAND.green}
-                                            />
+                                            {effectiveView === "employee" ? (
+                                                <>
+                                                    <StatRow
+                                                        label="Today's Allocation"
+                                                        value={c.today}
+                                                        color={BRAND.blue}
+                                                    />
+                                                    <StatRow
+                                                        label="Submitted"
+                                                        value={c.submitted}
+                                                        color={BRAND.green}
+                                                    />
+                                                    <StatRow
+                                                        label="Not Submitted"
+                                                        value={c.notSubmitted}
+                                                        color={BRAND.amber}
+                                                    />
+                                                    <StatRow
+                                                        label="Time"
+                                                        value={
+                                                            c.mins > 0
+                                                                ? formatMinutes(c.mins)
+                                                                : "0m"
+                                                        }
+                                                        color={BRAND.cyan}
+                                                    />
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {/* Today's Receiving only makes sense when the
+                                                        card covers more than just today */}
+                                                    {effectiveView === "client" && (
+                                                        <StatRow
+                                                            label="Today's Receiving"
+                                                            value={c.today}
+                                                            color={BRAND.blue}
+                                                        />
+                                                    )}
+                                                    <StatRow
+                                                        label="Allocated"
+                                                        value={c.allocated}
+                                                        color={BRAND.cyan}
+                                                    />
+                                                    <StatRow
+                                                        label="Pending"
+                                                        value={c.pending}
+                                                        color={BRAND.amber}
+                                                    />
+                                                    <StatRow
+                                                        label="Submitted"
+                                                        value={c.submitted}
+                                                        color={BRAND.green}
+                                                    />
+                                                </>
+                                            )}
                                         </div>
                                         <button
                                             type="button"
@@ -1021,7 +1284,7 @@ export default function ProductionReport() {
                                                 ...styles.viewDetailsBtn,
                                                 ...(active ? styles.viewDetailsBtnActive : {}),
                                             }}
-                                            onClick={() => setOpenClient(active ? null : c.client)}
+                                            onClick={() => setOpenGroup(active ? null : c.key)}
                                         >
                                             {active ? "Hide Details" : "View Details"}
                                         </button>
@@ -1033,14 +1296,16 @@ export default function ProductionReport() {
                 </div>
 
                 {/* Table stays hidden until a client card's "View Details" is clicked */}
-                {openClient && (
+                {openGroup && (
                     <div ref={detailRef} style={styles.tableWrap}>
                         <div style={styles.tableWrapHead}>
-                            <span style={styles.cardsTitle}>{openClient}</span>
+                            <span style={styles.cardsTitle}>
+                                {effectiveView === "daily" ? prettyDate(openGroup) : openGroup}
+                            </span>
                             <button
                                 type="button"
                                 style={styles.resetBtn}
-                                onClick={() => setOpenClient(null)}
+                                onClick={() => setOpenGroup(null)}
                             >
                                 <i className="ti ti-x" />
                                 Close
@@ -1049,7 +1314,7 @@ export default function ProductionReport() {
                         {countsNoNumber > 0 && (
                             <div style={styles.countNotice}>
                                 <i className="ti ti-info-circle" /> {countsNoNumber} more case
-                                {countsNoNumber === 1 ? "" : "s"} of this client don't have case
+                                {countsNoNumber === 1 ? "" : "s"} in this card don't have case
                                 numbers yet (allocated as a count) — they'll appear here once the
                                 numbers are added.
                             </div>
@@ -1775,6 +2040,58 @@ const styles: Record<string, CSSProperties> = {
     },
     statDot: { width: 8, height: 8, borderRadius: radius.circle, flexShrink: 0 },
     statValue: { fontWeight: fontWeight.semibold, fontSize: fontSize.base },
+    // ---- NEW: view switcher (Client / Employee / Daily) + quick range buttons ----
+    viewTabs: { display: "flex", gap: 8, flexWrap: "wrap" },
+    viewTab: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "7px 14px",
+        borderRadius: radius.pill,
+        border: "1px solid #dbe6f0",
+        background: "#fff",
+        color: "#374151",
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+        fontFamily: "inherit",
+    },
+    viewTabActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "1px solid transparent",
+        boxShadow: "0 4px 12px rgba(var(--brand-blue-rgb),0.25)",
+    },
+    quickBtn: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "9px 14px",
+        borderRadius: radius.sm,
+        border: "1px solid rgba(var(--brand-blue-rgb),0.25)",
+        background: "rgba(var(--brand-blue-rgb),0.06)",
+        color: BRAND.blue,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        fontFamily: "inherit",
+    },
+    quickBtnActive: {
+        background: GRADIENT,
+        color: "#fff",
+        border: "1px solid transparent",
+    },
+    todayChip: {
+        marginLeft: 8,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.semibold,
+        color: BRAND.green,
+        background: "rgba(var(--brand-green-rgb),0.12)",
+        borderRadius: radius.pill,
+        padding: "2px 8px",
+        verticalAlign: "middle",
+    },
     viewDetailsBtn: {
         width: "100%",
         padding: "7px 12px",

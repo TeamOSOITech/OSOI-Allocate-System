@@ -61,6 +61,9 @@ function todayStr() {
     return `${y}-${m}-${day}`;
 }
 
+// future dates are not allowed — typed / pasted values are clamped to today
+const clampToToday = (v: string) => (v && v > todayStr() ? todayStr() : v);
+
 function formatDisplayDate(iso: string) {
     // "2026-07-27" -> "27-07-2026"
     const [y, m, d] = iso.split("-");
@@ -556,7 +559,10 @@ export default function DailyWork() {
                                         <input
                                             type="date"
                                             value={workDate}
-                                            onChange={(e) => setWorkDate(e.target.value)}
+                                            max={todayStr()}
+                                            onChange={(e) =>
+                                                setWorkDate(clampToToday(e.target.value))
+                                            }
                                             style={styles.input}
                                             required
                                         />
@@ -995,7 +1001,10 @@ export default function DailyWork() {
                                         <input
                                             type="date"
                                             value={editWorkDate}
-                                            onChange={(e) => setEditWorkDate(e.target.value)}
+                                            max={todayStr()}
+                                            onChange={(e) =>
+                                                setEditWorkDate(clampToToday(e.target.value))
+                                            }
                                             style={styles.input}
                                             required
                                         />

@@ -63,6 +63,25 @@ function todayStr() {
     return `${y}-${m}-${day}`;
 }
 
+// Log Cases date: only the CURRENT MONTH can be picked (1st -> last day).
+// The date input's min/max only stop the picker, so typed / pasted values are
+// also clamped into the month by clampWorkDate().
+function minWorkDate() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function maxWorkDate() {
+    const d = new Date();
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); // day 0 of next month
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+}
+function clampWorkDate(v: string) {
+    if (!v) return v;
+    const lo = minWorkDate();
+    const hi = maxWorkDate();
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
 function formatDisplayDate(iso: string) {
     const [y, m, d] = (iso || "").split("-");
     if (!y || !m || !d) return iso;
@@ -1434,7 +1453,9 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                 type="date"
                                 style={styles.input}
                                 value={workDate}
-                                onChange={(e) => setWorkDate(e.target.value)}
+                                min={minWorkDate()}
+                                max={maxWorkDate()}
+                                onChange={(e) => setWorkDate(clampWorkDate(e.target.value))}
                             />
 
                             {/* CHANGED: in Upload mode Service is optional — it's

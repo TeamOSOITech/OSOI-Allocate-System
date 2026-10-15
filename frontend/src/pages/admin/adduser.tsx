@@ -218,6 +218,19 @@ function normalizeExcelDate(value: any): string {
     return value.toString();
 }
 
+// Date of Birth: employee must be at least 18 years old.
+const DOB_AGE_ERROR = "Employee must be at least 18 years old (Date of Birth).";
+// latest allowed DOB = today minus 18 years (local date, YYYY-MM-DD)
+function maxDobStr() {
+    const d = new Date();
+    return `${d.getFullYear() - 18}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+function isUnder18(dob: string) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(dob) && dob > maxDobStr();
+}
+
 function mapBulkRow(row: any) {
     return {
         firstName: row["First Name"] || row["Full Name"] || "",
@@ -709,6 +722,14 @@ export default function AddUser() {
                     });
                     return;
                 }
+                if (isUnder18(u.dob)) {
+                    preFailedResults.push({
+                        email: u.email,
+                        success: false,
+                        message: DOB_AGE_ERROR,
+                    });
+                    return;
+                }
                 if (!isProfessionalEmail(u.email)) {
                     preFailedResults.push({
                         email: u.email,
@@ -787,6 +808,11 @@ export default function AddUser() {
         const missing = validateRequired();
         if (missing.length > 0) {
             setError("Please fill all required fields.");
+            return;
+        }
+
+        if (isUnder18(formData.dob)) {
+            setError(DOB_AGE_ERROR);
             return;
         }
 
@@ -1335,9 +1361,16 @@ export default function AddUser() {
                                             type="date"
                                             style={styles.input}
                                             value={formData.dob}
-                                            onChange={(e) =>
-                                                setFormData({ ...formData, dob: e.target.value })
-                                            }
+                                            max={maxDobStr()}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (isUnder18(v)) {
+                                                    setError(DOB_AGE_ERROR);
+                                                    return;
+                                                }
+                                                if (error === DOB_AGE_ERROR) setError("");
+                                                setFormData({ ...formData, dob: v });
+                                            }}
                                         />
                                     </div>
                                     <div>

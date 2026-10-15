@@ -1994,7 +1994,14 @@ export default function Billing() {
                                         type="date"
                                         style={styles.input}
                                         value={invoiceDate}
-                                        onChange={(e) => setInvoiceDate(e.target.value)}
+                                        max={todayStr()}
+                                        onChange={(e) =>
+                                            setInvoiceDate(
+                                                e.target.value > todayStr()
+                                                    ? todayStr()
+                                                    : e.target.value
+                                            )
+                                        }
                                     />
                                 </label>
                                 <label style={styles.label}>
