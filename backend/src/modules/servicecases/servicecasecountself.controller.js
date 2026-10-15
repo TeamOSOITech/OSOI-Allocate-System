@@ -41,6 +41,24 @@ const userIdOf = (req) => req.user.userId;
 // Max case numbers typed in one go (frontend caps lower; this is a safety net).
 const MAX_CASE_NUMBERS_AT_ONCE = 200;
 
+// A typed entry starting with this token means "no case number" — only
+// accepted when the org has turned OFF "case number required"
+// (organizations.case_number_required = false). The server swaps it for
+// a generated internal number (AUTO00012) before saving.
+const AUTO_TOKEN = "__AUTO__";
+
+// true unless the org explicitly switched the requirement off. A missing
+// column / row falls back to the old behaviour (required).
+async function isCaseNumberRequired(orgId) {
+  const { data, error } = await supabase
+    .from("organizations")
+    .select("case_number_required")
+    .eq("id", orgId)
+    .maybeSingle();
+  if (error) return true;
+  return data?.case_number_required !== false;
+}
+
 // Same outcomes as servicecases.controller.js. "WIP" is NOT stored — it
 // simply means "add the case, don't submit it yet".
 const SUBMISSION_TYPES = [
@@ -524,6 +542,39 @@ async function addCaseNumbersToCount(req, res) {
       return res.status(400).json({
         success: false,
         message: `Only ${remaining} case(s) are allocated to you here — you entered ${candidates.length}.`,
+      });
+    }
+
+    // ---- "no case number" entries (only when the org allows it) ----
+    const autoCandidates = candidates.filter((cn) =>
+      cn.toUpperCase().startsWith(AUTO_TOKEN),
+    );
+    if (autoCandidates.length > 0) {
+      if (await isCaseNumberRequired(orgId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Case numbers are required — please type them in.",
+        });
+      }
+      const { data: seqRow, error: seqErr } = await supabase
+        .from("service_cases")
+        .select("sequence_number")
+        .eq("organization_id", orgId)
+        .eq("product_id", count.product_id)
+        .order("sequence_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (seqErr) throw seqErr;
+      const base = (seqRow?.sequence_number || 0) + 1;
+      autoCandidates.forEach((token, k) => {
+        const generated = `AUTO${String(base + k).padStart(5, "0")}`;
+        const idx = candidates.indexOf(token);
+        candidates[idx] = generated;
+        const key = token.toUpperCase();
+        if (statuses[key]) {
+          statuses[generated.toUpperCase()] = statuses[key];
+          delete statuses[key];
+        }
       });
     }
 

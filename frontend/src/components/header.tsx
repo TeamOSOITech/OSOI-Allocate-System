@@ -2,9 +2,13 @@ import { useState, useEffect, useRef } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
-import { useTheme, THEMES } from "../context/themecontext";
-import type { ThemeName } from "../context/themecontext";
+import { useTheme } from "../context/themecontext";
 import NotificationBell from "./notificationbell";
+import { getCurrentUser } from "../utils/auth";
+import SettingsModal from "./settingsmodal";
+
+// Only these roles see the Settings entry in the avatar menu.
+const SETTINGS_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"];
 
 interface HeaderProps {
     userName?: string;
@@ -87,7 +91,7 @@ export default function Header({
     // NOTE: isSmallMobile no longer used here — it only gated the bell
     // icon's small-screen variant, which was removed below.
     const { isMobile } = useBreakpoint();
-    const { colors: BRAND, themeName, setThemeName } = useTheme();
+    const { colors: BRAND } = useTheme();
     const navigate = useNavigate();
     // ON/OFF for the "work allocated" employee mails. Saved in
     // localStorage ("allocNotifyEnabled"); the allocation page reads the
@@ -124,7 +128,9 @@ export default function Header({
     const [menuOpen, setMenuOpen] = useState(false);
     // Only "theme" is left as a sub-panel now — Display mode was removed,
     // so this no longer needs to track a "display" state.
-    const [subPanel, setSubPanel] = useState<"none" | "theme">("none");
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    // Work rules inside Settings are for Super Admin / managers only.
+    const canEditSettings = SETTINGS_ROLES.includes(getCurrentUser()?.role || "");
     const menuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -132,13 +138,11 @@ export default function Header({
         const onClickOutside = (e: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
                 setMenuOpen(false);
-                setSubPanel("none");
             }
         };
         const onEsc = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 setMenuOpen(false);
-                setSubPanel("none");
             }
         };
         document.addEventListener("mousedown", onClickOutside);
@@ -151,7 +155,6 @@ export default function Header({
 
     const closeMenu = () => {
         setMenuOpen(false);
-        setSubPanel("none");
     };
 
     const styles = getStyles(BRAND);
@@ -274,113 +277,62 @@ export default function Header({
 
                     {menuOpen && (
                         <div style={styles.menu}>
-                            {subPanel === "none" && (
-                                <>
-                                    {/* My Profile — navigates to /profile directly.
+                            {/* My Profile — navigates to /profile directly.
                                     Still calls onProfileClick too, in case a
                                     parent wants to react to it as well. */}
-                                    <MenuItem
-                                        icon="ti-user"
-                                        label="My Profile"
-                                        styles={styles}
-                                        onClick={() => {
-                                            closeMenu();
-                                            navigate("/profile");
-                                            onProfileClick?.();
-                                        }}
-                                    />
-                                    <MenuItem
-                                        icon="ti-palette"
-                                        label="Theme color"
-                                        chevron
-                                        styles={styles}
-                                        onClick={() => setSubPanel("theme")}
-                                    />
-                                    {/* Change password — opens the existing
+                            <MenuItem
+                                icon="ti-user"
+                                label="My Profile"
+                                styles={styles}
+                                onClick={() => {
+                                    closeMenu();
+                                    navigate("/profile");
+                                    onProfileClick?.();
+                                }}
+                            />
+                            <MenuItem
+                                icon="ti-settings"
+                                label="Settings"
+                                styles={styles}
+                                onClick={() => {
+                                    closeMenu();
+                                    setSettingsOpen(true);
+                                }}
+                            />
+                            {/* Change password — opens the existing
                                     /reset-password route in a new tab, rather
                                     than navigating away from whatever the
                                     person was doing. */}
-                                    <MenuItem
-                                        icon="ti-key"
-                                        label="Change password"
-                                        styles={styles}
-                                        onClick={() => {
-                                            closeMenu();
-                                            window.open(
-                                                "/reset-password",
-                                                "_blank",
-                                                "noopener,noreferrer"
-                                            );
-                                            onChangePassword?.();
-                                        }}
-                                    />
-                                    <div style={styles.menuDivider} />
-                                    <MenuItem
-                                        icon="ti-logout"
-                                        label="Logout"
-                                        danger
-                                        styles={styles}
-                                        onClick={() => {
-                                            closeMenu();
-                                            onLogout?.();
-                                        }}
-                                    />
-                                </>
-                            )}
-
-                            {subPanel === "theme" && (
-                                <>
-                                    <button
-                                        style={styles.menuBackRow}
-                                        onClick={() => setSubPanel("none")}
-                                        type="button"
-                                    >
-                                        <i className="ti ti-chevron-left" /> Theme color
-                                    </button>
-                                    <div style={styles.swatchGrid}>
-                                        {(Object.keys(THEMES) as ThemeName[]).map((key) => {
-                                            const palette = THEMES[key];
-                                            const active = themeName === key;
-                                            return (
-                                                <div key={key} style={styles.swatchCell}>
-                                                    <button
-                                                        type="button"
-                                                        title={palette.label}
-                                                        onClick={() => {
-                                                            setThemeName(key);
-                                                            closeMenu();
-                                                        }}
-                                                        style={{
-                                                            ...styles.swatchBtn,
-                                                            background: `linear-gradient(135deg, ${palette.lightBlue}, ${palette.blue})`,
-                                                            boxShadow: active
-                                                                ? `0 0 0 2px #fff, 0 0 0 4px ${palette.blue}`
-                                                                : "none",
-                                                        }}
-                                                    >
-                                                        {active && (
-                                                            <i
-                                                                className="ti ti-check"
-                                                                style={{
-                                                                    color: "#fff",
-                                                                    fontSize: fontSize.md,
-                                                                }}
-                                                            />
-                                                        )}
-                                                    </button>
-                                                    <span style={styles.swatchLabel}>
-                                                        {palette.label}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </>
-                            )}
+                            <MenuItem
+                                icon="ti-key"
+                                label="Change password"
+                                styles={styles}
+                                onClick={() => {
+                                    closeMenu();
+                                    window.open("/reset-password", "_blank", "noopener,noreferrer");
+                                    onChangePassword?.();
+                                }}
+                            />
+                            <div style={styles.menuDivider} />
+                            <MenuItem
+                                icon="ti-logout"
+                                label="Logout"
+                                danger
+                                styles={styles}
+                                onClick={() => {
+                                    closeMenu();
+                                    onLogout?.();
+                                }}
+                            />
                         </div>
                     )}
                 </div>
             </div>
+            <SettingsModal
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                canEditWorkRules={canEditSettings}
+            />
         </header>
     );
 }

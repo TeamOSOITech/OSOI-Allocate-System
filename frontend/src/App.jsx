@@ -250,7 +250,15 @@ const AppLayout = ({ children, onLogout }) => {
                 display: "flex",
                 flexDirection: "column",
                 height: "100dvh",
-                overflow: "hidden",
+                // `clip` (unlike `hidden`) can't be scrolled even
+                // programmatically (focus / scrollIntoView / anchors) — that
+                // was shifting this shell up and hiding the header with no
+                // way to scroll it back until a refresh.
+                overflow: "clip",
+            }}
+            // Safety net for browsers without overflow: clip.
+            onScroll={(e) => {
+                if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
             }}
         >
             <div style={{ position: "relative", zIndex: 100, flexShrink: 0 }}>
@@ -282,7 +290,10 @@ const AppLayout = ({ children, onLogout }) => {
                     flex: 1,
                     display: "flex",
                     minHeight: 0, // required so the child below can be 100% height and still scroll
-                    overflow: "hidden",
+                    overflow: "clip",
+                }}
+                onScroll={(e) => {
+                    if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
                 }}
             >
                 {/* Sidebar now lives here ONCE, not duplicated per-page.

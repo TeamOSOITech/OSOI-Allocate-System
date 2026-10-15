@@ -4,6 +4,7 @@ import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
 import { useRoleLabels } from "../context/roleLabelsContext";
+import { useOrgSettings } from "../context/orgsettings";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -61,6 +62,74 @@ function getHoverCss(BRAND: { blue: string }) {
 @media (prefers-reduced-motion: reduce) { .pf-today-card, .pf-today-dot { animation: none; } }
 @keyframes pf-emp-pop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 `;
+}
+
+// Scrolls ONLY the page's own scroll area (<main>). element.scrollIntoView()
+// would also scroll the height-locked app shell, pushing the header up and
+// leaving it hidden until a refresh.
+function scrollWithinPage(el: HTMLElement | null, offset = 12) {
+    if (!el) return;
+    let parent: HTMLElement | null = el.parentElement;
+    while (parent) {
+        const oy = getComputedStyle(parent).overflowY;
+        if ((oy === "auto" || oy === "scroll") && parent.scrollHeight > parent.clientHeight) break;
+        parent = parent.parentElement;
+    }
+    if (!parent) return;
+    const top =
+        el.getBoundingClientRect().top -
+        parent.getBoundingClientRect().top +
+        parent.scrollTop -
+        offset;
+    parent.scrollTo({ top, behavior: "smooth" });
+}
+
+// Self-contained live clock (re-renders only itself every second).
+function LiveClock({ compact = false }: { compact?: boolean }) {
+    const [now, setNow] = useState(() => new Date());
+    useEffect(() => {
+        const id = window.setInterval(() => setNow(new Date()), 1000);
+        return () => window.clearInterval(id);
+    }, []);
+
+    const hh = now.getHours();
+    const h12 = hh % 12 === 0 ? 12 : hh % 12;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const time = `${pad(h12)}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const ampm = hh >= 12 ? "PM" : "AM";
+    const date = `${now.toLocaleDateString("en-GB", { weekday: "short" })}, ${now.getDate()} ${now.toLocaleDateString("en-GB", { month: "short" })} ${now.getFullYear()}`;
+
+    return (
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: compact ? "flex-start" : "flex-end",
+                gap: 4,
+                justifySelf: compact ? "flex-start" : "flex-end",
+            }}
+            aria-label="Current time"
+        >
+            <div
+                style={{
+                    background: "#fff",
+                    border: "1px solid #E6E9F3",
+                    borderRadius: 8,
+                    padding: "5px 11px",
+                    fontSize: 15,
+                    fontWeight: 500,
+                    color: "#17181C",
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                    lineHeight: 1.2,
+                }}
+            >
+                {time}
+                <span style={{ fontSize: 11, marginLeft: 3 }}>{ampm}</span>
+            </div>
+            <div style={{ fontSize: 11, color: "#4A4F63", whiteSpace: "nowrap" }}>{date}</div>
+        </div>
+    );
 }
 
 function useIsMobile() {
@@ -559,6 +628,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     const isMobile = useIsMobile();
     const { colors: themeColors } = useTheme();
     const { getRoleLabel } = useRoleLabels();
+    // Org setting: when OFF, count work can be completed without case numbers.
+    const { caseNumberRequired } = useOrgSettings();
     const BRAND = {
         blue: themeColors.blue,
         lightBlue: themeColors.lightBlue,
@@ -1697,9 +1768,20 @@ export default function Profile({ onLogout }: ProfileProps) {
     // count allocated to me. Every case can have its OWN client.
     // ---------------------------------------------------------------
     // rows that actually have a case number typed
+    // When case numbers are NOT required (org setting), a row also counts
+    // if it was given a submit status (e.g. Completed) with no number — it
+    // gets a placeholder token that the server swaps for a generated number.
     const addCnParsed = useMemo(
-        () => addCnRows.filter((r) => r.cn.trim()).map((r) => ({ ...r, cn: r.cn.trim() })),
-        [addCnRows]
+        () =>
+            addCnRows
+                .map((r, i) => ({ r, i }))
+                .filter(
+                    ({ r }) =>
+                        r.cn.trim() ||
+                        (!caseNumberRequired && r.status !== "WIP" && r.status !== "PENDING")
+                )
+                .map(({ r, i }) => ({ ...r, cn: r.cn.trim() || `__AUTO__${i + 1}` })),
+        [addCnRows, caseNumberRequired]
     );
 
     // how many of the typed case numbers will be submitted right away
@@ -1762,7 +1844,11 @@ export default function Profile({ onLogout }: ProfileProps) {
     const submitAddCaseNumbers = async () => {
         if (!addCnCount) return;
         if (addCnParsed.length === 0) {
-            setAddCnError("Type at least one case number.");
+            setAddCnError(
+                caseNumberRequired
+                    ? "Type at least one case number."
+                    : "Type a case number or set a status (e.g. Completed) for at least one row."
+            );
             return;
         }
         if (addCnParsed.length > addCnCount.remaining) {
@@ -1774,11 +1860,15 @@ export default function Profile({ onLogout }: ProfileProps) {
         for (const r of addCnParsed) {
             // Client is mandatory for every case.
             if (!r.clientId) {
-                setAddCnError(`Select a client for ${r.cn}.`);
+                setAddCnError(
+                    `Select a client for ${r.cn.startsWith("__AUTO__") ? `row ${r.cn.replace("__AUTO__", "")}` : r.cn}.`
+                );
                 return;
             }
             if (r.status === "QUERY" && !r.query.trim()) {
-                setAddCnError(`Enter the query text for ${r.cn}.`);
+                setAddCnError(
+                    `Enter the query text for ${r.cn.startsWith("__AUTO__") ? `row ${r.cn.replace("__AUTO__", "")}` : r.cn}.`
+                );
                 return;
             }
         }
@@ -2096,10 +2186,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         setDateFilter("");
         setProductFilter("all");
         setSearch("");
-        window.setTimeout(
-            () => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-            60
-        );
+        window.setTimeout(() => scrollWithinPage(detailRef.current), 60);
     };
 
     // Past Allocation card: opens the past cases table (click again to hide).
@@ -2116,10 +2203,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         setDateFilter("");
         setProductFilter("all");
         setSearch("");
-        window.setTimeout(
-            () => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-            60
-        );
+        window.setTimeout(() => scrollWithinPage(detailRef.current), 60);
     };
 
     const exportCsv = () => {
@@ -2503,6 +2587,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <p style={styles.aboutText}>{bio || "No bio added yet."}</p>
                             )}
                         </div>
+
+                        <LiveClock compact={isMobile} />
                     </div>
 
                     <div
@@ -4833,7 +4919,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         value={r.cn}
                                                         maxLength={50}
                                                         disabled={addCnSubmitting}
-                                                        placeholder="Case number"
+                                                        placeholder={
+                                                            caseNumberRequired
+                                                                ? "Case number"
+                                                                : "Case number (optional)"
+                                                        }
                                                         onChange={(e) =>
                                                             setAddCnRow(i, { cn: e.target.value })
                                                         }
@@ -6393,8 +6483,8 @@ function getStyles(
 
         identityGrid: {
             display: "grid",
-            gridTemplateColumns: "auto auto minmax(220px, 1fr)",
-            columnGap: 56,
+            gridTemplateColumns: "auto auto minmax(220px, 340px) 1fr",
+            columnGap: 40,
             alignItems: "center",
             flex: 1,
             minWidth: 0,

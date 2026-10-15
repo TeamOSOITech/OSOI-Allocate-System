@@ -124,4 +124,68 @@ router.patch(
   },
 );
 
+// ---------------------------------------------------------------
+// Org-level settings — currently one flag:
+//   case_number_required (boolean, default true)
+//     true  -> employees must type real case numbers when they complete
+//              units of a count-only entry (existing behaviour)
+//     false -> case numbers are optional for count-only work; units can
+//              be completed without typing any (the server generates an
+//              internal number for them).
+// SETUP REQUIRED (one-time): run in Supabase SQL editor
+//   alter table organizations
+//     add column if not exists case_number_required boolean not null default true;
+// ---------------------------------------------------------------
+const SETTINGS_EDITOR_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"];
+
+// GET /api/organization/settings — any authenticated user (the Profile
+// page needs it to know whether to ask for case numbers).
+router.get("/organization/settings", authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("case_number_required")
+      .eq("id", req.user.organizationId)
+      .maybeSingle();
+    // Column not created yet -> behave exactly as before (required).
+    if (error && !/case_number_required/i.test(error.message || ""))
+      throw error;
+    res.set("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      data: {
+        caseNumberRequired: error ? true : data?.case_number_required !== false,
+      },
+    });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+// PATCH /api/organization/settings — Super Admin / managers only.
+router.patch(
+  "/organization/settings",
+  authenticate,
+  authorize(...SETTINGS_EDITOR_ROLES),
+  async (req, res) => {
+    try {
+      const { caseNumberRequired } = req.body || {};
+      if (typeof caseNumberRequired !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          message: "caseNumberRequired must be true or false",
+        });
+      }
+      const { error } = await supabase
+        .from("organizations")
+        .update({ case_number_required: caseNumberRequired })
+        .eq("id", req.user.organizationId);
+      if (error) throw error;
+      res.json({ success: true, data: { caseNumberRequired } });
+    } catch (err) {
+      sendError(res, err, 400);
+    }
+  },
+);
+
 module.exports = router;

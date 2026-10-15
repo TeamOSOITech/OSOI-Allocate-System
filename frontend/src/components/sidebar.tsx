@@ -109,6 +109,9 @@ const menuItems: MenuItem[] = [
         path: "/history",
         roles: ["AUDIT_MANAGER"],
     },
+    // TEMPORARILY HIDDEN from the sidebar (routes still work): Billing,
+    // Approvals, QC & Audit. Un-comment this block to show them again.
+    /*
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
     // Approvals — decision-makers only. Process Lead no longer sees this
     // link: they submit requests via their normal actions (e.g. Add
@@ -132,6 +135,7 @@ const menuItems: MenuItem[] = [
         path: "/quality-scores",
         roles: SUPER_ADMIN_ONLY,
     },
+    */
     {
         // FIX: /profile route in App.jsx has no requiredRole (every logged-in
         // user, including TEAM_MEMBER via NORMAL_USER_ALLOWED_PATHS, can
@@ -486,47 +490,11 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     style={{
                         display: "flex",
                         alignItems: "flex-end",
-                        justifyContent: "space-between",
+                        justifyContent: "flex-end",
                         width: "100%",
                         flexShrink: 0,
                     }}
                 >
-                    <div
-                        onClick={() => {
-                            setIsOpen(false);
-                            navigate("/subscription");
-                        }}
-                        style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            background:
-                                activeLabel === "Upgrade"
-                                    ? GRADIENT_PILL
-                                    : hoveredLabel === "Upgrade"
-                                      ? COLORS.blueTint
-                                      : "transparent",
-                            border: `1.5px solid ${activeLabel === "Upgrade" ? "transparent" : COLORS.lightBlue}`,
-                            color: activeLabel === "Upgrade" ? "#fff" : COLORS.blue,
-                            borderRadius: radius.pill,
-                            padding: "7px 12px",
-                            fontSize: fontSize.sm,
-                            fontWeight: fontWeight.semibold,
-                            cursor: "pointer",
-                            marginBottom: "30px",
-                            whiteSpace: "nowrap",
-                        }}
-                        onMouseEnter={() => setHoveredLabel("Upgrade")}
-                        onMouseLeave={() => setHoveredLabel(null)}
-                    >
-                        <i
-                            className="ti ti-rocket"
-                            style={{ fontSize: fontSize.base, color: "inherit" }}
-                            aria-hidden="true"
-                        />
-                        Upgrade
-                    </div>
-
                     {/* Decorative plant illustration */}
                     <svg
                         width="130"

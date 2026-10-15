@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
-import type { CSSProperties } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import type { CSSProperties, ReactNode } from "react";
 import {
     BarChart,
     Bar,
@@ -117,13 +118,6 @@ const MONTH_NAMES = [
     "Dec",
 ];
 
-function monthKeyOf(dateStr: string) {
-    return (dateStr || "").slice(0, 7); // "YYYY-MM-DD" -> "YYYY-MM"
-}
-function yearKeyOf(dateStr: string) {
-    return (dateStr || "").slice(0, 4); // "YYYY-MM-DD" -> "YYYY"
-}
-
 // Last `n` month keys ending at the current month, most recent first —
 // used to populate the period dropdowns regardless of what data exists,
 // so "this month vs last month" is always pickable even with 0 batches.
@@ -169,6 +163,232 @@ function pctChange(a: number | null, b: number | null): number | null {
     if (a == null || b == null) return null;
     if (a === 0) return b === 0 ? 0 : null;
     return Math.round(((b - a) / a) * 1000) / 10;
+}
+
+// ------------------------------------------------------------
+// Dashboard visual kit — soft pastel KPI cards and pill selects.
+// ------------------------------------------------------------
+const KPI_TONES = [
+    {
+        bg: "linear-gradient(135deg,#FFFFFF 0%,#EEF0FF 100%)",
+        tile: "#E1E5FF",
+        ink: "#4F46E5",
+        wave: "#DDE2FF",
+    },
+    {
+        bg: "linear-gradient(135deg,#FFFFFF 0%,#E9FAF4 100%)",
+        tile: "#CFF3E6",
+        ink: "#0F9F7B",
+        wave: "#CFF1E4",
+    },
+    {
+        bg: "linear-gradient(135deg,#FFFFFF 0%,#F3ECFF 100%)",
+        tile: "#E5D8FF",
+        ink: "#7C3AED",
+        wave: "#E6DBFF",
+    },
+    {
+        bg: "linear-gradient(135deg,#FFFFFF 0%,#FFF1E4 100%)",
+        tile: "#FFDFC2",
+        ink: "#EA580C",
+        wave: "#FFE2C8",
+    },
+    {
+        bg: "linear-gradient(135deg,#FFFFFF 0%,#E8F9EE 100%)",
+        tile: "#CDF1D9",
+        ink: "#16A34A",
+        wave: "#CFF1DC",
+    },
+];
+
+function KpiCard({
+    index,
+    label,
+    value,
+    icon,
+    tip,
+    isMobile,
+}: {
+    index: number;
+    label: string;
+    value: string | number;
+    icon: string;
+    tip?: string;
+    isMobile: boolean;
+}) {
+    const tone = KPI_TONES[index % KPI_TONES.length];
+    return (
+        <div
+            title={tip}
+            style={{
+                position: "relative",
+                overflow: "hidden",
+                background: tone.bg,
+                border: "1px solid rgba(255,255,255,.9)",
+                borderRadius: 20,
+                padding: isMobile ? "12px 12px 14px" : "14px 16px 16px",
+                boxShadow: "0 8px 24px rgba(31,41,90,.07)",
+                textAlign: "left",
+                fontFamily: fontFamily.base,
+            }}
+        >
+            <svg
+                aria-hidden="true"
+                width="120"
+                height="70"
+                viewBox="0 0 120 70"
+                style={{ position: "absolute", right: 0, bottom: 0, pointerEvents: "none" }}
+            >
+                <path
+                    d="M120 0C96 14 80 36 56 48 38 56 18 62 0 70H120Z"
+                    fill={tone.wave}
+                    opacity=".75"
+                />
+                <path d="M120 26C102 38 90 54 70 62 56 67 42 69 30 70H120Z" fill={tone.wave} />
+            </svg>
+            <div
+                style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    marginBottom: 8,
+                }}
+            >
+                <div
+                    style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 12,
+                        background: tone.tile,
+                        color: tone.ink,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                    }}
+                >
+                    <i className={icon} style={{ fontSize: 20 }} />
+                </div>
+                <span
+                    aria-hidden="true"
+                    style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "50%",
+                        background: "#fff",
+                        border: "1px solid #EDEFF8",
+                        color: "#27305c",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                    }}
+                >
+                    <i className="ti ti-chevron-right" style={{ fontSize: 12 }} />
+                </span>
+            </div>
+            <div
+                style={{
+                    position: "relative",
+                    fontSize: fontSize["7xl"],
+                    fontWeight: fontWeight.semibold,
+                    color: "#14183a",
+                    lineHeight: 1.1,
+                }}
+            >
+                {value}
+            </div>
+            <div
+                style={{
+                    position: "relative",
+                    fontSize: fontSize.md,
+                    fontWeight: fontWeight.medium,
+                    color: "#1d2350",
+                    marginTop: 6,
+                }}
+            >
+                {label}
+            </div>
+            {tip && (
+                <div
+                    style={{
+                        position: "relative",
+                        fontSize: fontSize.xs,
+                        color: "#8a93ad",
+                        marginTop: 4,
+                        lineHeight: 1.4,
+                        maxWidth: "88%",
+                    }}
+                >
+                    {tip}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Rounded select with a leading icon and a custom chevron.
+function PillSelect({
+    icon,
+    value,
+    onChange,
+    children,
+    ariaLabel,
+}: {
+    icon: string;
+    value: string;
+    onChange: (v: string) => void;
+    children: ReactNode;
+    ariaLabel?: string;
+}) {
+    return (
+        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+            <i
+                className={`ti ${icon}`}
+                aria-hidden="true"
+                style={{
+                    position: "absolute",
+                    left: 11,
+                    fontSize: 14,
+                    color: "#4F46E5",
+                    pointerEvents: "none",
+                }}
+            />
+            <select
+                value={value}
+                aria-label={ariaLabel}
+                onChange={(e) => onChange(e.target.value)}
+                style={{
+                    appearance: "none",
+                    WebkitAppearance: "none",
+                    height: 34,
+                    padding: "0 30px 0 32px",
+                    borderRadius: 999,
+                    border: "1px solid #E4E7F5",
+                    background: "#fff",
+                    color: "#1d2350",
+                    fontSize: fontSize.base,
+                    fontWeight: fontWeight.medium,
+                    fontFamily: fontFamily.base,
+                    cursor: "pointer",
+                    outline: "none",
+                    boxShadow: "0 2px 8px rgba(31,41,90,.05)",
+                }}
+            >
+                {children}
+            </select>
+            <i
+                className="ti ti-chevron-down"
+                aria-hidden="true"
+                style={{
+                    position: "absolute",
+                    right: 11,
+                    fontSize: 12,
+                    color: "#5b6488",
+                    pointerEvents: "none",
+                }}
+            />
+        </span>
+    );
 }
 
 // Small reusable "Period A vs Period B" comparison card — mode toggle,
@@ -260,17 +480,94 @@ function ComparePanel({
         { name: label(periodB), Value: valueB ?? 0 },
     ];
 
+    const maxVal = Math.max(valueA ?? 0, valueB ?? 0, 1);
+
+    // Always-visible callout above each bar: dot on the bar top + a small
+    // white card with the period and its value.
+    const renderCallout = (props: any) => {
+        const { x, y, width, index } = props;
+        const row = chartData[index];
+        if (!row || x == null) return null;
+        const cx = x + width / 2;
+        const boxW = 150;
+        const boxH = 42;
+        const boxY = Math.max(y - boxH - 18, 2);
+        return (
+            <g>
+                <rect
+                    x={cx - boxW / 2}
+                    y={boxY}
+                    width={boxW}
+                    height={boxH}
+                    rx={10}
+                    fill="#fff"
+                    stroke="#E4E7F5"
+                    filter="drop-shadow(0 4px 10px rgba(31,41,90,.10))"
+                />
+                <text x={cx} y={boxY + 17} textAnchor="middle" fontSize={11} fill="#6b7394">
+                    {row.name}
+                </text>
+                <text x={cx} y={boxY + 33} textAnchor="middle" fontSize={11} fill="#4b5578">
+                    {title} :{" "}
+                    <tspan fontWeight={700} fill="#4F46E5">
+                        {fmt(row.Value)} {unit}
+                    </tspan>
+                </text>
+                <circle cx={cx} cy={y} r={5} fill="#4F46E5" stroke="#fff" strokeWidth={2} />
+            </g>
+        );
+    };
+
     return (
         <div style={styles.panel}>
-            <div style={styles.panelTitleRow}>
-                <div style={styles.panelTitle}>
-                    <i className={icon} style={{ marginRight: 6 }} aria-hidden="true" />
-                    {title} — Compare
+            <div
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                    marginBottom: 14,
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span
+                        style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 10,
+                            background: "#E8EAFF",
+                            color: "#4F46E5",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <i className={icon} style={{ fontSize: 17 }} aria-hidden="true" />
+                    </span>
+                    <div
+                        style={{
+                            fontSize: fontSize["2xl"],
+                            fontWeight: fontWeight.semibold,
+                            color: "#14183a",
+                        }}
+                    >
+                        {title} — Compare
+                    </div>
                 </div>
-                <div style={styles.panelTitleUnderline} />
+                {/* Month wise / Year wise dropdown (right side) */}
+                <PillSelect
+                    icon="ti-chart-bar"
+                    value={mode}
+                    ariaLabel="Compare by"
+                    onChange={(v) => handleModeChange(v as "month" | "year")}
+                >
+                    <option value="month">Month wise</option>
+                    <option value="year">Year wise</option>
+                </PillSelect>
             </div>
 
-            {/* Mode toggle + period pickers */}
+            {/* Period pickers */}
             <div
                 style={{
                     display: "flex",
@@ -280,89 +577,60 @@ function ComparePanel({
                     marginBottom: 14,
                 }}
             >
-                <div
-                    style={{
-                        display: "flex",
-                        borderRadius: radius.md,
-                        overflow: "hidden",
-                        border: "1px solid #e1e5ee",
-                    }}
-                >
-                    {(["month", "year"] as const).map((m) => (
-                        <button
-                            key={m}
-                            type="button"
-                            onClick={() => handleModeChange(m)}
-                            style={{
-                                border: "none",
-                                cursor: "pointer",
-                                padding: "6px 14px",
-                                fontSize: fontSize.sm,
-                                fontWeight: fontWeight.medium,
-                                background: mode === m ? BRAND.blue : "#fff",
-                                color: mode === m ? "#fff" : "#4b5563",
-                            }}
-                        >
-                            {m === "month" ? "By Month" : "By Year"}
-                        </button>
-                    ))}
-                </div>
-
-                <select
+                <PillSelect
+                    icon="ti-calendar"
                     value={periodA}
-                    onChange={(e) => setPeriodA(e.target.value)}
-                    style={{
-                        padding: "6px 10px",
-                        borderRadius: radius.md,
-                        border: "1px solid #e1e5ee",
-                        fontSize: fontSize.sm,
-                        color: "#374151",
-                    }}
+                    onChange={setPeriodA}
+                    ariaLabel="First period"
                 >
                     {options.map((k) => (
                         <option key={k} value={k}>
                             {label(k)}
                         </option>
                     ))}
-                </select>
+                </PillSelect>
 
-                <span style={{ color: "#9ca3af", fontSize: fontSize.sm }}>vs</span>
+                <span
+                    style={{
+                        color: "#9aa3bd",
+                        fontSize: fontSize.sm,
+                        fontWeight: fontWeight.medium,
+                    }}
+                >
+                    vs
+                </span>
 
-                <select
+                <PillSelect
+                    icon="ti-calendar"
                     value={periodB}
-                    onChange={(e) => setPeriodB(e.target.value)}
-                    style={{
-                        padding: "6px 10px",
-                        borderRadius: radius.md,
-                        border: "1px solid #e1e5ee",
-                        fontSize: fontSize.sm,
-                        color: "#374151",
-                    }}
+                    onChange={setPeriodB}
+                    ariaLabel="Second period"
                 >
                     {options.map((k) => (
                         <option key={k} value={k}>
                             {label(k)}
                         </option>
                     ))}
-                </select>
+                </PillSelect>
 
                 {delta != null && (
                     <span
                         style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 4,
-                            padding: "4px 10px",
+                            gap: 5,
+                            height: 34,
+                            padding: "0 14px",
                             borderRadius: 999,
                             fontSize: fontSize.sm,
-                            fontWeight: fontWeight.semibold,
+                            fontWeight: fontWeight.medium,
                             background:
                                 delta > 0
-                                    ? withAlpha(BRAND.green, 0.14)
+                                    ? "#E3F8EE"
                                     : delta < 0
-                                      ? "rgba(220,38,38,0.12)"
+                                      ? "rgba(220,38,38,0.10)"
                                       : "rgba(107,114,128,0.12)",
-                            color: delta > 0 ? BRAND.green : delta < 0 ? "#DC2626" : "#6b7280",
+                            color: delta > 0 ? "#0F9F7B" : delta < 0 ? "#DC2626" : "#6b7280",
                         }}
                     >
                         <i
@@ -381,35 +649,58 @@ function ComparePanel({
                 )}
             </div>
 
-            {loading ? (
+            {loading || asyncLoading ? (
                 <div style={styles.emptyState}>
                     <div style={styles.emptyText}>Loading…</div>
                 </div>
             ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-                        <XAxis dataKey="name" tick={{ fontSize: fontSize.sm, fill: "#6b7280" }} />
-                        <YAxis
-                            tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
-                            allowDecimals={false}
-                        />
-                        <Tooltip
-                            formatter={(value) => {
-                                const v = Array.isArray(value)
-                                    ? Number(value[0])
-                                    : Number(value ?? 0);
-                                return [`${fmt(v)} ${unit}`, title];
-                            }}
-                        />
-                        <Bar
-                            dataKey="Value"
-                            fill={BRAND.blue}
-                            radius={[4, 4, 0, 0]}
-                            barSize={isMobile ? 40 : 64}
-                        />
-                    </BarChart>
-                </ResponsiveContainer>
+                <div
+                    style={{
+                        borderRadius: 16,
+                        background: "linear-gradient(180deg,#F5F6FF 0%,#FFFFFF 100%)",
+                        padding: "6px 4px 0 0",
+                    }}
+                >
+                    <ResponsiveContainer width="100%" height={isMobile ? 240 : 270}>
+                        <BarChart
+                            data={chartData}
+                            margin={{ top: 60, right: 24, left: 0, bottom: 8 }}
+                        >
+                            <defs>
+                                <linearGradient id="cmpBarGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#5B5BE6" />
+                                    <stop offset="100%" stopColor="#3B3FB8" />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid
+                                strokeDasharray="3 4"
+                                stroke="#E6E9F5"
+                                vertical={false}
+                            />
+                            <XAxis
+                                dataKey="name"
+                                tick={{ fontSize: fontSize.sm, fill: "#4b5578" }}
+                                axisLine={{ stroke: "#CBD1E6" }}
+                                tickLine={false}
+                            />
+                            <YAxis
+                                tick={{ fontSize: fontSize.xs, fill: "#6b7394" }}
+                                allowDecimals={false}
+                                axisLine={false}
+                                tickLine={false}
+                                domain={[0, Math.ceil(maxVal * 1.1)]}
+                            />
+                            <Bar
+                                dataKey="Value"
+                                fill="url(#cmpBarGrad)"
+                                radius={[8, 8, 0, 0]}
+                                barSize={isMobile ? 56 : 100}
+                                isAnimationActive={false}
+                                label={renderCallout}
+                            />
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
             )}
         </div>
     );
@@ -417,6 +708,7 @@ function ComparePanel({
 
 export default function Dashboard({ user }: DashboardProps) {
     const isMobile = useIsMobile();
+    const navigate = useNavigate();
     const { colors: themeColors } = useTheme();
     const { getRoleLabel } = useRoleLabels();
     const BRAND = {
@@ -456,8 +748,8 @@ export default function Dashboard({ user }: DashboardProps) {
     // years of totalQty rather than just today's. Separate from
     // `batches` (today only) so the existing KPI cards/chart/pending
     // table above are completely unaffected.
-    const [batchHistory, setBatchHistory] = useState<DailyWorkBatch[]>([]);
-    const [batchHistoryLoading, setBatchHistoryLoading] = useState(true);
+    const [, setBatchHistory] = useState<DailyWorkBatch[]>([]);
+    const [, setBatchHistoryLoading] = useState(true);
 
     // NEW: KPI cards below now read case-based counts (from service_cases,
     // via the same /api/service-cases endpoint Today's Allocation's Cases
@@ -473,6 +765,9 @@ export default function Dashboard({ user }: DashboardProps) {
     // Today's Allocation page (but without a productId filter there).
     const [caseTotalCount, setCaseTotalCount] = useState(0);
     const [caseAllocatedCount, setCaseAllocatedCount] = useState(0);
+    // Today's completed = cases already submitted (submission_status =
+    // SUBMITTED) by the assigned employee for today's work date.
+    const [caseCompletedCount, setCaseCompletedCount] = useState(0);
     const [caseCountsLoading, setCaseCountsLoading] = useState(true);
     const caseRemainingCount = caseTotalCount - caseAllocatedCount;
 
@@ -491,14 +786,24 @@ export default function Dashboard({ user }: DashboardProps) {
             const allocatedParams = new URLSearchParams(baseParams);
             allocatedParams.set("allocationStatus", "ALLOCATED");
 
-            const [totalRes, allocatedRes] = await Promise.all([
+            const completedParams = new URLSearchParams(baseParams);
+            completedParams.set("submissionStatus", "SUBMITTED");
+
+            const [totalRes, allocatedRes, completedRes] = await Promise.all([
                 authFetch(`${API_BASE}/api/service-cases?${baseParams.toString()}`),
                 authFetch(`${API_BASE}/api/service-cases?${allocatedParams.toString()}`),
+                authFetch(`${API_BASE}/api/service-cases?${completedParams.toString()}`),
             ]);
-            const [totalJson, allocatedJson] = await Promise.all([
+            const [totalJson, allocatedJson, completedJson] = await Promise.all([
                 totalRes.json(),
                 allocatedRes.json(),
+                completedRes.json(),
             ]);
+            setCaseCompletedCount(
+                completedRes.ok && completedJson.success
+                    ? (completedJson.pagination?.total ?? 0)
+                    : 0
+            );
             setCaseTotalCount(
                 totalRes.ok && totalJson.success ? (totalJson.pagination?.total ?? 0) : 0
             );
@@ -512,6 +817,7 @@ export default function Dashboard({ user }: DashboardProps) {
             if (!silent) {
                 setCaseTotalCount(0);
                 setCaseAllocatedCount(0);
+                setCaseCompletedCount(0);
             }
         } finally {
             if (!silent) setCaseCountsLoading(false);
@@ -601,15 +907,31 @@ export default function Dashboard({ user }: DashboardProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [viewMode]);
 
-    // Sum of totalQty for a given month ("YYYY-MM") or year ("YYYY") key,
-    // from the full batch history above.
-    const getProductionValue = (mode: "month" | "year", key: string) => {
-        const keyOf = mode === "month" ? monthKeyOf : yearKeyOf;
-        return batchHistory.reduce(
-            (sum, b) => (keyOf(b.workDate) === key ? sum + (b.totalQty || 0) : sum),
-            0
-        );
-    };
+    // Completed (submitted) cases in a month/year, straight from
+    // service_cases — a pageSize=1 call just to read pagination.total.
+    // Stable via useCallback because ComparePanel re-fetches whenever
+    // this function's identity changes.
+    const getCompletedValue = useCallback(
+        async (mode: "month" | "year", key: string): Promise<number | null> => {
+            try {
+                const { from, to } = periodRange(mode, key);
+                const params = new URLSearchParams({
+                    page: "1",
+                    pageSize: "1",
+                    submissionStatus: "SUBMITTED",
+                    workDateFrom: from,
+                    workDateTo: to,
+                });
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success) return null;
+                return json.pagination?.total ?? 0;
+            } catch {
+                return null;
+            }
+        },
+        []
+    );
 
     // ---- Quality Manager view state/fetch ----
 
@@ -712,39 +1034,69 @@ export default function Dashboard({ user }: DashboardProps) {
             gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
             tip: "Cases still waiting to be allocated today",
         },
+        {
+            label: "Today's Completed",
+            value: caseCompletedCount,
+            icon: "ti ti-checks",
+            gradient: `linear-gradient(135deg, ${BRAND.green}, #15803D)`,
+            tip: "Cases completed & submitted by employees today",
+        },
     ];
 
     return (
         <div style={isMobile ? styles.rootMobile : styles.root}>
             <div style={isMobile ? styles.contentBodyMobile : styles.contentBody}>
-                {/* NEW: Manager / Quality Manager toggle — only shown when the
-                    person actually has more than one view available (Super
-                    Admin). A single-view role just never sees a button for
-                    the view they don't have. */}
-                {showManagerBtn && showQualityBtn && (
+                {/* Top bar: Manager / Quality Manager pills (only when the person
+                    has more than one view) + today's date + profile shortcut. */}
+                <div style={styles.topRow}>
                     <div style={styles.viewToggleRow}>
+                        {showManagerBtn && showQualityBtn && (
+                            <>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.viewToggleBtn,
+                                        ...(viewMode === "manager"
+                                            ? styles.viewToggleBtnActive
+                                            : {}),
+                                    }}
+                                    onClick={() => setViewMode("manager")}
+                                >
+                                    <i className="ti ti-users" style={{ fontSize: 14 }} />
+                                    Manager
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{
+                                        ...styles.viewToggleBtn,
+                                        ...(viewMode === "quality"
+                                            ? styles.viewToggleBtnActive
+                                            : {}),
+                                    }}
+                                    onClick={() => setViewMode("quality")}
+                                >
+                                    <i className="ti ti-shield-check" style={{ fontSize: 14 }} />
+                                    Quality Manager
+                                </button>
+                            </>
+                        )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={styles.dateBadge}>
+                            <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
+                            {formatDisplayDate(todayStr())}
+                        </div>
                         <button
                             type="button"
-                            style={{
-                                ...styles.viewToggleBtn,
-                                ...(viewMode === "manager" ? styles.viewToggleBtnActive : {}),
-                            }}
-                            onClick={() => setViewMode("manager")}
+                            style={styles.profileBtn}
+                            onClick={() => navigate("/profile")}
+                            aria-label="My profile"
+                            title="My profile"
                         >
-                            Manager
-                        </button>
-                        <button
-                            type="button"
-                            style={{
-                                ...styles.viewToggleBtn,
-                                ...(viewMode === "quality" ? styles.viewToggleBtnActive : {}),
-                            }}
-                            onClick={() => setViewMode("quality")}
-                        >
-                            Quality Manager
+                            <i className="ti ti-user" style={{ fontSize: 17 }} />
                         </button>
                     </div>
-                )}
+                </div>
 
                 {viewMode === "quality" ? (
                     <QualityManagerView
@@ -758,21 +1110,14 @@ export default function Dashboard({ user }: DashboardProps) {
                     />
                 ) : (
                     <>
-                        {/* Page header: icon badge + title + subtitle, same layout as
-                    dailywork.tsx / employees.tsx page headers. */}
-                        <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                            <div>
-                                <h2 style={styles.pageTitle}>Dashboard</h2>
-                                <p style={styles.headerSubtext}>
-                                    Welcome,{" "}
-                                    <strong>{user?.name || getRoleLabel(user?.role)}</strong> —
-                                    here's today's snapshot.
-                                </p>
-                            </div>
-                            <div style={styles.dateBadge}>
-                                <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
-                                {formatDisplayDate(todayStr())}
-                            </div>
+                        <div>
+                            <h2 style={styles.pageTitle}>
+                                Welcome, {user?.name || getRoleLabel(user?.role)}{" "}
+                                <span aria-hidden="true">👋</span>
+                            </h2>
+                            <p style={styles.headerSubtext}>
+                                Here's what's happening with your team today.
+                            </p>
                         </div>
 
                         {error && !errorDismissed && (
@@ -797,34 +1142,20 @@ export default function Dashboard({ user }: DashboardProps) {
                             chart or comparison panel, so the very first thing a
                             user sees on the page is today's simple totals. */}
                         <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
-                            {kpis.map((kpi) => (
-                                <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
-                                    <div style={styles.kpiTop}>
-                                        <div
-                                            style={{
-                                                ...styles.kpiIconWrap,
-                                                background: kpi.gradient,
-                                            }}
-                                        >
-                                            <i
-                                                className={kpi.icon}
-                                                style={{ fontSize: fontSize["2xl"], color: "#fff" }}
-                                            />
-                                        </div>
-                                        <i
-                                            className="ti ti-info-circle"
-                                            style={{ fontSize: fontSize.md, color: "#c7cbe0" }}
-                                            aria-hidden="true"
-                                        />
-                                    </div>
-                                    <div style={styles.kpiValue}>
-                                        {kpi.label !== "Total Employees" && caseCountsLoading
+                            {kpis.map((kpi, i) => (
+                                <KpiCard
+                                    key={kpi.label}
+                                    index={i}
+                                    label={kpi.label}
+                                    icon={kpi.icon}
+                                    tip={kpi.tip}
+                                    isMobile={isMobile}
+                                    value={
+                                        kpi.label !== "Total Employees" && caseCountsLoading
                                             ? "…"
-                                            : kpi.value}
-                                    </div>
-                                    <div style={styles.kpiLabel}>{kpi.label}</div>
-                                    {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
-                                </div>
+                                            : kpi.value
+                                    }
+                                />
                             ))}
                         </div>
 
@@ -834,11 +1165,10 @@ export default function Dashboard({ user }: DashboardProps) {
                             nothing's been logged yet. Shown after the KPI cards, as
                             a "dig deeper" panel rather than the first thing seen. */}
                         <ComparePanel
-                            title="Production"
+                            title="Completed Cases"
                             icon="ti ti-chart-bar"
-                            unit="units"
-                            getValue={getProductionValue}
-                            loading={batchHistoryLoading}
+                            unit="cases"
+                            getValueAsync={getCompletedValue}
                             styles={styles}
                             BRAND={BRAND}
                             isMobile={isMobile}
@@ -1118,18 +1448,11 @@ function QualityManagerView({
 
     return (
         <>
-            <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
-                <div>
-                    <h2 style={styles.pageTitle}>Quality Dashboard</h2>
-                    <p style={styles.headerSubtext}>
-                        Welcome, <strong>{userName}</strong> — QC and Audit stage snapshot,
-                        org-wide.
-                    </p>
-                </div>
-                <div style={styles.dateBadge}>
-                    <i className="ti ti-calendar" style={{ fontSize: fontSize.base }} />
-                    {formatDisplayDate(todayStr())}
-                </div>
+            <div>
+                <h2 style={styles.pageTitle}>
+                    Welcome, {userName} <span aria-hidden="true">👋</span>
+                </h2>
+                <p style={styles.headerSubtext}>QC and Audit stage snapshot, org-wide.</p>
             </div>
 
             {error && (
@@ -1150,22 +1473,16 @@ function QualityManagerView({
                         <div style={styles.panelTitleUnderline} />
                     </div>
                     <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
-                        {qcCards.map((kpi) => (
-                            <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
-                                <div style={styles.kpiTop}>
-                                    <div
-                                        style={{ ...styles.kpiIconWrap, background: kpi.gradient }}
-                                    >
-                                        <i
-                                            className={kpi.icon}
-                                            style={{ fontSize: fontSize.xl, color: "#fff" }}
-                                        />
-                                    </div>
-                                </div>
-                                <div style={styles.kpiValue}>{kpi.value}</div>
-                                <div style={styles.kpiLabel}>{kpi.label}</div>
-                                {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
-                            </div>
+                        {qcCards.map((kpi, i) => (
+                            <KpiCard
+                                key={kpi.label}
+                                index={i + 0}
+                                label={kpi.label}
+                                icon={kpi.icon}
+                                tip={kpi.tip}
+                                isMobile={isMobile}
+                                value={kpi.value}
+                            />
                         ))}
                     </div>
                     {summary?.qcAvgMarks != null && (
@@ -1180,22 +1497,16 @@ function QualityManagerView({
                         <div style={styles.panelTitleUnderline} />
                     </div>
                     <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
-                        {auditCards.map((kpi) => (
-                            <div key={kpi.label} style={styles.kpiCard} title={kpi.tip}>
-                                <div style={styles.kpiTop}>
-                                    <div
-                                        style={{ ...styles.kpiIconWrap, background: kpi.gradient }}
-                                    >
-                                        <i
-                                            className={kpi.icon}
-                                            style={{ fontSize: fontSize.xl, color: "#fff" }}
-                                        />
-                                    </div>
-                                </div>
-                                <div style={styles.kpiValue}>{kpi.value}</div>
-                                <div style={styles.kpiLabel}>{kpi.label}</div>
-                                {kpi.tip && <div style={styles.kpiTip}>{kpi.tip}</div>}
-                            </div>
+                        {auditCards.map((kpi, i) => (
+                            <KpiCard
+                                key={kpi.label}
+                                index={i + 1}
+                                label={kpi.label}
+                                icon={kpi.icon}
+                                tip={kpi.tip}
+                                isMobile={isMobile}
+                                value={kpi.value}
+                            />
                         ))}
                     </div>
                     {summary?.auditAvgMarks != null && (
@@ -1224,7 +1535,7 @@ function getStyles(BRAND: {
         root: {
             width: "100%",
             minHeight: "100%",
-            background: "#f4f5fb",
+            background: "linear-gradient(180deg,#F5F7FE 0%,#EEF1FB 100%)",
             fontFamily: fontFamily.base,
         },
         rootMobile: {
@@ -1260,8 +1571,27 @@ function getStyles(BRAND: {
             margin: 0,
             fontSize: fontSize["5xl"],
             fontWeight: fontWeight.semibold,
-            color: "#17181C",
+            color: "#14183a",
             textAlign: "left",
+        },
+        topRow: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+        },
+        profileBtn: {
+            width: 38,
+            height: 38,
+            borderRadius: "50%",
+            border: "1px solid #E4E7F5",
+            background: "#EEF0FF",
+            color: "#4F46E5",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
         },
         headerSubtext: {
             margin: "4px 0 0",
@@ -1276,15 +1606,14 @@ function getStyles(BRAND: {
         dateBadge: {
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 8,
             fontSize: fontSize.sm,
-            fontWeight: fontWeight.semibold,
-            color: "#fff",
-            background: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
-            padding: "8px 14px",
-            borderRadius: radius.md,
+            fontWeight: fontWeight.medium,
+            color: "#27305c",
+            background: "#E6EAFB",
+            padding: "8px 16px",
+            borderRadius: 999,
             whiteSpace: "nowrap",
-            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
         },
         errorBanner: {
             display: "flex",
@@ -1308,7 +1637,7 @@ function getStyles(BRAND: {
         },
         kpiGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
             gap: 16,
         },
         kpiGridMobile: {
@@ -1368,9 +1697,10 @@ function getStyles(BRAND: {
         },
         panel: {
             background: "#fff",
-            borderRadius: radius.lg,
-            padding: "20px",
-            boxShadow: "0 4px 16px rgba(0,0,0,.04)",
+            borderRadius: 20,
+            padding: "22px",
+            border: "1px solid #EEF0F8",
+            boxShadow: "0 8px 24px rgba(31,41,90,.06)",
         },
         panelTitleRow: { marginBottom: 16 },
         panelTitle: {
@@ -1454,22 +1784,25 @@ function getStyles(BRAND: {
             color: "#7d90a6",
         },
         // NEW: Manager / Quality Manager toggle at the top of the page.
-        viewToggleRow: { display: "flex", gap: 8 },
+        viewToggleRow: { display: "flex", gap: 10, flexWrap: "wrap" },
         viewToggleBtn: {
-            padding: "8px 18px",
-            borderRadius: radius.md,
-            border: "1px solid #e4e9f2",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 16px",
+            borderRadius: 999,
+            border: "1px solid #E4E7F5",
             background: "#fff",
             color: "#3b4a63",
             fontSize: fontSize.sm,
-            fontWeight: fontWeight.semibold,
+            fontWeight: fontWeight.medium,
             cursor: "pointer",
         },
         viewToggleBtnActive: {
             background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
             color: "#fff",
             border: "1px solid transparent",
-            boxShadow: `0 6px 16px ${withAlpha(BRAND.blue, 0.28)}`,
+            boxShadow: `0 8px 20px ${withAlpha(BRAND.blue, 0.3)}`,
         },
     };
 }
