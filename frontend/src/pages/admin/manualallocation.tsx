@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 // NEW: two more tabs on this page — "Cases" (manual + smart allocation of
@@ -308,6 +309,15 @@ type RowState = { status: RowStatus; qty: number };
 // actually saved (no longer "unsaved"), or when the person hits Clear.
 // Hover state for the page-level tab bar (Allocate / Cases / Employees)
 // — same treatment as the Client/Subclient tab buttons on clients.tsx.
+// "Back" target handed over by the page that sent the user here, e.g. the
+// Case Register's "Allocate Now" button navigates with
+// state: { from: "/daily-work" }. Only same-app paths are accepted.
+function getBackTarget(state: unknown): { path: string; label: string } | null {
+    const from = (state as { from?: unknown } | null)?.from;
+    if (typeof from !== "string" || !from.startsWith("/") || from.startsWith("//")) return null;
+    const labels: Record<string, string> = { "/daily-work": "Back to Daily Work" };
+    return { path: from, label: labels[from] || "Back" };
+}
 const MAIN_TAB_CSS = `
 .ma-tab-btn:hover { border-color: #cfe0f5; color: var(--brand-blue); }
 `;
@@ -382,6 +392,9 @@ function downloadCsv(filename: string, rows: string[][]) {
 
 export default function ManualAllocation() {
     const isMobile = useIsMobile();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const backTarget = getBackTarget(location.state);
 
     // ---- filter bar state ----
     // Date always defaults to TODAY on every visit/reload — it used to
@@ -1086,6 +1099,19 @@ export default function ManualAllocation() {
                     <i className="ti ti-history" style={{ fontSize: fontSize.md }} />
                     History
                 </button>
+                {/* NEW: shown only when this page was opened from another
+                    page (e.g. Daily Work > Allocate Now) — goes back there. */}
+                {backTarget && (
+                    <button
+                        type="button"
+                        className="ma-tab-btn"
+                        style={{ ...styles.mainTabBtn, marginLeft: "auto" }}
+                        onClick={() => navigate(backTarget.path)}
+                    >
+                        <i className="ti ti-arrow-left" style={{ fontSize: fontSize.md }} />
+                        {backTarget.label}
+                    </button>
+                )}
             </div>
 
             {mainTab === "cases" ? (

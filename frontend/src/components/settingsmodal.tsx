@@ -2,10 +2,11 @@
 //
 // Settings dialog opened from the avatar menu (header.tsx).
 //   Appearance  — theme color (every user)
+//   Logo        — change the organization logo (Super Admin only)
 //   Work rules  — "Case number required" switch (Super Admin / managers only)
 
-import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useTheme, THEMES } from "../context/themecontext";
@@ -13,12 +14,17 @@ import type { ThemeName } from "../context/themecontext";
 import { useOrgSettings, saveCaseNumberRequired } from "../context/orgsettings";
 import { fontFamily } from "../styles/theme";
 
-type SectionKey = "appearance" | "work" | "plan";
+type SectionKey = "appearance" | "logo" | "work" | "plan";
 
 interface Props {
     open: boolean;
     onClose: () => void;
     canEditWorkRules: boolean;
+    // Logo change (Super Admin only — decided by AppLayout)
+    canEditLogo?: boolean;
+    logoUrl?: string | null;
+    logoUploading?: boolean;
+    onLogoChange?: (file: File) => void | Promise<void>;
 }
 
 function Switch({
@@ -73,13 +79,22 @@ function Switch({
     );
 }
 
-export default function SettingsModal({ open, onClose, canEditWorkRules }: Props) {
+export default function SettingsModal({
+    open,
+    onClose,
+    canEditWorkRules,
+    canEditLogo = false,
+    logoUrl,
+    logoUploading = false,
+    onLogoChange,
+}: Props) {
     const navigate = useNavigate();
     const { colors: BRAND, themeName, setThemeName } = useTheme();
     const { caseNumberRequired } = useOrgSettings();
     const [section, setSection] = useState<SectionKey>("appearance");
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const logoFileInputRef = useRef<HTMLInputElement>(null);
     const [narrow, setNarrow] = useState(
         typeof window !== "undefined" ? window.innerWidth < 640 : false
     );
@@ -113,8 +128,15 @@ export default function SettingsModal({ open, onClose, canEditWorkRules }: Props
         }
     };
 
+    const handleLogoFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) onLogoChange?.(file);
+        if (logoFileInputRef.current) logoFileInputRef.current.value = "";
+    };
+
     const nav: { key: SectionKey; label: string; icon: string }[] = [
         { key: "appearance", label: "Appearance", icon: "ti-palette" },
+        ...(canEditLogo ? [{ key: "logo" as SectionKey, label: "Logo", icon: "ti-photo" }] : []),
         { key: "plan", label: "Plan & upgrade", icon: "ti-rocket" },
         ...(canEditWorkRules
             ? [{ key: "work" as SectionKey, label: "Work rules", icon: "ti-adjustments" }]
@@ -305,6 +327,105 @@ export default function SettingsModal({ open, onClose, canEditWorkRules }: Props
                                             </button>
                                         );
                                     })}
+                                </div>
+                            </>
+                        )}
+
+                        {section === "logo" && canEditLogo && (
+                            <>
+                                <h4 style={s.h2}>Organization logo</h4>
+                                <p style={s.sub}>
+                                    Shown in the header for everyone in your organization. Only
+                                    Super Admin can change it.
+                                </p>
+                                <div style={s.card}>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 14,
+                                            minWidth: 0,
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                width: 140,
+                                                height: 54,
+                                                borderRadius: 10,
+                                                border: "1px solid #E6E9F3",
+                                                background: "#fff",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                flexShrink: 0,
+                                                opacity: logoUploading ? 0.5 : 1,
+                                            }}
+                                        >
+                                            <img
+                                                src={logoUrl || "/Allookate.png"}
+                                                alt="Current logo"
+                                                style={{
+                                                    maxWidth: "90%",
+                                                    maxHeight: "90%",
+                                                    objectFit: "contain",
+                                                }}
+                                            />
+                                        </div>
+                                        <div style={{ minWidth: 0 }}>
+                                            <div
+                                                style={{
+                                                    fontSize: 14,
+                                                    fontWeight: 600,
+                                                    color: "#1B1F4B",
+                                                }}
+                                            >
+                                                Current logo
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: 13,
+                                                    color: "#6b7a90",
+                                                    marginTop: 4,
+                                                    lineHeight: 1.5,
+                                                }}
+                                            >
+                                                {logoUploading
+                                                    ? "Uploading…"
+                                                    : "Upload a PNG or JPG image."}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        disabled={logoUploading}
+                                        onClick={() => logoFileInputRef.current?.click()}
+                                        style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            padding: "10px 18px",
+                                            border: "none",
+                                            borderRadius: 999,
+                                            cursor: logoUploading ? "wait" : "pointer",
+                                            fontSize: 14,
+                                            fontWeight: 700,
+                                            color: "#fff",
+                                            flexShrink: 0,
+                                            opacity: logoUploading ? 0.7 : 1,
+                                            background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+                                            boxShadow: `0 6px 16px ${BRAND.blue}40`,
+                                        }}
+                                    >
+                                        <i className="ti ti-upload" />
+                                        Change logo
+                                    </button>
+                                    <input
+                                        ref={logoFileInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        style={{ display: "none" }}
+                                        onChange={handleLogoFileChange}
+                                    />
                                 </div>
                             </>
                         )}

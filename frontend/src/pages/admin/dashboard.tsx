@@ -289,7 +289,7 @@ function KpiCard({
             <div
                 style={{
                     position: "relative",
-                    fontSize: fontSize["7xl"],
+                    fontSize: fontSize["4xl"],
                     fontWeight: fontWeight.semibold,
                     color: "#14183a",
                     lineHeight: 1.1,
@@ -300,7 +300,7 @@ function KpiCard({
             <div
                 style={{
                     position: "relative",
-                    fontSize: fontSize.md,
+                    fontSize: fontSize.sm,
                     fontWeight: fontWeight.medium,
                     color: "#1d2350",
                     marginTop: 6,
@@ -312,7 +312,7 @@ function KpiCard({
                 <div
                     style={{
                         position: "relative",
-                        fontSize: fontSize.xs,
+                        fontSize: fontSize.xxs,
                         color: "#8a93ad",
                         marginTop: 4,
                         lineHeight: 1.4,
@@ -366,7 +366,7 @@ function PillSelect({
                     border: "1px solid #E4E7F5",
                     background: "#fff",
                     color: "#1d2350",
-                    fontSize: fontSize.base,
+                    fontSize: fontSize.sm,
                     fontWeight: fontWeight.medium,
                     fontFamily: fontFamily.base,
                     cursor: "pointer",
@@ -547,7 +547,7 @@ function ComparePanel({
                     </span>
                     <div
                         style={{
-                            fontSize: fontSize["2xl"],
+                            fontSize: fontSize.lg,
                             fontWeight: fontWeight.semibold,
                             color: "#14183a",
                         }}
@@ -1667,30 +1667,22 @@ function getStyles(BRAND: {
             justifyContent: "center",
         },
         kpiValue: {
-            // Was fontSize["4xl"] (22px). Theme reserves "7xl" (32px)
-            // specifically for "hero numbers / stat highlights" — this IS
-            // that use case, it just wasn't wired up. Bumped so the number
-            // is legible at a glance instead of blending into the card.
-            fontSize: fontSize["7xl"],
+            // Matches the KPI numbers on Service Cases (fontSize["4xl"]).
+            fontSize: fontSize["4xl"],
             fontWeight: fontWeight.bold,
             color: "#16233a",
             lineHeight: 1.15,
         },
         kpiLabel: {
-            // Was fontSize.sm (12px) at #7d90a6 (low-contrast pale gray).
-            // Bumped a step and darkened so the caption under the big
-            // number is actually easy to read, not just decorative.
-            fontSize: fontSize.base,
+            fontSize: fontSize.sm,
             fontWeight: fontWeight.medium,
             color: "#4b5b73",
             marginTop: 6,
         },
         kpiTip: {
-            // NEW: the explanation of what each number counts used to live
-            // only in the native `title` attribute — invisible unless you
-            // hover with a mouse, so unusable on mobile/touch. Now shown
-            // as a small always-visible caption instead.
-            fontSize: fontSize.xs,
+            // Always-visible caption (the old native `title` tooltip does
+            // not work on touch devices).
+            fontSize: fontSize.xxs,
             color: "#93a0b4",
             marginTop: 2,
             lineHeight: 1.35,
@@ -1735,20 +1727,18 @@ function getStyles(BRAND: {
         emptyText: { color: "#7d90a6", fontSize: fontSize.base, textAlign: "center" },
         table: { width: "100%", borderCollapse: "collapse" },
         th: {
-            // Was fontSize.sm (12px) at pale #7d90a6 — bumped and darkened
-            // so column headers are readable, not just decorative labels.
+            // Same as the table headers on Profile / Employees (xs).
             textAlign: "left",
-            fontSize: fontSize.base,
+            fontSize: fontSize.xs,
             fontWeight: fontWeight.semibold,
             color: "#5b6b82",
             padding: "10px 12px",
             borderBottom: "2px solid #eef0f3",
         },
         td: {
-            // Was fontSize.base (13px) — bumped one step so row data is
-            // comfortable to scan, especially numeric columns.
+            // Same as the table cells on Profile (base).
             textAlign: "left",
-            fontSize: fontSize.md,
+            fontSize: fontSize.base,
             color: "#16233a",
             padding: "12px",
             borderBottom: "1px solid #f1f2f4",

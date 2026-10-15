@@ -1,12 +1,22 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/authFetch";
 import { getCurrentUser } from "../utils/auth";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
+
+// "Back" target handed over by the page that sent the user here, e.g. the
+// Case Register's "Allocate Now" button navigates with
+// state: { from: "/daily-work" }. Only same-app paths are accepted.
+function getBackTarget(state: unknown): { path: string; label: string } | null {
+    const from = (state as { from?: unknown } | null)?.from;
+    if (typeof from !== "string" || !from.startsWith("/") || from.startsWith("//")) return null;
+    const labels: Record<string, string> = { "/daily-work": "Back to Daily Work" };
+    return { path: from, label: labels[from] || "Back" };
+}
 
 const BRAND = {
     blue: "#204297",
@@ -127,6 +137,8 @@ type SelfAllocCase = {
 export default function SelfAllocation() {
     const isMobile = useIsMobile();
     const navigate = useNavigate();
+    const location = useLocation();
+    const backTarget = getBackTarget(location.state);
     const currentUser = getCurrentUser();
     const myId = currentUser?.id || "";
 
@@ -302,6 +314,30 @@ export default function SelfAllocation() {
                         aligned to your team ({myTeam || "no team set"}) show up here.
                     </p>
                 </div>
+                {/* NEW: only when opened from another page (e.g. Daily Work). */}
+                {backTarget && (
+                    <button
+                        type="button"
+                        onClick={() => navigate(backTarget.path)}
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            background: "#fff",
+                            color: "#3b4a63",
+                            border: "1px solid #e4e9f2",
+                            borderRadius: radius.md,
+                            padding: "10px 18px",
+                            fontSize: fontSize.sm,
+                            fontWeight: fontWeight.semibold,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                        }}
+                    >
+                        <i className="ti ti-arrow-left" style={{ fontSize: fontSize.md }} />
+                        {backTarget.label}
+                    </button>
+                )}
             </div>
 
             {servicesError && <p style={styles.errorText}>{servicesError}</p>}

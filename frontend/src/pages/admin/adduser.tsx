@@ -347,21 +347,23 @@ export default function AddUser() {
                 setTeamsOptions(data.teams || []);
 
                 // Custom Reporting Manager values added via the "+" control
-                // are persisted separately from the real Process Lead list
-                // (see fetchProcessLeads below) — merge them in here so a
-                // previously-added custom value still shows up after a
-                // refresh instead of only existing in local state until
-                // reload.
+                // are persisted separately (reporting_managers table). They
+                // are kept in their OWN state and merged with the real
+                // managers at render time (see `reportingManagerOptions`).
+                // FIX: they used to be merged straight into the live list
+                // here, while fetchReportingManagers() below REPLACED that
+                // same list when /api/employees finished — so whichever
+                // request answered last won, and "already assigned"
+                // managers randomly disappeared from the dropdown.
                 const customManagers: string[] = data.reportingManagers || [];
-                if (customManagers.length > 0) {
-                    setProcessLeads((prev) => {
-                        const existingEmails = new Set(prev.map((pl) => pl.email));
-                        const additions = customManagers
-                            .filter((name) => !existingEmails.has(name))
-                            .map((name) => ({ id: `custom-${name}`, name, email: name }));
-                        return additions.length > 0 ? [...prev, ...additions] : prev;
-                    });
-                }
+                setCustomManagers(
+                    customManagers.map((name) => ({
+                        id: `custom-${name}`,
+                        name,
+                        email: name,
+                        role: "",
+                    }))
+                );
             } catch (err) {
                 console.error("Failed to load dropdown options:", err);
             } finally {
@@ -424,33 +426,56 @@ export default function AddUser() {
         [getRoleLabel, currentUser?.role]
     );
 
-    // Reporting Manager dropdown = every current Process Lead, fetched
-    // live from /api/employees and filtered by role, plus anything added
-    // manually via the + control below.
-    const [processLeads, setProcessLeads] = useState<{ id: string; name: string; email: string }[]>(
-        []
-    );
+    // Reporting Manager dropdown = real users whose role is Process Lead,
+    // Ops Manager ("Manager"), Super Admin or Audit Manager — fetched live
+    // from /api/employees and filtered by role (Team Members / Vertical
+    // Heads are NOT offered) — plus anything added manually via the "+"
+    // control below (kept in `customManagers`, see the options effect).
+    type ManagerOption = { id: string; name: string; email: string; role: string };
+    const REPORTING_MANAGER_ROLES = ["PROCESS_LEAD", "OPS_MANAGER", "SUPER_ADMIN", "AUDIT_MANAGER"];
+    const [managerUsers, setManagerUsers] = useState<ManagerOption[]>([]);
+    const [customManagers, setCustomManagers] = useState<ManagerOption[]>([]);
     const [processLeadsError, setProcessLeadsError] = useState("");
 
     useEffect(() => {
-        const fetchProcessLeads = async () => {
+        const fetchReportingManagers = async () => {
             try {
                 const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/employees`, {
                     cache: "no-store",
                 });
-                if (!res.ok) throw new Error("Failed to load Process Leads");
+                if (!res.ok) throw new Error("Failed to load Reporting Managers");
                 const all = await res.json();
-                setProcessLeads(
+                setManagerUsers(
                     (all || [])
-                        .filter((e: any) => e.role === "PROCESS_LEAD")
-                        .map((e: any) => ({ id: e.id, name: e.name, email: e.email }))
+                        .filter((e: any) => REPORTING_MANAGER_ROLES.includes(e.role))
+                        .map((e: any) => ({
+                            id: e.id,
+                            name: e.name,
+                            email: e.email,
+                            role: e.role,
+                        }))
                 );
             } catch (err: any) {
                 setProcessLeadsError("Could not load Reporting Manager list.");
             }
         };
-        fetchProcessLeads();
+        fetchReportingManagers();
     }, []);
+
+    // Final dropdown list: real managers first, then custom ones, de-duplicated
+    // by email (case-insensitive) and sorted by name. Derived from both
+    // sources, so the order the two requests finish in no longer matters.
+    const reportingManagerOptions = useMemo(() => {
+        const seen = new Set<string>();
+        const out: ManagerOption[] = [];
+        for (const m of [...managerUsers, ...customManagers]) {
+            const key = (m.email || "").trim().toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            out.push(m);
+        }
+        return out.sort((x, y) => (x.name || x.email).localeCompare(y.name || y.email));
+    }, [managerUsers, customManagers]);
 
     // Generic "save this new dropdown option to the backend" call. Adjust
     // the URL/body shape to match your actual backend route — this is a
@@ -1213,13 +1238,15 @@ export default function AddUser() {
                                             }
                                         >
                                             <option value="">
-                                                {processLeads.length === 0
-                                                    ? "No Process Leads found"
+                                                {reportingManagerOptions.length === 0
+                                                    ? "No managers found"
                                                     : "Select Manager"}
                                             </option>
-                                            {processLeads.map((pl) => (
+                                            {reportingManagerOptions.map((pl) => (
                                                 <option key={pl.id} value={pl.email}>
-                                                    {pl.name} ({pl.email})
+                                                    {pl.role
+                                                        ? `${pl.name} (${pl.email}) — ${getRoleLabel(pl.role)}`
+                                                        : `${pl.name} (${pl.email})`}
                                                 </option>
                                             ))}
                                         </select>
@@ -1246,8 +1273,12 @@ export default function AddUser() {
                                                     );
                                                     return;
                                                 }
-                                                setProcessLeads((prev) =>
-                                                    prev.some((pl) => pl.email === val)
+                                                setCustomManagers((prev) =>
+                                                    prev.some(
+                                                        (pl) =>
+                                                            pl.email.toLowerCase() ===
+                                                            val.toLowerCase()
+                                                    )
                                                         ? prev
                                                         : [
                                                               ...prev,
@@ -1255,6 +1286,7 @@ export default function AddUser() {
                                                                   id: `custom-${Date.now()}`,
                                                                   name: val,
                                                                   email: val,
+                                                                  role: "",
                                                               },
                                                           ]
                                                 );

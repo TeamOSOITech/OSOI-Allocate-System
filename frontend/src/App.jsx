@@ -152,10 +152,15 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
 const ADMIN_TIER_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
 const ADMIN_AND_VERTICAL_HEAD_ROLES = [...ADMIN_TIER_ROLES, "VERTICAL_HEAD"];
 
+// <Navigate> that carries the current location.state over to the target.
+const RedirectKeepState = ({ to }) => {
+    const location = useLocation();
+    return <Navigate to={to} replace state={location.state} />;
+};
+
 const AppLayout = ({ children, onLogout }) => {
     const handleRefresh = () => window.location.reload();
     const user = getCurrentUser();
-    const location = useLocation();
 
     // The login response doesn't include a profile photo — that only
     // lives on the employee record (user_master.photo_url). Fetch it
@@ -205,11 +210,9 @@ const AppLayout = ({ children, onLogout }) => {
         };
     }, []);
 
-    // Changing the logo is only offered on the Home page (/report — the
-    // sidebar's "Home" item, separate from "Dashboard") and only to
-    // SUPER_ADMIN — everywhere/everyone else just sees the logo, same
-    // as before.
-    const canEditLogo = user?.role === "SUPER_ADMIN" && location.pathname === "/report";
+    // Changing the logo now lives in Settings > Logo (header avatar menu)
+    // and is only offered to SUPER_ADMIN — everyone else just sees the logo.
+    const canEditLogo = user?.role === "SUPER_ADMIN";
 
     const handleLogoChange = async (file) => {
         setLogoUploading(true);
@@ -507,9 +510,12 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         {/* Old URL — keeps existing bookmarks/links working by
                             bouncing straight to the new /services path. */}
                         <Route path="/products" element={<Navigate to="/services" replace />} />
+                        {/* FIX: a plain <Navigate> drops location.state, so the
+                            `state.from` that "Allocate Now" sends (used by the
+                            Back button on Today's Allocation) was lost here. */}
                         <Route
                             path="/today's-allocation"
-                            element={<Navigate to="/todays-allocation" replace />}
+                            element={<RedirectKeepState to="/todays-allocation" />}
                         />
 
                         <Route
