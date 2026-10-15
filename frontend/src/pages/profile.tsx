@@ -2605,6 +2605,46 @@ export default function Profile({ onLogout }: ProfileProps) {
                     </span>
                     <span style={styles.smallMuted}>Click View Details to open the cases</span>
                 </div>
+                {/* ---- Self Allocate / Bulk Submit / Export ---- */}
+                <div style={{ ...styles.tabsRow, justifyContent: "flex-end", margin: "0 0 12px" }}>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        {!isViewingOther && (
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.exportBtn}
+                                onClick={openSelfAllocModal}
+                            >
+                                <BoxIcon /> Self Allocate
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            className="pf-btn pf-btn-solid"
+                            style={{
+                                ...styles.exportBtn,
+                                background: GRADIENT,
+                                color: "#fff",
+                                border: "none",
+                                opacity: stats.pendingCount > 0 ? 1 : 0.5,
+                                cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
+                            }}
+                            onClick={openBulkModal}
+                            disabled={stats.pendingCount === 0}
+                        >
+                            <CheckIcon /> Bulk Submit
+                            {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
+                        </button>
+                        <button
+                            type="button"
+                            className="pf-btn pf-btn-outline"
+                            style={styles.exportBtn}
+                            onClick={exportCsv}
+                        >
+                            <DownloadIcon /> Export
+                        </button>
+                    </div>
+                </div>
                 <div
                     style={
                         isMobile
@@ -2660,8 +2700,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                             onClick: openQueryModal,
                         },
                     ].map((c) => {
-                        const accent =
-                            c.key === "today"
+                        // Past + Queries only: all done -> green "All completed" badge,
+                        // nothing done at all -> red warning look.
+                        const allDone = c.key !== "today" && c.total > 0 && c.done >= c.total;
+                        const noneDone = c.key !== "today" && c.total > 0 && c.done === 0;
+                        const accent = noneDone
+                            ? BRAND.red
+                            : allDone
+                              ? BRAND.green
+                              : c.key === "today"
                                 ? BRAND.green
                                 : c.key === "past"
                                   ? BRAND.blue
@@ -2682,6 +2729,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     gap: 9,
                                     borderRadius: 16,
                                     border: `1px solid ${withAlpha(accent, 0.18)}`,
+                                    borderLeft: `1px solid ${withAlpha(accent, 0.18)}`,
                                     borderTop: `3px solid ${accent}`,
                                     background: `linear-gradient(180deg, ${withAlpha(accent, 0.07)} 0%, #fff 55%)`,
                                     boxShadow: `0 4px 14px ${withAlpha(accent, 0.1)}`,
@@ -2728,6 +2776,43 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         >
                                             {c.title}
                                         </span>
+                                        {c.key !== "today" && c.total > 0 && (
+                                            <span
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: 5,
+                                                    padding: "2px 9px",
+                                                    borderRadius: 999,
+                                                    background: withAlpha(
+                                                        allDone ? BRAND.green : BRAND.red,
+                                                        0.14
+                                                    ),
+                                                    color: allDone ? BRAND.green : BRAND.red,
+                                                    fontSize: 10.5,
+                                                    fontWeight: 700,
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        width: 6,
+                                                        height: 6,
+                                                        borderRadius: "50%",
+                                                        background: allDone
+                                                            ? BRAND.green
+                                                            : BRAND.red,
+                                                    }}
+                                                />
+                                                {allDone
+                                                    ? "All completed"
+                                                    : noneDone
+                                                      ? "None completed"
+                                                      : `${c.total - c.done} ${
+                                                            c.key === "past" ? "pending" : "open"
+                                                        }`}
+                                            </span>
+                                        )}
                                         {c.key === "today" && (
                                             <span
                                                 style={{
@@ -2884,72 +2969,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                             </div>
                         );
                     })}
-                </div>
-            </div>
-
-            {/* ---- Tabs + Export ---- */}
-            <div style={styles.tabsRow}>
-                <div style={styles.tabsGroup}>
-                    <button
-                        style={activeTab === "today" ? styles.tabActive : styles.tab}
-                        className="pf-tab"
-                        onClick={() => setActiveTab("today")}
-                    >
-                        Today's Allocation
-                    </button>
-                    <button
-                        style={activeTab === "past" ? styles.tabActive : styles.tab}
-                        className="pf-tab"
-                        onClick={() => setActiveTab("past")}
-                    >
-                        Past Allocation
-                    </button>
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-outline"
-                        style={styles.exportBtn}
-                        onClick={openQueryModal}
-                    >
-                        <QueryIcon /> All Query
-                        {openQueries.length > 0 ? ` (${openQueries.length})` : ""}
-                    </button>
-                    {!isViewingOther && (
-                        <button
-                            type="button"
-                            className="pf-btn pf-btn-outline"
-                            style={styles.exportBtn}
-                            onClick={openSelfAllocModal}
-                        >
-                            <BoxIcon /> Self Allocate
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-solid"
-                        style={{
-                            ...styles.exportBtn,
-                            background: GRADIENT,
-                            color: "#fff",
-                            border: "none",
-                            opacity: stats.pendingCount > 0 ? 1 : 0.5,
-                            cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
-                        }}
-                        onClick={openBulkModal}
-                        disabled={stats.pendingCount === 0}
-                    >
-                        <CheckIcon /> Bulk Submit
-                        {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
-                    </button>
-                    <button
-                        type="button"
-                        className="pf-btn pf-btn-outline"
-                        style={styles.exportBtn}
-                        onClick={exportCsv}
-                    >
-                        <DownloadIcon /> Export
-                    </button>
                 </div>
             </div>
 
