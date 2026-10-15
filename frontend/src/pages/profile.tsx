@@ -1244,6 +1244,25 @@ export default function Profile({ onLogout }: ProfileProps) {
         };
     }, [cases]);
 
+    // ---------------------------------------------------------------
+    // Login reminder: EVERY time the user logs in, the first time their own
+    // profile opens afterwards, tell them if they have open queries.
+    // login.tsx sets the "pf_query_reminder_pending" flag; it is cleared
+    // here once handled, so a normal refresh / navigation does not repeat it.
+    // ---------------------------------------------------------------
+    const [queryReminder, setQueryReminder] = useState<number | null>(null);
+    useEffect(() => {
+        if (loading || isViewingOther || !myId) return;
+        let pending = false;
+        try {
+            pending = window.localStorage.getItem("pf_query_reminder_pending") === "1";
+            if (pending) window.localStorage.removeItem("pf_query_reminder_pending");
+        } catch {
+            /* storage blocked - skip */
+        }
+        if (pending && openQueries.length > 0) setQueryReminder(openQueries.length);
+    }, [loading, isViewingOther, myId, openQueries.length]);
+
     const visibleQueries = useMemo(() => {
         const list = queryView === "OPEN" ? openQueries : resolvedQueries;
         const q = querySearch.trim().toLowerCase();
@@ -2808,9 +2827,23 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                     ? "All completed"
                                                     : noneDone
                                                       ? "None completed"
-                                                      : `${c.total - c.done} ${
-                                                            c.key === "past" ? "pending" : "open"
-                                                        }`}
+                                                      : (() => {
+                                                            // Use the SAME numbers as the tiles below,
+                                                            // so the pill and the tile never disagree.
+                                                            const tile = (name: string) =>
+                                                                Number(
+                                                                    c.rows.find(
+                                                                        (r) => r[0] === name
+                                                                    )?.[1] ?? 0
+                                                                );
+                                                            if (c.key === "query")
+                                                                return `${tile("In Query")} open`;
+                                                            if (tile("Pending") > 0)
+                                                                return `${tile("Pending")} pending`;
+                                                            if (tile("Waiting") > 0)
+                                                                return `${tile("Waiting")} waiting`;
+                                                            return `${c.total - c.done} pending`;
+                                                        })()}
                                             </span>
                                         )}
                                         {c.key === "today" && (
@@ -4944,6 +4977,96 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <CheckIcon />
                     </span>
                     {toastMsg}
+                </div>
+            )}
+
+            {queryReminder !== null && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 450,
+                        background: "rgba(23,24,28,.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onClick={() => setQueryReminder(null)}
+                >
+                    <div
+                        role="alertdialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 400,
+                            background: "#fff",
+                            borderTop: `4px solid ${BRAND.red}`,
+                            borderRadius: 16,
+                            padding: "20px 22px",
+                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 14,
+                        }}
+                    >
+                        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                            <span style={{ color: BRAND.red, display: "flex", marginTop: 2 }}>
+                                <QueryIcon />
+                            </span>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 700, fontSize: 14, color: "#17181C" }}>
+                                    You have {queryReminder} open{" "}
+                                    {queryReminder === 1 ? "query" : "queries"}
+                                </div>
+                                <div style={{ fontSize: 13, color: "#5B6479", marginTop: 2 }}>
+                                    Your queries are waiting to be resolved. Please look at them.
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                aria-label="Dismiss"
+                                onClick={() => setQueryReminder(null)}
+                                style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    cursor: "pointer",
+                                    fontSize: 16,
+                                    color: "#8A92A6",
+                                    lineHeight: 1,
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-outline"
+                                style={styles.exportBtn}
+                                onClick={() => setQueryReminder(null)}
+                            >
+                                Later
+                            </button>
+                            <button
+                                type="button"
+                                className="pf-btn pf-btn-solid"
+                                style={{
+                                    ...styles.exportBtn,
+                                    background: BRAND.red,
+                                    color: "#fff",
+                                    border: "none",
+                                }}
+                                onClick={() => {
+                                    setQueryReminder(null);
+                                    openQueryModal();
+                                }}
+                            >
+                                View Queries
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 

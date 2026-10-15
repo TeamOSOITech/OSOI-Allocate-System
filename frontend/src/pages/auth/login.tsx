@@ -79,6 +79,12 @@ const Login = () => {
             } catch {
                 /* storage blocked */
             }
+            // Tell the profile page to show the open-query reminder after THIS login.
+            try {
+                localStorage.setItem("pf_query_reminder_pending", "1");
+            } catch {
+                /* storage blocked */
+            }
 
             // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
             // (onrender.com) are different domains, so our JS can never
