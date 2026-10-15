@@ -236,6 +236,11 @@ type CaseRow = {
     clientName?: string | null;
     subclientId?: string | null;
     subclientName?: string | null;
+    // NEW: read-only history row — this case was allocated to the employee
+    // on an earlier day, was still pending when that day ended, and has
+    // since been returned to the pool. No Submit option.
+    missed?: boolean;
+    returnedAt?: string | null;
 };
 
 function isSubmitted(c: CaseRow) {
@@ -267,6 +272,8 @@ function isResolvedQuery(c: CaseRow) {
 // NEW: pending -> "3h 20m ago" (how long since it was allocated),
 // submitted -> "Done in 2h 10m" (allocation to submit).
 function allocAgeLabel(c: CaseRow) {
+    // missed (returned-to-pool) rows have no running timer
+    if (c.missed) return "";
     if (!c.allocatedAt) return "";
     const start = new Date(c.allocatedAt).getTime();
     if (Number.isNaN(start)) return "";
@@ -582,6 +589,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [isAvatarPreviewOpen, setIsAvatarPreviewOpen] = useState(false);
 
     const [activeTab, setActiveTab] = useState<"today" | "past">("today");
+    // NEW: cases allocated to me earlier that I left pending (returned to the pool)
+    const [missedCases, setMissedCases] = useState<CaseRow[]>([]);
     // Which list is open under the tabs — "Cases" or "Counts".
     const [allocView, setAllocView] = useState<"cases" | "counts">("cases");
     const [dateFilter, setDateFilter] = useState("");
@@ -869,6 +878,43 @@ export default function Profile({ onLogout }: ProfileProps) {
             ? `${API_BASE}/api/service-cases?employeeId=${encodeURIComponent(targetId)}&pageSize=2000`
             : `${API_BASE}/api/service-cases?mine=true&pageSize=2000`;
 
+    // NEW: past allocations that were left pending at day end (read-only).
+    const loadMissed = async (targetId: string | null) => {
+        try {
+            const url = targetId
+                ? `${API_BASE}/api/service-cases/my-missed?employeeId=${encodeURIComponent(targetId)}`
+                : `${API_BASE}/api/service-cases/my-missed`;
+            const res = await authFetch(url);
+            const json = await safeJson(res);
+            if (res.ok && json.success) {
+                setMissedCases(
+                    (json.data || []).map((row: any) => ({
+                        id: String(row.id),
+                        caseNumber: row.caseNumber,
+                        productId: row.productId != null ? String(row.productId) : "",
+                        productName: row.productName ?? null,
+                        workDate: row.workDate,
+                        profile: "",
+                        allocationStatus: "PENDING",
+                        allocatedAt: row.allocatedAt,
+                        submissionStatus: "PENDING",
+                        submissionType: null,
+                        queryText: "",
+                        submittedAt: null,
+                        clientId: row.clientId != null ? String(row.clientId) : null,
+                        clientName: row.clientName ?? null,
+                        subclientId: row.subclientId != null ? String(row.subclientId) : null,
+                        subclientName: row.subclientName ?? null,
+                        missed: true,
+                        returnedAt: row.returnedAt ?? null,
+                    }))
+                );
+            }
+        } catch (err) {
+            console.error("Failed to load pending history:", err);
+        }
+    };
+
     const loadAll = async () => {
         setLoading(true);
         setError(null);
@@ -928,6 +974,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                     console.error("Failed to load batch allocations:", batchesJson?.message);
                 }
             }
+            loadMissed(targetId);
             // Counts endpoint is always "me" — skip it when viewing someone else.
             if (!targetId) loadMyCounts();
             else setMyCounts([]);
@@ -945,6 +992,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         const targetId =
             viewingRef.current && viewingRef.current !== String(myId) ? viewingRef.current : null;
         try {
+            loadMissed(targetId);
             const res = await authFetch(casesUrl(targetId));
             const json = await safeJson(res);
             if (res.ok && json.success) {
@@ -1086,7 +1134,10 @@ export default function Profile({ onLogout }: ProfileProps) {
         [cases, myCounts]
     );
 
-    const baseRows = activeTab === "today" ? todaysCases : pastCases;
+    // NEW: Past Allocation = real past cases + the ones I left pending
+    // (read-only history rows, newest first).
+    const pastRows = useMemo(() => [...pastCases, ...missedCases], [pastCases, missedCases]);
+    const baseRows = activeTab === "today" ? todaysCases : pastRows;
 
     const filteredRows = useMemo(() => {
         return baseRows.filter((c) => {
@@ -1183,15 +1234,15 @@ export default function Profile({ onLogout }: ProfileProps) {
             .filter((m) => allocDay(m.allocatedAt, m.workDate) !== today)
             .reduce((sum, m) => sum + m.remaining, 0);
         const submitted = pastCases.filter(isSubmitted).length;
-        const pending = pastCases.length - submitted;
+        const pending = pastCases.length - submitted + missedCases.length;
         return {
-            total: pastCases.length + waiting,
-            withNo: pastCases.length,
+            total: pastCases.length + missedCases.length + waiting,
+            withNo: pastCases.length + missedCases.length,
             waiting,
             submitted,
             pending,
         };
-    }, [pastCases, myCounts]);
+    }, [pastCases, missedCases, myCounts]);
 
     // Numbers for the 5 cards at the top, for the period picked in the
     // Daily / Monthly dropdown:
@@ -1260,7 +1311,10 @@ export default function Profile({ onLogout }: ProfileProps) {
         } catch {
             /* storage blocked - skip */
         }
-        if (pending && openQueries.length > 0) setQueryReminder(openQueries.length);
+        // Managers get the TEAM queries popup instead (it already includes
+        // their own queries), so don't show the "only mine" one on top of it.
+        const isManager = TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
+        if (pending && !isManager && openQueries.length > 0) setQueryReminder(openQueries.length);
     }, [loading, isViewingOther, myId, openQueries.length]);
 
     const visibleQueries = useMemo(() => {
@@ -2600,6 +2654,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                               )
                             : 0
                     }
+                    // % of the allocated time that was actually completed
+                    // (e.g. 100h allocated, 25h done -> "25%")
+                    badge={
+                        topStats.allocatedMins > 0
+                            ? `${Math.min(
+                                  100,
+                                  Math.round((topStats.utilisedMins / topStats.allocatedMins) * 100)
+                              )}%`
+                            : undefined
+                    }
                     styles={styles}
                 />
             </div>
@@ -2694,12 +2758,12 @@ export default function Profile({ onLogout }: ProfileProps) {
                             total: pastSummary.total,
                             totalLabel: "Allocated",
                             done: pastSummary.submitted,
-                            doneLabel: "submitted",
+                            doneLabel: "completed",
+                            // Past: only "how much I received" and "how much I
+                            // completed" — no pending shown here.
                             rows: [
-                                ["With case no.", pastSummary.withNo, BRAND.blue],
-                                ["Waiting", pastSummary.waiting, BRAND.amber],
-                                ["Submitted", pastSummary.submitted, BRAND.green],
-                                ["Pending", pastSummary.pending, BRAND.amber],
+                                ["Received", pastSummary.total, BRAND.blue],
+                                ["Completed", pastSummary.submitted, BRAND.green],
                             ] as [string, number | string, string][],
                             active: activeTab === "past",
                             onClick: openPastCard,
@@ -2721,8 +2785,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                     ].map((c) => {
                         // Past + Queries only: all done -> green "All completed" badge,
                         // nothing done at all -> red warning look.
-                        const allDone = c.key !== "today" && c.total > 0 && c.done >= c.total;
-                        const noneDone = c.key !== "today" && c.total > 0 && c.done === 0;
+                        // Past card is neutral (no red/green "pending" styling).
+                        const allDone = c.key === "query" && c.total > 0 && c.done >= c.total;
+                        const noneDone = c.key === "query" && c.total > 0 && c.done === 0;
                         const accent = noneDone
                             ? BRAND.red
                             : allDone
@@ -2795,7 +2860,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         >
                                             {c.title}
                                         </span>
-                                        {c.key !== "today" && c.total > 0 && (
+                                        {c.key === "query" && c.total > 0 && (
                                             <span
                                                 style={{
                                                     display: "inline-flex",
@@ -3396,7 +3461,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         onChange={(kind, v) =>
                                                             handleCaseClientChange(c, kind, v)
                                                         }
-                                                        readOnly={isViewingOther}
+                                                        readOnly={isViewingOther || !!c.missed}
                                                         styles={styles}
                                                     />
                                                 }
@@ -3493,7 +3558,19 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 textAlign: "center",
                                                             }}
                                                         >
-                                                            {submitted ? (
+                                                            {c.missed ? (
+                                                                <div>
+                                                                    <span
+                                                                        style={styles.statusPending}
+                                                                    >
+                                                                        Pending
+                                                                    </span>
+                                                                    <div style={styles.smallMuted}>
+                                                                        Not submitted · returned to
+                                                                        pool
+                                                                    </div>
+                                                                </div>
+                                                            ) : submitted ? (
                                                                 <span style={styles.statusDone}>
                                                                     Submitted
                                                                 </span>
@@ -3636,7 +3713,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 textAlign: "center",
                                                             }}
                                                         >
-                                                            {isOpenQuery(c) ? (
+                                                            {c.missed ? (
+                                                                <span style={styles.smallMuted}>
+                                                                    {formatDisplayDate(
+                                                                        localDateStr(
+                                                                            c.returnedAt ?? null
+                                                                        )
+                                                                    )}
+                                                                </span>
+                                                            ) : isOpenQuery(c) ? (
                                                                 <button
                                                                     type="button"
                                                                     style={styles.rowSubmitBtn}
@@ -4980,6 +5065,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
             )}
 
+            {/* NEW: managers — open queries of my team (+ urgent > 48h) */}
+            <TeamQueriesPopup
+                enabled={
+                    !isViewingOther &&
+                    !!myId &&
+                    TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase())
+                }
+            />
+
             {queryReminder !== null && (
                 <div
                     style={{
@@ -5150,6 +5244,7 @@ function StatCard({
     onClick,
     active,
     progress,
+    badge,
 }: {
     icon: React.ReactNode;
     tint: string;
@@ -5160,6 +5255,7 @@ function StatCard({
     onClick?: () => void;
     active?: boolean;
     progress?: number; // 0-100, thin bar under the text
+    badge?: string; // small pill at the top-right (e.g. "25%")
 }) {
     return (
         <div
@@ -5214,7 +5310,478 @@ function StatCard({
                     {active ? "Hide ▴" : "View ▾"}
                 </span>
             )}
+            {badge && (
+                <span
+                    style={{
+                        alignSelf: "flex-start",
+                        padding: "2px 9px",
+                        borderRadius: 999,
+                        background: `${tint}1F`,
+                        color: tint,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                    }}
+                >
+                    {badge}
+                </span>
+            )}
         </div>
+    );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Manager-only: open queries of my team (popup + details)                */
+/* ---------------------------------------------------------------------- */
+// login.tsx sets this on every successful login; cleared once handled here.
+const LOGIN_FLAG = "pf_team_query_popup_pending";
+
+// Roles that have a team / org view (same rule the backend enforces).
+const TEAM_QUERY_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD", "VERTICAL_HEAD"];
+
+type TeamQuery = {
+    id: string;
+    caseNumber: string;
+    productName: string | null;
+    clientName: string | null;
+    subclientName: string | null;
+    employeeId: string;
+    employeeName: string;
+    queryText: string;
+    submittedAt: string | null;
+    ageHours: number;
+    urgent: boolean;
+};
+type TeamMember = {
+    employeeId: string;
+    name: string;
+    openCount: number;
+    urgentCount: number;
+    oldestAgeHours: number;
+};
+type TeamQueryData = {
+    totalOpen: number;
+    urgentCount: number;
+    urgentHours: number;
+    members: TeamMember[];
+    queries: TeamQuery[];
+};
+
+// 53.5 -> "2d 5h", 5.2 -> "5h", 0.4 -> "<1h"
+function tqAgeLabel(hours: number) {
+    if (hours < 1) return "<1h";
+    const h = Math.floor(hours);
+    const d = Math.floor(h / 24);
+    return d > 0 ? `${d}d ${h % 24}h` : `${h}h`;
+}
+
+function tqFmtDateTime(iso: string | null) {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "-";
+    return d.toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+}
+
+const TQ_RED = "#F43F5E";
+const tqOverlay: React.CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    zIndex: 460,
+    background: "rgba(23,24,28,.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+};
+const tqBtn: React.CSSProperties = {
+    height: 36,
+    padding: "0 16px",
+    borderRadius: 10,
+    border: "1px solid #dfe3ee",
+    background: "#fff",
+    color: "#17181C",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+};
+const tqBtnRed: React.CSSProperties = {
+    ...tqBtn,
+    border: "none",
+    background: "linear-gradient(135deg, #FB7185, #F43F5E)",
+    color: "#fff",
+};
+
+function TeamQueriesPopup({ enabled }: { enabled: boolean }) {
+    const [data, setData] = useState<TeamQueryData | null>(null);
+    const [showSummary, setShowSummary] = useState(false);
+    const [showDetails, setShowDetails] = useState(false);
+    const [openEmp, setOpenEmp] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!enabled) return;
+        let cancelled = false;
+        (async () => {
+            let fromLogin = false;
+            try {
+                fromLogin = window.localStorage.getItem(LOGIN_FLAG) === "1";
+                if (fromLogin) window.localStorage.removeItem(LOGIN_FLAG);
+            } catch {
+                /* storage blocked */
+            }
+            try {
+                const res = await authFetch(`${API_BASE}/api/service-cases/team-queries`);
+                const json = await res.json();
+                if (cancelled || !res.ok || !json.success) return;
+                const d: TeamQueryData = json.data;
+                setData(d);
+                // popup on EVERY login while the team has open queries
+                if (fromLogin && d.totalOpen > 0) setShowSummary(true);
+            } catch (err) {
+                console.error("team queries load failed:", err);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [enabled]);
+
+    const urgentList = useMemo(() => (data?.queries || []).filter((q) => q.urgent), [data]);
+
+    if (!enabled || !data || data.totalOpen === 0) return null;
+    const hasUrgent = data.urgentCount > 0;
+
+    return (
+        <>
+            {/* reopen pill */}
+            {!showSummary && !showDetails && (
+                <button
+                    type="button"
+                    onClick={() => setShowDetails(true)}
+                    style={{
+                        position: "fixed",
+                        right: 18,
+                        bottom: 18,
+                        zIndex: 400,
+                        border: "none",
+                        borderRadius: 999,
+                        padding: "10px 16px",
+                        background: hasUrgent ? TQ_RED : "#3B4A9E",
+                        color: "#fff",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: "0 8px 22px rgba(0,0,0,.22)",
+                    }}
+                >
+                    {hasUrgent ? "⚠ " : ""}Team queries · {data.totalOpen}
+                    {hasUrgent ? ` (${data.urgentCount} urgent)` : ""}
+                </button>
+            )}
+
+            {/* summary / urgent popup */}
+            {showSummary && (
+                <div style={tqOverlay} onClick={() => setShowSummary(false)}>
+                    <div
+                        role="alertdialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 430,
+                            background: "#fff",
+                            borderTop: `4px solid ${hasUrgent ? TQ_RED : "#F59E0B"}`,
+                            borderRadius: 16,
+                            padding: "20px 22px",
+                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 14,
+                        }}
+                    >
+                        {hasUrgent && (
+                            <div
+                                style={{
+                                    background: "#FFF1F2",
+                                    border: "1px solid #FECDD3",
+                                    borderRadius: 12,
+                                    padding: "10px 12px",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        color: TQ_RED,
+                                        fontWeight: 800,
+                                        fontSize: 13,
+                                        letterSpacing: ".04em",
+                                    }}
+                                >
+                                    ⚠ URGENT
+                                </div>
+                                <div
+                                    style={{
+                                        fontSize: 13,
+                                        color: "#17181C",
+                                        marginTop: 2,
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    {data.urgentCount}{" "}
+                                    {data.urgentCount === 1 ? "query is" : "queries are"} open for
+                                    more than {data.urgentHours} hours.
+                                </div>
+                                <div style={{ fontSize: 12, color: "#5B6479", marginTop: 4 }}>
+                                    {urgentList
+                                        .slice(0, 3)
+                                        .map(
+                                            (q) =>
+                                                `${q.caseNumber} (${q.employeeName}, ${tqAgeLabel(q.ageHours)})`
+                                        )
+                                        .join(" · ")}
+                                    {urgentList.length > 3
+                                        ? ` · +${urgentList.length - 3} more`
+                                        : ""}
+                                </div>
+                            </div>
+                        )}
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: 15, color: "#17181C" }}>
+                                Your team has {data.totalOpen} open{" "}
+                                {data.totalOpen === 1 ? "query" : "queries"}
+                            </div>
+                            <div style={{ fontSize: 13, color: "#5B6479", marginTop: 2 }}>
+                                Open View Details to see who has how many and how long they have
+                                been waiting.
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button
+                                type="button"
+                                style={tqBtn}
+                                onClick={() => setShowSummary(false)}
+                            >
+                                Later
+                            </button>
+                            <button
+                                type="button"
+                                style={tqBtnRed}
+                                onClick={() => {
+                                    setShowSummary(false);
+                                    setShowDetails(true);
+                                }}
+                            >
+                                View Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* details */}
+            {showDetails && (
+                <div style={tqOverlay} onClick={() => setShowDetails(false)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 760,
+                            maxHeight: "86vh",
+                            background: "#fff",
+                            borderRadius: 16,
+                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
+                            display: "flex",
+                            flexDirection: "column",
+                            overflow: "hidden",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "16px 20px",
+                                borderBottom: "1px solid #EEF0F6",
+                            }}
+                        >
+                            <div>
+                                <div style={{ fontWeight: 700, fontSize: 16, color: "#17181C" }}>
+                                    Team Queries
+                                </div>
+                                <div style={{ fontSize: 12.5, color: "#5B6479" }}>
+                                    {data.totalOpen} open
+                                    {hasUrgent
+                                        ? ` · ${data.urgentCount} urgent (over ${data.urgentHours}h)`
+                                        : ""}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                style={tqBtn}
+                                onClick={() => setShowDetails(false)}
+                            >
+                                ✕ Close
+                            </button>
+                        </div>
+
+                        <div style={{ overflowY: "auto", padding: "12px 20px 20px" }}>
+                            {data.members.map((m) => {
+                                const isOpen = openEmp === m.employeeId;
+                                const mine = data.queries.filter(
+                                    (q) => q.employeeId === m.employeeId
+                                );
+                                return (
+                                    <div
+                                        key={m.employeeId}
+                                        style={{
+                                            border: `1px solid ${m.urgentCount > 0 ? "#FECDD3" : "#EEF0F6"}`,
+                                            borderRadius: 12,
+                                            marginTop: 10,
+                                            overflow: "hidden",
+                                        }}
+                                    >
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenEmp(isOpen ? null : m.employeeId)}
+                                            style={{
+                                                width: "100%",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 12,
+                                                padding: "12px 14px",
+                                                border: "none",
+                                                background:
+                                                    m.urgentCount > 0 ? "#FFF7F8" : "#FAFBFF",
+                                                cursor: "pointer",
+                                                textAlign: "left",
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    flex: 1,
+                                                    fontWeight: 700,
+                                                    fontSize: 14,
+                                                    color: "#17181C",
+                                                }}
+                                            >
+                                                {m.name}
+                                            </span>
+                                            <span style={{ fontSize: 12.5, color: "#5B6479" }}>
+                                                {m.openCount} open · oldest{" "}
+                                                {tqAgeLabel(m.oldestAgeHours)}
+                                            </span>
+                                            {m.urgentCount > 0 && (
+                                                <span
+                                                    style={{
+                                                        background: TQ_RED,
+                                                        color: "#fff",
+                                                        borderRadius: 999,
+                                                        padding: "2px 9px",
+                                                        fontSize: 11,
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    {m.urgentCount} urgent
+                                                </span>
+                                            )}
+                                            <span style={{ color: "#8A92A6", fontSize: 12 }}>
+                                                {isOpen ? "▴" : "▾"}
+                                            </span>
+                                        </button>
+
+                                        {isOpen && (
+                                            <div style={{ padding: "4px 14px 12px" }}>
+                                                {mine.map((q) => (
+                                                    <div
+                                                        key={q.id}
+                                                        style={{
+                                                            padding: "10px 0",
+                                                            borderTop: "1px solid #EEF0F6",
+                                                            display: "flex",
+                                                            flexDirection: "column",
+                                                            gap: 3,
+                                                        }}
+                                                    >
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                gap: 8,
+                                                                alignItems: "center",
+                                                                flexWrap: "wrap",
+                                                            }}
+                                                        >
+                                                            <span
+                                                                style={{
+                                                                    fontWeight: 700,
+                                                                    fontSize: 13,
+                                                                }}
+                                                            >
+                                                                {q.caseNumber}
+                                                            </span>
+                                                            <span
+                                                                style={{
+                                                                    fontSize: 12.5,
+                                                                    color: "#5B6479",
+                                                                }}
+                                                            >
+                                                                {[
+                                                                    q.productName,
+                                                                    q.clientName,
+                                                                    q.subclientName,
+                                                                ]
+                                                                    .filter(Boolean)
+                                                                    .join(" · ") || "-"}
+                                                            </span>
+                                                            <span
+                                                                style={{
+                                                                    marginLeft: "auto",
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    color: q.urgent
+                                                                        ? TQ_RED
+                                                                        : "#5B6479",
+                                                                }}
+                                                            >
+                                                                {q.urgent ? "⚠ URGENT · " : ""}open{" "}
+                                                                {tqAgeLabel(q.ageHours)}
+                                                            </span>
+                                                        </div>
+                                                        {q.queryText && (
+                                                            <div
+                                                                style={{
+                                                                    fontSize: 12.5,
+                                                                    color: "#17181C",
+                                                                }}
+                                                            >
+                                                                {q.queryText}
+                                                            </div>
+                                                        )}
+                                                        <div
+                                                            style={{
+                                                                fontSize: 11.5,
+                                                                color: "#8A92A6",
+                                                            }}
+                                                        >
+                                                            Raised {tqFmtDateTime(q.submittedAt)}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 }
 
@@ -5395,7 +5962,11 @@ function MobileRow({
                 </div>
             )}
             <div style={{ margin: "6px 0" }}>{clientCell}</div>
-            {readOnly ? null : isOpenQuery(c) ? (
+            {c.missed ? (
+                <div style={styles.smallMuted}>
+                    Assigned to you but left pending — returned to pool
+                </div>
+            ) : readOnly ? null : isOpenQuery(c) ? (
                 <button type="button" style={styles.rowSubmitBtn} onClick={onResolveQuery}>
                     Resolve
                 </button>

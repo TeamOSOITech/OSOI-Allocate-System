@@ -82,6 +82,8 @@ const Login = () => {
             // Tell the profile page to show the open-query reminder after THIS login.
             try {
                 localStorage.setItem("pf_query_reminder_pending", "1");
+                // managers: team-queries popup (first login of the day / urgent)
+                localStorage.setItem("pf_team_query_popup_pending", "1");
             } catch {
                 /* storage blocked */
             }
