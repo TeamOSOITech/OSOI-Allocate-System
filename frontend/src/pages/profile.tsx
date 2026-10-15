@@ -5002,7 +5002,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                             width: "100%",
                             maxWidth: 400,
                             background: "#fff",
-                            borderTop: `4px solid ${BRAND.red}`,
+                            borderTop: "4px solid #F97066",
                             borderRadius: 16,
                             padding: "20px 22px",
                             boxShadow: "0 24px 60px rgba(0,0,0,.28)",
@@ -5012,7 +5012,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         }}
                     >
                         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                            <span style={{ color: BRAND.red, display: "flex", marginTop: 2 }}>
+                            <span style={{ color: "#F43F5E", display: "flex", marginTop: 2 }}>
                                 <QueryIcon />
                             </span>
                             <div style={{ flex: 1 }}>
@@ -5054,7 +5054,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 className="pf-btn pf-btn-solid"
                                 style={{
                                     ...styles.exportBtn,
-                                    background: BRAND.red,
+                                    background: "linear-gradient(135deg, #FB7185, #F43F5E)",
                                     color: "#fff",
                                     border: "none",
                                 }}
