@@ -341,4 +341,18 @@ const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
+
+  // NEW (ROLLOVER): cases allocated on an earlier day and still not
+  // submitted go back to the pool. Runs once at startup and then every 5
+  // minutes (the Cases list / Smart Allocation / Profile also trigger it
+  // on demand, so nothing stale is ever shown).
+  const {
+    rolloverAllOrgs,
+  } = require("./src/modules/servicecases/servicecases.controller");
+  const runRollover = () =>
+    rolloverAllOrgs().catch((e) =>
+      console.error("Rollover failed:", e?.message || e),
+    );
+  runRollover();
+  setInterval(runRollover, 5 * 60 * 1000);
 });

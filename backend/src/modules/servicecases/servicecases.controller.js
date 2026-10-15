@@ -513,6 +513,9 @@ async function getEmployeeNameMap(employeeIds, organizationId) {
 // ------------------------------------------------------------
 async function listServiceCases(req, res) {
   try {
+    // NEW (ROLLOVER): make sure yesterday's still-pending allocations are
+    // back in the pool before anything is listed (throttled, never throws).
+    await ensureRollover(req.user.organizationId);
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     // "mine=true" (the employee's own allocation page) loads everything
     // assigned to them in one go rather than paginating — that page
@@ -2130,6 +2133,10 @@ async function autoAllocateServiceCases(req, res) {
       });
     }
 
+    // NEW (ROLLOVER): pull yesterday's unsubmitted cases back into the pool
+    // first, so they are part of this allocation.
+    await ensureRollover(req.user.organizationId);
+
     const { data: pendingCases, error } = await supabase
       .from("service_cases")
       .select("id, case_number, sequence_number")
@@ -3170,6 +3177,9 @@ function getActingEmployeeId(req) {
 // ------------------------------------------------------------
 async function submitServiceCase(req, res) {
   try {
+    // NEW (ROLLOVER): a case left pending from an earlier day has already
+    // been returned to the pool, so it can no longer be submitted.
+    await ensureRollover(req.user.organizationId);
     const { id } = req.params;
     const submissionType = (req.body.submissionType || "").toString().trim();
     const queryText = (req.body.queryText || "").toString().trim();
@@ -3596,6 +3606,7 @@ async function updateServiceCaseAudit(req, res) {
 // ------------------------------------------------------------
 async function bulkSubmitServiceCases(req, res) {
   try {
+    await ensureRollover(req.user.organizationId);
     const items = Array.isArray(req.body.items) ? req.body.items : [];
     const cleaned = items
       .map((it) => ({
@@ -3759,6 +3770,487 @@ async function selfAllocateServiceCases(req, res) {
   }
 }
 
+// ============================================================
+// END-OF-DAY ROLLOVER for allocated cases.
+//
+// RULE
+//   A case that was allocated to an employee on an EARLIER day and is
+//   still submission-PENDING (the employee never picked Completed / Query /
+//   Completed by Team / Completed by Client) is sent BACK TO THE POOL:
+//
+//     service_cases.assigned_employee_id -> null
+//     service_cases.allocation_status    -> 'PENDING'   (= unallocated)
+//     service_cases.allocated_at / allocated_by -> null
+//
+//   Because the Cases tab and Smart Allocation already pull every
+//   unallocated (PENDING) case with work_date <= the chosen date, the case
+//   shows up automatically the next time someone picks that service on
+//   Today's Allocation, and gets re-allocated like any other pending case.
+//
+//   Cases that DO have an outcome (Completed, Query, Completed by Team,
+//   Completed by Client) are never touched.
+//
+// HISTORY
+//   Before a case is returned, one row is written to `case_carryover_log`
+//   (who it was allocated to, when, and when it was returned). The Profile
+//   page reads this to show "assigned to you, left pending" under Past
+//   Allocation — read-only, no Submit button.
+//
+// WHEN IT RUNS (all idempotent, safe to run any number of times)
+//   - every few minutes from server.js (rolloverAllOrgs)
+//   - lazily (throttled) when the Cases list / Smart Allocation / Profile
+//     are opened or a case is submitted, so nothing stale is ever shown
+//     even if the timer has not fired yet.
+//
+// REQUIRES THIS TABLE (run once in the Supabase SQL editor):
+//
+//   create table if not exists case_carryover_log (
+//     id uuid primary key default gen_random_uuid(),
+//     organization_id text not null,
+//     case_id text not null,
+//     case_number text,
+//     product_id text,
+//     client_id text,
+//     subclient_id text,
+//     work_date date,
+//     employee_id text not null,
+//     allocated_at timestamptz not null,
+//     returned_at timestamptz not null default now(),
+//     unique (case_id, employee_id, allocated_at)
+//   );
+//   create index if not exists case_carryover_log_emp_idx
+//     on case_carryover_log (organization_id, employee_id, returned_at desc);
+//
+// (ids are text so this works whatever id type your other tables use.)
+//
+// TIMEZONE: "a new day" starts at midnight in APP_TIMEZONE
+// (.env, default Asia/Kolkata).
+
+const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Kolkata";
+const BATCH = 500;
+// Lazy callers (list/submit/profile) re-run the sweep at most this often.
+const LAZY_THROTTLE_MS = 60 * 1000;
+
+// ---- timezone helpers -------------------------------------------------
+
+// Offset (in minutes) of APP_TIMEZONE from UTC at the given instant.
+function tzOffsetMinutes(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: APP_TIMEZONE,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return Math.round((asUtc - date.getTime()) / 60000);
+}
+
+// ISO timestamp of 00:00 TODAY in APP_TIMEZONE. Anything allocated
+// strictly before this belongs to an earlier day.
+function startOfTodayISO(now = new Date()) {
+  const offset = tzOffsetMinutes(now);
+  const local = new Date(now.getTime() + offset * 60000);
+  const midnightLocalAsUtc = Date.UTC(
+    local.getUTCFullYear(),
+    local.getUTCMonth(),
+    local.getUTCDate(),
+  );
+  return new Date(midnightLocalAsUtc - offset * 60000).toISOString();
+}
+
+// ---- core sweep -------------------------------------------------------
+
+// organizationId optional: omit to sweep every organization.
+async function rolloverPendingCases(organizationId = null) {
+  const cutoff = startOfTodayISO();
+  let totalReturned = 0;
+
+  // Loop in batches. Every returned case leaves the candidate set (its
+  // allocation_status flips to PENDING), so re-querying from the top
+  // each time always yields the next batch.
+  // Hard cap on loops so a bad row can never spin forever.
+  for (let loop = 0; loop < 200; loop++) {
+    let q = supabase
+      .from("service_cases")
+      .select(
+        "id, organization_id, case_number, product_id, client_id, subclient_id, work_date, assigned_employee_id, allocated_at",
+      )
+      .eq("allocation_status", "ALLOCATED")
+      .not("assigned_employee_id", "is", null)
+      .lt("allocated_at", cutoff)
+      // not submitted yet: NULL or 'PENDING'
+      .or("submission_status.is.null,submission_status.eq.PENDING")
+      .limit(BATCH);
+    if (organizationId) q = q.eq("organization_id", organizationId);
+
+    const { data: candidates, error } = await q;
+    if (error) throw error;
+    if (!candidates || candidates.length === 0) break;
+
+    // 1) write history FIRST so a returned case can never lose its record.
+    const logRows = candidates.map((c) => ({
+      organization_id: String(c.organization_id),
+      case_id: String(c.id),
+      case_number: c.case_number,
+      product_id: c.product_id != null ? String(c.product_id) : null,
+      client_id: c.client_id != null ? String(c.client_id) : null,
+      subclient_id: c.subclient_id != null ? String(c.subclient_id) : null,
+      work_date: c.work_date || null,
+      employee_id: String(c.assigned_employee_id),
+      allocated_at: c.allocated_at,
+    }));
+    const { error: logError } = await supabase
+      .from("case_carryover_log")
+      .upsert(logRows, {
+        onConflict: "case_id,employee_id,allocated_at",
+        ignoreDuplicates: true,
+      });
+    if (logError) throw logError;
+
+    // 2) send the cases back to the pool. The same guards are repeated
+    //    here so a case the employee submitted a split-second ago is NOT
+    //    touched.
+    const ids = candidates.map((c) => c.id);
+    const { data: returned, error: updError } = await supabase
+      .from("service_cases")
+      .update({
+        assigned_employee_id: null,
+        allocation_status: "PENDING",
+        allocated_at: null,
+        allocated_by: null,
+      })
+      .in("id", ids)
+      .eq("allocation_status", "ALLOCATED")
+      .lt("allocated_at", cutoff)
+      .or("submission_status.is.null,submission_status.eq.PENDING")
+      .select("id");
+    if (updError) throw updError;
+
+    // 3) drop log rows for any case that was NOT returned (submitted in
+    //    the gap between step 1 and 2) so history stays truthful.
+    const returnedIds = new Set((returned || []).map((r) => String(r.id)));
+    const skipped = candidates.filter((c) => !returnedIds.has(String(c.id)));
+    for (const s of skipped) {
+      await supabase
+        .from("case_carryover_log")
+        .delete()
+        .eq("case_id", String(s.id))
+        .eq("employee_id", String(s.assigned_employee_id))
+        .eq("allocated_at", s.allocated_at);
+    }
+
+    totalReturned += returnedIds.size;
+    // Nothing moved this round -> the rest are all "skipped"; stop.
+    if (returnedIds.size === 0) break;
+    if (candidates.length < BATCH) break;
+  }
+
+  return totalReturned;
+}
+
+async function rolloverAllOrgs() {
+  const n = await rolloverPendingCases(null);
+  if (n > 0) {
+    console.log(`🔁 Rollover: ${n} pending case(s) returned to the pool.`);
+  }
+  return n;
+}
+
+// Throttled, never throws — safe to `await` at the top of any request.
+const lastRunByOrg = new Map();
+async function ensureRollover(organizationId) {
+  const key = organizationId || "*";
+  const now = Date.now();
+  if (now - (lastRunByOrg.get(key) || 0) < LAZY_THROTTLE_MS) return;
+  lastRunByOrg.set(key, now);
+  try {
+    await rolloverPendingCases(organizationId || null);
+  } catch (err) {
+    // Missing table / transient DB error must never break the request.
+    console.error("ensureRollover failed:", err?.message || err);
+  }
+}
+
+// ============================================================
+// MANAGER VIEW OF OPEN QUERIES  ->  GET /api/service-cases/team-queries
+//
+// Powers the popup a manager sees on the first login of the day
+// ("Your team has N open queries") and its "View Details" screen
+// (who has how many, and how long each query has been open).
+//
+// A query is "open" while submission_status = SUBMITTED and
+// submission_type = QUERY (it stops being open once the employee
+// resolves it as Completed / Completed by Team / Completed by Client).
+// Its age is counted from submitted_at (the moment it was raised).
+//
+// WHO SEES WHAT
+//   SUPER_ADMIN, OPS_MANAGER      -> every employee in the organization
+//   PROCESS_LEAD, VERTICAL_HEAD   -> their whole team: same "Worked In
+//                                    Teams" OR "Reporting Manager" = their
+//                                    email, plus their own queries
+//   anyone else                   -> 403
+//
+// URGENT = a query open for more than URGENT_HOURS (48) hours.
+
+const URGENT_HOURS = 48;
+const WHOLE_ORG_ROLES = ["SUPER_ADMIN", "OPS_MANAGER"];
+const TEAM_ROLES = ["PROCESS_LEAD", "VERTICAL_HEAD"];
+
+async function listTeamQueries(req, res) {
+  try {
+    const { role, userId, organizationId } = req.user;
+    const wholeOrg = WHOLE_ORG_ROLES.includes(role);
+    if (!wholeOrg && !TEAM_ROLES.includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only managers can view team queries.",
+      });
+    }
+
+    // ---- who is in scope ----
+    // "My team" = same meaning as the Employees page:
+    //   - people on the same team ("Worked In Teams") as the manager, OR
+    //   - people who report to the manager (their "Reporting Manager"
+    //     is the manager's email),
+    //   - plus the manager themself (their own queries count too).
+    let teamIds = null; // null = everyone in the org
+    if (!wholeOrg) {
+      const { data: people, error: pErr } = await supabase
+        .from("user_master")
+        .select(
+          '"Auth User Id", "Email", "Reporting Manager", "Worked In Teams"',
+        )
+        .eq("organization_id", organizationId);
+      if (pErr) throw pErr;
+
+      const norm = (v) => (v || "").toString().trim().toLowerCase();
+      // a person can be on several teams ("A, B") — compare each name
+      const teamsOf = (v) =>
+        norm(v)
+          .split(/[,;/|]/)
+          .map((t) => t.trim())
+          .filter(Boolean);
+
+      const me = (people || []).find((p) => p["Auth User Id"] === userId);
+      const myEmail = norm(me?.["Email"]);
+      const myTeams = teamsOf(me?.["Worked In Teams"]);
+
+      teamIds = (people || [])
+        .filter((p) => {
+          if (p["Auth User Id"] === userId) return true; // myself
+          if (myEmail && norm(p["Reporting Manager"]) === myEmail) return true;
+          const theirTeams = teamsOf(p["Worked In Teams"]);
+          return theirTeams.some((t) => myTeams.includes(t));
+        })
+        .map((p) => p["Auth User Id"]);
+    }
+
+    const empty = {
+      totalOpen: 0,
+      urgentCount: 0,
+      urgentHours: URGENT_HOURS,
+      members: [],
+      queries: [],
+    };
+    if (teamIds && teamIds.length === 0) {
+      return res.json({ success: true, data: empty });
+    }
+
+    // ---- open queries ----
+    let q = supabase
+      .from("service_cases")
+      .select(
+        "id, case_number, product_id, client_id, subclient_id, assigned_employee_id, query_text, submitted_at, work_date",
+      )
+      .eq("organization_id", organizationId)
+      .eq("submission_status", "SUBMITTED")
+      .eq("submission_type", "QUERY")
+      .not("assigned_employee_id", "is", null)
+      .order("submitted_at", { ascending: true })
+      .limit(2000);
+    if (teamIds) q = q.in("assigned_employee_id", teamIds);
+
+    const { data: rows, error } = await q;
+    if (error) throw error;
+    const list = rows || [];
+    if (list.length === 0) {
+      return res.json({ success: true, data: empty });
+    }
+
+    const [productMap, clientMap, subclientMap, empMap] = await Promise.all([
+      getProductNameMap(
+        list.map((r) => r.product_id),
+        organizationId,
+      ),
+      getClientNameMap(
+        list.map((r) => r.client_id),
+        organizationId,
+      ),
+      getSubclientNameMap(
+        list.map((r) => r.subclient_id),
+        organizationId,
+      ),
+      getEmployeeNameMap(
+        list.map((r) => r.assigned_employee_id),
+        organizationId,
+      ),
+    ]);
+
+    const now = Date.now();
+    const queries = list.map((r) => {
+      const raisedMs = r.submitted_at
+        ? new Date(r.submitted_at).getTime()
+        : NaN;
+      const ageHours = Number.isNaN(raisedMs)
+        ? 0
+        : Math.max(0, (now - raisedMs) / 3600000);
+      return {
+        id: r.id,
+        caseNumber: r.case_number,
+        productName: productMap[r.product_id] || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        employeeId: r.assigned_employee_id,
+        employeeName: empMap[r.assigned_employee_id] || "Unknown",
+        queryText: r.query_text || "",
+        submittedAt: r.submitted_at || null,
+        ageHours: Math.round(ageHours * 10) / 10,
+        urgent: ageHours > URGENT_HOURS,
+      };
+    });
+
+    // oldest first, so the most overdue are on top
+    queries.sort((a, b) => b.ageHours - a.ageHours);
+
+    // ---- per employee ----
+    const byEmp = new Map();
+    for (const item of queries) {
+      const m = byEmp.get(item.employeeId) || {
+        employeeId: item.employeeId,
+        name: item.employeeName,
+        openCount: 0,
+        urgentCount: 0,
+        oldestAgeHours: 0,
+      };
+      m.openCount += 1;
+      if (item.urgent) m.urgentCount += 1;
+      m.oldestAgeHours = Math.max(m.oldestAgeHours, item.ageHours);
+      byEmp.set(item.employeeId, m);
+    }
+    const members = [...byEmp.values()].sort(
+      (a, b) =>
+        b.urgentCount - a.urgentCount || b.oldestAgeHours - a.oldestAgeHours,
+    );
+
+    res.json({
+      success: true,
+      data: {
+        totalOpen: queries.length,
+        urgentCount: queries.filter((x) => x.urgent).length,
+        urgentHours: URGENT_HOURS,
+        members,
+        queries,
+      },
+    });
+  } catch (err) {
+    console.error("listTeamQueries error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// NEW (ROLLOVER): GET /api/service-cases/my-missed
+// query: employeeId? (Super Admin / Ops Manager only, to view someone else)
+//
+// Cases that were allocated to the employee on an earlier day and were
+// still pending (never submitted) when that day ended. They have already
+// been returned to the pool (see caseRollover.js); this list is the
+// employee's READ-ONLY record of them for Profile -> Past Allocation.
+// ------------------------------------------------------------
+async function listMyMissedCases(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const requested = (req.query.employeeId || "").toString().trim();
+    let employeeId = req.user.userId;
+    if (requested && requested !== req.user.userId) {
+      if (!ON_BEHALF_ROLES.includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view your own pending history.",
+        });
+      }
+      employeeId = requested;
+    }
+
+    // Anything allocated earlier and still pending must be in the log.
+    await ensureRollover(orgId);
+
+    const { data, error } = await supabase
+      .from("case_carryover_log")
+      .select("*")
+      .eq("organization_id", String(orgId))
+      .eq("employee_id", String(employeeId))
+      .order("returned_at", { ascending: false })
+      .limit(2000);
+    if (error) throw error;
+
+    const rows = data || [];
+    const [productMap, clientMap, subclientMap] = await Promise.all([
+      getProductNameMap(
+        rows.map((r) => r.product_id),
+        orgId,
+      ),
+      getClientNameMap(
+        rows.map((r) => r.client_id),
+        orgId,
+      ),
+      getSubclientNameMap(
+        rows.map((r) => r.subclient_id),
+        orgId,
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: `missed-${r.id}`,
+        caseId: r.case_id,
+        caseNumber: r.case_number,
+        productId: r.product_id,
+        productName: productMap[r.product_id] || null,
+        clientId: r.client_id || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientId: r.subclient_id || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        workDate: r.work_date,
+        allocatedAt: r.allocated_at,
+        returnedAt: r.returned_at,
+      })),
+    });
+  } catch (err) {
+    console.error("listMyMissedCases error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
 module.exports = {
   getAutoPrefix,
   updateServiceCaseNumber,
@@ -3787,6 +4279,11 @@ module.exports = {
   selfAllocateServiceCases,
   updateServiceCaseQc,
   updateServiceCaseAudit,
+  // NEW (ROLLOVER)
+  listMyMissedCases,
+  // NEW: manager team-queries popup + day-end rollover
+  listTeamQueries,
+  rolloverAllOrgs,
   // MODIFIED: helpers exported for servicecasecountallocations.controller.js
   // (without these the count endpoints crashed with "undefined is not a function").
   getProduct,

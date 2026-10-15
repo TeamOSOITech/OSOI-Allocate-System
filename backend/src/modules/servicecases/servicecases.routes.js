@@ -33,6 +33,10 @@ const {
   selfAllocateServiceCases,
   updateServiceCaseQc,
   updateServiceCaseAudit,
+  // NEW (ROLLOVER)
+  listMyMissedCases,
+  // NEW: manager popup — open queries of my team (role-checked inside).
+  listTeamQueries,
 } = require("./servicecases.controller");
 
 // count-only allocation endpoints (Today's Allocation -> Counts)
@@ -112,6 +116,10 @@ router.post("/count-allocations/clear", allocPerm, clearCountAllocations);
 // Any logged-in employee; "me" is always req.user.userId inside the
 // handlers, so these can only ever touch the caller's own allocations.
 router.get("/my-counts", listMyCounts);
+// NEW (ROLLOVER): cases left pending at day end (read-only history).
+router.get("/my-missed", listMyMissedCases);
+// NEW: managers — open queries of their team + which are over 48h.
+router.get("/team-queries", listTeamQueries);
 router.post("/my-counts/self-allocate", selfAllocateCounts);
 router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
 
