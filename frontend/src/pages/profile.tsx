@@ -84,54 +84,6 @@ function scrollWithinPage(el: HTMLElement | null, offset = 12) {
     parent.scrollTo({ top, behavior: "smooth" });
 }
 
-// Self-contained live clock (re-renders only itself every second).
-function LiveClock({ compact = false }: { compact?: boolean }) {
-    const [now, setNow] = useState(() => new Date());
-    useEffect(() => {
-        const id = window.setInterval(() => setNow(new Date()), 1000);
-        return () => window.clearInterval(id);
-    }, []);
-
-    const hh = now.getHours();
-    const h12 = hh % 12 === 0 ? 12 : hh % 12;
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const time = `${pad(h12)}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-    const ampm = hh >= 12 ? "PM" : "AM";
-    const date = `${now.toLocaleDateString("en-GB", { weekday: "short" })}, ${now.getDate()} ${now.toLocaleDateString("en-GB", { month: "short" })} ${now.getFullYear()}`;
-
-    return (
-        <div
-            style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: compact ? "flex-start" : "flex-end",
-                gap: 4,
-                justifySelf: compact ? "flex-start" : "flex-end",
-            }}
-            aria-label="Current time"
-        >
-            <div
-                style={{
-                    background: "#fff",
-                    border: "1px solid #E6E9F3",
-                    borderRadius: 8,
-                    padding: "5px 11px",
-                    fontSize: 15,
-                    fontWeight: 500,
-                    color: "#17181C",
-                    fontVariantNumeric: "tabular-nums",
-                    whiteSpace: "nowrap",
-                    lineHeight: 1.2,
-                }}
-            >
-                {time}
-                <span style={{ fontSize: 11, marginLeft: 3 }}>{ampm}</span>
-            </div>
-            <div style={{ fontSize: 11, color: "#4A4F63", whiteSpace: "nowrap" }}>{date}</div>
-        </div>
-    );
-}
-
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
         typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
@@ -2587,8 +2539,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <p style={styles.aboutText}>{bio || "No bio added yet."}</p>
                             )}
                         </div>
-
-                        <LiveClock compact={isMobile} />
                     </div>
 
                     <div
@@ -6483,7 +6433,7 @@ function getStyles(
 
         identityGrid: {
             display: "grid",
-            gridTemplateColumns: "auto auto minmax(220px, 340px) 1fr",
+            gridTemplateColumns: "auto auto minmax(220px, 1fr)",
             columnGap: 40,
             alignItems: "center",
             flex: 1,
