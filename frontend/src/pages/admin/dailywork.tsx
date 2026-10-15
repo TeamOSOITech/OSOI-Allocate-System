@@ -174,13 +174,21 @@ export default function DailyWork() {
         [batches]
     );
 
-    const totalAllocated = useMemo(
-        () => batches.reduce((sum, b) => sum + (b.allocatedQty || 0), 0),
+    // FIX: the Allocated / Pending cards were summing EVERY batch ever
+    // logged (all past dates), so "Allocated" showed old totals even when
+    // nothing was allocated today. They now count only today's batches.
+    const todayOnlyBatches = useMemo(
+        () => batches.filter((b) => String(b.workDate).slice(0, 10) === todayStr()),
         [batches]
     );
+    // Total cases that came in today (sum of today's logged quantities).
+    const totalCasesToday = useMemo(
+        () => todayOnlyBatches.reduce((sum, b) => sum + (b.totalQty || 0), 0),
+        [todayOnlyBatches]
+    );
     const totalPending = useMemo(
-        () => batches.reduce((sum, b) => sum + (b.pendingQty || 0), 0),
-        [batches]
+        () => todayOnlyBatches.reduce((sum, b) => sum + (b.pendingQty || 0), 0),
+        [todayOnlyBatches]
     );
 
     const filteredBatches = useMemo(() => {
@@ -443,7 +451,7 @@ export default function DailyWork() {
                 <ServiceCases
                     kpi={{
                         services: products.length,
-                        allocated: totalAllocated,
+                        totalCases: totalCasesToday,
                         pending: totalPending,
                         employees: employeeCount,
                     }}
@@ -478,11 +486,11 @@ export default function DailyWork() {
                                 dotColor="var(--brand-blue)"
                             />
                             <KpiCard
-                                icon="ti ti-users"
+                                icon="ti ti-files"
                                 iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
-                                label="Allocated"
-                                value={totalAllocated}
-                                footer="Total Allocated"
+                                label="Total Cases"
+                                value={totalCasesToday}
+                                footer="Cases Today"
                                 dotColor="var(--brand-light-blue)"
                             />
                             <KpiCard
@@ -490,7 +498,7 @@ export default function DailyWork() {
                                 iconBg="linear-gradient(135deg, #34d399, #059669)"
                                 label="Pending"
                                 value={totalPending}
-                                footer="Total Pending"
+                                footer="Pending Today"
                                 dotColor="#059669"
                             />
                             <KpiCard

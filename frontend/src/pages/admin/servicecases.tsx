@@ -335,7 +335,7 @@ function KpiCard({
 // numbers, not separate Case-Register-only figures.
 type ServiceCasesKpi = {
     services: number;
-    allocated: number;
+    totalCases: number;
     pending: number;
     employees: number | null;
 };
@@ -703,6 +703,43 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // term, which can ask the backend for a page that no longer exists
     // once results are filtered down (a 416 "Requested range not
     // satisfiable" error) before the corrected page-1 fetch lands.
+    // Total cases that came in TODAY for the KPI card: every case row
+    // logged for today's date + count-only (Manual Count) cases still
+    // waiting for today. Re-fetched whenever the case list or count
+    // entries change (add / delete / allocate) so the card stays live.
+    const [todayCaseTotal, setTodayCaseTotal] = useState<number | null>(null);
+    // Pending = today's cases that are not allocated to anyone yet
+    // (+ count-only cases still waiting).
+    const [todayPendingTotal, setTodayPendingTotal] = useState<number | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const today = todayStr();
+                const base = `${API_BASE}/api/service-cases?workDate=${today}&page=1&pageSize=1`;
+                const [allRes, pendRes] = await Promise.all([
+                    authFetch(base),
+                    authFetch(`${base}&allocationStatus=PENDING`),
+                ]);
+                const [allJson, pendJson] = await Promise.all([allRes.json(), pendRes.json()]);
+                if (!allRes.ok || !allJson.success) return;
+                const countToday = countEntries
+                    .filter((c) => String(c.workDate).slice(0, 10) === today)
+                    .reduce((sum, c) => sum + Math.max(0, c.quantity - (c.fulfilledCount || 0)), 0);
+                if (cancelled) return;
+                setTodayCaseTotal(Number(allJson.pagination?.total ?? 0) + countToday);
+                if (pendRes.ok && pendJson.success) {
+                    setTodayPendingTotal(Number(pendJson.pagination?.total ?? 0) + countToday);
+                }
+            } catch {
+                /* keep the previous values */
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [cases, countEntries]);
+
     const [debouncedSearch, setDebouncedSearch] = useState("");
     useEffect(() => {
         const t = setTimeout(() => {
@@ -1298,11 +1335,11 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                         />
                         <KpiCard
                             styles={styles}
-                            icon="ti ti-users"
+                            icon="ti ti-files"
                             iconBg="linear-gradient(135deg, var(--brand-light-blue), var(--brand-blue))"
-                            label="Allocated"
-                            value={kpi.allocated}
-                            footer="Total Allocated"
+                            label="Total Cases"
+                            value={todayCaseTotal ?? kpi.totalCases}
+                            footer="Cases Today"
                             dotColor="var(--brand-light-blue)"
                         />
                         <KpiCard
@@ -1310,8 +1347,8 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                             icon="ti ti-check"
                             iconBg="linear-gradient(135deg, #34d399, #059669)"
                             label="Pending"
-                            value={kpi.pending}
-                            footer="Total Pending"
+                            value={todayPendingTotal ?? kpi.pending}
+                            footer="Not Allocated Yet"
                             dotColor="#059669"
                         />
                         <KpiCard

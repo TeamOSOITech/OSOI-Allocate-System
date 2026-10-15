@@ -2426,83 +2426,96 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                     </div>
 
-                    {!isViewingOther && (
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: isMobile ? "flex-start" : "flex-end",
+                            gap: 12,
+                            alignSelf: isMobile ? "flex-start" : "flex-end",
+                        }}
+                    >
+                        {!isViewingOther && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    alignSelf: isMobile ? "flex-start" : "flex-end",
+                                }}
+                            >
+                                {editingProfile && (
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.cancelEditBtn}
+                                        disabled={savingProfile}
+                                        onClick={cancelEditProfile}
+                                    >
+                                        Cancel
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    style={styles.editProfileBtn}
+                                    className="pf-btn pf-btn-outline"
+                                    disabled={savingProfile}
+                                    onClick={() =>
+                                        editingProfile
+                                            ? handleSaveProfile()
+                                            : setEditingProfile(true)
+                                    }
+                                >
+                                    {!editingProfile && <PencilIcon />}
+                                    {editingProfile
+                                        ? savingProfile
+                                            ? "Saving…"
+                                            : "Save"
+                                        : "Edit Profile"}
+                                </button>
+                            </div>
+                        )}
                         <div
                             style={{
                                 display: "flex",
+                                justifyContent: isMobile ? "flex-start" : "flex-end",
                                 alignItems: "center",
-                                gap: 10,
-                                alignSelf: isMobile ? "flex-start" : "center",
+                                gap: 8,
+                                marginTop: isMobile ? 0 : 22,
                             }}
                         >
-                            {editingProfile && (
-                                <button
-                                    type="button"
-                                    className="pf-btn pf-btn-outline"
-                                    style={styles.cancelEditBtn}
-                                    disabled={savingProfile}
-                                    onClick={cancelEditProfile}
-                                >
-                                    Cancel
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                style={styles.editProfileBtn}
-                                className="pf-btn pf-btn-outline"
-                                disabled={savingProfile}
-                                onClick={() =>
-                                    editingProfile ? handleSaveProfile() : setEditingProfile(true)
-                                }
+                            <span style={styles.smallMuted}>Show</span>
+                            <select
+                                value={statPeriod}
+                                onChange={(e) => {
+                                    setStatPeriod(e.target.value as "daily" | "monthly");
+                                    setOpenCard(null);
+                                }}
+                                aria-label="Stats period"
+                                style={{
+                                    height: 34,
+                                    padding: "0 30px 0 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid #e2e4f0",
+                                    background: "#fff",
+                                    color: "#17181C",
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    outline: "none",
+                                }}
                             >
-                                {!editingProfile && <PencilIcon />}
-                                {editingProfile
-                                    ? savingProfile
-                                        ? "Saving…"
-                                        : "Save"
-                                    : "Edit Profile"}
-                            </button>
+                                <option value="daily">Daily</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
                         </div>
-                    )}
+                    </div>
                 </div>
 
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
             </div>
 
             {/* ---- Stats (click a card -> its cases table opens below) ---- */}
-            <div
-                style={{
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    alignItems: "center",
-                    gap: 8,
-                }}
-            >
-                <span style={styles.smallMuted}>Show</span>
-                <select
-                    value={statPeriod}
-                    onChange={(e) => {
-                        setStatPeriod(e.target.value as "daily" | "monthly");
-                        setOpenCard(null);
-                    }}
-                    aria-label="Stats period"
-                    style={{
-                        height: 34,
-                        padding: "0 30px 0 12px",
-                        borderRadius: 8,
-                        border: "1px solid #e2e4f0",
-                        background: "#fff",
-                        color: "#17181C",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        outline: "none",
-                    }}
-                >
-                    <option value="daily">Daily</option>
-                    <option value="monthly">Monthly</option>
-                </select>
-            </div>
             <div style={isMobile ? styles.statsGridMobile : styles.statsGrid}>
                 <StatCard
                     icon={<BoxIcon />}
@@ -2608,8 +2621,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                             done: stats.submittedCount,
                             doneLabel: "submitted",
                             rows: [
-                                ["With case number", stats.total, BRAND.blue],
-                                ["Waiting for case no.", stats.waitingToday, BRAND.amber],
+                                ["With case no.", stats.total, BRAND.blue],
+                                ["Waiting", stats.waitingToday, BRAND.amber],
                                 ["Submitted", stats.submittedCount, BRAND.green],
                                 ["Pending", stats.pendingCount, BRAND.amber],
                             ] as [string, number | string, string][],
@@ -2624,8 +2637,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                             done: pastSummary.submitted,
                             doneLabel: "submitted",
                             rows: [
-                                ["With case number", pastSummary.withNo, BRAND.blue],
-                                ["Waiting for case no.", pastSummary.waiting, BRAND.amber],
+                                ["With case no.", pastSummary.withNo, BRAND.blue],
+                                ["Waiting", pastSummary.waiting, BRAND.amber],
                                 ["Submitted", pastSummary.submitted, BRAND.green],
                                 ["Pending", pastSummary.pending, BRAND.amber],
                             ] as [string, number | string, string][],
@@ -2646,185 +2659,231 @@ export default function Profile({ onLogout }: ProfileProps) {
                             active: showQueryModal,
                             onClick: openQueryModal,
                         },
-                    ].map((c) => (
-                        <div
-                            key={c.key}
-                            className={
-                                c.key === "today" ? "pf-card-hover pf-today-card" : "pf-card-hover"
-                            }
-                            style={{
-                                ...styles.caseCard,
-                                padding: "14px 16px",
-                                gap: 10,
-                                borderRadius: 14,
-                                border:
-                                    c.key === "today"
-                                        ? "1px solid rgba(var(--brand-green-rgb),0.35)"
-                                        : "1px solid #eef0f6",
-                                borderLeft:
-                                    c.key === "today"
-                                        ? "1px solid rgba(var(--brand-green-rgb),0.35)"
-                                        : "1px solid #eef0f6",
-                                borderTop:
-                                    c.key === "today"
-                                        ? `3px solid ${BRAND.green}`
-                                        : "1px solid #eef0f6",
-                            }}
-                        >
-                            {/* header: icon + title (+ LIVE) ........ total */}
-                            <div style={{ ...styles.caseCardTop, alignItems: "center" }}>
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 10,
-                                        minWidth: 0,
-                                    }}
-                                >
-                                    <span
-                                        style={{
-                                            color: c.key === "today" ? BRAND.green : BRAND.blue,
-                                            display: "inline-flex",
-                                        }}
-                                    >
-                                        {c.key === "today" ? (
-                                            <CalendarIcon />
-                                        ) : c.key === "past" ? (
-                                            <ClockIcon />
-                                        ) : (
-                                            <ChatIcon />
-                                        )}
-                                    </span>
-                                    <span
-                                        style={{
-                                            fontSize: 15,
-                                            fontWeight: 700,
-                                            color: "#17181C",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
-                                        {c.title}
-                                    </span>
-                                    {c.key === "today" && (
-                                        <span
-                                            style={{
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 5,
-                                                padding: "2px 9px",
-                                                borderRadius: 999,
-                                                background: "rgba(var(--brand-green-rgb),0.12)",
-                                                color: BRAND.green,
-                                                fontSize: 10,
-                                                fontWeight: 700,
-                                                letterSpacing: "0.05em",
-                                            }}
-                                        >
-                                            <span
-                                                className="pf-today-dot"
-                                                style={{
-                                                    width: 6,
-                                                    height: 6,
-                                                    borderRadius: "50%",
-                                                    background: BRAND.green,
-                                                }}
-                                            />
-                                            LIVE
-                                        </span>
-                                    )}
-                                </div>
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "baseline",
-                                        gap: 6,
-                                        flexShrink: 0,
-                                    }}
-                                >
-                                    <span style={{ ...styles.caseTotalNum, fontSize: 26 }}>
-                                        {c.total}
-                                    </span>
-                                    <span style={styles.smallMuted}>{c.totalLabel}</span>
-                                </div>
-                            </div>
-
-                            {/* progress + % */}
-                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                <div style={{ ...styles.caseBarTrack, flex: 1 }}>
-                                    <div
-                                        style={{
-                                            ...styles.caseBarFill,
-                                            width: `${c.total > 0 ? Math.round((c.done / c.total) * 100) : 0}%`,
-                                        }}
-                                    />
-                                </div>
-                                <span
-                                    style={{
-                                        ...styles.smallMuted,
-                                        whiteSpace: "nowrap",
-                                        fontWeight: 600,
-                                    }}
-                                >
-                                    {c.total > 0 ? Math.round((c.done / c.total) * 100) : 0}%{" "}
-                                    {c.doneLabel}
-                                </span>
-                            </div>
-
-                            {/* stat tiles (2 x 2) */}
+                    ].map((c) => {
+                        const accent =
+                            c.key === "today"
+                                ? BRAND.green
+                                : c.key === "past"
+                                  ? BRAND.blue
+                                  : BRAND.amber;
+                        const pct = c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
+                        const isActive = c.active && c.key !== "query";
+                        return (
                             <div
+                                key={c.key}
+                                className={
+                                    c.key === "today"
+                                        ? "pf-card-hover pf-today-card"
+                                        : "pf-card-hover"
+                                }
                                 style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "1fr 1fr",
-                                    gap: 8,
+                                    ...styles.caseCard,
+                                    padding: "12px 14px 12px",
+                                    gap: 9,
+                                    borderRadius: 16,
+                                    border: `1px solid ${withAlpha(accent, 0.18)}`,
+                                    borderTop: `3px solid ${accent}`,
+                                    background: `linear-gradient(180deg, ${withAlpha(accent, 0.07)} 0%, #fff 55%)`,
+                                    boxShadow: `0 4px 14px ${withAlpha(accent, 0.1)}`,
                                 }}
                             >
-                                {c.rows.map(([label, value, color]) => (
+                                {/* header: icon + title (+ LIVE) ........ total */}
+                                <div style={{ ...styles.caseCardTop, alignItems: "center" }}>
                                     <div
-                                        key={label}
                                         style={{
                                             display: "flex",
-                                            flexDirection: "column",
-                                            gap: 2,
-                                            padding: "8px 12px",
-                                            borderRadius: 10,
-                                            background: "#F7F9FE",
-                                            borderLeft: `3px solid ${color}`,
+                                            alignItems: "center",
+                                            gap: 9,
                                             minWidth: 0,
                                         }}
                                     >
-                                        <span style={{ fontSize: 12, color: "#5B6479" }}>
-                                            {label}
+                                        <span
+                                            style={{
+                                                width: 30,
+                                                height: 30,
+                                                borderRadius: 9,
+                                                background: withAlpha(accent, 0.14),
+                                                color: accent,
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                flexShrink: 0,
+                                            }}
+                                        >
+                                            {c.key === "today" ? (
+                                                <CalendarIcon />
+                                            ) : c.key === "past" ? (
+                                                <ClockIcon />
+                                            ) : (
+                                                <ChatIcon />
+                                            )}
                                         </span>
-                                        <strong style={{ fontSize: 20, lineHeight: 1.15, color }}>
-                                            {value}
-                                        </strong>
+                                        <span
+                                            style={{
+                                                fontSize: 14,
+                                                fontWeight: 700,
+                                                color: "#17181C",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            {c.title}
+                                        </span>
+                                        {c.key === "today" && (
+                                            <span
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: 5,
+                                                    padding: "2px 8px",
+                                                    borderRadius: 999,
+                                                    background: withAlpha(BRAND.green, 0.14),
+                                                    color: BRAND.green,
+                                                    fontSize: 9.5,
+                                                    fontWeight: 700,
+                                                    letterSpacing: "0.06em",
+                                                }}
+                                            >
+                                                <span
+                                                    className="pf-today-dot"
+                                                    style={{
+                                                        width: 5,
+                                                        height: 5,
+                                                        borderRadius: "50%",
+                                                        background: BRAND.green,
+                                                    }}
+                                                />
+                                                LIVE
+                                            </span>
+                                        )}
                                     </div>
-                                ))}
-                            </div>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "baseline",
+                                            gap: 5,
+                                            flexShrink: 0,
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                ...styles.caseTotalNum,
+                                                fontSize: 24,
+                                                color: accent,
+                                            }}
+                                        >
+                                            {c.total}
+                                        </span>
+                                        <span style={{ ...styles.smallMuted, fontSize: 11 }}>
+                                            {c.totalLabel}
+                                        </span>
+                                    </div>
+                                </div>
 
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={{
-                                    ...styles.caseViewBtn,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    gap: 8,
-                                    padding: "8px 12px",
-                                    fontSize: 13,
-                                    borderRadius: 10,
-                                    ...(c.active && c.key !== "query"
-                                        ? { background: BRAND.blue, color: "#fff" }
-                                        : {}),
-                                }}
-                                onClick={c.onClick}
-                            >
-                                {c.active && c.key !== "query" ? "Hide Details" : "View Details"}
-                                <ArrowRightIcon />
-                            </button>
-                        </div>
-                    ))}
+                                {/* progress + % */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                    <div
+                                        style={{
+                                            ...styles.caseBarTrack,
+                                            flex: 1,
+                                            height: 5,
+                                            background: withAlpha(accent, 0.15),
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                ...styles.caseBarFill,
+                                                width: `${pct}%`,
+                                                background: accent,
+                                            }}
+                                        />
+                                    </div>
+                                    <span
+                                        style={{
+                                            ...styles.smallMuted,
+                                            fontSize: 11,
+                                            whiteSpace: "nowrap",
+                                            fontWeight: 600,
+                                        }}
+                                    >
+                                        {pct}% {c.doneLabel}
+                                    </span>
+                                </div>
+
+                                {/* stat tiles: one compact row (2 x 2 on phones) */}
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gridTemplateColumns: isMobile
+                                            ? "1fr 1fr"
+                                            : `repeat(${c.rows.length}, 1fr)`,
+                                        gap: 7,
+                                    }}
+                                >
+                                    {c.rows.map(([label, value, color]) => (
+                                        <div
+                                            key={label}
+                                            style={{
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: 1,
+                                                padding: "6px 10px",
+                                                borderRadius: 10,
+                                                background: withAlpha(color, 0.09),
+                                                minWidth: 0,
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    fontSize: 11,
+                                                    color: "#5B6479",
+                                                    whiteSpace: "nowrap",
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                }}
+                                            >
+                                                {label}
+                                            </span>
+                                            <strong
+                                                style={{
+                                                    fontSize: 18,
+                                                    lineHeight: 1.15,
+                                                    color,
+                                                }}
+                                            >
+                                                {value}
+                                            </strong>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    className="pf-btn pf-btn-outline"
+                                    style={{
+                                        ...styles.caseViewBtn,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        padding: "6px 12px",
+                                        fontSize: 12.5,
+                                        borderRadius: 999,
+                                        border: "none",
+                                        background: isActive ? BRAND.blue : withAlpha(accent, 0.1),
+                                        color: isActive
+                                            ? "#fff"
+                                            : accent === BRAND.amber
+                                              ? "#B26B00"
+                                              : accent,
+                                    }}
+                                    onClick={c.onClick}
+                                >
+                                    {isActive ? "Hide Details" : "View Details"}
+                                    <ArrowRightIcon />
+                                </button>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
 
