@@ -84,6 +84,9 @@ function toClientResponse(client, subclientsCount, products) {
     secondaryContactName: client.secondary_contact_name,
     secondaryContactEmail: client.secondary_contact_email,
     secondaryContactPhone: client.secondary_contact_phone,
+    thirdContactName: client.third_contact_name ?? null,
+    thirdContactEmail: client.third_contact_email ?? null,
+    thirdContactPhone: client.third_contact_phone ?? null,
   };
 }
 
@@ -116,6 +119,9 @@ function fromClientBody(body) {
     secondaryContactName,
     secondaryContactEmail,
     secondaryContactPhone,
+    thirdContactName,
+    thirdContactEmail,
+    thirdContactPhone,
   } = body;
 
   return {
@@ -131,6 +137,10 @@ function fromClientBody(body) {
     secondary_contact_name: secondaryContactName || null,
     secondary_contact_email: secondaryContactEmail || null,
     secondary_contact_phone: secondaryContactPhone || null,
+    // 3rd contact: manual add/edit only (not part of Excel upload/export)
+    third_contact_name: thirdContactName || null,
+    third_contact_email: thirdContactEmail || null,
+    third_contact_phone: thirdContactPhone || null,
   };
   // NOTE: organization_id is intentionally NOT read from the body
   // anywhere in this file — it always comes from req.user.organizationId,
@@ -188,6 +198,9 @@ async function attachPendingClientApprovals(formattedClients, organizationId) {
     secondaryContactName: req.payload?.secondaryContactName || null,
     secondaryContactEmail: req.payload?.secondaryContactEmail || null,
     secondaryContactPhone: req.payload?.secondaryContactPhone || null,
+    thirdContactName: req.payload?.thirdContactName || null,
+    thirdContactEmail: req.payload?.thirdContactEmail || null,
+    thirdContactPhone: req.payload?.thirdContactPhone || null,
     approvalStatus: "PENDING_CREATE",
     approvalRequestId: req.id,
   }));

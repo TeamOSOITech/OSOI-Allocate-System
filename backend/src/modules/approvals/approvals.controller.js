@@ -325,6 +325,9 @@ function contactFieldsFromPayload(body) {
     secondary_contact_name: body.secondaryContactName || null,
     secondary_contact_email: body.secondaryContactEmail || null,
     secondary_contact_phone: body.secondaryContactPhone || null,
+    third_contact_name: body.thirdContactName || null,
+    third_contact_email: body.thirdContactEmail || null,
+    third_contact_phone: body.thirdContactPhone || null,
   };
 }
 

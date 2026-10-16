@@ -90,12 +90,25 @@ const CONTACT_FIELD_MAP = [
   },
 ];
 
+// 3rd (additional) contact — manual Add/Edit only. Kept OUT of
+// CONTACT_FIELD_MAP on purpose, because that map also drives the Excel
+// template / bulk upload and the 3rd contact must not appear there.
+const EXTRA_CONTACT_FIELD_MAP = [
+  { db: "third_contact_name", api: "thirdContactName" },
+  { db: "third_contact_email", api: "thirdContactEmail" },
+  { db: "third_contact_phone", api: "thirdContactPhone" },
+];
+
 // Builds the { db_column: value } object used for Supabase insert/update,
 // pulling from a camelCase request body. Missing/empty values become null
 // rather than being omitted, so clearing a field in Edit actually clears it.
 function toDbContactFields(body) {
   const out = {};
   for (const f of CONTACT_FIELD_MAP) {
+    const val = body[f.api];
+    out[f.db] = val === undefined || val === "" ? null : val;
+  }
+  for (const f of EXTRA_CONTACT_FIELD_MAP) {
     const val = body[f.api];
     out[f.db] = val === undefined || val === "" ? null : val;
   }
@@ -106,6 +119,9 @@ function toDbContactFields(body) {
 function toApiContactFields(row) {
   const out = {};
   for (const f of CONTACT_FIELD_MAP) {
+    out[f.api] = row[f.db] ?? null;
+  }
+  for (const f of EXTRA_CONTACT_FIELD_MAP) {
     out[f.api] = row[f.db] ?? null;
   }
   return out;
