@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
@@ -122,6 +122,12 @@ type Client = {
     thirdContactName?: string | null;
     thirdContactEmail?: string | null;
     thirdContactPhone?: string | null;
+    fourthContactName?: string | null;
+    fourthContactEmail?: string | null;
+    fourthContactPhone?: string | null;
+    fifthContactName?: string | null;
+    fifthContactEmail?: string | null;
+    fifthContactPhone?: string | null;
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
     approvalStatus?: "PENDING_CREATE" | "PENDING_UPDATE" | "PENDING_DELETE";
@@ -158,6 +164,12 @@ type SubclientRow = {
     thirdContactName?: string | null;
     thirdContactEmail?: string | null;
     thirdContactPhone?: string | null;
+    fourthContactName?: string | null;
+    fourthContactEmail?: string | null;
+    fourthContactPhone?: string | null;
+    fifthContactName?: string | null;
+    fifthContactEmail?: string | null;
+    fifthContactPhone?: string | null;
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
 };
@@ -378,6 +390,15 @@ export default function Clients() {
         thirdContactEmail: "",
         thirdContactPhone: "",
         thirdContactOpen: false,
+        // 4th and 5th additional contacts (same UI-only *Open flags).
+        fourthContactName: "",
+        fourthContactEmail: "",
+        fourthContactPhone: "",
+        fourthContactOpen: false,
+        fifthContactName: "",
+        fifthContactEmail: "",
+        fifthContactPhone: "",
+        fifthContactOpen: false,
         // Single currency ("Unit") for the whole client/subclient —
         // defaults from Country but can be manually overridden.
         currency: "USD",
@@ -651,6 +672,12 @@ export default function Clients() {
                 thirdContactName: addForm.thirdContactName || null,
                 thirdContactEmail: addForm.thirdContactEmail || null,
                 thirdContactPhone: addForm.thirdContactPhone || null,
+                fourthContactName: addForm.fourthContactName || null,
+                fourthContactEmail: addForm.fourthContactEmail || null,
+                fourthContactPhone: addForm.fourthContactPhone || null,
+                fifthContactName: addForm.fifthContactName || null,
+                fifthContactEmail: addForm.fifthContactEmail || null,
+                fifthContactPhone: addForm.fifthContactPhone || null,
                 productRates: addForm.productRates,
             };
 
@@ -717,6 +744,22 @@ export default function Clients() {
             data.thirdContactName ||
             data.thirdContactEmail ||
             data.thirdContactPhone
+        ),
+        fourthContactName: data.fourthContactName || "",
+        fourthContactEmail: data.fourthContactEmail || "",
+        fourthContactPhone: data.fourthContactPhone || "",
+        fourthContactOpen: !!(
+            data.fourthContactName ||
+            data.fourthContactEmail ||
+            data.fourthContactPhone
+        ),
+        fifthContactName: data.fifthContactName || "",
+        fifthContactEmail: data.fifthContactEmail || "",
+        fifthContactPhone: data.fifthContactPhone || "",
+        fifthContactOpen: !!(
+            data.fifthContactName ||
+            data.fifthContactEmail ||
+            data.fifthContactPhone
         ),
         currency:
             (data.productRates && data.productRates[0]?.currency) ||
@@ -785,6 +828,12 @@ export default function Clients() {
                 thirdContactName: editForm.thirdContactName || null,
                 thirdContactEmail: editForm.thirdContactEmail || null,
                 thirdContactPhone: editForm.thirdContactPhone || null,
+                fourthContactName: editForm.fourthContactName || null,
+                fourthContactEmail: editForm.fourthContactEmail || null,
+                fourthContactPhone: editForm.fourthContactPhone || null,
+                fifthContactName: editForm.fifthContactName || null,
+                fifthContactEmail: editForm.fifthContactEmail || null,
+                fifthContactPhone: editForm.fifthContactPhone || null,
                 productRates: editForm.productRates,
             };
 
@@ -1389,105 +1438,114 @@ export default function Clients() {
                 />
             </div>
 
-            {/* Additional (3rd) contact — up to 3 contacts in total. Only in
-                the manual Add / Edit form; Excel upload & export are unchanged. */}
-            {formState.thirdContactOpen ? (
-                <>
-                    <div
-                        style={{
-                            ...styles.formSectionLabel,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                        }}
-                    >
-                        <span>Additional Contact Person</span>
+            {/* Additional contacts (3rd, 4th, 5th) — up to 5 contacts in total
+                (Primary + Finance + 3 more). Only in the manual Add / Edit
+                form; Excel upload & export are unchanged. */}
+            {(["third", "fourth", "fifth"] as const).map((slot, idx) => {
+                const fs = formState as any;
+                if (!fs[`${slot}ContactOpen`]) return null;
+                const setSlot = (patch: Record<string, any>) =>
+                    setFormState((prev) => ({ ...prev, ...patch }));
+                return (
+                    <Fragment key={slot}>
+                        <div
+                            style={{
+                                ...styles.formSectionLabel,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                            }}
+                        >
+                            <span>Additional Contact Person {idx + 1}</span>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setSlot({
+                                        [`${slot}ContactName`]: "",
+                                        [`${slot}ContactEmail`]: "",
+                                        [`${slot}ContactPhone`]: "",
+                                        [`${slot}ContactOpen`]: false,
+                                    })
+                                }
+                                style={{
+                                    background: "none",
+                                    border: "none",
+                                    color: "#dc2626",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                }}
+                            >
+                                Remove
+                            </button>
+                        </div>
+                        <div>
+                            <label style={styles.formLabel}>Name</label>
+                            <input
+                                style={styles.formInput}
+                                value={fs[`${slot}ContactName`]}
+                                onChange={(e) =>
+                                    setSlot({ [`${slot}ContactName`]: e.target.value })
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label style={styles.formLabel}>Email</label>
+                            <input
+                                style={styles.formInput}
+                                type="email"
+                                value={fs[`${slot}ContactEmail`]}
+                                onChange={(e) =>
+                                    setSlot({ [`${slot}ContactEmail`]: e.target.value })
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label style={styles.formLabel}>Phone Number</label>
+                            <input
+                                style={styles.formInput}
+                                value={fs[`${slot}ContactPhone`]}
+                                onChange={(e) =>
+                                    setSlot({ [`${slot}ContactPhone`]: e.target.value })
+                                }
+                            />
+                        </div>
+                    </Fragment>
+                );
+            })}
+
+            {(() => {
+                const fs = formState as any;
+                const slots = ["third", "fourth", "fifth"] as const;
+                const nextSlot = slots.find((sl) => !fs[`${sl}ContactOpen`]);
+                if (!nextSlot) return null; // all 5 contacts added
+                const added = 2 + slots.filter((sl) => fs[`${sl}ContactOpen`]).length;
+                return (
+                    <div style={{ gridColumn: "1 / -1" }}>
                         <button
                             type="button"
                             onClick={() =>
                                 setFormState((prev) => ({
                                     ...prev,
-                                    thirdContactName: "",
-                                    thirdContactEmail: "",
-                                    thirdContactPhone: "",
-                                    thirdContactOpen: false,
+                                    [`${nextSlot}ContactOpen`]: true,
                                 }))
                             }
                             style={{
                                 background: "none",
-                                border: "none",
-                                color: "#dc2626",
-                                fontSize: 12,
+                                border: "1px dashed #94a3b8",
+                                borderRadius: 8,
+                                padding: "8px 14px",
+                                fontSize: 13,
                                 fontWeight: 600,
+                                color: "#334155",
                                 cursor: "pointer",
                             }}
                         >
-                            Remove
+                            + Add another contact person ({added} of 5 added)
                         </button>
                     </div>
-                    <div>
-                        <label style={styles.formLabel}>Name</label>
-                        <input
-                            style={styles.formInput}
-                            value={formState.thirdContactName}
-                            onChange={(e) =>
-                                setFormState((prev) => ({
-                                    ...prev,
-                                    thirdContactName: e.target.value,
-                                }))
-                            }
-                        />
-                    </div>
-                    <div>
-                        <label style={styles.formLabel}>Email</label>
-                        <input
-                            style={styles.formInput}
-                            type="email"
-                            value={formState.thirdContactEmail}
-                            onChange={(e) =>
-                                setFormState((prev) => ({
-                                    ...prev,
-                                    thirdContactEmail: e.target.value,
-                                }))
-                            }
-                        />
-                    </div>
-                    <div>
-                        <label style={styles.formLabel}>Phone Number</label>
-                        <input
-                            style={styles.formInput}
-                            value={formState.thirdContactPhone}
-                            onChange={(e) =>
-                                setFormState((prev) => ({
-                                    ...prev,
-                                    thirdContactPhone: e.target.value,
-                                }))
-                            }
-                        />
-                    </div>
-                </>
-            ) : (
-                <div style={{ gridColumn: "1 / -1" }}>
-                    <button
-                        type="button"
-                        onClick={() =>
-                            setFormState((prev) => ({ ...prev, thirdContactOpen: true }))
-                        }
-                        style={{
-                            background: "none",
-                            border: "1px dashed #94a3b8",
-                            borderRadius: 8,
-                            padding: "8px 14px",
-                            fontSize: 13,
-                            fontWeight: 600,
-                            color: "#334155",
-                            cursor: "pointer",
-                        }}
-                    >
-                        + Add another contact person (2 of 3 added)
-                    </button>
-                </div>
-            )}
+                );
+            })()}
         </>
     );
 
@@ -2598,31 +2656,32 @@ export default function Clients() {
                                 </span>
                             </div>
 
-                            {(viewDetails.data.thirdContactName ||
-                                viewDetails.data.thirdContactEmail ||
-                                viewDetails.data.thirdContactPhone) && (
-                                <>
-                                    <div style={styles.detailsSectionLabel}>Additional Contact</div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Name</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.thirdContactName || "—"}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Email</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.thirdContactEmail || "—"}
-                                        </span>
-                                    </div>
-                                    <div style={styles.detailsRow}>
-                                        <span style={styles.detailsLabel}>Phone</span>
-                                        <span style={styles.detailsValue}>
-                                            {viewDetails.data.thirdContactPhone || "—"}
-                                        </span>
-                                    </div>
-                                </>
-                            )}
+                            {(["third", "fourth", "fifth"] as const).map((slot, idx) => {
+                                const d = viewDetails.data as any;
+                                const n = d[`${slot}ContactName`];
+                                const em = d[`${slot}ContactEmail`];
+                                const ph = d[`${slot}ContactPhone`];
+                                if (!n && !em && !ph) return null;
+                                return (
+                                    <Fragment key={slot}>
+                                        <div style={styles.detailsSectionLabel}>
+                                            Additional Contact {idx + 1}
+                                        </div>
+                                        <div style={styles.detailsRow}>
+                                            <span style={styles.detailsLabel}>Name</span>
+                                            <span style={styles.detailsValue}>{n || "—"}</span>
+                                        </div>
+                                        <div style={styles.detailsRow}>
+                                            <span style={styles.detailsLabel}>Email</span>
+                                            <span style={styles.detailsValue}>{em || "—"}</span>
+                                        </div>
+                                        <div style={styles.detailsRow}>
+                                            <span style={styles.detailsLabel}>Phone</span>
+                                            <span style={styles.detailsValue}>{ph || "—"}</span>
+                                        </div>
+                                    </Fragment>
+                                );
+                            })}
 
                             <div style={styles.detailsModalFooter}>
                                 {/* Edit/Delete only for roles that can manage, and not

@@ -58,6 +58,7 @@ const td = {
     fontSize: fontSize.base,
     color: "#2b2a3a",
     borderBottom: "1px solid #EEF1F8",
+    textAlign: "left",
 } as const;
 const dateInput = {
     padding: "8px 12px",
@@ -67,6 +68,79 @@ const dateInput = {
     fontFamily: fontFamily.base,
     background: "#fff",
 } as const;
+
+// Stat-card icons + colours (Tabler icon font, same as the rest of the app)
+const STAT_STYLE: Record<string, { icon: string; bg: string; fg: string }> = {
+    "Total cases": { icon: "ti-file-text", bg: "#E4EEFB", fg: "#3B6FD4" },
+    Received: { icon: "ti-mail", bg: "#DDF5EA", fg: "#0E9F6E" },
+    "In Progress": { icon: "ti-clock", bg: "#EEE5FB", fg: "#7C3AED" },
+    Submitted: { icon: "ti-send", bg: "#FFEBD9", fg: "#F97316" },
+    "Under Review": { icon: "ti-shield-check", bg: "#D9F3F7", fg: "#0891B2" },
+    Completed: { icon: "ti-check", bg: "#F1E3FA", fg: "#A21CAF" },
+};
+const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
+    Received: { bg: "#DDF5EA", fg: "#0E9F6E" },
+    "In Progress": { bg: "#EEE5FB", fg: "#7C3AED" },
+    Submitted: { bg: "#FFEBD9", fg: "#C2570C" },
+    "Under Review": { bg: "#D9F3F7", fg: "#0E7490" },
+    Completed: { bg: "#F1E3FA", fg: "#86198F" },
+};
+
+const StatCard = ({ label, value }: { label: string; value: number }) => {
+    const st = STAT_STYLE[label];
+    return (
+        <div
+            style={{
+                ...card,
+                padding: "16px 18px",
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                boxShadow: "0 1px 3px rgba(23,24,28,0.04)",
+            }}
+        >
+            <span
+                style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: "50%",
+                    background: st.bg,
+                    color: st.fg,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 20,
+                    flexShrink: 0,
+                }}
+            >
+                <i className={`ti ${st.icon}`} aria-hidden="true" />
+            </span>
+            <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: fontSize.sm, color: "#55607A" }}>{label}</div>
+                <div style={{ fontSize: 26, fontWeight: fontWeight.semibold, lineHeight: 1.15 }}>
+                    {value}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const CardTitle = ({ icon, children }: { icon: string; children: string }) => (
+    <div
+        style={{
+            padding: "14px 18px",
+            fontWeight: fontWeight.semibold,
+            borderBottom: "1px solid #E7EBF5",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            textAlign: "left",
+        }}
+    >
+        <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 20, color: "#3B4AB8" }} />
+        {children}
+    </div>
+);
 
 const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
     const now = new Date();
@@ -134,7 +208,7 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
     };
 
     return (
-        <div>
+        <div style={{ textAlign: "left" }}>
             <div
                 style={{
                     display: "flex",
@@ -222,24 +296,14 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                             marginBottom: 16,
                         }}
                     >
-                        <div style={{ ...card, padding: "14px 16px" }}>
-                            <div style={{ fontSize: fontSize.sm, color: "#6b6280" }}>
-                                Total cases
-                            </div>
-                            <div style={{ fontSize: 26, fontWeight: fontWeight.semibold }}>
-                                {data.summary.total}
-                            </div>
-                        </div>
+                        <StatCard label="Total cases" value={data.summary.total} />
                         {["Received", "In Progress", "Submitted", "Under Review", "Completed"].map(
-                            (s) => (
-                                <div key={s} style={{ ...card, padding: "14px 16px" }}>
-                                    <div style={{ fontSize: fontSize.sm, color: "#6b6280" }}>
-                                        {s}
-                                    </div>
-                                    <div style={{ fontSize: 26, fontWeight: fontWeight.semibold }}>
-                                        {data.summary.byStatus[s] || 0}
-                                    </div>
-                                </div>
+                            (st) => (
+                                <StatCard
+                                    key={st}
+                                    label={st}
+                                    value={data.summary.byStatus[st] || 0}
+                                />
                             )
                         )}
                     </div>
@@ -269,15 +333,7 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                         }}
                     >
                         <div style={{ ...card, overflow: "hidden" }}>
-                            <div
-                                style={{
-                                    padding: "12px 16px",
-                                    fontWeight: fontWeight.semibold,
-                                    borderBottom: "1px solid #E7EBF5",
-                                }}
-                            >
-                                By service
-                            </div>
+                            <CardTitle icon="ti-layout-grid">By service</CardTitle>
                             <table style={{ width: "100%", borderCollapse: "collapse" }}>
                                 <thead>
                                     <tr>
@@ -305,15 +361,7 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                             </table>
                         </div>
                         <div style={{ ...card, overflow: "hidden" }}>
-                            <div
-                                style={{
-                                    padding: "12px 16px",
-                                    fontWeight: fontWeight.semibold,
-                                    borderBottom: "1px solid #E7EBF5",
-                                }}
-                            >
-                                By day
-                            </div>
+                            <CardTitle icon="ti-calendar">By day</CardTitle>
                             <div style={{ maxHeight: 260, overflowY: "auto" }}>
                                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                                     <thead>
@@ -345,15 +393,7 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                     </div>
 
                     <div style={{ ...card, overflow: "hidden" }}>
-                        <div
-                            style={{
-                                padding: "12px 16px",
-                                fontWeight: fontWeight.semibold,
-                                borderBottom: "1px solid #E7EBF5",
-                            }}
-                        >
-                            Cases
-                        </div>
+                        <CardTitle icon="ti-file-text">Cases</CardTitle>
                         {data.cases.length === 0 ? (
                             <div style={{ padding: 32, textAlign: "center", color: "#8a8fa3" }}>
                                 No cases in this date range.
@@ -384,7 +424,29 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                                                 <td style={td}>{c.service}</td>
                                                 <td style={td}>{c.subclient || "—"}</td>
                                                 <td style={td}>{fmt(c.workDate)}</td>
-                                                <td style={td}>{c.status}</td>
+                                                <td style={td}>
+                                                    <span
+                                                        style={{
+                                                            display: "inline-block",
+                                                            padding: "3px 12px",
+                                                            borderRadius: 999,
+                                                            fontSize: fontSize.sm,
+                                                            fontWeight: fontWeight.semibold,
+                                                            background: (
+                                                                STATUS_PILL[c.status] || {
+                                                                    bg: "#EEF1F6",
+                                                                }
+                                                            ).bg,
+                                                            color: (
+                                                                STATUS_PILL[c.status] || {
+                                                                    fg: "#55607A",
+                                                                }
+                                                            ).fg,
+                                                        }}
+                                                    >
+                                                        {c.status}
+                                                    </span>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>

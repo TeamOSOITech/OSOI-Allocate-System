@@ -132,6 +132,11 @@ const SharedWithMe = () => {
                                         cursor: "pointer",
                                     }}
                                 >
+                                    <i
+                                        className="ti ti-file-text"
+                                        aria-hidden="true"
+                                        style={{ marginRight: 8 }}
+                                    />
                                     {p.label}
                                     {p.clientName ? ` — ${p.clientName}` : ""}
                                 </button>
