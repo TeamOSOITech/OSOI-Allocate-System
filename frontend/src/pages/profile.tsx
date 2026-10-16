@@ -1246,6 +1246,10 @@ export default function Profile({ onLogout }: ProfileProps) {
             total,
             submittedCount,
             pendingCount,
+            // Pending shown on the cards = cases not submitted + counts
+            // still waiting for a case number (pendingCount alone is kept
+            // for Bulk Submit, which can only submit real cases)
+            pendingTotal: pendingCount + waitingToday,
             allocatedMins,
             utilisedMins,
             waitingToday,
@@ -1300,7 +1304,8 @@ export default function Profile({ onLogout }: ProfileProps) {
             withNo: monthCases.length,
             waiting,
             submittedCount: submittedList.length,
-            pendingCount: monthCases.length - submittedList.length,
+            pendingCount: monthCases.length - submittedList.length + waiting,
+            pendingCases: monthCases.length - submittedList.length,
             allocatedMins,
             utilisedMins,
             monthName: new Date().toLocaleString("en-US", { month: "long" }),
@@ -2133,7 +2138,11 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
         setOpenCard(k);
         setActiveTab("today");
-        setAllocView("cases");
+        setAllocView(
+            k === "pending" && stats.pendingCount === 0 && stats.waitingToday > 0
+                ? "counts"
+                : "cases"
+        );
         setStatusFilter(k === "submitted" ? "SUBMITTED" : k === "pending" ? "PENDING" : "all");
         setDateFilter("");
         setProductFilter("all");
@@ -2661,7 +2670,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                     tint={BRAND.amber}
                     value={topStats.pendingCount}
                     label="Pending"
-                    sub={`${periodLabel} · awaiting submission`}
+                    sub={
+                        topStats.waiting > 0
+                            ? `${topStats.pendingCases} cases · ${topStats.waiting} waiting for case no.`
+                            : `${periodLabel} · awaiting submission`
+                    }
                     active={isDaily && openCard === "pending" && activeTab === "today"}
                     onClick={isDaily ? () => openStatCard("pending") : undefined}
                     styles={styles}
@@ -2789,7 +2802,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 ["With case no.", stats.total, BRAND.blue],
                                 ["Waiting", stats.waitingToday, BRAND.amber],
                                 ["Submitted", stats.submittedCount, BRAND.green],
-                                ["Pending", stats.pendingCount, BRAND.amber],
+                                ["Pending", stats.pendingTotal, BRAND.amber],
                             ] as [string, number | string, string][],
                             active: openCard === "all" && activeTab === "today",
                             onClick: () => openStatCard("all"),
@@ -4798,7 +4811,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
             {/* ---- Add Case Numbers modal — per-case client / subclient + status ---- */}
             {addCnCount && (
-                <div style={styles.bulkOverlay} onClick={closeAddCaseNumbers}>
+                <div style={styles.bulkOverlay}>
                     <div
                         style={{ ...styles.bulkModal, width: 980 }}
                         onClick={(e) => e.stopPropagation()}

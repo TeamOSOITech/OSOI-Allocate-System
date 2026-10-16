@@ -118,6 +118,10 @@ type Client = {
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
+    // optional 3rd (additional) contact — manual add/edit only, not in Excel
+    thirdContactName?: string | null;
+    thirdContactEmail?: string | null;
+    thirdContactPhone?: string | null;
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
     approvalStatus?: "PENDING_CREATE" | "PENDING_UPDATE" | "PENDING_DELETE";
@@ -150,6 +154,10 @@ type SubclientRow = {
     secondaryContactName: string | null;
     secondaryContactEmail: string | null;
     secondaryContactPhone: string | null;
+    // optional 3rd (additional) contact — manual add/edit only, not in Excel
+    thirdContactName?: string | null;
+    thirdContactEmail?: string | null;
+    thirdContactPhone?: string | null;
     productRates?: ProductRate[];
     products?: { id: number; product_name: string }[];
 };
@@ -365,6 +373,11 @@ export default function Clients() {
         secondaryContactName: "",
         secondaryContactEmail: "",
         secondaryContactPhone: "",
+        // 3rd (additional) contact. thirdContactOpen is UI-only (never sent).
+        thirdContactName: "",
+        thirdContactEmail: "",
+        thirdContactPhone: "",
+        thirdContactOpen: false,
         // Single currency ("Unit") for the whole client/subclient —
         // defaults from Country but can be manually overridden.
         currency: "USD",
@@ -635,6 +648,9 @@ export default function Clients() {
                 secondaryContactName: addForm.secondaryContactName || null,
                 secondaryContactEmail: addForm.secondaryContactEmail || null,
                 secondaryContactPhone: addForm.secondaryContactPhone || null,
+                thirdContactName: addForm.thirdContactName || null,
+                thirdContactEmail: addForm.thirdContactEmail || null,
+                thirdContactPhone: addForm.thirdContactPhone || null,
                 productRates: addForm.productRates,
             };
 
@@ -694,6 +710,14 @@ export default function Clients() {
         secondaryContactName: data.secondaryContactName || "",
         secondaryContactEmail: data.secondaryContactEmail || "",
         secondaryContactPhone: data.secondaryContactPhone || "",
+        thirdContactName: data.thirdContactName || "",
+        thirdContactEmail: data.thirdContactEmail || "",
+        thirdContactPhone: data.thirdContactPhone || "",
+        thirdContactOpen: !!(
+            data.thirdContactName ||
+            data.thirdContactEmail ||
+            data.thirdContactPhone
+        ),
         currency:
             (data.productRates && data.productRates[0]?.currency) ||
             currencyForCountry(data.country),
@@ -758,6 +782,9 @@ export default function Clients() {
                 secondaryContactName: editForm.secondaryContactName || null,
                 secondaryContactEmail: editForm.secondaryContactEmail || null,
                 secondaryContactPhone: editForm.secondaryContactPhone || null,
+                thirdContactName: editForm.thirdContactName || null,
+                thirdContactEmail: editForm.thirdContactEmail || null,
+                thirdContactPhone: editForm.thirdContactPhone || null,
                 productRates: editForm.productRates,
             };
 
@@ -1361,6 +1388,106 @@ export default function Clients() {
                     }
                 />
             </div>
+
+            {/* Additional (3rd) contact — up to 3 contacts in total. Only in
+                the manual Add / Edit form; Excel upload & export are unchanged. */}
+            {formState.thirdContactOpen ? (
+                <>
+                    <div
+                        style={{
+                            ...styles.formSectionLabel,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                        }}
+                    >
+                        <span>Additional Contact Person</span>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                setFormState((prev) => ({
+                                    ...prev,
+                                    thirdContactName: "",
+                                    thirdContactEmail: "",
+                                    thirdContactPhone: "",
+                                    thirdContactOpen: false,
+                                }))
+                            }
+                            style={{
+                                background: "none",
+                                border: "none",
+                                color: "#dc2626",
+                                fontSize: 12,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                            }}
+                        >
+                            Remove
+                        </button>
+                    </div>
+                    <div>
+                        <label style={styles.formLabel}>Name</label>
+                        <input
+                            style={styles.formInput}
+                            value={formState.thirdContactName}
+                            onChange={(e) =>
+                                setFormState((prev) => ({
+                                    ...prev,
+                                    thirdContactName: e.target.value,
+                                }))
+                            }
+                        />
+                    </div>
+                    <div>
+                        <label style={styles.formLabel}>Email</label>
+                        <input
+                            style={styles.formInput}
+                            type="email"
+                            value={formState.thirdContactEmail}
+                            onChange={(e) =>
+                                setFormState((prev) => ({
+                                    ...prev,
+                                    thirdContactEmail: e.target.value,
+                                }))
+                            }
+                        />
+                    </div>
+                    <div>
+                        <label style={styles.formLabel}>Phone Number</label>
+                        <input
+                            style={styles.formInput}
+                            value={formState.thirdContactPhone}
+                            onChange={(e) =>
+                                setFormState((prev) => ({
+                                    ...prev,
+                                    thirdContactPhone: e.target.value,
+                                }))
+                            }
+                        />
+                    </div>
+                </>
+            ) : (
+                <div style={{ gridColumn: "1 / -1" }}>
+                    <button
+                        type="button"
+                        onClick={() =>
+                            setFormState((prev) => ({ ...prev, thirdContactOpen: true }))
+                        }
+                        style={{
+                            background: "none",
+                            border: "1px dashed #94a3b8",
+                            borderRadius: 8,
+                            padding: "8px 14px",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: "#334155",
+                            cursor: "pointer",
+                        }}
+                    >
+                        + Add another contact person (2 of 3 added)
+                    </button>
+                </div>
+            )}
         </>
     );
 
@@ -2470,6 +2597,32 @@ export default function Clients() {
                                     {viewDetails.data.secondaryContactPhone || "—"}
                                 </span>
                             </div>
+
+                            {(viewDetails.data.thirdContactName ||
+                                viewDetails.data.thirdContactEmail ||
+                                viewDetails.data.thirdContactPhone) && (
+                                <>
+                                    <div style={styles.detailsSectionLabel}>Additional Contact</div>
+                                    <div style={styles.detailsRow}>
+                                        <span style={styles.detailsLabel}>Name</span>
+                                        <span style={styles.detailsValue}>
+                                            {viewDetails.data.thirdContactName || "—"}
+                                        </span>
+                                    </div>
+                                    <div style={styles.detailsRow}>
+                                        <span style={styles.detailsLabel}>Email</span>
+                                        <span style={styles.detailsValue}>
+                                            {viewDetails.data.thirdContactEmail || "—"}
+                                        </span>
+                                    </div>
+                                    <div style={styles.detailsRow}>
+                                        <span style={styles.detailsLabel}>Phone</span>
+                                        <span style={styles.detailsValue}>
+                                            {viewDetails.data.thirdContactPhone || "—"}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
 
                             <div style={styles.detailsModalFooter}>
                                 {/* Edit/Delete only for roles that can manage, and not
