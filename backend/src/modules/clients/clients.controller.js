@@ -87,6 +87,12 @@ function toClientResponse(client, subclientsCount, products) {
     thirdContactName: client.third_contact_name ?? null,
     thirdContactEmail: client.third_contact_email ?? null,
     thirdContactPhone: client.third_contact_phone ?? null,
+    fourthContactName: client.fourth_contact_name ?? null,
+    fourthContactEmail: client.fourth_contact_email ?? null,
+    fourthContactPhone: client.fourth_contact_phone ?? null,
+    fifthContactName: client.fifth_contact_name ?? null,
+    fifthContactEmail: client.fifth_contact_email ?? null,
+    fifthContactPhone: client.fifth_contact_phone ?? null,
   };
 }
 
@@ -122,6 +128,12 @@ function fromClientBody(body) {
     thirdContactName,
     thirdContactEmail,
     thirdContactPhone,
+    fourthContactName,
+    fourthContactEmail,
+    fourthContactPhone,
+    fifthContactName,
+    fifthContactEmail,
+    fifthContactPhone,
   } = body;
 
   return {
@@ -141,6 +153,12 @@ function fromClientBody(body) {
     third_contact_name: thirdContactName || null,
     third_contact_email: thirdContactEmail || null,
     third_contact_phone: thirdContactPhone || null,
+    fourth_contact_name: fourthContactName || null,
+    fourth_contact_email: fourthContactEmail || null,
+    fourth_contact_phone: fourthContactPhone || null,
+    fifth_contact_name: fifthContactName || null,
+    fifth_contact_email: fifthContactEmail || null,
+    fifth_contact_phone: fifthContactPhone || null,
   };
   // NOTE: organization_id is intentionally NOT read from the body
   // anywhere in this file — it always comes from req.user.organizationId,
@@ -201,6 +219,12 @@ async function attachPendingClientApprovals(formattedClients, organizationId) {
     thirdContactName: req.payload?.thirdContactName || null,
     thirdContactEmail: req.payload?.thirdContactEmail || null,
     thirdContactPhone: req.payload?.thirdContactPhone || null,
+    fourthContactName: req.payload?.fourthContactName || null,
+    fourthContactEmail: req.payload?.fourthContactEmail || null,
+    fourthContactPhone: req.payload?.fourthContactPhone || null,
+    fifthContactName: req.payload?.fifthContactName || null,
+    fifthContactEmail: req.payload?.fifthContactEmail || null,
+    fifthContactPhone: req.payload?.fifthContactPhone || null,
     approvalStatus: "PENDING_CREATE",
     approvalRequestId: req.id,
   }));

@@ -328,6 +328,12 @@ function contactFieldsFromPayload(body) {
     third_contact_name: body.thirdContactName || null,
     third_contact_email: body.thirdContactEmail || null,
     third_contact_phone: body.thirdContactPhone || null,
+    fourth_contact_name: body.fourthContactName || null,
+    fourth_contact_email: body.fourthContactEmail || null,
+    fourth_contact_phone: body.fourthContactPhone || null,
+    fifth_contact_name: body.fifthContactName || null,
+    fifth_contact_email: body.fifthContactEmail || null,
+    fifth_contact_phone: body.fifthContactPhone || null,
   };
 }
 

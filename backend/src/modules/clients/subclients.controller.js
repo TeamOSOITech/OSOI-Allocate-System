@@ -90,13 +90,19 @@ const CONTACT_FIELD_MAP = [
   },
 ];
 
-// 3rd (additional) contact — manual Add/Edit only. Kept OUT of
+// 3rd, 4th and 5th (additional) contacts — manual Add/Edit only. Kept OUT of
 // CONTACT_FIELD_MAP on purpose, because that map also drives the Excel
 // template / bulk upload and the 3rd contact must not appear there.
 const EXTRA_CONTACT_FIELD_MAP = [
   { db: "third_contact_name", api: "thirdContactName" },
   { db: "third_contact_email", api: "thirdContactEmail" },
   { db: "third_contact_phone", api: "thirdContactPhone" },
+  { db: "fourth_contact_name", api: "fourthContactName" },
+  { db: "fourth_contact_email", api: "fourthContactEmail" },
+  { db: "fourth_contact_phone", api: "fourthContactPhone" },
+  { db: "fifth_contact_name", api: "fifthContactName" },
+  { db: "fifth_contact_email", api: "fifthContactEmail" },
+  { db: "fifth_contact_phone", api: "fifthContactPhone" },
 ];
 
 // Builds the { db_column: value } object used for Supabase insert/update,
