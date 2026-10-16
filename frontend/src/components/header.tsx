@@ -198,13 +198,15 @@ export default function Header({
                 {/* Notification bell: the employee's in-app notifications and
                     "Turn on alerts" (push) live in NotificationBell. The ON/OFF
                     switch for allocation mails is inside its popup. */}
-                <NotificationBell
-                    buttonStyle={isMobile ? styles.iconBtnSmall : styles.iconBtn}
-                    badgeStyle={styles.notifBadge}
-                    isMobile={isMobile}
-                    notifyEnabled={notifyEnabled}
-                    onToggleNotify={toggleNotify}
-                />
+                {getCurrentUser()?.role !== "CLIENT" && (
+                    <NotificationBell
+                        buttonStyle={isMobile ? styles.iconBtnSmall : styles.iconBtn}
+                        badgeStyle={styles.notifBadge}
+                        isMobile={isMobile}
+                        notifyEnabled={notifyEnabled}
+                        onToggleNotify={toggleNotify}
+                    />
+                )}
 
                 {/* Avatar + dropdown menu */}
                 <div style={{ position: "relative" }} ref={menuRef}>

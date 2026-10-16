@@ -121,6 +121,10 @@ const Login = () => {
                     window.location.href = "/profile";
                     break;
 
+                case "CLIENT":
+                    window.location.href = "/client-dashboard";
+                    break;
+
                 default:
                     setError("Invalid role");
             }

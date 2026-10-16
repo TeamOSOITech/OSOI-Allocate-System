@@ -57,6 +57,12 @@ const Subscription = lazy(() => import("./pages/subscription"));
 // but was never wired into routing/sidebar — see the route + sidebar
 // entry below.
 const Approvals = lazy(() => import("./pages/admin/approvals"));
+// NEW: Client Dashboard (CLIENT role only) + staff-side Client Sharing.
+const ClientDashboard = lazy(() => import("./pages/clientportal/clientdashboard"));
+const ClientSharing = lazy(() => import("./pages/admin/clientsharing"));
+// NEW: "Shared with me" — pages that staff shared with ANY logged-in user
+// (any role, any organization). Read-only.
+const SharedWithMe = lazy(() => import("./pages/clientportal/sharedwithme"));
 // FIX (#16 — 404 page): catch-all for any unmatched route.
 const NotFound = lazy(() => import("./pages/notfound"));
 //import VoiceAssistant from "./components/voiceAssistant";
@@ -96,8 +102,11 @@ const NORMAL_USER_ALLOWED_PATHS = [
     // so Team Member needs to be allow-listed here too or this route's
     // own TEAM_MEMBER check above would still bounce them to /report.
     "/subscription",
+    // NEW: pages shared with this login by staff (read-only).
+    "/shared-with-me",
 ];
 const NORMAL_USER_HOME = "/report";
+const CLIENT_HOME = "/client-dashboard";
 
 // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly cookies the
 // browser attaches automatically — this component's JS can no longer read
@@ -119,6 +128,13 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
     const location = useLocation();
     const user = getCurrentUser();
     if (!user) return <Navigate to="/login" replace />;
+
+    // CLIENT lockdown: an external client login can ONLY ever see the
+    // Client Dashboard. Every other route (even ones with no requiredRole)
+    // bounces them back there. The API enforces the same server-side.
+    if (user?.role === "CLIENT" && location.pathname !== CLIENT_HOME) {
+        return <Navigate to={CLIENT_HOME} replace />;
+    }
 
     // Role-based access, Phase 1: Normal User can only ever reach the
     // allow-listed paths above, full stop — checked first, before the
@@ -383,6 +399,46 @@ function App() {
                                 <PrivateRoute>
                                     <AppLayout onLogout={handleLogout}>
                                         <Home user={user} />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Client Dashboard — the only page a CLIENT login can open. */}
+                        <Route
+                            path="/client-dashboard"
+                            element={
+                                <PrivateRoute requiredRole="CLIENT">
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ClientDashboard />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Client Sharing — staff choose what each client sees. */}
+                        <Route
+                            path="/client-sharing"
+                            element={
+                                <PrivateRoute
+                                    requiredRole={["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"]}
+                                >
+                                    <AppLayout onLogout={handleLogout}>
+                                        <ClientSharing />
+                                    </AppLayout>
+                                </PrivateRoute>
+                            }
+                        />
+
+                        {/* NEW: Shared with me — pages staff shared with this login
+                        (any role, any organization). Read-only. The sidebar only
+                        shows the link when something has actually been shared. */}
+                        <Route
+                            path="/shared-with-me"
+                            element={
+                                <PrivateRoute>
+                                    <AppLayout onLogout={handleLogout}>
+                                        <SharedWithMe />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

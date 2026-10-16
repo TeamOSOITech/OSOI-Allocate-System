@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
+
+const API_BASE = import.meta.env.VITE_API_URL;
 
 type MenuItem = {
     label: string;
@@ -20,6 +23,8 @@ const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
 // now restricted to SUPER_ADMIN alone (previously visible to some mix of
 // ADMIN_TIER / ADMIN_AND_VERTICAL_HEAD / EVERYONE).
 const SUPER_ADMIN_ONLY = ["SUPER_ADMIN"];
+
+const SHARED_PATH = "/shared-with-me";
 
 const menuItems: MenuItem[] = [
     // NEW: Home — Holidays + Birthdays (see pages/home.tsx). Points at
@@ -147,6 +152,29 @@ const menuItems: MenuItem[] = [
         path: "/profile",
         roles: EVERYONE,
     },
+    // NEW: Client Dashboard — the ONLY enabled tab for a CLIENT login.
+    {
+        label: "Client Dashboard",
+        icon: "ti ti-layout-dashboard",
+        path: "/client-dashboard",
+        roles: ["CLIENT"],
+    },
+    // NEW: pages that staff shared with this login (any role / any org).
+    // Only shown when something has actually been shared — see
+    // visibleItems below. Carries a red badge for new shares.
+    {
+        label: "Shared with me",
+        icon: "ti ti-share-3",
+        path: SHARED_PATH,
+        roles: EVERYONE,
+    },
+    // NEW: staff choose which cases each client can see.
+    {
+        label: "Client Sharing",
+        icon: "ti ti-share",
+        path: "/client-sharing",
+        roles: ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"],
+    },
 ];
 
 const pathToLabel: Record<string, string> = {
@@ -165,6 +193,9 @@ const pathToLabel: Record<string, string> = {
     "/profile": "Profile",
     "/subscription": "Upgrade",
     "/approvals": "Approvals",
+    "/client-dashboard": "Client Dashboard",
+    "/client-sharing": "Client Sharing",
+    "/shared-with-me": "Shared with me",
 };
 
 // ---- Brand palette ----
@@ -216,7 +247,51 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     const user = userStr ? JSON.parse(userStr) : null;
     const role = user?.role || "TEAM_MEMBER";
 
-    const visibleItems = menuItems.filter((item) => item.roles.includes(role));
+    // Pages shared with this login: how many in total (the sidebar entry
+    // only appears when > 0) and how many are new since they last opened it.
+    const [shareCount, setShareCount] = useState(0);
+    const [newShares, setNewShares] = useState(0);
+    useEffect(() => {
+        if (role === "CLIENT") return; // clients see shared pages inside their dashboard
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/client-portal/my-pages`, {
+                    cache: "no-store",
+                });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json.success === false || cancelled) return;
+                const list: { seen?: boolean }[] = json.data || [];
+                setShareCount(list.length);
+                setNewShares(list.filter((p) => !p.seen).length);
+            } catch {
+                /* the entry just stays hidden */
+            }
+        };
+        load();
+        window.addEventListener("shares-seen", load);
+        return () => {
+            cancelled = true;
+            window.removeEventListener("shares-seen", load);
+        };
+    }, [role, normalizedPath]);
+
+    // CLIENT login: show the normal tabs but DISABLED (greyed out, not
+    // clickable) — only "Client Dashboard" is live. Enforced server-side too.
+    const isClient = role === "CLIENT";
+    const visibleItems = isClient
+        ? [
+              ...menuItems.filter((i) => i.path === "/client-dashboard"),
+              ...menuItems.filter(
+                  (i) =>
+                      i.roles.includes("SUPER_ADMIN") &&
+                      !i.path.startsWith("/client-") &&
+                      i.path !== SHARED_PATH
+              ),
+          ]
+        : menuItems.filter(
+              (item) => item.roles.includes(role) && (item.path !== SHARED_PATH || shareCount > 0)
+          );
 
     const handleLogout = () => {
         setIsOpen(false);
@@ -360,12 +435,15 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                     {visibleItems.map((item) => {
                         const isToday = item.label === "Today's Task";
                         const isActive = activeLabel === item.label;
-                        const isHovered = hoveredLabel === item.label;
+                        const isDisabled = isClient && item.path !== "/client-dashboard";
+                        const isHovered = !isDisabled && hoveredLabel === item.label;
 
                         return (
                             <div
                                 key={item.label}
-                                onClick={() => handleClick(item)}
+                                aria-disabled={isDisabled || undefined}
+                                title={isDisabled ? "Not available for client accounts" : undefined}
+                                onClick={() => !isDisabled && handleClick(item)}
                                 onMouseEnter={() => setHoveredLabel(item.label)}
                                 onMouseLeave={() => setHoveredLabel(null)}
                                 style={{
@@ -383,7 +461,8 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                     padding: "10px 14px",
                                     fontSize: fontSize.base,
                                     fontWeight: isActive ? fontWeight.semibold : fontWeight.regular,
-                                    cursor: "pointer",
+                                    cursor: isDisabled ? "not-allowed" : "pointer",
+                                    opacity: isDisabled ? 0.45 : 1,
                                     boxShadow: isActive
                                         ? `0 4px 12px rgba(var(--brand-blue-rgb),0.35)`
                                         : "none",
@@ -436,6 +515,23 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                             aria-hidden="true"
                                         />
                                         <span>{item.label}</span>
+                                        {item.path === SHARED_PATH && newShares > 0 && (
+                                            <span
+                                                aria-label={`${newShares} new`}
+                                                style={{
+                                                    marginLeft: "auto",
+                                                    background: "#E5484D",
+                                                    color: "#fff",
+                                                    borderRadius: 999,
+                                                    fontSize: 11,
+                                                    fontWeight: 600,
+                                                    padding: "1px 7px",
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                {newShares}
+                                            </span>
+                                        )}
                                     </>
                                 )}
                             </div>

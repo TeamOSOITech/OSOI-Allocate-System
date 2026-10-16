@@ -36,6 +36,7 @@ import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
 import { getCurrentUser, hasRole } from "../../utils/auth";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
+import ShareButton from "../../components/sharebutton";
 // Scrolls ONLY the page's own scroll area. element.scrollIntoView() would also
 // scroll the height-locked app shell, pushing header + sidebar up and leaving a
 // blank strip at the bottom.
@@ -897,15 +898,20 @@ export default function ProductionReport() {
                             totals work-wise.
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        style={{ ...styles.exportBtn, opacity: exporting ? 0.6 : 1 }}
-                        disabled={exporting}
-                        onClick={handleExportExcel}
+                    <div
+                        style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
                     >
-                        <i className="ti ti-file-spreadsheet" />
-                        {exporting ? "Exporting…" : "Export Excel"}
-                    </button>
+                        <ShareButton pageKey="production-reports" title="Production Report" />
+                        <button
+                            type="button"
+                            style={{ ...styles.exportBtn, opacity: exporting ? 0.6 : 1 }}
+                            disabled={exporting}
+                            onClick={handleExportExcel}
+                        >
+                            <i className="ti ti-file-spreadsheet" />
+                            {exporting ? "Exporting…" : "Export Excel"}
+                        </button>
+                    </div>
                 </div>
 
                 <div
