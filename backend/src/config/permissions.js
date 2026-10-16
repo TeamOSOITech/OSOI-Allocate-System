@@ -14,6 +14,9 @@
 //   so nothing else in the app has to change.
 
 const ROLES = {
+  // NEW: external client login — sees ONLY what is shared with them via
+  // /api/client-portal. Holds no internal permissions at all.
+  CLIENT: "CLIENT",
   TEAM_MEMBER: "TEAM_MEMBER",
   VERTICAL_HEAD: "VERTICAL_HEAD",
   PROCESS_LEAD: "PROCESS_LEAD",
@@ -26,6 +29,7 @@ const ROLES = {
 // (e.g. UI gating). Real authorization must use PERMISSIONS below,
 // because seniority here is not a strict inheritance ladder.
 const ROLE_RANK = {
+  [ROLES.CLIENT]: 0,
   [ROLES.TEAM_MEMBER]: 1,
   [ROLES.VERTICAL_HEAD]: 2,
   [ROLES.PROCESS_LEAD]: 3,
@@ -37,6 +41,8 @@ const ROLE_RANK = {
 // Every permission code used anywhere in the API, mapped to the roles
 // allowed to perform it. Matches section-by-section from the doc.
 const ROLE_PERMISSIONS = {
+  [ROLES.CLIENT]: [],
+
   [ROLES.TEAM_MEMBER]: [
     "materialisation.update.own",
     "materialisation.view.own",
@@ -66,6 +72,8 @@ const ROLE_PERMISSIONS = {
     "materialisation.update.own",
     "materialisation.view.own",
     "tasks.allocate.org",
+    // NEW: share cases with a client (Client Dashboard).
+    "client_portal.manage",
     "users.onboard",
     "verticals.start_for_existing_user",
     "qc_permission.request", // still needs approval — see APPROVAL_RULES
@@ -129,6 +137,8 @@ const ROLE_PERMISSIONS = {
     // billing.routes.js's requireAnyPermission("billing.manage") on the
     // /upgrade/* routes and subscription.tsx's canManagePlan.
     "billing.manage",
+    // NEW: share cases with a client + link client logins (Client Dashboard).
+    "client_portal.manage",
   ],
 
   [ROLES.AUDIT_MANAGER]: [

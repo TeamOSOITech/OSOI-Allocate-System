@@ -265,6 +265,11 @@ app.use(
     "./src/modules/externalmembers/externalmembers.routes",
   ),
 );
+// NEW: Client Dashboard — client logins see only what staff share with them.
+app.use(
+  "/api/client-portal",
+  loadRoute("clientportal", "./src/modules/clientportal/clientportal.routes"),
+);
 app.use("/api/qc", loadRoute("qc", "./src/modules/qualitychecks/qc.routes"));
 // NEW: QC + Audit workflow on top of service_cases (Employee submits ->
 // QC review -> Audit review). Deliberately separate from /api/qc above

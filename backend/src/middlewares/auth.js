@@ -143,6 +143,12 @@ async function verifyToken(token) {
   };
 }
 
+const CLIENT_ALLOWED_PREFIXES = [
+  "/api/client-portal",
+  "/api/auth/",
+  "/api/organization/logo",
+];
+
 const authenticate = async (req, res, next) => {
   // COOKIE-AUTH: the browser sends the httpOnly accessToken cookie. The
   // Authorization header is checked first (Postman, mobile app,
@@ -178,6 +184,18 @@ const authenticate = async (req, res, next) => {
       }
       user = result.user;
       cacheSet(key, token, user);
+    }
+
+    // CLIENT LOCKDOWN: an external client login may ONLY reach the client
+    // portal API (+ auth/logout and the org logo). Many internal endpoints
+    // only require "any logged-in user", so without this check a client
+    // could read internal data straight from the API even though the UI
+    // has every tab disabled.
+    if (
+      user.role === "CLIENT" &&
+      !CLIENT_ALLOWED_PREFIXES.some((p) => req.originalUrl.startsWith(p))
+    ) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     // hand each request its own copy so a handler can't mutate the cached one
