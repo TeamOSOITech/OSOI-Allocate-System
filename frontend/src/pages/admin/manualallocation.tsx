@@ -822,7 +822,21 @@ export default function ManualAllocation() {
         };
     }, [productId, date, caseCountsRefreshKey]);
 
-    const caseRemainingCount = caseTotalCount - caseAllocatedCount;
+    // Remaining = the table's own "Total to allocate" (cases + counts, today +
+    // carried-over, month-wise), reported by TodaysAllocationCases. Falls back
+    // to the old calculation until the child has reported.
+    const [pendingFromTable, setPendingFromTable] = useState<number | null>(null);
+    const [countsAllocatedFromTable, setCountsAllocatedFromTable] = useState(0);
+    const handlePendingTotalChange = useCallback((pending: number, countsAllocated: number) => {
+        setPendingFromTable(pending);
+        setCountsAllocatedFromTable(countsAllocated);
+    }, []);
+    // Allocated = allocated cases + allocated quantity from the Counts view.
+    const kpiAllocatedCount = caseAllocatedCount + countsAllocatedFromTable;
+    const caseRemainingCount =
+        pendingFromTable !== null ? pendingFromTable : caseTotalCount - caseAllocatedCount;
+    const kpiTotalCount =
+        pendingFromTable !== null ? kpiAllocatedCount + pendingFromTable : caseTotalCount;
 
     const fetchCaseCountsAgain = useCallback(() => {
         setCaseCountsRefreshKey((k) => k + 1);
@@ -1262,7 +1276,7 @@ export default function ManualAllocation() {
                                         icon={Box}
                                         label="Total Cases"
                                         subLabel="Total cases to allocate"
-                                        value={caseTotalCount}
+                                        value={kpiTotalCount}
                                         color={BRAND.blue}
                                     />
                                     <KpiCard
@@ -1276,7 +1290,7 @@ export default function ManualAllocation() {
                                         icon={CheckCircle2}
                                         label="Allocated"
                                         subLabel="Already allocated"
-                                        value={caseAllocatedCount}
+                                        value={kpiAllocatedCount}
                                         color={BRAND.lightBlue}
                                     />
                                     <KpiCard
@@ -1303,6 +1317,7 @@ export default function ManualAllocation() {
                                     onChangeWorkDate={setDate}
                                     hideHeader
                                     onCasesChanged={fetchCaseCountsAgain}
+                                    onPendingTotalChange={handlePendingTotalChange}
                                 />
 
                                 {false && (

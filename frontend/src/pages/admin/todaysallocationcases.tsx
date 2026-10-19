@@ -201,6 +201,10 @@ type Props = {
     onChangeWorkDate: (date: string) => void;
     hideHeader?: boolean;
     onCasesChanged?: () => void;
+    // reports the exact "still to allocate" number (cases + counts, today +
+    // carried-over) so the parent's KPI cards match the summary strip below.
+    // countsAllocated = quantity already allocated in the "Counts" view.
+    onPendingTotalChange?: (pending: number, countsAllocated: number) => void;
 };
 
 export default function TodaysAllocationCases({
@@ -210,6 +214,7 @@ export default function TodaysAllocationCases({
     onChangeWorkDate,
     hideHeader = false,
     onCasesChanged,
+    onPendingTotalChange,
 }: Props) {
     const isMobile = useIsMobile();
     const monthStart = monthStartOf(workDate);
@@ -858,6 +863,15 @@ export default function TodaysAllocationCases({
             totalMins: total * ampOf(productId),
         };
     }, [countRows, caseSummary, workDate, ampOf, productId]);
+
+    // keep the parent's Total/Remaining KPI cards in sync with this summary
+    const countsAllocatedTotal = useMemo(
+        () => countRows.reduce((s, c) => s + (c.allocatedTotal || 0), 0),
+        [countRows]
+    );
+    useEffect(() => {
+        onPendingTotalChange?.(summary.total, countsAllocatedTotal);
+    }, [summary.total, countsAllocatedTotal, onPendingTotalChange]);
 
     const handleManualAllocate = async (caseId: string, employeeId: string) => {
         setAllocatingId(caseId);
