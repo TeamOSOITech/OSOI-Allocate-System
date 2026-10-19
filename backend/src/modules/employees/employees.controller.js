@@ -35,7 +35,13 @@ async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
 
   try {
-    let employees = await employeesService.fetchAllEmployees(orgId);
+    // ?collar=WHITE (default) | BLUE | ALL — keeps the two modes' people
+    // apart; pages that need everyone (e.g. Profile) pass ALL.
+    const collarParam = String(req.query.collar || "WHITE").toUpperCase();
+    const collar = ["WHITE", "BLUE", "ALL"].includes(collarParam)
+      ? collarParam
+      : "WHITE";
+    let employees = await employeesService.fetchAllEmployees(orgId, collar);
 
     // Vertical Head only ever sees their OWN team's employees. Self is
     // always kept in the list even if their own Team field happens to be
@@ -144,17 +150,8 @@ async function updateEmployee(req, res) {
     updatePayload["Department"] = body.department;
   if (body.reportingManager !== undefined)
     updatePayload["Reporting Manager"] = body.reportingManager;
-  if (body.joiningDate !== undefined) {
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata",
-    });
-    if (body.joiningDate && String(body.joiningDate).slice(0, 10) > today) {
-      return res
-        .status(400)
-        .json({ error: "Date of Joining cannot be in the future." });
-    }
+  if (body.joiningDate !== undefined)
     updatePayload["Date of Joining"] = body.joiningDate;
-  }
   if (body.dateOfBirth !== undefined)
     updatePayload["Date of Birth"] = body.dateOfBirth;
   if (body.employeeCode !== undefined)

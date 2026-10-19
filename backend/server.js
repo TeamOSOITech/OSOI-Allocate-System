@@ -296,6 +296,12 @@ app.use(
   "/api/holidays",
   loadRoute("holidays", "./src/modules/holidays/holidays.routes"),
 );
+// NEW: Blue Collar (manpower-based) mode — locations, role->services Excel
+// upload, team view and the employee tick-and-submit flow.
+app.use(
+  "/api/blue",
+  loadRoute("bluecollar", "./src/modules/bluecollar/bluecollar.routes"),
+);
 
 // ========================
 // ⚠️ REMOVED: /test-auth

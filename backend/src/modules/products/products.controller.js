@@ -57,6 +57,7 @@ async function attachPendingApprovals(products, organizationId) {
     time_taken: req.payload?.time_taken ?? null,
     time_unit: req.payload?.time_unit ?? null,
     teams: req.payload?.teams || [],
+    has_case_number: req.payload?.has_case_number ?? true,
     hidden: false,
     approvalStatus: "PENDING_CREATE",
     approvalRequestId: req.id,
@@ -149,7 +150,8 @@ const getProductById = async (req, res) => {
 // to real team names.
 const createProduct = async (req, res) => {
   try {
-    const { product_name, time_taken, time_unit, teams } = req.body;
+    const { product_name, time_taken, time_unit, teams, has_case_number } =
+      req.body;
 
     if (!product_name) {
       return res
@@ -170,8 +172,15 @@ const createProduct = async (req, res) => {
         .json({ success: false, message: "teams must be an array" });
     }
 
+    if (has_case_number !== undefined && typeof has_case_number !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "has_case_number must be true or false",
+      });
+    }
+
     const product = await productService.createProduct(
-      { product_name, time_taken, time_unit, teams },
+      { product_name, time_taken, time_unit, teams, has_case_number },
       req.user.organizationId,
     );
 
@@ -224,6 +233,17 @@ const parseTimeTaken = (raw) => {
 // logic, and the row-processing loop is a standalone export
 // (processProductBulkRows) so applyApprovedAction() in
 // approvals.controller.js can replay it later against the same rows.
+
+// NEW: optional "Case Number" column in the bulk sheet — Yes/No (also
+// accepts true/false/1/0). Blank means Yes, same default as the form.
+// Returns true/false, or null when the value isn't recognised.
+function parseCaseNumberCell(raw) {
+  const v = (raw ?? "").toString().trim().toLowerCase();
+  if (v === "") return true;
+  if (["yes", "y", "true", "1"].includes(v)) return true;
+  if (["no", "n", "false", "0"].includes(v)) return false;
+  return null;
+}
 
 async function parseProductBulkRows(filePath, originalFilename) {
   const buffer = fs.readFileSync(filePath);
@@ -331,9 +351,21 @@ async function processProductBulkRows(rows, orgId) {
       continue;
     }
 
+    const has_case_number = parseCaseNumberCell(row["Case Number"]);
+    if (has_case_number === null) {
+      results.push({
+        identifier,
+        row: rowNumber,
+        success: false,
+        message: `"Case Number" must be Yes or No, got: "${row["Case Number"]}"`,
+      });
+      failedCount++;
+      continue;
+    }
+
     try {
       await productService.createProduct(
-        { product_name, time_taken, time_unit, teams },
+        { product_name, time_taken, time_unit, teams, has_case_number },
         orgId,
       );
       results.push({ identifier, row: rowNumber, success: true });
@@ -422,7 +454,15 @@ const updateProduct = async (req, res) => {
       });
     }
 
-    const { product_name, time_taken, time_unit, teams } = req.body;
+    const { product_name, time_taken, time_unit, teams, has_case_number } =
+      req.body;
+
+    if (has_case_number !== undefined && typeof has_case_number !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "has_case_number must be true or false",
+      });
+    }
 
     if (time_unit && !["minutes", "hours"].includes(time_unit)) {
       return res.status(400).json({
@@ -439,7 +479,7 @@ const updateProduct = async (req, res) => {
 
     const product = await productService.updateProduct(
       id,
-      { product_name, time_taken, time_unit, teams },
+      { product_name, time_taken, time_unit, teams, has_case_number },
       req.user.organizationId,
     );
 

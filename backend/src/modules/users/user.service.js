@@ -359,18 +359,6 @@ async function createUserAndGenerateResetLink({
   metadata,
   organizationId,
 }) {
-  // Date of Joining cannot be in the future (server-side guard; the form
-  // and bulk upload check this too).
-  if (metadata?.doj) {
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata",
-    });
-    if (String(metadata.doj).slice(0, 10) > today) {
-      const e = new Error("Date of Joining cannot be in the future.");
-      e.status = 400;
-      throw e;
-    }
-  }
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
     password: tempPassword,
@@ -415,6 +403,14 @@ async function createUserAndGenerateResetLink({
         Role: metadata?.role || null,
         "Auth User Id": data.user.id,
         organization_id: organizationId,
+        // Only written for Blue Collar users, so White Collar creation keeps
+        // working even before the collar_type column exists.
+        ...(metadata?.collarType === "BLUE"
+          ? {
+              collar_type: "BLUE",
+              blue_location_id: metadata?.locationId || null,
+            }
+          : {}),
       });
     if (insertError) throw insertError;
   } catch (err) {
@@ -677,6 +673,11 @@ async function processAddUserRequest(body, requester) {
       reportingManager: body.reportingManager,
       workedInTeams: body.Teams,
       role: requestedRole,
+      collarType:
+        String(body.collarType || "").toUpperCase() === "BLUE"
+          ? "BLUE"
+          : "WHITE",
+      locationId: body.locationId || null,
     },
   });
 
@@ -871,6 +872,11 @@ async function processBulkAddUserRequest(users, requester) {
           reportingManager: rawUser.reportingManager,
           workedInTeams: rawUser.Teams,
           role: requestedRole,
+          collarType:
+            String(rawUser.collarType || "").toUpperCase() === "BLUE"
+              ? "BLUE"
+              : "WHITE",
+          locationId: rawUser.locationId || null,
         },
       });
 

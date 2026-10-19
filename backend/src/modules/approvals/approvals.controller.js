@@ -381,18 +381,26 @@ async function applyApprovedAction(request) {
 
     // ---- NEW: Service (Product) ----
     case "SERVICE_CREATE": {
-      const { product_name, time_taken, time_unit, teams } = body;
+      const { product_name, time_taken, time_unit, teams, has_case_number } =
+        body;
       await productsService.createProduct(
-        { product_name, time_taken, time_unit, teams },
+        { product_name, time_taken, time_unit, teams, has_case_number },
         orgId,
       );
       break;
     }
     case "SERVICE_UPDATE": {
-      const { id, product_name, time_taken, time_unit, teams } = body;
+      const {
+        id,
+        product_name,
+        time_taken,
+        time_unit,
+        teams,
+        has_case_number,
+      } = body;
       await productsService.updateProduct(
         id,
-        { product_name, time_taken, time_unit, teams },
+        { product_name, time_taken, time_unit, teams, has_case_number },
         orgId,
       );
       break;

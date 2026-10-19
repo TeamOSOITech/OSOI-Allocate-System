@@ -449,20 +449,8 @@ const CLIENT_TEMPLATE_COLUMNS = [
     width: 20,
     color: BRAND.green,
   },
-  {
-    header: "Subclient Name",
-    key: "subclientName",
-    width: 22,
-    color: BRAND.blue,
-  },
-  {
-    header: "Subclient Status",
-    key: "subclientStatus",
-    width: 16,
-    color: BRAND.blue,
-  },
-  // "Branch Name"/"Branch Status" columns removed — the branches table
-  // no longer exists.
+  // Subclients are NOT part of the Client sheet — they have their own
+  // Subclient bulk upload. ("Branch" columns were removed earlier too.)
 ];
 
 async function downloadTemplate(req, res) {
@@ -499,7 +487,7 @@ async function downloadTemplate(req, res) {
       },
     ]);
 
-    // Excel validation so wrong values can't be typed: statuses are a
+    // Excel validation so wrong values can't be typed: Client Status is a
     // dropdown (anything other than "Inactive" used to silently become
     // "Active"), and every email column must look like an email.
     const colOf = (key) =>
@@ -511,12 +499,6 @@ async function downloadTemplate(req, res) {
       colOf("clientStatus"),
       ["Active", "Inactive"],
       "Client Status",
-    );
-    addInlineListValidation(
-      sheet,
-      colOf("subclientStatus"),
-      ["Active", "Inactive"],
-      "Subclient Status",
     );
     ["companyEmail", "primaryContactEmail", "secondaryContactEmail"].forEach(
       (key) => addEmailValidation(sheet, colOf(key)),
@@ -560,7 +542,6 @@ async function parseClientBulkRows(fileBuffer, originalFilename) {
 
 async function processClientBulkRows(rows, orgId) {
   const clientCache = new Map();
-  const subclientCache = new Map();
 
   const results = [];
   let createdCount = 0;
@@ -593,10 +574,6 @@ async function processClientBulkRows(rows, orgId) {
         norm(row["Secondary Contact Email"]) || null;
       const secondaryContactPhone =
         norm(row["Secondary Contact Phone"]) || null;
-
-      const subName = norm(row["Subclient Name"]);
-      const subStatus =
-        norm(row["Subclient Status"]) === "Inactive" ? "Inactive" : "Active";
 
       if (!clientName) {
         failedCount++;
@@ -640,32 +617,6 @@ async function processClientBulkRows(rows, orgId) {
           });
         }
         clientCache.set(clientKey, client);
-      }
-
-      // ---- resolve subclient (optional), scoped to org + client ----
-      if (subName) {
-        const subKey = `${client.id}::${subName.toLowerCase()}`;
-        let subclient = subclientCache.get(subKey);
-
-        if (!subclient) {
-          const existingSub = await clientsService.findSubclientByName(
-            orgId,
-            client.id,
-            subName,
-          );
-
-          if (existingSub) {
-            subclient = existingSub;
-          } else {
-            subclient = await clientsService.insertSubclientRow({
-              name: subName,
-              client_id: client.id,
-              status: subStatus,
-              organization_id: orgId,
-            });
-          }
-          subclientCache.set(subKey, subclient);
-        }
       }
 
       createdCount++;

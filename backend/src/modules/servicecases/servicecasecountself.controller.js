@@ -66,6 +66,7 @@ const SUBMISSION_TYPES = [
   "DONE_BY_TEAM",
   "DONE_BY_CLIENT",
   "QUERY",
+  "OUT_OF_SCOPE",
 ];
 
 const strId = (v) =>
@@ -404,7 +405,7 @@ async function selfAllocateCounts(req, res) {
 // body: {
 //   countId,
 //   caseNumbers: string[],
-//   statuses?: { [UPPERCASED_CASE_NUMBER]: { submissionType, queryText? } },
+//   statuses?: { [UPPERCASED_CASE_NUMBER]: { submissionType, queryText?, reasonText? } },
 //   clientId?, subclientId?
 // }
 //
@@ -490,10 +491,17 @@ async function addCaseNumbersToCount(req, res) {
       const s = statuses[cn.toUpperCase()] || {};
       const type = (s.submissionType || "WIP").toString().trim();
       const queryText = (s.queryText || "").toString().trim();
-      return { type, queryText };
+      const reasonText = (s.reasonText || "").toString().trim();
+      return { type, queryText, reasonText };
     };
     for (const cn of candidates) {
-      const { type, queryText } = statusFor(cn);
+      const { type, queryText, reasonText } = statusFor(cn);
+      if (type === "OUT_OF_SCOPE" && !reasonText) {
+        return res.status(400).json({
+          success: false,
+          message: `Reason is required for ${cn} (Out of Scope).`,
+        });
+      }
       if (type !== "WIP" && !SUBMISSION_TYPES.includes(type)) {
         return res
           .status(400)
@@ -545,12 +553,32 @@ async function addCaseNumbersToCount(req, res) {
       });
     }
 
-    // ---- "no case number" entries (only when the org allows it) ----
+    // ---- NEW: services marked "no case number" (has_case_number = false) ----
+    // Counts of such a service never take real case numbers — only
+    // placeholder (__AUTO__) entries, which get a generated internal number.
+    const { data: svcRow } = await supabase
+      .from("service_master")
+      .select("has_case_number")
+      .eq("id", count.product_id)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+    const noCaseService = svcRow?.has_case_number === false;
+    if (
+      noCaseService &&
+      candidates.some((cn) => !cn.toUpperCase().startsWith(AUTO_TOKEN))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "This service doesn't use case numbers.",
+      });
+    }
+
+    // ---- "no case number" entries (when the org allows it, or the service has none) ----
     const autoCandidates = candidates.filter((cn) =>
       cn.toUpperCase().startsWith(AUTO_TOKEN),
     );
     if (autoCandidates.length > 0) {
-      if (await isCaseNumberRequired(orgId)) {
+      if (!noCaseService && (await isCaseNumberRequired(orgId))) {
         return res.status(400).json({
           success: false,
           message: "Case numbers are required — please type them in.",
@@ -652,7 +680,7 @@ async function addCaseNumbersToCount(req, res) {
       const now = new Date().toISOString();
 
       const rows = toInsert.map((caseNumber, i) => {
-        const { type, queryText } = statusFor(caseNumber);
+        const { type, queryText, reasonText } = statusFor(caseNumber);
         const row = {
           organization_id: orgId,
           product_id: count.product_id,
@@ -674,6 +702,7 @@ async function addCaseNumbersToCount(req, res) {
           row.submission_status = "SUBMITTED";
           row.submission_type = type;
           row.query_text = type === "QUERY" ? queryText : null;
+          row.out_of_scope_reason = type === "OUT_OF_SCOPE" ? reasonText : null;
           row.submitted_at = now;
           submittedNow++;
         }

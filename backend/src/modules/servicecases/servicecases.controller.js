@@ -349,13 +349,18 @@ async function findExistingCaseNumbersCI(
   return found;
 }
 
+// NEW: a service marked "no case number" (service_master.has_case_number =
+// false) can only be logged as a COUNT. Case-number paths reject it.
+const NO_CASE_NUMBER_MSG =
+  "This service doesn't use case numbers — add it as a count only (leave the case numbers empty and enter how many).";
+
 async function getProduct(productId, organizationId) {
   const { data, error } = await supabase
     .from("service_master")
     // NEW: `teams` too — needed by assertVerticalHeadCanUseProduct below
     // to check a Vertical Head is only ever creating cases against a
     // service their own team is assigned to.
-    .select("id, product_name, teams")
+    .select("id, product_name, teams, has_case_number")
     .eq("id", productId)
     .eq("organization_id", organizationId)
     .maybeSingle();
@@ -590,23 +595,6 @@ async function listServiceCases(req, res) {
       }
     }
 
-    // Dashboard KPI cards: "allocated today" / "completed today" must be
-    // judged by WHEN the allocation / submission actually happened, not by
-    // work_date (a carried-over case keeps its old work_date but is
-    // allocated/submitted today). These take full ISO timestamps.
-    for (const key of [
-      "allocatedFrom",
-      "allocatedTo",
-      "submittedFrom",
-      "submittedTo",
-    ]) {
-      if (req.query[key] && Number.isNaN(Date.parse(String(req.query[key])))) {
-        return res
-          .status(400)
-          .json({ success: false, message: `${key} must be an ISO date-time` });
-      }
-    }
-
     // Applies every filter (productId, date range, client/subclient,
     // the search box's OR clause, etc.) to a freshly-created query
     // builder. Supabase-js query builders aren't cloneable, so this
@@ -682,18 +670,6 @@ async function listServiceCases(req, res) {
       }
       if (req.query.submissionStatus) {
         filtered = filtered.eq("submission_status", req.query.submissionStatus);
-      }
-      if (req.query.allocatedFrom) {
-        filtered = filtered.gte("allocated_at", req.query.allocatedFrom);
-      }
-      if (req.query.allocatedTo) {
-        filtered = filtered.lte("allocated_at", req.query.allocatedTo);
-      }
-      if (req.query.submittedFrom) {
-        filtered = filtered.gte("submitted_at", req.query.submittedFrom);
-      }
-      if (req.query.submittedTo) {
-        filtered = filtered.lte("submitted_at", req.query.submittedTo);
       }
       // Quality Scores (QC) page filter. qc_status only ever holds the
       // plain values 'PENDING' / 'PASSED' / 'FAILED'.
@@ -828,6 +804,7 @@ async function listServiceCases(req, res) {
       submissionStatus: r.submission_status || "PENDING",
       submissionType: r.submission_type || null,
       queryText: r.query_text || "",
+      outOfScopeReason: r.out_of_scope_reason || "",
       submittedAt: r.submitted_at || null,
       // who actually submitted it (Production Report -> "Submitted By" /
       // "On behalf" chip). Null for rows submitted before this column existed.
@@ -936,6 +913,11 @@ async function createServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
+    }
+    if (product.has_case_number === false) {
+      return res
+        .status(400)
+        .json({ success: false, message: NO_CASE_NUMBER_MSG });
     }
     const vhScope = await assertVerticalHeadCanUseProduct(req, product);
     if (!vhScope.ok) {
@@ -1075,32 +1057,8 @@ async function createServiceCases(req, res) {
 // ------------------------------------------------------------
 async function downloadUploadTemplate(req, res) {
   try {
-    const orgId = req.user.organizationId;
-
-    // Dropdown sources: this org's services / clients / subclients, so a
-    // wrong (or misspelt) name can't be typed into the sheet. The upload
-    // itself still re-checks everything server-side.
-    const [prodRes, clientRes, subRes] = await Promise.all([
-      supabase
-        .from("service_master")
-        .select("product_name")
-        .eq("organization_id", orgId),
-      supabase.from("clients").select("name").eq("organization_id", orgId),
-      supabase.from("subclients").select("name").eq("organization_id", orgId),
-    ]);
-    const uniqSorted = (rows, key) =>
-      Array.from(
-        new Set(
-          (rows || []).map((r) => String(r[key] || "").trim()).filter(Boolean),
-        ),
-      ).sort((a, b) => a.localeCompare(b));
-    const services = uniqSorted(prodRes.data, "product_name");
-    const clients = uniqSorted(clientRes.data, "name");
-    const subclients = uniqSorted(subRes.data, "name");
-
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Cases");
-    const lists = wb.addWorksheet("Lists", { state: "hidden" });
     ws.columns = [
       { header: "Case Number", key: "caseNumber", width: 18 },
       { header: "Service", key: "service", width: 22 },
@@ -1108,65 +1066,8 @@ async function downloadUploadTemplate(req, res) {
       { header: "Subclient Name", key: "subclient", width: 24 },
     ];
     ws.getRow(1).eachCell((cell) => styleHeaderCell(cell));
-
-    // Values live on a hidden "Lists" sheet (a range reference has no
-    // 255-character limit like an inline list does).
-    const MAX_ROW = 5000;
-    const addListValidation = (colIndex, values, label) => {
-      values.forEach((v, i) => {
-        lists.getCell(i + 1, colIndex).value = v;
-      });
-      if (values.length === 0) return;
-      const listCol = lists.getColumn(colIndex).letter;
-      const col = ws.getColumn(colIndex + 1).letter; // Lists A <-> Cases B
-      // Per-cell on purpose: the exceljs version used here (3.x) cannot
-      // write a range-keyed validation; it merges equal neighbouring cells
-      // into one range itself when saving. Its address sort is textual
-      // ("B10" < "B2"), which makes the merged ranges overlap when a
-      // column crosses 9 -> 10 -> 100 rows, and overlapping ranges make
-      // Excel offer to "repair" the file. So rows are applied in chunks
-      // with the same digit count, each carrying a distinct (invisible)
-      // promptTitle so neighbouring chunks never get merged together.
-      const chunks = [
-        [2, 9],
-        [10, 99],
-        [100, 999],
-        [1000, MAX_ROW],
-      ];
-      chunks.forEach(([from, to], idx) => {
-        const rule = {
-          type: "list",
-          allowBlank: true,
-          formulae: [`Lists!$${listCol}$1:$${listCol}$${values.length}`],
-          showErrorMessage: true,
-          errorStyle: "stop",
-          errorTitle: "Invalid value",
-          error: `Please pick a ${label} from the dropdown list.`,
-          promptTitle: `rows-${idx}`,
-        };
-        for (let row = from; row <= Math.min(to, MAX_ROW); row++) {
-          ws.getCell(`${col}${row}`).dataValidation = rule;
-        }
-      });
-    };
-    addListValidation(1, services, "Service");
-    addListValidation(2, clients, "Client Name");
-    addListValidation(3, subclients, "Subclient Name");
-
-    // Sample rows use real dropdown values (when the org has any) so the
-    // sample itself passes the validation.
-    ws.getRow(2).values = [
-      "CASE-1001",
-      services[0] || "",
-      clients[0] || "",
-      "",
-    ];
-    ws.getRow(3).values = [
-      "CASE-1002",
-      services[1] || services[0] || "",
-      clients[1] || clients[0] || "",
-      "",
-    ];
+    ws.addRow(["CASE-1001", "Income Tax", "ABC Ltd", "ABC North"]);
+    ws.addRow(["CASE-1002", "GST", "XYZ Pvt Ltd", ""]);
 
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader(
@@ -1354,6 +1255,11 @@ async function uploadCustomServiceCases(req, res) {
           caseNumber,
           scope.message || "You can't add cases to this service",
         );
+        continue;
+      }
+
+      if (productById.get(rowProductId)?.has_case_number === false) {
+        skip(rowNum, caseNumber, NO_CASE_NUMBER_MSG);
         continue;
       }
 
@@ -1603,6 +1509,11 @@ async function manualCreateServiceCases(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Service not found" });
+    }
+    if (product.has_case_number === false) {
+      return res
+        .status(400)
+        .json({ success: false, message: NO_CASE_NUMBER_MSG });
     }
     const vhScope = await assertVerticalHeadCanUseProduct(req, product);
     if (!vhScope.ok) {
@@ -3264,6 +3175,7 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
 //   submission_status  text, default 'PENDING' ('PENDING' | 'SUBMITTED')
 //   submission_type    text ('COMPLETED' | 'DONE_BY_TEAM' | 'DONE_BY_CLIENT' | 'QUERY')
 //   query_text         text, nullable
+//   out_of_scope_reason text, nullable   (see add_out_of_scope.sql)
 //   submitted_at       timestamptz, nullable
 // ------------------------------------------------------------
 
@@ -3272,14 +3184,19 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
 //   QUERY          -> "Query"
 //   DONE_BY_TEAM   -> "Completed by Team"
 //   DONE_BY_CLIENT -> "Completed by Client"
+//   OUT_OF_SCOPE   -> "Out of Scope" (reason stored in out_of_scope_reason)
 const SUBMISSION_TYPES = [
   "COMPLETED",
   "DONE_BY_TEAM",
   "DONE_BY_CLIENT",
   "QUERY",
+  // NEW: work that is outside the service's scope — needs a reason.
+  "OUT_OF_SCOPE",
 ];
 // What an open Query can be turned into once it's sorted out.
-const QUERY_RESOLUTION_TYPES = SUBMISSION_TYPES.filter((t) => t !== "QUERY");
+const QUERY_RESOLUTION_TYPES = SUBMISSION_TYPES.filter(
+  (t) => t !== "QUERY" && t !== "OUT_OF_SCOPE",
+);
 
 // NEW: Super Admin / Ops Manager can submit work on behalf of another
 // employee (Profile page -> search employee -> open their profile).
@@ -3313,12 +3230,20 @@ async function submitServiceCase(req, res) {
     const { id } = req.params;
     const submissionType = (req.body.submissionType || "").toString().trim();
     const queryText = (req.body.queryText || "").toString().trim();
+    const reasonText = (req.body.reasonText || "").toString().trim();
 
     if (!SUBMISSION_TYPES.includes(submissionType)) {
       return res.status(400).json({
         success: false,
         message:
-          "submissionType must be 'COMPLETED', 'DONE_BY_TEAM', 'DONE_BY_CLIENT' or 'QUERY'.",
+          "submissionType must be 'COMPLETED', 'DONE_BY_TEAM', 'DONE_BY_CLIENT', 'QUERY' or 'OUT_OF_SCOPE'.",
+      });
+    }
+    if (submissionType === "OUT_OF_SCOPE" && !reasonText) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "reasonText is required when submissionType is 'OUT_OF_SCOPE'.",
       });
     }
     if (submissionType === "QUERY" && !queryText) {
@@ -3341,6 +3266,8 @@ async function submitServiceCase(req, res) {
         submission_status: "SUBMITTED",
         submission_type: submissionType,
         query_text: submissionType === "QUERY" ? queryText : null,
+        out_of_scope_reason:
+          submissionType === "OUT_OF_SCOPE" ? reasonText : null,
         submitted_at: new Date().toISOString(),
         // the person who pressed Submit (may differ from the assigned
         // employee when a Super Admin / Ops Manager submits on behalf).
@@ -3374,6 +3301,7 @@ async function submitServiceCase(req, res) {
         submissionStatus: data.submission_status,
         submissionType: data.submission_type,
         queryText: data.query_text,
+        outOfScopeReason: data.out_of_scope_reason || "",
         submittedAt: data.submitted_at,
       },
     });
@@ -3743,6 +3671,7 @@ async function bulkSubmitServiceCases(req, res) {
         id: (it.id || "").toString(),
         submissionType: (it.submissionType || "").toString().trim(),
         queryText: (it.queryText || "").toString().trim(),
+        reasonText: (it.reasonText || "").toString().trim(),
       }))
       .filter((it) => it.id);
 
@@ -3762,7 +3691,14 @@ async function bulkSubmitServiceCases(req, res) {
         return res.status(400).json({
           success: false,
           message:
-            "Every case needs a status of 'Completed', 'Query', 'Completed by Team' or 'Completed by Client'.",
+            "Every case needs a status of 'Completed', 'Query', 'Completed by Team', 'Completed by Client' or 'Out of Scope'.",
+        });
+      }
+      if (it.submissionType === "OUT_OF_SCOPE" && !it.reasonText) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Every case marked 'Out of Scope' needs its reason filled in.",
         });
       }
       if (it.submissionType === "QUERY" && !it.queryText) {
@@ -3793,6 +3729,8 @@ async function bulkSubmitServiceCases(req, res) {
             submission_status: "SUBMITTED",
             submission_type: it.submissionType,
             query_text: it.submissionType === "QUERY" ? it.queryText : null,
+            out_of_scope_reason:
+              it.submissionType === "OUT_OF_SCOPE" ? it.reasonText : null,
             submitted_at: now,
             // who pressed Submit (see submitServiceCase).
             submitted_by: req.user.userId,

@@ -141,6 +141,7 @@ const login = async (rawEmail, password) => {
       lastName: matchedUser["Last Name"],
       department: matchedUser["Department"],
       designation: matchedUser["Designation"],
+      collarType: matchedUser["collar_type"] === "BLUE" ? "BLUE" : "WHITE",
     },
   };
 };

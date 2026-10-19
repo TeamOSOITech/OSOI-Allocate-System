@@ -52,7 +52,8 @@ const getProductById = async (id, organizationId) => {
 // tag on the service, not a relational link, so it's just passed straight
 // through. Defaults to [] when omitted so the column never ends up NULL.
 const createProduct = async (payload, organizationId) => {
-  const { product_name, time_taken, time_unit, teams } = payload;
+  const { product_name, time_taken, time_unit, teams, has_case_number } =
+    payload;
 
   const { data, error } = await supabase
     .from(TABLE)
@@ -62,6 +63,9 @@ const createProduct = async (payload, organizationId) => {
         time_taken,
         time_unit,
         teams: teams || [],
+        // NEW: does this service come with a case number? Defaults to
+        // true (the old behaviour) when the caller doesn't say.
+        has_case_number: has_case_number ?? true,
         organization_id: organizationId,
         hidden: false,
       },
@@ -81,6 +85,7 @@ const bulkCreateProducts = async (productsArray, organizationId) => {
     time_taken: p.time_taken,
     time_unit: p.time_unit,
     teams: p.teams || [],
+    has_case_number: p.has_case_number ?? true,
     organization_id: organizationId,
     hidden: p.hidden ?? false,
   }));
@@ -100,7 +105,8 @@ const bulkCreateProducts = async (productsArray, organizationId) => {
 // touches keys present in the object, so we build the patch conditionally
 // rather than always including `teams: teams || []`).
 const updateProduct = async (id, payload, organizationId) => {
-  const { product_name, time_taken, time_unit, teams } = payload;
+  const { product_name, time_taken, time_unit, teams, has_case_number } =
+    payload;
 
   const patch = {
     product_name,
@@ -111,6 +117,12 @@ const updateProduct = async (id, payload, organizationId) => {
 
   if (teams !== undefined) {
     patch.teams = teams || [];
+  }
+
+  // NEW: only touch has_case_number when the caller actually sent it, so
+  // older clients / field-only updates don't reset it.
+  if (has_case_number !== undefined) {
+    patch.has_case_number = has_case_number;
   }
 
   const { data, error } = await supabase

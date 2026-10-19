@@ -28,6 +28,10 @@ function mapRow(row) {
     // save and always came back empty after refresh.
     team: row["Worked In Teams"] ?? null,
     photoUrl: row.photo_url ?? null,
+    // Blue Collar mode: "WHITE" (service-based, the default) or "BLUE"
+    // (manpower-based), plus the location a Blue Collar employee is at.
+    collarType: row.collar_type === "BLUE" ? "BLUE" : "WHITE",
+    locationId: row.blue_location_id ?? null,
     status: "Active",
   };
 }
@@ -67,12 +71,27 @@ async function validateReportingManager(email, organizationId) {
   return { valid: true };
 }
 
-async function fetchAllEmployees(organizationId) {
-  const { data, error } = await supabase
-    .from("user_master")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .order("First Name", { ascending: true });
+// collar: "WHITE" (default — service-based users, incl. rows that pre-date
+// the collar_type column), "BLUE" (manpower-based users) or "ALL".
+async function fetchAllEmployees(organizationId, collar = "WHITE") {
+  const build = (withFilter) => {
+    let q = supabase
+      .from("user_master")
+      .select("*")
+      .eq("organization_id", organizationId);
+    if (withFilter && collar === "BLUE") q = q.eq("collar_type", "BLUE");
+    if (withFilter && collar === "WHITE")
+      q = q.or("collar_type.is.null,collar_type.eq.WHITE");
+    return q.order("First Name", { ascending: true });
+  };
+
+  let { data, error } = await build(true);
+
+  // collar_type column not created yet (migration not run): behave exactly
+  // like before for White Collar instead of breaking every page.
+  if (error && /collar_type/i.test(error.message || "") && collar !== "BLUE") {
+    ({ data, error } = await build(false));
+  }
 
   if (error) throw error;
   return (data || []).map(mapRow);
