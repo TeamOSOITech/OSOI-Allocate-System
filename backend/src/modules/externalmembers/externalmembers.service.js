@@ -9,26 +9,32 @@
 // same external picks come back automatically the next time that
 // service+date combination is opened.
 //
+// PERMANENT UNTIL REMOVED: an external member added to a service stays on
+// that service for EVERY date until someone removes them. The work_date
+// column is still stored (the date it was last saved) but is NOT used to
+// filter — reads return everyone saved for the service, and a save replaces
+// the whole set for the service whatever date it was originally added on.
+//
 // Table: external_service_members(id, organization_id, product_id,
 //        employee_id, work_date, created_at)
-// Unique on (organization_id, product_id, employee_id, work_date) so
-// re-adding the same person for the same service/date is a no-op, not
-// a duplicate row.
+// Unique on (organization_id, product_id, employee_id, work_date).
 
 const supabase = require("../../config/supabaseClient");
 
 const TABLE = "external_service_members";
 
-async function fetchExternalMembers(organizationId, productId, workDate) {
+// `_workDate` is accepted for backwards compatibility with the frontend but
+// deliberately ignored: externals are not tied to a single date any more.
+async function fetchExternalMembers(organizationId, productId, _workDate) {
   const { data, error } = await supabase
     .from(TABLE)
     .select("employee_id")
     .eq("organization_id", organizationId)
-    .eq("product_id", productId)
-    .eq("work_date", workDate);
+    .eq("product_id", productId);
 
   if (error) throw error;
-  return (data || []).map((row) => row.employee_id);
+  // de-duplicate: older rows may hold the same person on several dates
+  return [...new Set((data || []).map((row) => row.employee_id))];
 }
 
 // Replaces the FULL external-member set for this org+service+date in one
@@ -41,18 +47,19 @@ async function replaceExternalMembers(
   workDate,
   employeeIds,
 ) {
+  // Delete EVERY row for this service (any date), so people added on older
+  // dates are replaced too and a removal really removes them.
   const { error: deleteError } = await supabase
     .from(TABLE)
     .delete()
     .eq("organization_id", organizationId)
-    .eq("product_id", productId)
-    .eq("work_date", workDate);
+    .eq("product_id", productId);
 
   if (deleteError) throw deleteError;
 
   if (!employeeIds || employeeIds.length === 0) return [];
 
-  const rows = employeeIds.map((employeeId) => ({
+  const rows = [...new Set(employeeIds)].map((employeeId) => ({
     organization_id: organizationId,
     product_id: productId,
     employee_id: employeeId,

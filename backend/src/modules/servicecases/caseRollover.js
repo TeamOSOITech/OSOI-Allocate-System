@@ -191,6 +191,63 @@ async function rolloverPendingCases(organizationId = null) {
   return totalReturned;
 }
 
+// ---- LEAVE / HALF-DAY RELEASE -----------------------------------------
+//
+// When an employee is marked LEAVE (or put on a leave period that covers
+// today), every case still sitting with them that has NOT been submitted goes
+// back to the main pool. When they are marked HALF_DAY, HALF of those
+// unsubmitted cases (rounded up, most recently allocated first) go back.
+// Submitted cases (Completed / Query / ...) are never touched.
+//
+// Only acts on TODAY (APP_TIMEZONE): marking a past or future date must not
+// pull back today's work.
+
+function todayYmdInAppTz(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now); // YYYY-MM-DD
+}
+
+// mode: "ALL" (leave) | "HALF" (half day). Returns number of cases returned.
+async function releaseCasesForEmployee(organizationId, employeeId, mode) {
+  const { data: open, error } = await supabase
+    .from("service_cases")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("assigned_employee_id", employeeId)
+    .eq("allocation_status", "ALLOCATED")
+    .or("submission_status.is.null,submission_status.eq.PENDING")
+    .order("allocated_at", { ascending: false });
+  if (error) throw error;
+
+  const ids = (open || []).map((c) => c.id);
+  if (ids.length === 0) return 0;
+
+  const toReturn =
+    mode === "HALF" ? ids.slice(0, Math.ceil(ids.length / 2)) : ids;
+
+  // Same guards as the end-of-day sweep: a case submitted a split-second ago
+  // is NOT touched.
+  const { data: returned, error: updError } = await supabase
+    .from("service_cases")
+    .update({
+      assigned_employee_id: null,
+      allocation_status: "PENDING",
+      allocated_at: null,
+      allocated_by: null,
+    })
+    .in("id", toReturn)
+    .eq("assigned_employee_id", employeeId)
+    .eq("allocation_status", "ALLOCATED")
+    .or("submission_status.is.null,submission_status.eq.PENDING")
+    .select("id");
+  if (updError) throw updError;
+  return (returned || []).length;
+}
+
 async function rolloverAllOrgs() {
   const n = await rolloverPendingCases(null);
   if (n > 0) {
@@ -219,4 +276,6 @@ module.exports = {
   rolloverAllOrgs,
   ensureRollover,
   startOfTodayISO,
+  todayYmdInAppTz,
+  releaseCasesForEmployee,
 };

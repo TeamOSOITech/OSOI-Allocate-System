@@ -13,6 +13,10 @@
 const { sendError } = require("../../utils/response");
 const attendanceService = require("./attendance.service");
 const { allEmployeesInOrg, isIsoDate } = require("../../utils/orgGuards");
+const {
+  todayYmdInAppTz,
+  releaseCasesForEmployee,
+} = require("../servicecases/caseRollover");
 
 // ------------------------------------------------------------
 // GET /api/attendance?date=YYYY-MM-DD
@@ -95,11 +99,53 @@ async function bulkMarkAttendance(req, res) {
       marked_by: req.user.userId,
     }));
 
+    // Status BEFORE this save, so a case release only happens when the status
+    // really CHANGES (the grid re-saves every employee each time; without this
+    // a HALF_DAY employee would be halved again on every save).
+    let before = new Map();
+    try {
+      const prev = await attendanceService.fetchAttendanceForDate(
+        req.user.organizationId,
+        date,
+      );
+      before = new Map(prev.map((r) => [r.employee_id, r.status]));
+    } catch (e) {
+      console.error("bulkMarkAttendance: could not read previous status:", e);
+    }
+
     const data = await attendanceService.upsertAttendanceRows(rows);
 
-    res
-      .status(201)
-      .json({ success: true, data: data.map(attendanceService.mapRow) });
+    // LEAVE -> all unsubmitted cases go back to the pool.
+    // HALF_DAY -> half of the unsubmitted cases go back.
+    // Only for TODAY; never lets a failure here break attendance saving.
+    let released = 0;
+    if (date === todayYmdInAppTz()) {
+      for (const r of records) {
+        if (before.get(r.employeeId) === r.status) continue;
+        const mode =
+          r.status === "LEAVE"
+            ? "ALL"
+            : r.status === "HALF_DAY"
+              ? "HALF"
+              : null;
+        if (!mode) continue;
+        try {
+          released += await releaseCasesForEmployee(
+            req.user.organizationId,
+            r.employeeId,
+            mode,
+          );
+        } catch (e) {
+          console.error("bulkMarkAttendance: release failed:", e?.message || e);
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: data.map(attendanceService.mapRow),
+      released,
+    });
   } catch (err) {
     sendError(res, err, 400);
   }

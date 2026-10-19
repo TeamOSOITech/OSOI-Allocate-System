@@ -7,6 +7,10 @@
 //   DELETE /api/employee-leaves/:id
 
 const supabase = require("../../config/supabaseClient");
+const {
+  todayYmdInAppTz,
+  releaseCasesForEmployee,
+} = require("../servicecases/caseRollover");
 
 const orgIdOf = (req) => req.user.organizationId;
 const userIdOf = (req) => req.user.userId;
@@ -63,12 +67,10 @@ async function listLeaves(req, res) {
     res.json({ success: true, data: (data || []).map(shape) });
   } catch (err) {
     console.error("listLeaves error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -131,19 +133,32 @@ async function createLeaves(req, res) {
       .select();
     if (error) throw error;
 
+    // Leave period covers today -> their unsubmitted cases go back to the
+    // pool right now (a failure here never breaks saving the leave).
+    let released = 0;
+    const today = todayYmdInAppTz();
+    if (fromDate <= today && today <= toDate) {
+      for (const employeeId of employeeIds) {
+        try {
+          released += await releaseCasesForEmployee(orgId, employeeId, "ALL");
+        } catch (e) {
+          console.error("createLeaves: release failed:", e?.message || e);
+        }
+      }
+    }
+
     res.status(201).json({
       success: true,
+      released,
       message: `Leave marked for ${rows.length} employee(s) (${fromDate} to ${toDate}).`,
       data: (data || []).map(shape),
     });
   } catch (err) {
     console.error("createLeaves error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -164,12 +179,10 @@ async function deleteLeave(req, res) {
     res.json({ success: true, message: "Leave period removed." });
   } catch (err) {
     console.error("deleteLeave error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
