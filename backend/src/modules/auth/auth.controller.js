@@ -1,5 +1,10 @@
 const { sendError } = require("../../utils/response");
-const { login, forgotPassword, refreshSession } = require("./auth.service");
+const {
+  login,
+  loginWithGoogle,
+  forgotPassword,
+  refreshSession,
+} = require("./auth.service");
 const {
   setAuthCookies,
   clearAuthCookies,
@@ -48,6 +53,31 @@ const loginHandler = async (req, res) => {
     console.error("LOGIN ERROR:", err);
 
     return sendError(res, err, 401, "Invalid email or password");
+  }
+};
+
+//
+// GOOGLE LOGIN HANDLER — same cookies / response shape as loginHandler.
+//
+const googleLoginHandler = async (req, res) => {
+  try {
+    const { accessToken, refreshToken } = req.body || {};
+    const data = await loginWithGoogle(accessToken, refreshToken);
+
+    const csrfToken = setAuthCookies(res, {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+    });
+    const { accessToken: _at, refreshToken: _rt, ...safeData } = data;
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: { ...safeData, csrfToken },
+    });
+  } catch (err) {
+    console.error("GOOGLE LOGIN ERROR:", err.message);
+    return sendError(res, err, 401, "Google sign-in failed.");
   }
 };
 
@@ -142,6 +172,7 @@ const forgotPasswordHandler = async (req, res) => {
 
 module.exports = {
   loginHandler,
+  googleLoginHandler,
   logoutHandler,
   refreshHandler,
   forgotPasswordHandler,

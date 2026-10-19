@@ -145,6 +145,70 @@ const login = async (rawEmail, password) => {
   };
 };
 
+// GOOGLE LOGIN: the browser signs in with Google through Supabase and hands us
+// the resulting session. We verify the token with Supabase, then require that
+// the Google identity belongs to an EXISTING user_master account (matched on
+// "Auth User Id"). No account is ever created here — an unregistered Google
+// address is rejected, same as a wrong password.
+const loginWithGoogle = async (accessToken, refreshToken) => {
+  if (!accessToken || !refreshToken) {
+    throw new Error("Google sign-in failed. Please try again.");
+  }
+
+  const { data: authData, error: authError } =
+    await supabaseAuthClient.auth.getUser(accessToken);
+  const authUser = authData?.user;
+  if (authError || !authUser) {
+    throw new Error("Google sign-in failed. Please try again.");
+  }
+
+  const viaGoogle = (authUser.identities || []).some(
+    (i) => i.provider === "google",
+  );
+  if (!viaGoogle || !authUser.email_confirmed_at) {
+    throw new Error("Google sign-in failed. Please try again.");
+  }
+
+  const { data: rows, error: rowsError } = await supabase
+    .from("user_master")
+    .select("*")
+    .eq("Auth User Id", authUser.id)
+    .limit(1);
+
+  const matchedUser = rows?.[0];
+  if (rowsError || !matchedUser) {
+    throw new Error(
+      "This Google account is not registered. Ask your administrator to add you.",
+    );
+  }
+
+  const rawRole = matchedUser["Role"];
+  if (!rawRole) {
+    throw new Error(
+      "No role assigned to this account. Contact an administrator.",
+    );
+  }
+  const normalizedRole = String(rawRole)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: authUser.id,
+      email: matchedUser["Email"],
+      role: normalizedRole,
+      organizationId: matchedUser["organization_id"],
+      firstName: matchedUser["First Name"],
+      lastName: matchedUser["Last Name"],
+      department: matchedUser["Department"],
+      designation: matchedUser["Designation"],
+    },
+  };
+};
+
 // UPDATED: Forgot password — generates a reset link for every role-account
 // registered under this real email, then EMAILS each link via Gmail SMTP
 // (see mailer.js) rather than sending it through Supabase's own mailer.
@@ -271,6 +335,7 @@ const refreshSession = async (refreshToken) => {
 
 module.exports = {
   login,
+  loginWithGoogle,
   forgotPassword,
   refreshSession,
 };
