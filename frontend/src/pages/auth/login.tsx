@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { setCsrfToken } from "../../utils/authFetch";
+import { supabase } from "../../config/supabaseClient";
 
 const MOBILE_BREAKPOINT = 860;
 const COMPACT_BREAKPOINT = 640;
@@ -34,9 +35,144 @@ const Login = () => {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const [resetSending, setResetSending] = useState(false);
+    const [googleBusy, setGoogleBusy] = useState(false);
     const [view, setView] = useState<"login" | "forgot" | "sent">("login");
 
     const API_URL = import.meta.env.VITE_API_URL;
+
+    // Shared by password login and Google login: remember the profile, then
+    // send the person to the right landing page.
+    const completeLogin = (data: any) => {
+        // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
+        // cookies set by the server above — storing them in
+        // localStorage too would just be dead, readable-by-XSS weight
+        // with no purpose. Only the (non-sensitive) user profile is
+        // kept client-side, for displaying name/role in the UI and as
+        // the PrivateRoute "am I logged in" signal in App.jsx.
+        try {
+            localStorage.setItem("user", JSON.stringify(data.data.user));
+        } catch {
+            /* storage blocked */
+        }
+        // Tell the profile page to show the open-query reminder after THIS login.
+        try {
+            localStorage.setItem("pf_query_reminder_pending", "1");
+            // managers: team-queries popup (first login of the day / urgent)
+            localStorage.setItem("pf_team_query_popup_pending", "1");
+        } catch {
+            /* storage blocked */
+        }
+
+        // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
+        // (onrender.com) are different domains, so our JS can never
+        // read the csrfToken cookie the backend also sets — the
+        // browser only exposes a cookie to JS running on the SAME
+        // domain that set it. The backend anticipates this and also
+        // returns the same value in this response body, which (unlike
+        // the cookie) our own same-origin fetch() call CAN read. Every
+        // authFetch() call after this attaches it as X-CSRF-Token.
+        if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
+
+        const userRole = data.data.user.role;
+
+        // FIX: this switch only knew the OLD roles (ADMIN/MANAGER/
+        // EMPLOYEE). After migrating user_master."Role" to the new
+        // 6-tier system, every login fell through to "Invalid role"
+        // below — nobody could actually get in, even with a correct
+        // password, because the role string never matched a case.
+        switch (userRole) {
+            case "SUPER_ADMIN":
+            case "OPS_MANAGER":
+            case "AUDIT_MANAGER":
+            case "PROCESS_LEAD":
+                window.location.href = "/profile";
+                break;
+
+            case "VERTICAL_HEAD":
+                window.location.href = "/profile";
+                break;
+
+            case "TEAM_MEMBER":
+                window.location.href = "/profile";
+                break;
+
+            case "CLIENT":
+                window.location.href = "/client-dashboard";
+                break;
+
+            default:
+                setError("Invalid role");
+        }
+    };
+
+    // ---- Google login -------------------------------------------------
+    const handleGoogleLogin = async () => {
+        setError("");
+        setGoogleBusy(true);
+        try {
+            sessionStorage.setItem("google_login_pending", "1");
+        } catch {
+            /* storage blocked */
+        }
+        const { error: oauthError } = await supabase.auth.signInWithOAuth({
+            provider: "google",
+            options: {
+                redirectTo: `${window.location.origin}/login`,
+                queryParams: { prompt: "select_account" },
+            },
+        });
+        if (oauthError) {
+            setGoogleBusy(false);
+            setError("Could not start Google sign-in. Please try again.");
+        }
+    };
+
+    // Back from Google: hand the session to our backend, which sets the same
+    // httpOnly cookies as a normal login. The browser-side copy is then wiped
+    // so tokens live only in those cookies.
+    useEffect(() => {
+        let pending = false;
+        try {
+            pending = sessionStorage.getItem("google_login_pending") === "1";
+        } catch {
+            /* storage blocked */
+        }
+        if (!pending) return;
+        try {
+            sessionStorage.removeItem("google_login_pending");
+        } catch {
+            /* storage blocked */
+        }
+
+        (async () => {
+            setLoading(true);
+            try {
+                const { data: sess } = await supabase.auth.getSession();
+                const session = sess?.session;
+                if (!session) throw new Error("Google sign-in was cancelled or failed.");
+
+                const res = await fetch(`${API_URL}/api/auth/google`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        accessToken: session.access_token,
+                        refreshToken: session.refresh_token,
+                    }),
+                    credentials: "include",
+                });
+                const data = await res.json().catch(() => ({}));
+                await supabase.auth.signOut({ scope: "local" });
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || "Google sign-in failed.");
+                }
+                completeLogin(data);
+            } catch (err: any) {
+                setError(err.message || "Google sign-in failed.");
+                setLoading(false);
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -68,66 +204,7 @@ const Login = () => {
                 throw new Error(data.message || "Login failed");
             }
 
-            // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
-            // cookies set by the server above — storing them in
-            // localStorage too would just be dead, readable-by-XSS weight
-            // with no purpose. Only the (non-sensitive) user profile is
-            // kept client-side, for displaying name/role in the UI and as
-            // the PrivateRoute "am I logged in" signal in App.jsx.
-            try {
-                localStorage.setItem("user", JSON.stringify(data.data.user));
-            } catch {
-                /* storage blocked */
-            }
-            // Tell the profile page to show the open-query reminder after THIS login.
-            try {
-                localStorage.setItem("pf_query_reminder_pending", "1");
-                // managers: team-queries popup (first login of the day / urgent)
-                localStorage.setItem("pf_team_query_popup_pending", "1");
-            } catch {
-                /* storage blocked */
-            }
-
-            // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
-            // (onrender.com) are different domains, so our JS can never
-            // read the csrfToken cookie the backend also sets — the
-            // browser only exposes a cookie to JS running on the SAME
-            // domain that set it. The backend anticipates this and also
-            // returns the same value in this response body, which (unlike
-            // the cookie) our own same-origin fetch() call CAN read. Every
-            // authFetch() call after this attaches it as X-CSRF-Token.
-            if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
-
-            const userRole = data.data.user.role;
-
-            // FIX: this switch only knew the OLD roles (ADMIN/MANAGER/
-            // EMPLOYEE). After migrating user_master."Role" to the new
-            // 6-tier system, every login fell through to "Invalid role"
-            // below — nobody could actually get in, even with a correct
-            // password, because the role string never matched a case.
-            switch (userRole) {
-                case "SUPER_ADMIN":
-                case "OPS_MANAGER":
-                case "AUDIT_MANAGER":
-                case "PROCESS_LEAD":
-                    window.location.href = "/profile";
-                    break;
-
-                case "VERTICAL_HEAD":
-                    window.location.href = "/profile";
-                    break;
-
-                case "TEAM_MEMBER":
-                    window.location.href = "/profile";
-                    break;
-
-                case "CLIENT":
-                    window.location.href = "/client-dashboard";
-                    break;
-
-                default:
-                    setError("Invalid role");
-            }
+            completeLogin(data);
         } catch (err: any) {
             setError(err.message || "Login failed.");
         } finally {
@@ -970,6 +1047,62 @@ const Login = () => {
                                     {loading ? "Signing In..." : "Sign In"}
                                 </button>
                             </form>
+
+                            <div
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    margin: "14px 0 10px",
+                                    color: "#9CA3AF",
+                                    fontSize: fontSize.xs,
+                                }}
+                            >
+                                <span style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
+                                or
+                                <span style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={handleGoogleLogin}
+                                disabled={loading || googleBusy}
+                                style={{
+                                    width: "100%",
+                                    padding: isMobile ? "12px" : "9px",
+                                    border: "1px solid #D9DEEE",
+                                    borderRadius: 10,
+                                    background: "#fff",
+                                    color: "#2b2a3a",
+                                    fontWeight: 600,
+                                    fontSize: fontSize.md,
+                                    cursor: loading || googleBusy ? "default" : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 10,
+                                }}
+                            >
+                                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                                    <path
+                                        fill="#EA4335"
+                                        d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.5 17.7 9.5 24 9.5z"
+                                    />
+                                    <path
+                                        fill="#4285F4"
+                                        d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"
+                                    />
+                                    <path
+                                        fill="#FBBC05"
+                                        d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"
+                                    />
+                                    <path
+                                        fill="#34A853"
+                                        d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"
+                                    />
+                                </svg>
+                                {googleBusy ? "Opening Google..." : "Continue with Google"}
+                            </button>
 
                             <button
                                 type="button"
