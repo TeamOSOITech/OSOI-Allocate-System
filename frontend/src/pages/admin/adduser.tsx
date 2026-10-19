@@ -231,6 +231,19 @@ function isUnder18(dob: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(dob) && dob > maxDobStr();
 }
 
+// Date of Joining: cannot be in the future.
+const DOJ_FUTURE_ERROR = "Date of Joining cannot be in the future.";
+// latest allowed DOJ = today (local date, YYYY-MM-DD)
+function todayDateStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+function isFutureDoj(doj: string) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(doj) && doj > todayDateStr();
+}
+
 function mapBulkRow(row: any) {
     return {
         firstName: row["First Name"] || row["Full Name"] || "",
@@ -730,6 +743,14 @@ export default function AddUser() {
                     });
                     return;
                 }
+                if (isFutureDoj(u.doj)) {
+                    preFailedResults.push({
+                        email: u.email,
+                        success: false,
+                        message: DOJ_FUTURE_ERROR,
+                    });
+                    return;
+                }
                 if (!isProfessionalEmail(u.email)) {
                     preFailedResults.push({
                         email: u.email,
@@ -813,6 +834,11 @@ export default function AddUser() {
 
         if (isUnder18(formData.dob)) {
             setError(DOB_AGE_ERROR);
+            return;
+        }
+
+        if (isFutureDoj(formData.doj)) {
+            setError(DOJ_FUTURE_ERROR);
             return;
         }
 
@@ -1379,9 +1405,16 @@ export default function AddUser() {
                                             type="date"
                                             style={styles.input}
                                             value={formData.doj}
-                                            onChange={(e) =>
-                                                setFormData({ ...formData, doj: e.target.value })
-                                            }
+                                            max={todayDateStr()}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (isFutureDoj(v)) {
+                                                    setError(DOJ_FUTURE_ERROR);
+                                                    return;
+                                                }
+                                                if (error === DOJ_FUTURE_ERROR) setError("");
+                                                setFormData({ ...formData, doj: v });
+                                            }}
                                         />
                                     </div>
                                 </div>

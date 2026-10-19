@@ -1833,9 +1833,15 @@ export default function Employees() {
                                             className="emp-drawer-input"
                                             style={styles.detailsInput}
                                             value={toDateInputValue(drawerData.joiningDate)}
-                                            onChange={(e) =>
-                                                updateEditField("joiningDate", e.target.value)
-                                            }
+                                            max={new Date().toLocaleDateString("en-CA")}
+                                            onChange={(e) => {
+                                                if (
+                                                    e.target.value >
+                                                    new Date().toLocaleDateString("en-CA")
+                                                )
+                                                    return;
+                                                updateEditField("joiningDate", e.target.value);
+                                            }}
                                         />
                                     ) : (
                                         <span style={styles.detailsValue}>
