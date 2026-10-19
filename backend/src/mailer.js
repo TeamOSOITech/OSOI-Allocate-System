@@ -8,7 +8,7 @@ const axios = require("axios");
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || "team@osoitech.com";
-const SENDER_NAME = process.env.BREVO_SENDER_NAME || "Allocate System";
+const SENDER_NAME = process.env.BREVO_SENDER_NAME || "Allookate";
 
 if (!BREVO_API_KEY) {
   console.error(
