@@ -145,29 +145,24 @@ const login = async (rawEmail, password) => {
   };
 };
 
-// GOOGLE LOGIN: the browser signs in with Google through Supabase and hands us
-// the resulting session. We verify the token with Supabase, then require that
-// the Google identity belongs to an EXISTING user_master account (matched on
-// "Auth User Id"). No account is ever created here — an unregistered Google
-// address is rejected, same as a wrong password.
-const loginWithGoogle = async (accessToken, refreshToken) => {
-  if (!accessToken || !refreshToken) {
-    throw new Error("Google sign-in failed. Please try again.");
-  }
+// MICROSOFT LOGIN: the browser signs in with Microsoft through Supabase
+// (provider "azure") and hands us the resulting session. We verify the token
+// with Supabase, then require that the identity belongs to an EXISTING
+// user_master account (matched on "Auth User Id"). No account is ever created
+// here — an unregistered Microsoft address is rejected, same as a wrong password.
+const loginWithMicrosoft = async (accessToken, refreshToken) => {
+  const fail = () => new Error("Microsoft sign-in failed. Please try again.");
+  if (!accessToken || !refreshToken) throw fail();
 
   const { data: authData, error: authError } =
     await supabaseAuthClient.auth.getUser(accessToken);
   const authUser = authData?.user;
-  if (authError || !authUser) {
-    throw new Error("Google sign-in failed. Please try again.");
-  }
+  if (authError || !authUser) throw fail();
 
-  const viaGoogle = (authUser.identities || []).some(
-    (i) => i.provider === "google",
+  const viaMicrosoft = (authUser.identities || []).some(
+    (i) => i.provider === "azure",
   );
-  if (!viaGoogle || !authUser.email_confirmed_at) {
-    throw new Error("Google sign-in failed. Please try again.");
-  }
+  if (!viaMicrosoft) throw fail();
 
   const { data: rows, error: rowsError } = await supabase
     .from("user_master")
@@ -178,7 +173,7 @@ const loginWithGoogle = async (accessToken, refreshToken) => {
   const matchedUser = rows?.[0];
   if (rowsError || !matchedUser) {
     throw new Error(
-      "This Google account is not registered. Ask your administrator to add you.",
+      "This Microsoft account is not registered. Ask your administrator to add you.",
     );
   }
 
@@ -335,7 +330,7 @@ const refreshSession = async (refreshToken) => {
 
 module.exports = {
   login,
-  loginWithGoogle,
+  loginWithMicrosoft,
   forgotPassword,
   refreshSession,
 };

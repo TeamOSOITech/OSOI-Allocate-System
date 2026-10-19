@@ -1,7 +1,7 @@
 const { sendError } = require("../../utils/response");
 const {
   login,
-  loginWithGoogle,
+  loginWithMicrosoft,
   forgotPassword,
   refreshSession,
 } = require("./auth.service");
@@ -57,12 +57,12 @@ const loginHandler = async (req, res) => {
 };
 
 //
-// GOOGLE LOGIN HANDLER — same cookies / response shape as loginHandler.
+// MICROSOFT LOGIN HANDLER — same cookies / response shape as loginHandler.
 //
-const googleLoginHandler = async (req, res) => {
+const microsoftLoginHandler = async (req, res) => {
   try {
     const { accessToken, refreshToken } = req.body || {};
-    const data = await loginWithGoogle(accessToken, refreshToken);
+    const data = await loginWithMicrosoft(accessToken, refreshToken);
 
     const csrfToken = setAuthCookies(res, {
       accessToken: data.accessToken,
@@ -76,8 +76,8 @@ const googleLoginHandler = async (req, res) => {
       data: { ...safeData, csrfToken },
     });
   } catch (err) {
-    console.error("GOOGLE LOGIN ERROR:", err.message);
-    return sendError(res, err, 401, "Google sign-in failed.");
+    console.error("MICROSOFT LOGIN ERROR:", err.message);
+    return sendError(res, err, 401, "Microsoft sign-in failed.");
   }
 };
 
@@ -172,7 +172,7 @@ const forgotPasswordHandler = async (req, res) => {
 
 module.exports = {
   loginHandler,
-  googleLoginHandler,
+  microsoftLoginHandler,
   logoutHandler,
   refreshHandler,
   forgotPasswordHandler,
