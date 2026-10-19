@@ -381,10 +381,16 @@ async function applyApprovedAction(request) {
 
     // ---- NEW: Service (Product) ----
     case "SERVICE_CREATE": {
-      const { product_name, time_taken, time_unit, teams, has_case_number } =
-        body;
+      const {
+        product_name,
+        time_taken,
+        time_unit,
+        teams,
+        has_case_number,
+        status,
+      } = body;
       await productsService.createProduct(
-        { product_name, time_taken, time_unit, teams, has_case_number },
+        { product_name, time_taken, time_unit, teams, has_case_number, status },
         orgId,
       );
       break;
@@ -397,10 +403,11 @@ async function applyApprovedAction(request) {
         time_unit,
         teams,
         has_case_number,
+        status,
       } = body;
       await productsService.updateProduct(
         id,
-        { product_name, time_taken, time_unit, teams, has_case_number },
+        { product_name, time_taken, time_unit, teams, has_case_number, status },
         orgId,
       );
       break;

@@ -52,14 +52,22 @@ const getProductById = async (id, organizationId) => {
 // tag on the service, not a relational link, so it's just passed straight
 // through. Defaults to [] when omitted so the column never ends up NULL.
 const createProduct = async (payload, organizationId) => {
-  const { product_name, time_taken, time_unit, teams, has_case_number } =
-    payload;
+  const {
+    product_name,
+    time_taken,
+    time_unit,
+    teams,
+    has_case_number,
+    status,
+  } = payload;
 
   const { data, error } = await supabase
     .from(TABLE)
     .insert([
       {
         product_name,
+        // NEW: Active / Inactive. Anything but "Inactive" is Active.
+        status: status === "Inactive" ? "Inactive" : "Active",
         time_taken,
         time_unit,
         teams: teams || [],
@@ -105,8 +113,14 @@ const bulkCreateProducts = async (productsArray, organizationId) => {
 // touches keys present in the object, so we build the patch conditionally
 // rather than always including `teams: teams || []`).
 const updateProduct = async (id, payload, organizationId) => {
-  const { product_name, time_taken, time_unit, teams, has_case_number } =
-    payload;
+  const {
+    product_name,
+    time_taken,
+    time_unit,
+    teams,
+    has_case_number,
+    status,
+  } = payload;
 
   const patch = {
     product_name,
@@ -123,6 +137,11 @@ const updateProduct = async (id, payload, organizationId) => {
   // older clients / field-only updates don't reset it.
   if (has_case_number !== undefined) {
     patch.has_case_number = has_case_number;
+  }
+
+  // NEW: only touch status when the caller sent it.
+  if (status !== undefined) {
+    patch.status = status === "Inactive" ? "Inactive" : "Active";
   }
 
   const { data, error } = await supabase

@@ -150,8 +150,21 @@ const getProductById = async (req, res) => {
 // to real team names.
 const createProduct = async (req, res) => {
   try {
-    const { product_name, time_taken, time_unit, teams, has_case_number } =
-      req.body;
+    const {
+      product_name,
+      time_taken,
+      time_unit,
+      teams,
+      has_case_number,
+      status,
+    } = req.body;
+
+    if (status !== undefined && !["Active", "Inactive"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "status must be 'Active' or 'Inactive'",
+      });
+    }
 
     if (!product_name) {
       return res
@@ -180,7 +193,7 @@ const createProduct = async (req, res) => {
     }
 
     const product = await productService.createProduct(
-      { product_name, time_taken, time_unit, teams, has_case_number },
+      { product_name, time_taken, time_unit, teams, has_case_number, status },
       req.user.organizationId,
     );
 
@@ -454,8 +467,21 @@ const updateProduct = async (req, res) => {
       });
     }
 
-    const { product_name, time_taken, time_unit, teams, has_case_number } =
-      req.body;
+    const {
+      product_name,
+      time_taken,
+      time_unit,
+      teams,
+      has_case_number,
+      status,
+    } = req.body;
+
+    if (status !== undefined && !["Active", "Inactive"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "status must be 'Active' or 'Inactive'",
+      });
+    }
 
     if (has_case_number !== undefined && typeof has_case_number !== "boolean") {
       return res.status(400).json({
@@ -479,7 +505,7 @@ const updateProduct = async (req, res) => {
 
     const product = await productService.updateProduct(
       id,
-      { product_name, time_taken, time_unit, teams, has_case_number },
+      { product_name, time_taken, time_unit, teams, has_case_number, status },
       req.user.organizationId,
     );
 
