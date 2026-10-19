@@ -1075,8 +1075,32 @@ async function createServiceCases(req, res) {
 // ------------------------------------------------------------
 async function downloadUploadTemplate(req, res) {
   try {
+    const orgId = req.user.organizationId;
+
+    // Dropdown sources: this org's services / clients / subclients, so a
+    // wrong (or misspelt) name can't be typed into the sheet. The upload
+    // itself still re-checks everything server-side.
+    const [prodRes, clientRes, subRes] = await Promise.all([
+      supabase
+        .from("service_master")
+        .select("product_name")
+        .eq("organization_id", orgId),
+      supabase.from("clients").select("name").eq("organization_id", orgId),
+      supabase.from("subclients").select("name").eq("organization_id", orgId),
+    ]);
+    const uniqSorted = (rows, key) =>
+      Array.from(
+        new Set(
+          (rows || []).map((r) => String(r[key] || "").trim()).filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b));
+    const services = uniqSorted(prodRes.data, "product_name");
+    const clients = uniqSorted(clientRes.data, "name");
+    const subclients = uniqSorted(subRes.data, "name");
+
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Cases");
+    const lists = wb.addWorksheet("Lists", { state: "hidden" });
     ws.columns = [
       { header: "Case Number", key: "caseNumber", width: 18 },
       { header: "Service", key: "service", width: 22 },
@@ -1084,8 +1108,65 @@ async function downloadUploadTemplate(req, res) {
       { header: "Subclient Name", key: "subclient", width: 24 },
     ];
     ws.getRow(1).eachCell((cell) => styleHeaderCell(cell));
-    ws.addRow(["CASE-1001", "Income Tax", "ABC Ltd", "ABC North"]);
-    ws.addRow(["CASE-1002", "GST", "XYZ Pvt Ltd", ""]);
+
+    // Values live on a hidden "Lists" sheet (a range reference has no
+    // 255-character limit like an inline list does).
+    const MAX_ROW = 5000;
+    const addListValidation = (colIndex, values, label) => {
+      values.forEach((v, i) => {
+        lists.getCell(i + 1, colIndex).value = v;
+      });
+      if (values.length === 0) return;
+      const listCol = lists.getColumn(colIndex).letter;
+      const col = ws.getColumn(colIndex + 1).letter; // Lists A <-> Cases B
+      // Per-cell on purpose: the exceljs version used here (3.x) cannot
+      // write a range-keyed validation; it merges equal neighbouring cells
+      // into one range itself when saving. Its address sort is textual
+      // ("B10" < "B2"), which makes the merged ranges overlap when a
+      // column crosses 9 -> 10 -> 100 rows, and overlapping ranges make
+      // Excel offer to "repair" the file. So rows are applied in chunks
+      // with the same digit count, each carrying a distinct (invisible)
+      // promptTitle so neighbouring chunks never get merged together.
+      const chunks = [
+        [2, 9],
+        [10, 99],
+        [100, 999],
+        [1000, MAX_ROW],
+      ];
+      chunks.forEach(([from, to], idx) => {
+        const rule = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`Lists!$${listCol}$1:$${listCol}$${values.length}`],
+          showErrorMessage: true,
+          errorStyle: "stop",
+          errorTitle: "Invalid value",
+          error: `Please pick a ${label} from the dropdown list.`,
+          promptTitle: `rows-${idx}`,
+        };
+        for (let row = from; row <= Math.min(to, MAX_ROW); row++) {
+          ws.getCell(`${col}${row}`).dataValidation = rule;
+        }
+      });
+    };
+    addListValidation(1, services, "Service");
+    addListValidation(2, clients, "Client Name");
+    addListValidation(3, subclients, "Subclient Name");
+
+    // Sample rows use real dropdown values (when the org has any) so the
+    // sample itself passes the validation.
+    ws.getRow(2).values = [
+      "CASE-1001",
+      services[0] || "",
+      clients[0] || "",
+      "",
+    ];
+    ws.getRow(3).values = [
+      "CASE-1002",
+      services[1] || services[0] || "",
+      clients[1] || clients[0] || "",
+      "",
+    ];
 
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader(
