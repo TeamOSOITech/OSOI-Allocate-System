@@ -2,7 +2,6 @@ const router = require("express").Router();
 const rateLimit = require("express-rate-limit");
 const {
   loginHandler,
-  microsoftLoginHandler,
   logoutHandler,
   refreshHandler,
 } = require("./auth.controller");
@@ -72,10 +71,6 @@ const loginAccountLimiter = rateLimit({
 
 // Login using Supabase Authentication
 router.post("/login", loginLimiter, loginAccountLimiter, loginHandler);
-
-// Microsoft / Outlook sign-in (Supabase OAuth on the browser; we verify the
-// session here). Only works for accounts that already exist in user_master.
-router.post("/microsoft", loginLimiter, microsoftLoginHandler);
 
 // Clears the auth cookies. No rate limit needed — it only ever hurts
 // the caller's own session, nothing to abuse.

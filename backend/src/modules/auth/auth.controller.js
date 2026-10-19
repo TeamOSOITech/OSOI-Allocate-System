@@ -1,10 +1,5 @@
 const { sendError } = require("../../utils/response");
-const {
-  login,
-  loginWithMicrosoft,
-  forgotPassword,
-  refreshSession,
-} = require("./auth.service");
+const { login, forgotPassword, refreshSession } = require("./auth.service");
 const {
   setAuthCookies,
   clearAuthCookies,
@@ -53,31 +48,6 @@ const loginHandler = async (req, res) => {
     console.error("LOGIN ERROR:", err);
 
     return sendError(res, err, 401, "Invalid email or password");
-  }
-};
-
-//
-// MICROSOFT LOGIN HANDLER — same cookies / response shape as loginHandler.
-//
-const microsoftLoginHandler = async (req, res) => {
-  try {
-    const { accessToken, refreshToken } = req.body || {};
-    const data = await loginWithMicrosoft(accessToken, refreshToken);
-
-    const csrfToken = setAuthCookies(res, {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-    });
-    const { accessToken: _at, refreshToken: _rt, ...safeData } = data;
-
-    return res.status(200).json({
-      success: true,
-      message: "Login successful",
-      data: { ...safeData, csrfToken },
-    });
-  } catch (err) {
-    console.error("MICROSOFT LOGIN ERROR:", err.message);
-    return sendError(res, err, 401, "Microsoft sign-in failed.");
   }
 };
 
@@ -172,7 +142,6 @@ const forgotPasswordHandler = async (req, res) => {
 
 module.exports = {
   loginHandler,
-  microsoftLoginHandler,
   logoutHandler,
   refreshHandler,
   forgotPasswordHandler,
