@@ -144,8 +144,17 @@ async function updateEmployee(req, res) {
     updatePayload["Department"] = body.department;
   if (body.reportingManager !== undefined)
     updatePayload["Reporting Manager"] = body.reportingManager;
-  if (body.joiningDate !== undefined)
+  if (body.joiningDate !== undefined) {
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata",
+    });
+    if (body.joiningDate && String(body.joiningDate).slice(0, 10) > today) {
+      return res
+        .status(400)
+        .json({ error: "Date of Joining cannot be in the future." });
+    }
     updatePayload["Date of Joining"] = body.joiningDate;
+  }
   if (body.dateOfBirth !== undefined)
     updatePayload["Date of Birth"] = body.dateOfBirth;
   if (body.employeeCode !== undefined)

@@ -359,6 +359,18 @@ async function createUserAndGenerateResetLink({
   metadata,
   organizationId,
 }) {
+  // Date of Joining cannot be in the future (server-side guard; the form
+  // and bulk upload check this too).
+  if (metadata?.doj) {
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata",
+    });
+    if (String(metadata.doj).slice(0, 10) > today) {
+      const e = new Error("Date of Joining cannot be in the future.");
+      e.status = 400;
+      throw e;
+    }
+  }
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
     password: tempPassword,
