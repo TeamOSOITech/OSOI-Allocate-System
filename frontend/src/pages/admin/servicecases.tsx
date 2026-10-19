@@ -113,11 +113,16 @@ function getPageNumbers(current: number, total: number): (number | "...")[] {
 }
 
 // has_case_number === false -> service has no case numbers (count only).
-type Product = { id: string; product_name: string; has_case_number?: boolean };
+type Product = {
+    id: string;
+    product_name: string;
+    has_case_number?: boolean;
+    status?: string | null; // "Active" | "Inactive"
+};
 type Client = { id: string; name: string };
 // NEW: Subclient — id + name + which client it belongs to, used to
 // filter the dropdown to whichever client a row/form currently has.
-type Subclient = { id: string; name: string; clientId: string };
+type Subclient = { id: string; name: string; clientId: string; status?: string | null };
 type ServiceCase = {
     id: string;
     caseNumber: string;
@@ -708,6 +713,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                     id: String(s.id),
                     name: s.name,
                     clientId: String(s.clientId),
+                    status: s.status,
                 }))
             );
         } catch (err) {
@@ -1475,11 +1481,13 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         disabled={productsLoading}
                                     >
                                         <option value="">-- Select service --</option>
-                                        {products.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.product_name}
-                                            </option>
-                                        ))}
+                                        {products
+                                            .filter((p) => p.status !== "Inactive")
+                                            .map((p) => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.product_name}
+                                                </option>
+                                            ))}
                                     </select>
                                 </>
                             )}
@@ -1524,7 +1532,11 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                                 : "-- Select client first --"}
                                         </option>
                                         {subclients
-                                            .filter((s) => s.clientId === formClientId)
+                                            .filter(
+                                                (s) =>
+                                                    s.clientId === formClientId &&
+                                                    s.status !== "Inactive"
+                                            )
                                             .map((s) => (
                                                 <option key={s.id} value={s.id}>
                                                     {s.name}
@@ -2219,7 +2231,9 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                                             </option>
                                                             {subclients
                                                                 .filter(
-                                                                    (s) => s.clientId === c.clientId
+                                                                    (s) =>
+                                                                        s.clientId === c.clientId &&
+                                                                        s.status !== "Inactive"
                                                                 )
                                                                 .map((s) => (
                                                                     <option key={s.id} value={s.id}>

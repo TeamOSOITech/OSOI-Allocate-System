@@ -47,6 +47,8 @@ type Product = {
     // NEW: whether this service comes with a case number. Missing/null on
     // older rows is treated as true (the old behaviour).
     has_case_number?: boolean;
+    // NEW: Active / Inactive. Missing on older rows = Active.
+    status?: "Active" | "Inactive";
     created_at?: string;
     updated_at?: string;
     // Stamped by the backend (see products.controller.js's
@@ -73,6 +75,7 @@ type ProductForm = {
     time_unit: string;
     teams: string[];
     has_case_number: boolean;
+    status: "Active" | "Inactive";
 };
 
 const emptyForm: ProductForm = {
@@ -81,6 +84,7 @@ const emptyForm: ProductForm = {
     time_unit: "",
     teams: [],
     has_case_number: true,
+    status: "Active",
 };
 
 // Shape returned by GET /api/teams — same shape used on the Employees
@@ -515,6 +519,7 @@ const Products = () => {
             time_unit: product.time_unit || "",
             teams: product.teams || [],
             has_case_number: product.has_case_number !== false,
+            status: product.status === "Inactive" ? "Inactive" : "Active",
         });
         setTeamDropdownOpen(false);
         setEditTarget(product);
@@ -1453,6 +1458,21 @@ const Products = () => {
                                                         <span style={styles.tdNameText}>
                                                             {p.product_name}
                                                         </span>
+                                                        {p.status === "Inactive" && (
+                                                            <span
+                                                                style={{
+                                                                    marginLeft: 8,
+                                                                    padding: "1px 8px",
+                                                                    borderRadius: 999,
+                                                                    fontSize: 11,
+                                                                    fontWeight: 600,
+                                                                    background: "#FEE2E2",
+                                                                    color: "#B91C1C",
+                                                                }}
+                                                            >
+                                                                Inactive
+                                                            </span>
+                                                        )}
                                                         {isPendingCreate(p) && (
                                                             <span style={styles.pendingBadge}>
                                                                 Awaiting approval
@@ -1669,6 +1689,13 @@ const Products = () => {
                             </div>
 
                             <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Status</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.status === "Inactive" ? "Inactive" : "Active"}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Teams</span>
                                 <span style={styles.detailsValue}>
                                     {viewDetails.teams && viewDetails.teams.length > 0
@@ -1788,15 +1815,50 @@ const Products = () => {
                     <div style={styles.addModal} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.detailsHeader}>
                             <h3 style={styles.detailsTitle}>Edit Service</h3>
-                            <button
-                                style={styles.closeBtn}
-                                onClick={closeEditModal}
-                                type="button"
-                                aria-label="Close"
-                                title="Close"
-                            >
-                                ✕
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                {/* Status is only editable here (not on Add — new
+                                    services always start Active). */}
+                                <select
+                                    aria-label="Status"
+                                    title="Status"
+                                    value={editForm.status}
+                                    onChange={(e) =>
+                                        setEditForm((prev) => ({
+                                            ...prev,
+                                            status:
+                                                e.target.value === "Inactive"
+                                                    ? "Inactive"
+                                                    : "Active",
+                                        }))
+                                    }
+                                    style={{
+                                        height: 30,
+                                        padding: "0 10px",
+                                        borderRadius: 999,
+                                        border: "none",
+                                        fontSize: 12.5,
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        outline: "none",
+                                        background:
+                                            editForm.status === "Inactive" ? "#FEE2E2" : "#DCFCE7",
+                                        color:
+                                            editForm.status === "Inactive" ? "#B91C1C" : "#15803D",
+                                    }}
+                                >
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select>
+                                <button
+                                    style={styles.closeBtn}
+                                    onClick={closeEditModal}
+                                    type="button"
+                                    aria-label="Close"
+                                    title="Close"
+                                >
+                                    ✕
+                                </button>
+                            </div>
                         </div>
 
                         <div style={styles.addBody}>

@@ -354,8 +354,8 @@ type SelfAllocCase = {
 
 // clients / subclients for the "add client" dropdowns (ids are kept as
 // strings everywhere so comparisons between <select> values and ids work).
-type ClientOption = { id: string; name: string };
-type SubclientOption = { id: string; name: string; clientId: string };
+type ClientOption = { id: string; name: string; status?: string | null };
+type SubclientOption = { id: string; name: string; clientId: string; status?: string | null };
 
 // COUNT-ONLY work ("20 cases pending", no case numbers yet).
 //  - MyCountRow: units allocated to ME that still need real case numbers.
@@ -627,7 +627,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [search, setSearch] = useState("");
     // Which stat card's table is open (null = table hidden, like the
     // Production Report's "View Details").
-    const [openCard, setOpenCard] = useState<null | "all" | "submitted" | "pending">(null);
+    const [openCard, setOpenCard] = useState<null | "all" | "submitted" | "pending" | "pendingNo">(
+        null
+    );
     // Top 5 cards: "daily" = today only, "monthly" = whole current month.
     const [statPeriod, setStatPeriod] = useState<"daily" | "monthly">("daily");
     const detailRef = useRef<HTMLDivElement>(null);
@@ -694,6 +696,10 @@ export default function Profile({ onLogout }: ProfileProps) {
     // now live on EACH ROW (addCnRows), not as one popup-wide value.
     const [addCnCount, setAddCnCount] = useState<MyCountRow | null>(null);
     const [addCnRows, setAddCnRows] = useState<AddCnRow[]>([]);
+    // Clients allowed in the popup: ONLY active clients mapped to this
+    // count's service (from /api/service-cases/product-clients/:productId).
+    const [addCnClients, setAddCnClients] = useState<ClientOption[]>([]);
+    const [addCnClientsLoading, setAddCnClientsLoading] = useState(false);
     const [addCnSubmitting, setAddCnSubmitting] = useState(false);
     const [addCnError, setAddCnError] = useState<string | null>(null);
     // client / subclient lists + saving state for the table's client column.
@@ -868,7 +874,9 @@ export default function Profile({ onLogout }: ProfileProps) {
             if (cRes.ok) {
                 const json = await safeJson(cRes);
                 const list = Array.isArray(json) ? json : json?.data || [];
-                setClients(list.map((c: any) => ({ id: String(c.id), name: c.name })));
+                setClients(
+                    list.map((c: any) => ({ id: String(c.id), name: c.name, status: c.status }))
+                );
             }
             if (sRes.ok) {
                 const json = await safeJson(sRes);
@@ -878,6 +886,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         id: String(s.id),
                         name: s.name,
                         clientId: String(s.clientId),
+                        status: s.status,
                     }))
                 );
             }
@@ -1803,6 +1812,44 @@ export default function Profile({ onLogout }: ProfileProps) {
         // one row per case still to add (first 10 shown, "+ Add row" for more)
         setAddCnRows(Array.from({ length: Math.min(mc.remaining, 10) }, () => blankAddCnRow(mc)));
         setAddCnError(null);
+
+        // load the clients mapped to this service (active only)
+        setAddCnClients([]);
+        setAddCnClientsLoading(true);
+        (async () => {
+            let allowed: ClientOption[] = [];
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/product-clients/${mc.productId}`
+                );
+                const json = await safeJson(res);
+                if (res.ok) {
+                    const list = Array.isArray(json) ? json : json?.data || [];
+                    allowed = list.map((c: any) => ({ id: String(c.id), name: c.name }));
+                } else {
+                    setAddCnError(json?.message || "Failed to load clients for this service");
+                }
+            } catch (err) {
+                console.error("Failed to load service clients:", err);
+                setAddCnError("Failed to load clients for this service");
+            }
+            setAddCnClients(allowed);
+            setAddCnClientsLoading(false);
+            // drop a pre-filled client / subclient that is no longer allowed
+            const okClient = new Set(allowed.map((c) => c.id));
+            const inactiveSub = new Set(
+                subclients.filter((x) => x.status === "Inactive").map((x) => x.id)
+            );
+            setAddCnRows((rows) =>
+                rows.map((r) =>
+                    r.clientId && !okClient.has(r.clientId)
+                        ? { ...r, clientId: "", subclientId: "" }
+                        : r.subclientId && inactiveSub.has(r.subclientId)
+                          ? { ...r, subclientId: "" }
+                          : r
+                )
+            );
+        })();
     };
 
     const closeAddCaseNumbers = () => {
@@ -2143,19 +2190,54 @@ export default function Profile({ onLogout }: ProfileProps) {
     // always shows it, since that tab has no card of its own).
     const showDetails = openCard !== null || activeTab === "past";
 
-    const openStatCard = (k: "all" | "submitted" | "pending") => {
+    const openStatCard = (k: "all" | "submitted" | "pending" | "pendingNo") => {
         if (openCard === k && activeTab === "today") {
             setOpenCard(null);
             return;
         }
         setOpenCard(k);
         setActiveTab("today");
-        setAllocView(
-            k === "pending" && stats.pendingCount === 0 && stats.waitingToday > 0
-                ? "counts"
-                : "cases"
-        );
+        // "pendingNo" (without case no.) -> Counts table;
+        // "pending" (with case no.) -> Cases table filtered to PENDING.
+        setAllocView(k === "pendingNo" ? "counts" : "cases");
         setStatusFilter(k === "submitted" ? "SUBMITTED" : k === "pending" ? "PENDING" : "all");
+        setDateFilter("");
+        setProductFilter("all");
+        setSearch("");
+        window.setTimeout(() => scrollWithinPage(detailRef.current), 60);
+    };
+
+    // Clicking a small tile inside "Today's Cases" / "Past Cases":
+    // jumps straight to the matching table (never toggles closed).
+    const openTile = (cardKey: string, label: string) => {
+        if (cardKey === "query") {
+            openQueryModal();
+            return;
+        }
+        const goPast = cardKey === "past";
+        let nextCard: null | "all" | "submitted" | "pending" | "pendingNo" = null;
+        let view: "cases" | "counts" = "cases";
+        let status: "all" | "PENDING" | "SUBMITTED" = "all";
+        if (goPast) {
+            if (label === "Completed") status = "SUBMITTED";
+        } else if (label === "Waiting") {
+            nextCard = "pendingNo";
+            view = "counts";
+        } else if (label === "Submitted") {
+            nextCard = "submitted";
+            status = "SUBMITTED";
+        } else if (label === "Pending") {
+            nextCard = "pending";
+            status = "PENDING";
+            // only counts are pending -> show the Counts table
+            if (stats.pendingCount === 0 && stats.waitingToday > 0) view = "counts";
+        } else {
+            nextCard = "all"; // "With case no."
+        }
+        setOpenCard(nextCard);
+        setActiveTab(goPast ? "past" : "today");
+        setAllocView(view);
+        setStatusFilter(status);
         setDateFilter("");
         setProductFilter("all");
         setSearch("");
@@ -2686,15 +2768,21 @@ export default function Profile({ onLogout }: ProfileProps) {
                         <StatCard
                             icon={<ClockIcon />}
                             tint={BRAND.amber}
-                            value={topStats.pendingCount}
-                            label="Pending"
-                            sub={
-                                topStats.waiting > 0
-                                    ? `${topStats.pendingCases} cases · ${topStats.waiting} waiting for case no.`
-                                    : `${periodLabel} · awaiting submission`
-                            }
+                            value={topStats.pendingCases}
+                            label="Pending · With Case No."
+                            sub={`${periodLabel} · awaiting submission`}
                             active={isDaily && openCard === "pending" && activeTab === "today"}
                             onClick={isDaily ? () => openStatCard("pending") : undefined}
+                            styles={styles}
+                        />
+                        <StatCard
+                            icon={<ClockIcon />}
+                            tint={BRAND.amber}
+                            value={topStats.waiting}
+                            label="Pending · Without Case No."
+                            sub={`${periodLabel} · waiting for case no.`}
+                            active={isDaily && openCard === "pendingNo" && activeTab === "today"}
+                            onClick={isDaily ? () => openStatCard("pendingNo") : undefined}
                             styles={styles}
                         />
                         {/* total hours allocated = cases x service AMP */}
@@ -3112,6 +3200,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             {c.rows.map(([label, value, color]) => (
                                                 <div
                                                     key={label}
+                                                    className="pf-card-hover"
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    title={`View ${label}`}
+                                                    onClick={() => openTile(c.key, label)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter" || e.key === " ") {
+                                                            e.preventDefault();
+                                                            openTile(c.key, label);
+                                                        }
+                                                    }}
                                                     style={{
                                                         display: "flex",
                                                         flexDirection: "column",
@@ -3120,6 +3219,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         borderRadius: 10,
                                                         background: withAlpha(color, 0.09),
                                                         minWidth: 0,
+                                                        cursor: "pointer",
                                                     }}
                                                 >
                                                     <span
@@ -3188,8 +3288,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         : openCard === "submitted"
                                           ? "Submitted Cases — Today"
                                           : openCard === "pending"
-                                            ? "Pending Cases — Today"
-                                            : "All Allocated Cases — Today"}
+                                            ? "Pending Cases (With Case No.) — Today"
+                                            : openCard === "pendingNo"
+                                              ? "Pending Counts (Without Case No.) — Today"
+                                              : "All Allocated Cases — Today"}
                                 </span>
                                 {activeTab === "today" && (
                                     <button
@@ -5191,7 +5293,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 const queryMissing =
                                                     r.status === "QUERY" && !r.query.trim();
                                                 const rowSubOptions = subclients.filter(
-                                                    (s) => s.clientId === r.clientId
+                                                    (s) =>
+                                                        s.clientId === r.clientId &&
+                                                        s.status !== "Inactive"
                                                 );
                                                 // WIP / Pending are the "not submitted" statuses
                                                 const isNotSubmitted =
@@ -5246,9 +5350,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 }
                                                             >
                                                                 <option value="">
-                                                                    Select client
+                                                                    {addCnClientsLoading
+                                                                        ? "Loading clients…"
+                                                                        : addCnClients.length === 0
+                                                                          ? "No clients mapped to this service"
+                                                                          : "Select client"}
                                                                 </option>
-                                                                {clients.map((cl) => (
+                                                                {addCnClients.map((cl) => (
                                                                     <option
                                                                         key={cl.id}
                                                                         value={cl.id}
@@ -7055,7 +7163,7 @@ function getStyles(
         /* Stats — 4 cards now (Total / Submitted / Pending / Allocated Time) */
         statsGrid: {
             display: "grid",
-            gridTemplateColumns: "repeat(5, 1fr)",
+            gridTemplateColumns: "repeat(6, 1fr)",
             gap: 10,
         },
         statsGridMobile: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
