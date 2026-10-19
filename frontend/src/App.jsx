@@ -57,9 +57,8 @@ const Subscription = lazy(() => import("./pages/subscription"));
 // but was never wired into routing/sidebar — see the route + sidebar
 // entry below.
 const Approvals = lazy(() => import("./pages/admin/approvals"));
-// NEW: Client Dashboard (CLIENT role only) + staff-side Client Sharing.
+// NEW: Client Dashboard (CLIENT role only).
 const ClientDashboard = lazy(() => import("./pages/clientportal/clientdashboard"));
-const ClientSharing = lazy(() => import("./pages/admin/clientsharing"));
 // NEW: "Shared with me" — pages that staff shared with ANY logged-in user
 // (any role, any organization). Read-only.
 const SharedWithMe = lazy(() => import("./pages/clientportal/sharedwithme"));
@@ -411,20 +410,6 @@ function App() {
                                 <PrivateRoute requiredRole="CLIENT">
                                     <AppLayout onLogout={handleLogout}>
                                         <ClientDashboard />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
-
-                        {/* NEW: Client Sharing — staff choose what each client sees. */}
-                        <Route
-                            path="/client-sharing"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        <ClientSharing />
                                     </AppLayout>
                                 </PrivateRoute>
                             }

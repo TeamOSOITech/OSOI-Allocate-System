@@ -1,16 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties, ReactNode } from "react";
-import {
-    BarChart,
-    Bar,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    Legend,
-    ResponsiveContainer,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
@@ -79,22 +70,6 @@ function formatDisplayDate(iso: string) {
     const [y, m, d] = iso.split("-");
     if (!y || !m || !d) return iso;
     return `${d}-${m}-${y}`;
-}
-
-// Takes BRAND (from the active theme) so the "in progress" tint tracks the
-// theme's light-blue instead of a hardcoded one.
-function statusBadgeStyle(
-    status: string,
-    BRAND: { lightBlue: string; green: string }
-): CSSProperties {
-    const s = (status || "").toUpperCase();
-    if (s === "COMPLETED") {
-        return { background: withAlpha(BRAND.green, 0.12), color: BRAND.green };
-    }
-    if (s === "ASSIGNED" || s === "IN_PROGRESS") {
-        return { background: withAlpha(BRAND.lightBlue, 0.12), color: BRAND.lightBlue };
-    }
-    return { background: "rgba(245,158,11,0.14)", color: "#B45309" }; // PENDING / default
 }
 
 // ------------------------------------------------------------
@@ -992,19 +967,6 @@ export default function Dashboard({ user }: DashboardProps) {
         };
     }, [viewMode]);
 
-    const pendingBatches = useMemo(() => batches.filter((b) => (b.pendingQty || 0) > 0), [batches]);
-
-    const chartData = useMemo(
-        () =>
-            batches.map((b) => ({
-                name: b.productName || "Unnamed",
-                Total: b.totalQty || 0,
-                Allocated: b.allocatedQty || 0,
-                Pending: b.pendingQty || 0,
-            })),
-        [batches]
-    );
-
     const kpis = [
         {
             label: "Total Employees",
@@ -1173,174 +1135,6 @@ export default function Dashboard({ user }: DashboardProps) {
                             BRAND={BRAND}
                             isMobile={isMobile}
                         />
-
-                        {/* Chart */}
-                        <div style={styles.panel}>
-                            <div style={styles.panelTitleRow}>
-                                <div style={styles.panelTitle}>
-                                    Today's Work — Total vs Allocated vs Pending
-                                </div>
-                                <div style={styles.panelTitleUnderline} />
-                            </div>
-                            {chartData.length === 0 && !loading ? (
-                                <div style={styles.emptyState}>
-                                    <div style={styles.emptyIconCircle}>
-                                        <i
-                                            className="ti ti-chart-bar"
-                                            style={{
-                                                fontSize: fontSize["5xl"],
-                                                color: BRAND.lightBlue,
-                                            }}
-                                        />
-                                    </div>
-                                    <div style={styles.emptyText}>
-                                        No daily work logged for today yet.
-                                    </div>
-                                </div>
-                            ) : (
-                                <ResponsiveContainer width="100%" height={280}>
-                                    <BarChart
-                                        data={chartData}
-                                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
-                                    >
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-                                        <XAxis
-                                            dataKey="name"
-                                            tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
-                                        />
-                                        <YAxis
-                                            tick={{ fontSize: fontSize.sm, fill: "#6b7280" }}
-                                            allowDecimals={false}
-                                        />
-                                        <Tooltip />
-                                        <Legend />
-                                        <Bar
-                                            dataKey="Total"
-                                            fill={BRAND.blue}
-                                            radius={[4, 4, 0, 0]}
-                                        />
-                                        <Bar
-                                            dataKey="Allocated"
-                                            fill={BRAND.green}
-                                            radius={[4, 4, 0, 0]}
-                                        />
-                                        <Bar
-                                            dataKey="Pending"
-                                            fill={BRAND.amber}
-                                            radius={[4, 4, 0, 0]}
-                                        />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            )}
-                        </div>
-
-                        {/* Pending table */}
-                        <div style={styles.panel}>
-                            <div style={styles.panelTitleRow}>
-                                <div style={styles.panelTitle}>Pending Allocations (Today)</div>
-                                <div style={styles.panelTitleUnderline} />
-                            </div>
-
-                            {loading ? (
-                                <div style={styles.emptyState}>
-                                    <div style={styles.emptyText}>Loading…</div>
-                                </div>
-                            ) : pendingBatches.length === 0 ? (
-                                <div style={styles.emptyState}>
-                                    <div
-                                        style={{
-                                            ...styles.emptyIconCircle,
-                                            background: withAlpha(BRAND.green, 0.1),
-                                        }}
-                                    >
-                                        <i
-                                            className="ti ti-mood-smile"
-                                            style={{
-                                                fontSize: fontSize["6xl"],
-                                                color: BRAND.green,
-                                            }}
-                                        />
-                                    </div>
-                                    <div style={styles.emptyText}>
-                                        Nothing pending — all of today's work is fully allocated.
-                                    </div>
-                                </div>
-                            ) : isMobile ? (
-                                <div style={styles.cardList}>
-                                    {pendingBatches.map((b) => (
-                                        <div key={b.id} style={styles.pendingCard}>
-                                            <div style={styles.pendingCardTop}>
-                                                <span style={styles.pendingCardProduct}>
-                                                    {b.productName || "Unnamed"}
-                                                </span>
-                                                <span
-                                                    style={{
-                                                        ...styles.statusBadge,
-                                                        ...statusBadgeStyle(b.status, BRAND),
-                                                    }}
-                                                >
-                                                    {b.status}
-                                                </span>
-                                            </div>
-                                            <div style={styles.pendingCardRow}>
-                                                <span>Total: {b.totalQty}</span>
-                                                <span>Allocated: {b.allocatedQty}</span>
-                                                <span
-                                                    style={{
-                                                        color: BRAND.amber,
-                                                        fontWeight: fontWeight.semibold,
-                                                    }}
-                                                >
-                                                    Pending: {b.pendingQty}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <table style={styles.table}>
-                                    <thead>
-                                        <tr>
-                                            <th style={styles.th}>Product</th>
-                                            <th style={styles.th}>Total Qty</th>
-                                            <th style={styles.th}>Allocated</th>
-                                            <th style={styles.th}>Pending</th>
-                                            <th style={styles.th}>Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {pendingBatches.map((b) => (
-                                            <tr key={b.id}>
-                                                <td style={styles.td}>
-                                                    {b.productName || "Unnamed"}
-                                                </td>
-                                                <td style={styles.td}>{b.totalQty}</td>
-                                                <td style={styles.td}>{b.allocatedQty}</td>
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontWeight: fontWeight.semibold,
-                                                        color: BRAND.amber,
-                                                    }}
-                                                >
-                                                    {b.pendingQty}
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <span
-                                                        style={{
-                                                            ...styles.statusBadge,
-                                                            ...statusBadgeStyle(b.status, BRAND),
-                                                        }}
-                                                    >
-                                                        {b.status}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            )}
-                        </div>
                     </>
                 )}
             </div>

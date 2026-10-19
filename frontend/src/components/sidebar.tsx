@@ -168,13 +168,6 @@ const menuItems: MenuItem[] = [
         path: SHARED_PATH,
         roles: EVERYONE,
     },
-    // NEW: staff choose which cases each client can see.
-    {
-        label: "Client Sharing",
-        icon: "ti ti-share",
-        path: "/client-sharing",
-        roles: ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"],
-    },
 ];
 
 const pathToLabel: Record<string, string> = {
@@ -194,7 +187,6 @@ const pathToLabel: Record<string, string> = {
     "/subscription": "Upgrade",
     "/approvals": "Approvals",
     "/client-dashboard": "Client Dashboard",
-    "/client-sharing": "Client Sharing",
     "/shared-with-me": "Shared with me",
 };
 
