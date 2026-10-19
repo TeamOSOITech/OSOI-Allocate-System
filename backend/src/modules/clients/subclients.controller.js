@@ -10,6 +10,11 @@
 const { sendError } = require("../../utils/response");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
+const {
+  addInlineListValidation,
+  addRangeListValidation,
+  addEmailValidation,
+} = require("../../utils/excelValidation");
 const subclientsService = require("./subclients.service");
 
 // REVERSED MAPPING: a Subclient now picks which existing Products it uses,
@@ -349,6 +354,45 @@ async function downloadTemplate(req, res) {
         secondaryContactPhone: "+91 98765 43212",
       },
     ]);
+
+    // Excel validation so wrong values can't be typed: Client Name is a
+    // dropdown of this org's clients (a misspelt client used to fail the
+    // row at upload), Subclient Status a fixed dropdown, emails must look
+    // like emails. Client names live on a hidden "Lists" sheet.
+    const orgClientNames = Array.from(
+      new Set(
+        (
+          (await subclientsService.getClientNamesForOrg(
+            req.user.organizationId,
+          )) || []
+        )
+          .map((c) => (typeof c === "string" ? c : c?.name) || "")
+          .map((n) => String(n).trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    const listsSheet = workbook.addWorksheet("Lists", { state: "hidden" });
+    const colOf = (key) =>
+      sheet.getColumn(
+        SUBCLIENT_TEMPLATE_COLUMNS.findIndex((c) => c.key === key) + 1,
+      ).letter;
+    addRangeListValidation(
+      sheet,
+      listsSheet,
+      1,
+      colOf("clientName"),
+      orgClientNames,
+      "Client Name",
+    );
+    addInlineListValidation(
+      sheet,
+      colOf("subclientStatus"),
+      ["Active", "Inactive"],
+      "Subclient Status",
+    );
+    ["mainEmail", "primaryContactEmail", "secondaryContactEmail"].forEach(
+      (key) => addEmailValidation(sheet, colOf(key)),
+    );
 
     sheet.views = [{ state: "frozen", ySplit: 1 }];
 

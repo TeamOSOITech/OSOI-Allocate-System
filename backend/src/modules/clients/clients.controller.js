@@ -11,6 +11,10 @@
 const { sendError } = require("../../utils/response");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
+const {
+  addInlineListValidation,
+  addEmailValidation,
+} = require("../../utils/excelValidation");
 const clientsService = require("./clients.service");
 
 // REVERSED MAPPING: Products no longer carry client/subclient on
@@ -494,6 +498,29 @@ async function downloadTemplate(req, res) {
         secondaryContactPhone: "+91 90000 00002",
       },
     ]);
+
+    // Excel validation so wrong values can't be typed: statuses are a
+    // dropdown (anything other than "Inactive" used to silently become
+    // "Active"), and every email column must look like an email.
+    const colOf = (key) =>
+      sheet.getColumn(
+        CLIENT_TEMPLATE_COLUMNS.findIndex((c) => c.key === key) + 1,
+      ).letter;
+    addInlineListValidation(
+      sheet,
+      colOf("clientStatus"),
+      ["Active", "Inactive"],
+      "Client Status",
+    );
+    addInlineListValidation(
+      sheet,
+      colOf("subclientStatus"),
+      ["Active", "Inactive"],
+      "Subclient Status",
+    );
+    ["companyEmail", "primaryContactEmail", "secondaryContactEmail"].forEach(
+      (key) => addEmailValidation(sheet, colOf(key)),
+    );
 
     sheet.views = [{ state: "frozen", ySplit: 1 }];
 
