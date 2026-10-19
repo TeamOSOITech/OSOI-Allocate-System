@@ -354,9 +354,21 @@ export default function TodaysAllocationEmployees({
         );
     }, [employees, serviceMatchedIds, externalSearch]);
 
+    // Only externals who really appear in the picker below: still in the
+    // employee list and NOT already team-matched to this service. Old saved
+    // ids of removed / now team-matched employees are ignored here, so the
+    // "N added" count always equals the ticked names.
+    const activeExternalIds = useMemo(() => {
+        const known = new Set(employees.map((e) => e.id));
+        return new Set(
+            [...externalIds].filter((id) => known.has(id) && !serviceMatchedIds.has(id))
+        );
+    }, [externalIds, employees, serviceMatchedIds]);
+
     const toggleExternal = (id: string) => {
         setExternalIds((prev) => {
-            const next = new Set(prev);
+            // also drops stale ids when saving, so they get cleaned up
+            const next = new Set([...prev].filter((x) => activeExternalIds.has(x)));
             if (next.has(id)) next.delete(id);
             else next.add(id);
             persistExternalMembers(next);
@@ -602,9 +614,9 @@ export default function TodaysAllocationEmployees({
                             style={{ ...styles.select, textAlign: "left", cursor: "pointer" }}
                             onClick={() => setExternalMenuOpen((o) => !o)}
                         >
-                            {externalIds.size === 0
+                            {activeExternalIds.size === 0
                                 ? "Add from other teams…"
-                                : `${externalIds.size} added`}
+                                : `${activeExternalIds.size} added`}
                         </button>
                         {externalMenuOpen && (
                             <div style={styles.externalPanel}>
@@ -687,6 +699,7 @@ export default function TodaysAllocationEmployees({
                         <div style={styles.colName}>Employee</div>
                         <div style={styles.colTeam}>Team</div>
                         <div style={{ ...styles.colStatus, ...styles.colStatusHead }}>Status</div>
+                        <div style={{ width: REMOVE_COL_WIDTH, flexShrink: 0 }} />
                     </div>
                     {loading ? (
                         <div style={styles.emptyNote}>Loading employees…</div>
@@ -748,6 +761,43 @@ export default function TodaysAllocationEmployees({
                                                 </button>
                                             )
                                         )}
+                                    </div>
+                                    <div
+                                        style={{
+                                            width: REMOVE_COL_WIDTH,
+                                            flexShrink: 0,
+                                            display: "flex",
+                                            justifyContent: "flex-end",
+                                        }}
+                                    >
+                                        {/* Remove an External member from this service.
+                                        Only shown for externals (not team-matched). */}
+                                        {externalIds.has(emp.id) &&
+                                            !serviceMatchedIds.has(emp.id) && (
+                                                <button
+                                                    type="button"
+                                                    title="Remove from External"
+                                                    aria-label={`Remove ${emp.name} from External`}
+                                                    onClick={() => {
+                                                        if (
+                                                            window.confirm(
+                                                                `Remove ${emp.name} from External for this service?`
+                                                            )
+                                                        ) {
+                                                            toggleExternal(emp.id);
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        ...styles.statusBtn,
+                                                        color: "#dc2626",
+                                                        border: "1px solid #dc2626",
+                                                        background: "transparent",
+                                                    }}
+                                                >
+                                                    <i className="ti ti-user-minus" />
+                                                    Remove
+                                                </button>
+                                            )}
                                     </div>
                                 </div>
                             );
@@ -931,6 +981,8 @@ const TEAM_COL_WIDTH = 160;
 const STATUS_BTN_WIDTH = 94;
 const STATUS_GAP = 6;
 const STATUS_COL_WIDTH = STATUS_BTN_WIDTH * 3 + STATUS_GAP * 2;
+// Extra column on the right for the External "Remove" button.
+const REMOVE_COL_WIDTH = 96;
 
 const styles: Record<string, CSSProperties> = {
     root: {
