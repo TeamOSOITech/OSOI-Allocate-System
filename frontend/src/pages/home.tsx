@@ -6,6 +6,7 @@ import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
 import ManageRoleLabelsButton from "../components/manageroleslabels";
+import { useCollarMode } from "../context/collarmode";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -323,6 +324,7 @@ interface BulkRowResult {
 
 export default function Home({ user }: { user: HomeUser }) {
     const isMobile = useIsMobile();
+    const { mode: collarMode } = useCollarMode();
     const { colors: themeColors } = useTheme();
     const BRAND = {
         blue: themeColors.blue,
@@ -425,7 +427,8 @@ export default function Home({ user }: { user: HomeUser }) {
     const fetchEmployees = async () => {
         setEmployeesLoading(true);
         try {
-            const res = await authFetch(`${API_BASE}/api/employees`);
+            // birthdays / joinees follow the mode picked in the toggle
+            const res = await authFetch(`${API_BASE}/api/employees?collar=${collarMode}`);
             const json = await res.json();
             if (!res.ok) return;
             const list = Array.isArray(json) ? json : json.data || [];
@@ -439,8 +442,12 @@ export default function Home({ user }: { user: HomeUser }) {
 
     useEffect(() => {
         fetchHolidays();
-        fetchEmployees();
     }, []);
+
+    useEffect(() => {
+        fetchEmployees();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [collarMode]);
 
     const currentYear = new Date().getFullYear();
 
@@ -701,7 +708,9 @@ export default function Home({ user }: { user: HomeUser }) {
                         </h2>
                         <p style={styles.headerSubtext}>Here's what's happening today.</p>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div
+                        style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}
+                    >
                         <div style={styles.dateBadge}>
                             <i className="ti ti-calendar-event" aria-hidden="true" />
                             {todayNice}

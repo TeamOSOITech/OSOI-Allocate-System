@@ -4,6 +4,7 @@ import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { authFetch } from "../../utils/authFetch";
 import { useRoleLabels } from "../../context/roleLabelsContext";
 import MyPendingApprovals from "../../components/mypendingapprovals";
+import { useCollarMode } from "../../context/collarmode";
 //import Sidebar from "../../components/sidebar";
 
 const MOBILE_BREAKPOINT = 768;
@@ -182,6 +183,8 @@ const GLOBAL_CSS = `
 
 export default function Employees() {
     const isMobile = useIsMobile();
+    // Only the people of the mode picked on Home (White / Blue Collar).
+    const { mode: collarMode } = useCollarMode();
     //const [sidebarOpen, setSidebarOpen] = useState(false);
 
     // Custom org-specific role display names — see
@@ -358,7 +361,9 @@ export default function Employees() {
         setLoading(true);
         setError("");
         try {
-            const res = await authFetch(`${apiBase}/api/employees`, { cache: "no-store" });
+            const res = await authFetch(`${apiBase}/api/employees?collar=${collarMode}`, {
+                cache: "no-store",
+            });
             if (!res.ok) throw new Error("Failed to load employees");
             setEmployees(await res.json());
         } catch (err: any) {
@@ -396,6 +401,10 @@ export default function Employees() {
 
     useEffect(() => {
         fetchEmployees();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [collarMode]);
+
+    useEffect(() => {
         fetchTeams();
         fetchDepartmentOptions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1833,15 +1842,9 @@ export default function Employees() {
                                             className="emp-drawer-input"
                                             style={styles.detailsInput}
                                             value={toDateInputValue(drawerData.joiningDate)}
-                                            max={new Date().toLocaleDateString("en-CA")}
-                                            onChange={(e) => {
-                                                if (
-                                                    e.target.value >
-                                                    new Date().toLocaleDateString("en-CA")
-                                                )
-                                                    return;
-                                                updateEditField("joiningDate", e.target.value);
-                                            }}
+                                            onChange={(e) =>
+                                                updateEditField("joiningDate", e.target.value)
+                                            }
                                         />
                                     ) : (
                                         <span style={styles.detailsValue}>

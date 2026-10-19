@@ -112,7 +112,8 @@ function getPageNumbers(current: number, total: number): (number | "...")[] {
     return withDots;
 }
 
-type Product = { id: string; product_name: string };
+// has_case_number === false -> service has no case numbers (count only).
+type Product = { id: string; product_name: string; has_case_number?: boolean };
 type Client = { id: string; name: string };
 // NEW: Subclient — id + name + which client it belongs to, used to
 // filter the dropdown to whichever client a row/form currently has.
@@ -980,6 +981,10 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     //  - No case numbers typed  -> count only: nothing is added to the
     //    Case Register, just the count is recorded ("Pending Counts"),
     //    and case numbers can be added later.
+    // NEW: the selected service has no case numbers -> count-only form.
+    const selectedNoCase =
+        products.find((p) => String(p.id) === String(productId))?.has_case_number === false;
+
     const handleManualSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setFormError("");
@@ -989,7 +994,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             setFormError("Select a service.");
             return;
         }
-        const caseNumbers = parseCaseNumbers(caseNumbersText);
+        const caseNumbers = selectedNoCase ? [] : parseCaseNumbers(caseNumbersText);
         const hasCaseNumbers = caseNumbers.length > 0;
 
         if (hasCaseNumbers && caseNumbers.length > MAX_MANUAL_CASE_NUMBERS) {
@@ -1541,17 +1546,28 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
 
                             {formMode === "manual" && (
                                 <>
-                                    <label style={styles.label}>Case Numbers (if available)</label>
-                                    <textarea
-                                        style={{ ...styles.input, ...styles.caseNumbersTextarea }}
-                                        value={caseNumbersText}
-                                        onChange={(e) => setCaseNumbersText(e.target.value)}
-                                        placeholder={`Type one case number per line\n(or comma-separated) — up to ${MAX_MANUAL_CASE_NUMBERS} at once`}
-                                        rows={4}
-                                    />
+                                    {!selectedNoCase && (
+                                        <>
+                                            <label style={styles.label}>
+                                                Case Numbers (if available)
+                                            </label>
+                                            <textarea
+                                                style={{
+                                                    ...styles.input,
+                                                    ...styles.caseNumbersTextarea,
+                                                }}
+                                                value={caseNumbersText}
+                                                onChange={(e) => setCaseNumbersText(e.target.value)}
+                                                placeholder={`Type one case number per line\n(or comma-separated) — up to ${MAX_MANUAL_CASE_NUMBERS} at once`}
+                                                rows={4}
+                                            />
+                                        </>
+                                    )}
 
                                     <label style={styles.label}>
-                                        How many cases (if no case numbers)
+                                        {selectedNoCase
+                                            ? "How many cases"
+                                            : "How many cases (if no case numbers)"}
                                     </label>
                                     <input
                                         type="number"
@@ -1559,17 +1575,18 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                         max={MAX_MANUAL_COUNT}
                                         style={{
                                             ...styles.input,
-                                            opacity: caseNumbersText.trim() ? 0.5 : 1,
+                                            opacity:
+                                                !selectedNoCase && caseNumbersText.trim() ? 0.5 : 1,
                                         }}
                                         value={manualQuantity}
                                         onChange={(e) => setManualQuantity(e.target.value)}
                                         placeholder="e.g. 20, 30"
-                                        disabled={!!caseNumbersText.trim()}
+                                        disabled={!selectedNoCase && !!caseNumbersText.trim()}
                                     />
                                     <p style={styles.helperNote}>
-                                        Have case numbers? Type them above and cases are created
-                                        with those numbers. Don't have them yet? Leave it empty and
-                                        enter only the count — case numbers can be added later.
+                                        {selectedNoCase
+                                            ? "This service has no case numbers — just enter the count."
+                                            : "Have case numbers? Type them above and cases are created with those numbers. Don't have them yet? Leave it empty and enter only the count — case numbers can be added later."}
                                     </p>
                                 </>
                             )}

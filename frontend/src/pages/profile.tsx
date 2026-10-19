@@ -5,6 +5,7 @@ import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
 import { useRoleLabels } from "../context/roleLabelsContext";
 import { useOrgSettings } from "../context/orgsettings";
+import { useCollarMode } from "../context/collarmode";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -578,6 +579,10 @@ function empInitials(name: string) {
 export default function Profile({ onLogout }: ProfileProps) {
     void onLogout;
     const isMobile = useIsMobile();
+    // Blue Collar (manpower) mode: the service-based case / allocation /
+    // query sections below don't apply, so they are hidden and a simple
+    // work-submission history is shown instead.
+    const { mode: collarMode, isBlue: isBlueMode } = useCollarMode();
     const { colors: themeColors } = useTheme();
     const { getRoleLabel } = useRoleLabels();
     // Org setting: when OFF, count work can be completed without case numbers.
@@ -750,7 +755,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     const loadEmpList = async () => {
         if (!canViewOthers) return;
         try {
-            const res = await authFetch(`${API_BASE}/api/employees`, { cache: "no-store" });
+            const res = await authFetch(`${API_BASE}/api/employees?collar=${collarMode}`, {
+                cache: "no-store",
+            });
             if (!res.ok) return;
             const list = await res.json();
             setEmpList(
@@ -1040,9 +1047,14 @@ export default function Profile({ onLogout }: ProfileProps) {
         loadAll();
         loadClientLists();
         loadProductAmps();
-        loadEmpList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // search list follows the White / Blue Collar mode
+    useEffect(() => {
+        loadEmpList();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [collarMode]);
 
     // While the All Query popup is open, re-check every 15s.
     useEffect(() => {
@@ -2599,979 +2611,1727 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 </button>
                             </div>
                         )}
-                        <div
-                            style={{
-                                display: "flex",
-                                justifyContent: isMobile ? "flex-start" : "flex-end",
-                                alignItems: "center",
-                                gap: 8,
-                                marginTop: isMobile ? 0 : 22,
-                            }}
-                        >
-                            <span style={styles.smallMuted}>Show</span>
-                            <select
-                                value={statPeriod}
-                                onChange={(e) => {
-                                    setStatPeriod(e.target.value as "daily" | "monthly");
-                                    setOpenCard(null);
-                                }}
-                                aria-label="Stats period"
+                        {!isBlueMode && (
+                            <div
                                 style={{
-                                    height: 34,
-                                    padding: "0 30px 0 12px",
-                                    borderRadius: 8,
-                                    border: "1px solid #e2e4f0",
-                                    background: "#fff",
-                                    color: "#17181C",
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    cursor: "pointer",
-                                    outline: "none",
+                                    display: "flex",
+                                    justifyContent: isMobile ? "flex-start" : "flex-end",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    marginTop: isMobile ? 0 : 22,
                                 }}
                             >
-                                <option value="daily">Daily</option>
-                                <option value="monthly">Monthly</option>
-                            </select>
-                        </div>
+                                <span style={styles.smallMuted}>Show</span>
+                                <select
+                                    value={statPeriod}
+                                    onChange={(e) => {
+                                        setStatPeriod(e.target.value as "daily" | "monthly");
+                                        setOpenCard(null);
+                                    }}
+                                    aria-label="Stats period"
+                                    style={{
+                                        height: 34,
+                                        padding: "0 30px 0 12px",
+                                        borderRadius: 8,
+                                        border: "1px solid #e2e4f0",
+                                        background: "#fff",
+                                        color: "#17181C",
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        outline: "none",
+                                    }}
+                                >
+                                    <option value="daily">Daily</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
             </div>
 
-            {/* ---- Stats (click a card -> its cases table opens below) ---- */}
-            <div style={isMobile ? styles.statsGridMobile : styles.statsGrid}>
-                <StatCard
-                    icon={<BoxIcon />}
-                    tint={BRAND.blue}
-                    value={topStats.allocatedTotal}
-                    label="Cases Allocated"
-                    sub={
-                        topStats.waiting > 0
-                            ? `${topStats.withNo} with case no. · ${topStats.waiting} waiting`
-                            : periodLabel
-                    }
-                    active={isDaily && openCard === "all" && activeTab === "today"}
-                    onClick={isDaily ? () => openStatCard("all") : undefined}
-                    styles={styles}
-                />
-                <StatCard
-                    icon={<CheckIcon />}
-                    tint={BRAND.green}
-                    value={topStats.submittedCount}
-                    label="Submitted"
-                    sub={`${periodLabel} · completed & submitted`}
-                    active={isDaily && openCard === "submitted" && activeTab === "today"}
-                    onClick={isDaily ? () => openStatCard("submitted") : undefined}
-                    styles={styles}
-                />
-                <StatCard
-                    icon={<ClockIcon />}
-                    tint={BRAND.amber}
-                    value={topStats.pendingCount}
-                    label="Pending"
-                    sub={
-                        topStats.waiting > 0
-                            ? `${topStats.pendingCases} cases · ${topStats.waiting} waiting for case no.`
-                            : `${periodLabel} · awaiting submission`
-                    }
-                    active={isDaily && openCard === "pending" && activeTab === "today"}
-                    onClick={isDaily ? () => openStatCard("pending") : undefined}
-                    styles={styles}
-                />
-                {/* total hours allocated = cases x service AMP */}
-                <StatCard
-                    icon={<ClockIcon />}
-                    tint={BRAND.lightBlue}
-                    value={
-                        topStats.allocatedMins > 0 ? formatMinutes(topStats.allocatedMins) : "0m"
-                    }
-                    label="Allocated Hours"
-                    sub={`${periodLabel} · cases × service AMP`}
-                    styles={styles}
-                />
-                {/* time utilised = AMP of submitted cases, out of allocated time */}
-                <StatCard
-                    icon={<ClockIcon />}
-                    tint={BRAND.green}
-                    value={topStats.utilisedMins > 0 ? formatMinutes(topStats.utilisedMins) : "0m"}
-                    label="Time Utilised"
-                    sub={
-                        topStats.allocatedMins > 0
-                            ? `of ${formatMinutes(topStats.allocatedMins)} allocated`
-                            : "Submitted cases × AMP"
-                    }
-                    progress={
-                        topStats.allocatedMins > 0
-                            ? Math.min(
-                                  100,
-                                  Math.round((topStats.utilisedMins / topStats.allocatedMins) * 100)
-                              )
-                            : 0
-                    }
-                    // % of the allocated time that was actually completed
-                    // (e.g. 100h allocated, 25h done -> "25%")
-                    badge={
-                        topStats.allocatedMins > 0
-                            ? `${Math.min(
-                                  100,
-                                  Math.round((topStats.utilisedMins / topStats.allocatedMins) * 100)
-                              )}%`
-                            : undefined
-                    }
-                    styles={styles}
-                />
-            </div>
+            {isBlueMode && <BlueWorkSummary employeeId={isViewingOther ? viewingId : null} />}
 
-            {/* ---- Case-wise cards (click View Details -> cases table opens) ---- */}
-            <div style={styles.caseSection}>
-                <div style={styles.caseSectionHead}>
-                    <span
-                        style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 10,
-                            fontSize: 20,
-                            fontWeight: 700,
-                            color: "#17181C",
-                        }}
-                    >
-                        <span style={{ color: BRAND.green, display: "inline-flex" }}>
-                            <LayersIcon />
-                        </span>
-                        Allocation Summary
-                    </span>
-                    <span style={styles.smallMuted}>Click View Details to open the cases</span>
-                </div>
-                {/* ---- Self Allocate / Bulk Submit / Export ---- */}
-                <div style={{ ...styles.tabsRow, justifyContent: "flex-end", margin: "0 0 12px" }}>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        {!isViewingOther && (
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.exportBtn}
-                                onClick={openSelfAllocModal}
-                            >
-                                <BoxIcon /> Self Allocate
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            className="pf-btn pf-btn-solid"
-                            style={{
-                                ...styles.exportBtn,
-                                background: GRADIENT,
-                                color: "#fff",
-                                border: "none",
-                                opacity: stats.pendingCount > 0 ? 1 : 0.5,
-                                cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
-                            }}
-                            onClick={openBulkModal}
-                            disabled={stats.pendingCount === 0}
-                        >
-                            <CheckIcon /> Bulk Submit
-                            {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
-                        </button>
-                        <button
-                            type="button"
-                            className="pf-btn pf-btn-outline"
-                            style={styles.exportBtn}
-                            onClick={exportCsv}
-                        >
-                            <DownloadIcon /> Export
-                        </button>
+            {!isBlueMode && (
+                <>
+                    {/* ---- Stats (click a card -> its cases table opens below) ---- */}
+                    <div style={isMobile ? styles.statsGridMobile : styles.statsGrid}>
+                        <StatCard
+                            icon={<BoxIcon />}
+                            tint={BRAND.blue}
+                            value={topStats.allocatedTotal}
+                            label="Cases Allocated"
+                            sub={
+                                topStats.waiting > 0
+                                    ? `${topStats.withNo} with case no. · ${topStats.waiting} waiting`
+                                    : periodLabel
+                            }
+                            active={isDaily && openCard === "all" && activeTab === "today"}
+                            onClick={isDaily ? () => openStatCard("all") : undefined}
+                            styles={styles}
+                        />
+                        <StatCard
+                            icon={<CheckIcon />}
+                            tint={BRAND.green}
+                            value={topStats.submittedCount}
+                            label="Submitted"
+                            sub={`${periodLabel} · completed & submitted`}
+                            active={isDaily && openCard === "submitted" && activeTab === "today"}
+                            onClick={isDaily ? () => openStatCard("submitted") : undefined}
+                            styles={styles}
+                        />
+                        <StatCard
+                            icon={<ClockIcon />}
+                            tint={BRAND.amber}
+                            value={topStats.pendingCount}
+                            label="Pending"
+                            sub={
+                                topStats.waiting > 0
+                                    ? `${topStats.pendingCases} cases · ${topStats.waiting} waiting for case no.`
+                                    : `${periodLabel} · awaiting submission`
+                            }
+                            active={isDaily && openCard === "pending" && activeTab === "today"}
+                            onClick={isDaily ? () => openStatCard("pending") : undefined}
+                            styles={styles}
+                        />
+                        {/* total hours allocated = cases x service AMP */}
+                        <StatCard
+                            icon={<ClockIcon />}
+                            tint={BRAND.lightBlue}
+                            value={
+                                topStats.allocatedMins > 0
+                                    ? formatMinutes(topStats.allocatedMins)
+                                    : "0m"
+                            }
+                            label="Allocated Hours"
+                            sub={`${periodLabel} · cases × service AMP`}
+                            styles={styles}
+                        />
+                        {/* time utilised = AMP of submitted cases, out of allocated time */}
+                        <StatCard
+                            icon={<ClockIcon />}
+                            tint={BRAND.green}
+                            value={
+                                topStats.utilisedMins > 0
+                                    ? formatMinutes(topStats.utilisedMins)
+                                    : "0m"
+                            }
+                            label="Time Utilised"
+                            sub={
+                                topStats.allocatedMins > 0
+                                    ? `of ${formatMinutes(topStats.allocatedMins)} allocated`
+                                    : "Submitted cases × AMP"
+                            }
+                            progress={
+                                topStats.allocatedMins > 0
+                                    ? Math.min(
+                                          100,
+                                          Math.round(
+                                              (topStats.utilisedMins / topStats.allocatedMins) * 100
+                                          )
+                                      )
+                                    : 0
+                            }
+                            // % of the allocated time that was actually completed
+                            // (e.g. 100h allocated, 25h done -> "25%")
+                            badge={
+                                topStats.allocatedMins > 0
+                                    ? `${Math.min(
+                                          100,
+                                          Math.round(
+                                              (topStats.utilisedMins / topStats.allocatedMins) * 100
+                                          )
+                                      )}%`
+                                    : undefined
+                            }
+                            styles={styles}
+                        />
                     </div>
-                </div>
-                <div
-                    style={
-                        isMobile
-                            ? { ...styles.caseGrid, gridTemplateColumns: "1fr" }
-                            : styles.caseGrid
-                    }
-                >
-                    {[
-                        {
-                            key: "today",
-                            title: "Today's Cases",
-                            total: stats.allocatedTotal,
-                            totalLabel: "Allocated",
-                            done: stats.submittedCount,
-                            doneLabel: "submitted",
-                            rows: [
-                                ["With case no.", stats.total, BRAND.blue],
-                                ["Waiting", stats.waitingToday, BRAND.amber],
-                                ["Submitted", stats.submittedCount, BRAND.green],
-                                ["Pending", stats.pendingTotal, BRAND.amber],
-                            ] as [string, number | string, string][],
-                            active: openCard === "all" && activeTab === "today",
-                            onClick: () => openStatCard("all"),
-                        },
-                        {
-                            key: "past",
-                            title: "Past Cases",
-                            total: pastSummary.total,
-                            totalLabel: "Allocated",
-                            done: pastSummary.submitted,
-                            doneLabel: "completed",
-                            // Past: only "how much I received" and "how much I
-                            // completed" — no pending shown here.
-                            rows: [
-                                ["Received", pastSummary.total, BRAND.blue],
-                                ["Completed", pastSummary.submitted, BRAND.green],
-                            ] as [string, number | string, string][],
-                            active: activeTab === "past",
-                            onClick: openPastCard,
-                        },
-                        {
-                            key: "query",
-                            title: "Queries",
-                            total: openQueries.length + resolvedQueries.length,
-                            totalLabel: "Total",
-                            done: resolvedQueries.length,
-                            doneLabel: "completed",
-                            rows: [
-                                ["In Query", openQueries.length, BRAND.red],
-                                ["Query Completed", resolvedQueries.length, BRAND.green],
-                            ] as [string, number | string, string][],
-                            active: showQueryModal,
-                            onClick: openQueryModal,
-                        },
-                    ].map((c) => {
-                        // Past + Queries only: all done -> green "All completed" badge,
-                        // nothing done at all -> red warning look.
-                        // Past card is neutral (no red/green "pending" styling).
-                        const allDone = c.key === "query" && c.total > 0 && c.done >= c.total;
-                        const noneDone = c.key === "query" && c.total > 0 && c.done === 0;
-                        const accent = noneDone
-                            ? BRAND.red
-                            : allDone
-                              ? BRAND.green
-                              : c.key === "today"
-                                ? BRAND.green
-                                : c.key === "past"
-                                  ? BRAND.blue
-                                  : BRAND.amber;
-                        const pct = c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
-                        const isActive = c.active && c.key !== "query";
-                        return (
-                            <div
-                                key={c.key}
-                                className={
-                                    c.key === "today"
-                                        ? "pf-card-hover pf-today-card"
-                                        : "pf-card-hover"
-                                }
+
+                    {/* ---- Case-wise cards (click View Details -> cases table opens) ---- */}
+                    <div style={styles.caseSection}>
+                        <div style={styles.caseSectionHead}>
+                            <span
                                 style={{
-                                    ...styles.caseCard,
-                                    padding: "12px 14px 12px",
-                                    gap: 9,
-                                    borderRadius: 16,
-                                    border: `1px solid ${withAlpha(accent, 0.18)}`,
-                                    borderLeft: `1px solid ${withAlpha(accent, 0.18)}`,
-                                    borderTop: `3px solid ${accent}`,
-                                    background: `linear-gradient(180deg, ${withAlpha(accent, 0.07)} 0%, #fff 55%)`,
-                                    boxShadow: `0 4px 14px ${withAlpha(accent, 0.1)}`,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    fontSize: 20,
+                                    fontWeight: 700,
+                                    color: "#17181C",
                                 }}
                             >
-                                {/* header: icon + title (+ LIVE) ........ total */}
-                                <div style={{ ...styles.caseCardTop, alignItems: "center" }}>
-                                    <div
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 9,
-                                            minWidth: 0,
-                                        }}
+                                <span style={{ color: BRAND.green, display: "inline-flex" }}>
+                                    <LayersIcon />
+                                </span>
+                                Allocation Summary
+                            </span>
+                            <span style={styles.smallMuted}>
+                                Click View Details to open the cases
+                            </span>
+                        </div>
+                        {/* ---- Self Allocate / Bulk Submit / Export ---- */}
+                        <div
+                            style={{
+                                ...styles.tabsRow,
+                                justifyContent: "flex-end",
+                                margin: "0 0 12px",
+                            }}
+                        >
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                {!isViewingOther && (
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.exportBtn}
+                                        onClick={openSelfAllocModal}
                                     >
-                                        <span
-                                            style={{
-                                                width: 30,
-                                                height: 30,
-                                                borderRadius: 9,
-                                                background: withAlpha(accent, 0.14),
-                                                color: accent,
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                flexShrink: 0,
-                                            }}
-                                        >
-                                            {c.key === "today" ? (
-                                                <CalendarIcon />
-                                            ) : c.key === "past" ? (
-                                                <ClockIcon />
-                                            ) : (
-                                                <ChatIcon />
-                                            )}
-                                        </span>
-                                        <span
-                                            style={{
-                                                fontSize: 14,
-                                                fontWeight: 700,
-                                                color: "#17181C",
-                                                whiteSpace: "nowrap",
-                                            }}
-                                        >
-                                            {c.title}
-                                        </span>
-                                        {c.key === "query" && c.total > 0 && (
-                                            <span
-                                                style={{
-                                                    display: "inline-flex",
-                                                    alignItems: "center",
-                                                    gap: 5,
-                                                    padding: "2px 9px",
-                                                    borderRadius: 999,
-                                                    background: withAlpha(
-                                                        allDone ? BRAND.green : BRAND.red,
-                                                        0.14
-                                                    ),
-                                                    color: allDone ? BRAND.green : BRAND.red,
-                                                    fontSize: 10.5,
-                                                    fontWeight: 700,
-                                                    whiteSpace: "nowrap",
-                                                }}
-                                            >
-                                                <span
-                                                    style={{
-                                                        width: 6,
-                                                        height: 6,
-                                                        borderRadius: "50%",
-                                                        background: allDone
-                                                            ? BRAND.green
-                                                            : BRAND.red,
-                                                    }}
-                                                />
-                                                {allDone
-                                                    ? "All completed"
-                                                    : noneDone
-                                                      ? "None completed"
-                                                      : (() => {
-                                                            // Use the SAME numbers as the tiles below,
-                                                            // so the pill and the tile never disagree.
-                                                            const tile = (name: string) =>
-                                                                Number(
-                                                                    c.rows.find(
-                                                                        (r) => r[0] === name
-                                                                    )?.[1] ?? 0
-                                                                );
-                                                            if (c.key === "query")
-                                                                return `${tile("In Query")} open`;
-                                                            if (tile("Pending") > 0)
-                                                                return `${tile("Pending")} pending`;
-                                                            if (tile("Waiting") > 0)
-                                                                return `${tile("Waiting")} waiting`;
-                                                            return `${c.total - c.done} pending`;
-                                                        })()}
-                                            </span>
-                                        )}
-                                        {c.key === "today" && (
-                                            <span
-                                                style={{
-                                                    display: "inline-flex",
-                                                    alignItems: "center",
-                                                    gap: 5,
-                                                    padding: "2px 8px",
-                                                    borderRadius: 999,
-                                                    background: withAlpha(BRAND.green, 0.14),
-                                                    color: BRAND.green,
-                                                    fontSize: 9.5,
-                                                    fontWeight: 700,
-                                                    letterSpacing: "0.06em",
-                                                }}
-                                            >
-                                                <span
-                                                    className="pf-today-dot"
-                                                    style={{
-                                                        width: 5,
-                                                        height: 5,
-                                                        borderRadius: "50%",
-                                                        background: BRAND.green,
-                                                    }}
-                                                />
-                                                LIVE
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "baseline",
-                                            gap: 5,
-                                            flexShrink: 0,
-                                        }}
-                                    >
-                                        <span
-                                            style={{
-                                                ...styles.caseTotalNum,
-                                                fontSize: 24,
-                                                color: accent,
-                                            }}
-                                        >
-                                            {c.total}
-                                        </span>
-                                        <span style={{ ...styles.smallMuted, fontSize: 11 }}>
-                                            {c.totalLabel}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* progress + % */}
-                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                    <div
-                                        style={{
-                                            ...styles.caseBarTrack,
-                                            flex: 1,
-                                            height: 5,
-                                            background: withAlpha(accent, 0.15),
-                                        }}
-                                    >
-                                        <div
-                                            style={{
-                                                ...styles.caseBarFill,
-                                                width: `${pct}%`,
-                                                background: accent,
-                                            }}
-                                        />
-                                    </div>
-                                    <span
-                                        style={{
-                                            ...styles.smallMuted,
-                                            fontSize: 11,
-                                            whiteSpace: "nowrap",
-                                            fontWeight: 600,
-                                        }}
-                                    >
-                                        {pct}% {c.doneLabel}
-                                    </span>
-                                </div>
-
-                                {/* stat tiles: one compact row (2 x 2 on phones) */}
-                                <div
+                                        <BoxIcon /> Self Allocate
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    className="pf-btn pf-btn-solid"
                                     style={{
-                                        display: "grid",
-                                        gridTemplateColumns: isMobile
-                                            ? "1fr 1fr"
-                                            : `repeat(${c.rows.length}, 1fr)`,
-                                        gap: 7,
+                                        ...styles.exportBtn,
+                                        background: GRADIENT,
+                                        color: "#fff",
+                                        border: "none",
+                                        opacity: stats.pendingCount > 0 ? 1 : 0.5,
+                                        cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
                                     }}
+                                    onClick={openBulkModal}
+                                    disabled={stats.pendingCount === 0}
                                 >
-                                    {c.rows.map(([label, value, color]) => (
-                                        <div
-                                            key={label}
-                                            style={{
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                gap: 1,
-                                                padding: "6px 10px",
-                                                borderRadius: 10,
-                                                background: withAlpha(color, 0.09),
-                                                minWidth: 0,
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    fontSize: 11,
-                                                    color: "#5B6479",
-                                                    whiteSpace: "nowrap",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                }}
-                                            >
-                                                {label}
-                                            </span>
-                                            <strong
-                                                style={{
-                                                    fontSize: 18,
-                                                    lineHeight: 1.15,
-                                                    color,
-                                                }}
-                                            >
-                                                {value}
-                                            </strong>
-                                        </div>
-                                    ))}
-                                </div>
-
+                                    <CheckIcon /> Bulk Submit
+                                    {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
+                                </button>
                                 <button
                                     type="button"
                                     className="pf-btn pf-btn-outline"
-                                    style={{
-                                        ...styles.caseViewBtn,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        gap: 6,
-                                        padding: "6px 12px",
-                                        fontSize: 12.5,
-                                        borderRadius: 999,
-                                        border: "none",
-                                        background: isActive ? BRAND.blue : withAlpha(accent, 0.1),
-                                        color: isActive
-                                            ? "#fff"
-                                            : accent === BRAND.amber
-                                              ? "#B26B00"
-                                              : accent,
-                                    }}
-                                    onClick={c.onClick}
+                                    style={styles.exportBtn}
+                                    onClick={exportCsv}
                                 >
-                                    {isActive ? "Hide Details" : "View Details"}
-                                    <ArrowRightIcon />
+                                    <DownloadIcon /> Export
                                 </button>
                             </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {showDetails && (
-                <>
-                    <div ref={detailRef} style={styles.detailHead}>
-                        <span style={styles.detailTitle}>
-                            {activeTab === "past"
-                                ? "Past Allocation"
-                                : openCard === "submitted"
-                                  ? "Submitted Cases — Today"
-                                  : openCard === "pending"
-                                    ? "Pending Cases — Today"
-                                    : "All Allocated Cases — Today"}
-                        </span>
-                        {activeTab === "today" && (
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.exportBtn}
-                                onClick={() => setOpenCard(null)}
-                            >
-                                ✕ Close
-                            </button>
-                        )}
-                    </div>
-
-                    {/* ---- Counts / Cases toggle (left) + Search (right) ---- */}
-                    <div
-                        style={{
-                            ...styles.allocViewRow,
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                        }}
-                    >
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {!isViewingOther && (
-                                <>
-                                    <button
-                                        type="button"
-                                        className="pf-btn"
-                                        style={
-                                            allocView === "counts"
-                                                ? styles.allocViewBtnActive
-                                                : styles.allocViewBtn
-                                        }
-                                        onClick={() => setAllocView("counts")}
-                                    >
-                                        Counts ({filteredCounts.length})
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="pf-btn"
-                                        style={
-                                            allocView === "cases"
-                                                ? styles.allocViewBtnActive
-                                                : styles.allocViewBtn
-                                        }
-                                        onClick={() => setAllocView("cases")}
-                                    >
-                                        Cases ({filteredRows.length})
-                                    </button>
-                                </>
-                            )}
                         </div>
                         <div
-                            style={{
-                                display: "flex",
-                                gap: 10,
-                                alignItems: "center",
-                                width: isMobile ? "100%" : "auto",
-                            }}
+                            style={
+                                isMobile
+                                    ? { ...styles.caseGrid, gridTemplateColumns: "1fr" }
+                                    : styles.caseGrid
+                            }
                         >
-                            {allocView === "cases" && (
-                                <select
-                                    style={{ ...styles.textInput, minWidth: 130 }}
-                                    value={statusFilter}
-                                    onChange={(e) => setStatusFilter(e.target.value as any)}
-                                    aria-label="Status"
-                                >
-                                    <option value="all">All Status</option>
-                                    <option value="PENDING">Pending</option>
-                                    <option value="SUBMITTED">Submitted</option>
-                                </select>
-                            )}
-                            <input
-                                style={{ ...styles.textInput, width: isMobile ? "100%" : 300 }}
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                placeholder={
-                                    allocView === "cases"
-                                        ? "Search by case number or service…"
-                                        : "Search by service or client…"
-                                }
-                            />
+                            {[
+                                {
+                                    key: "today",
+                                    title: "Today's Cases",
+                                    total: stats.allocatedTotal,
+                                    totalLabel: "Allocated",
+                                    done: stats.submittedCount,
+                                    doneLabel: "submitted",
+                                    rows: [
+                                        ["With case no.", stats.total, BRAND.blue],
+                                        ["Waiting", stats.waitingToday, BRAND.amber],
+                                        ["Submitted", stats.submittedCount, BRAND.green],
+                                        ["Pending", stats.pendingTotal, BRAND.amber],
+                                    ] as [string, number | string, string][],
+                                    active: openCard === "all" && activeTab === "today",
+                                    onClick: () => openStatCard("all"),
+                                },
+                                {
+                                    key: "past",
+                                    title: "Past Cases",
+                                    total: pastSummary.total,
+                                    totalLabel: "Allocated",
+                                    done: pastSummary.submitted,
+                                    doneLabel: "completed",
+                                    // Past: only "how much I received" and "how much I
+                                    // completed" — no pending shown here.
+                                    rows: [
+                                        ["Received", pastSummary.total, BRAND.blue],
+                                        ["Completed", pastSummary.submitted, BRAND.green],
+                                    ] as [string, number | string, string][],
+                                    active: activeTab === "past",
+                                    onClick: openPastCard,
+                                },
+                                {
+                                    key: "query",
+                                    title: "Queries",
+                                    total: openQueries.length + resolvedQueries.length,
+                                    totalLabel: "Total",
+                                    done: resolvedQueries.length,
+                                    doneLabel: "completed",
+                                    rows: [
+                                        ["In Query", openQueries.length, BRAND.red],
+                                        ["Query Completed", resolvedQueries.length, BRAND.green],
+                                    ] as [string, number | string, string][],
+                                    active: showQueryModal,
+                                    onClick: openQueryModal,
+                                },
+                            ].map((c) => {
+                                // Past + Queries only: all done -> green "All completed" badge,
+                                // nothing done at all -> red warning look.
+                                // Past card is neutral (no red/green "pending" styling).
+                                const allDone =
+                                    c.key === "query" && c.total > 0 && c.done >= c.total;
+                                const noneDone = c.key === "query" && c.total > 0 && c.done === 0;
+                                const accent = noneDone
+                                    ? BRAND.red
+                                    : allDone
+                                      ? BRAND.green
+                                      : c.key === "today"
+                                        ? BRAND.green
+                                        : c.key === "past"
+                                          ? BRAND.blue
+                                          : BRAND.amber;
+                                const pct = c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
+                                const isActive = c.active && c.key !== "query";
+                                return (
+                                    <div
+                                        key={c.key}
+                                        className={
+                                            c.key === "today"
+                                                ? "pf-card-hover pf-today-card"
+                                                : "pf-card-hover"
+                                        }
+                                        style={{
+                                            ...styles.caseCard,
+                                            padding: "12px 14px 12px",
+                                            gap: 9,
+                                            borderRadius: 16,
+                                            border: `1px solid ${withAlpha(accent, 0.18)}`,
+                                            borderLeft: `1px solid ${withAlpha(accent, 0.18)}`,
+                                            borderTop: `3px solid ${accent}`,
+                                            background: `linear-gradient(180deg, ${withAlpha(accent, 0.07)} 0%, #fff 55%)`,
+                                            boxShadow: `0 4px 14px ${withAlpha(accent, 0.1)}`,
+                                        }}
+                                    >
+                                        {/* header: icon + title (+ LIVE) ........ total */}
+                                        <div
+                                            style={{ ...styles.caseCardTop, alignItems: "center" }}
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 9,
+                                                    minWidth: 0,
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        width: 30,
+                                                        height: 30,
+                                                        borderRadius: 9,
+                                                        background: withAlpha(accent, 0.14),
+                                                        color: accent,
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        justifyContent: "center",
+                                                        flexShrink: 0,
+                                                    }}
+                                                >
+                                                    {c.key === "today" ? (
+                                                        <CalendarIcon />
+                                                    ) : c.key === "past" ? (
+                                                        <ClockIcon />
+                                                    ) : (
+                                                        <ChatIcon />
+                                                    )}
+                                                </span>
+                                                <span
+                                                    style={{
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                        color: "#17181C",
+                                                        whiteSpace: "nowrap",
+                                                    }}
+                                                >
+                                                    {c.title}
+                                                </span>
+                                                {c.key === "query" && c.total > 0 && (
+                                                    <span
+                                                        style={{
+                                                            display: "inline-flex",
+                                                            alignItems: "center",
+                                                            gap: 5,
+                                                            padding: "2px 9px",
+                                                            borderRadius: 999,
+                                                            background: withAlpha(
+                                                                allDone ? BRAND.green : BRAND.red,
+                                                                0.14
+                                                            ),
+                                                            color: allDone
+                                                                ? BRAND.green
+                                                                : BRAND.red,
+                                                            fontSize: 10.5,
+                                                            fontWeight: 700,
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                width: 6,
+                                                                height: 6,
+                                                                borderRadius: "50%",
+                                                                background: allDone
+                                                                    ? BRAND.green
+                                                                    : BRAND.red,
+                                                            }}
+                                                        />
+                                                        {allDone
+                                                            ? "All completed"
+                                                            : noneDone
+                                                              ? "None completed"
+                                                              : (() => {
+                                                                    // Use the SAME numbers as the tiles below,
+                                                                    // so the pill and the tile never disagree.
+                                                                    const tile = (name: string) =>
+                                                                        Number(
+                                                                            c.rows.find(
+                                                                                (r) => r[0] === name
+                                                                            )?.[1] ?? 0
+                                                                        );
+                                                                    if (c.key === "query")
+                                                                        return `${tile("In Query")} open`;
+                                                                    if (tile("Pending") > 0)
+                                                                        return `${tile("Pending")} pending`;
+                                                                    if (tile("Waiting") > 0)
+                                                                        return `${tile("Waiting")} waiting`;
+                                                                    return `${c.total - c.done} pending`;
+                                                                })()}
+                                                    </span>
+                                                )}
+                                                {c.key === "today" && (
+                                                    <span
+                                                        style={{
+                                                            display: "inline-flex",
+                                                            alignItems: "center",
+                                                            gap: 5,
+                                                            padding: "2px 8px",
+                                                            borderRadius: 999,
+                                                            background: withAlpha(
+                                                                BRAND.green,
+                                                                0.14
+                                                            ),
+                                                            color: BRAND.green,
+                                                            fontSize: 9.5,
+                                                            fontWeight: 700,
+                                                            letterSpacing: "0.06em",
+                                                        }}
+                                                    >
+                                                        <span
+                                                            className="pf-today-dot"
+                                                            style={{
+                                                                width: 5,
+                                                                height: 5,
+                                                                borderRadius: "50%",
+                                                                background: BRAND.green,
+                                                            }}
+                                                        />
+                                                        LIVE
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "baseline",
+                                                    gap: 5,
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        ...styles.caseTotalNum,
+                                                        fontSize: 24,
+                                                        color: accent,
+                                                    }}
+                                                >
+                                                    {c.total}
+                                                </span>
+                                                <span
+                                                    style={{ ...styles.smallMuted, fontSize: 11 }}
+                                                >
+                                                    {c.totalLabel}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* progress + % */}
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 10,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    ...styles.caseBarTrack,
+                                                    flex: 1,
+                                                    height: 5,
+                                                    background: withAlpha(accent, 0.15),
+                                                }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        ...styles.caseBarFill,
+                                                        width: `${pct}%`,
+                                                        background: accent,
+                                                    }}
+                                                />
+                                            </div>
+                                            <span
+                                                style={{
+                                                    ...styles.smallMuted,
+                                                    fontSize: 11,
+                                                    whiteSpace: "nowrap",
+                                                    fontWeight: 600,
+                                                }}
+                                            >
+                                                {pct}% {c.doneLabel}
+                                            </span>
+                                        </div>
+
+                                        {/* stat tiles: one compact row (2 x 2 on phones) */}
+                                        <div
+                                            style={{
+                                                display: "grid",
+                                                gridTemplateColumns: isMobile
+                                                    ? "1fr 1fr"
+                                                    : `repeat(${c.rows.length}, 1fr)`,
+                                                gap: 7,
+                                            }}
+                                        >
+                                            {c.rows.map(([label, value, color]) => (
+                                                <div
+                                                    key={label}
+                                                    style={{
+                                                        display: "flex",
+                                                        flexDirection: "column",
+                                                        gap: 1,
+                                                        padding: "6px 10px",
+                                                        borderRadius: 10,
+                                                        background: withAlpha(color, 0.09),
+                                                        minWidth: 0,
+                                                    }}
+                                                >
+                                                    <span
+                                                        style={{
+                                                            fontSize: 11,
+                                                            color: "#5B6479",
+                                                            whiteSpace: "nowrap",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                        }}
+                                                    >
+                                                        {label}
+                                                    </span>
+                                                    <strong
+                                                        style={{
+                                                            fontSize: 18,
+                                                            lineHeight: 1.15,
+                                                            color,
+                                                        }}
+                                                    >
+                                                        {value}
+                                                    </strong>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-outline"
+                                            style={{
+                                                ...styles.caseViewBtn,
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                gap: 6,
+                                                padding: "6px 12px",
+                                                fontSize: 12.5,
+                                                borderRadius: 999,
+                                                border: "none",
+                                                background: isActive
+                                                    ? BRAND.blue
+                                                    : withAlpha(accent, 0.1),
+                                                color: isActive
+                                                    ? "#fff"
+                                                    : accent === BRAND.amber
+                                                      ? "#B26B00"
+                                                      : accent,
+                                            }}
+                                            onClick={c.onClick}
+                                        >
+                                            {isActive ? "Hide Details" : "View Details"}
+                                            <ArrowRightIcon />
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
 
-                    {/* ---- Counts view (table: case # / client / sub-client / service / date / status) ---- */}
-                    {!isViewingOther && allocView === "counts" && (
-                        <div className="pf-card-hover" style={styles.cntCard}>
-                            <div style={styles.cntTop}>
-                                <div>
-                                    <div style={styles.countsCardTitle}>
-                                        Counts (no case number yet) — add case numbers
-                                    </div>
-                                    <div style={styles.smallMuted}>
-                                        These were allocated to you as a count. Add the real case
-                                        number(s), pick the client for each and a status.
-                                    </div>
-                                </div>
-                                <span style={styles.countsBadge}>{countsToAdd} pending</span>
-                            </div>
-                            {filteredCounts.length === 0 ? (
-                                <EmptyState
-                                    text={
-                                        activeTab === "today"
-                                            ? "No counts waiting for today."
-                                            : "No past counts found."
-                                    }
-                                    styles={styles}
-                                />
-                            ) : (
-                                <div style={{ overflowX: "auto", padding: "0 20px 20px" }}>
-                                    <div style={styles.cntGroups}>
-                                        {(() => {
-                                            // group the counts by service
-                                            const groups = new Map<string, MyCountRow[]>();
-                                            filteredCounts.forEach((m) => {
-                                                const k = m.productName || "No service";
-                                                if (!groups.has(k)) groups.set(k, []);
-                                                groups.get(k)!.push(m);
-                                            });
-                                            const dotColors = [
-                                                BRAND.blue,
-                                                "#6C8EF5",
-                                                BRAND.green,
-                                                BRAND.amber,
-                                            ];
-                                            return Array.from(groups.entries()).map(
-                                                ([service, rows], gi) => {
-                                                    const gAdded = rows.reduce(
-                                                        (t, r) => t + r.addedByMe,
-                                                        0
-                                                    );
-                                                    const gTotal = rows.reduce(
-                                                        (t, r) => t + r.allocatedToMe,
-                                                        0
-                                                    );
-                                                    return (
-                                                        <div key={service} style={styles.cntGroup}>
-                                                            <div style={styles.cntGroupHead}>
-                                                                <span
-                                                                    style={{
-                                                                        ...styles.cntDot,
-                                                                        background:
-                                                                            dotColors[
-                                                                                gi %
-                                                                                    dotColors.length
-                                                                            ],
-                                                                    }}
-                                                                />
-                                                                <span style={styles.cntGroupName}>
-                                                                    {service}
-                                                                </span>
-                                                                <span style={styles.cntCountPill}>
-                                                                    {rows.length}{" "}
-                                                                    {rows.length === 1
-                                                                        ? "Case"
-                                                                        : "Cases"}
-                                                                </span>
-                                                                <span style={{ flex: 1 }} />
-                                                                <span style={styles.smallMuted}>
-                                                                    Total Added
-                                                                </span>
-                                                                <span style={styles.cntGroupTotal}>
-                                                                    {gAdded} / {gTotal}
-                                                                </span>
-                                                            </div>
-                                                            {rows.map((mc, ri) => {
-                                                                const done = mc.remaining === 0;
-                                                                const mcAmp = ampOf(mc.productId);
-                                                                const carry =
-                                                                    !!mc.workDate &&
-                                                                    mc.workDate < todayStr();
-                                                                const days = mc.workDate
-                                                                    ? Math.max(
-                                                                          0,
-                                                                          Math.round(
-                                                                              (new Date(
-                                                                                  todayStr()
-                                                                              ).getTime() -
-                                                                                  new Date(
-                                                                                      mc.workDate
-                                                                                  ).getTime()) /
-                                                                                  86400000
-                                                                          )
-                                                                      )
-                                                                    : 0;
-                                                                return (
-                                                                    <div
-                                                                        key={mc.id}
-                                                                        style={{
-                                                                            ...styles.cntRow,
-                                                                            borderTop:
-                                                                                ri === 0
-                                                                                    ? "none"
-                                                                                    : "1px solid #eef0f6",
-                                                                        }}
-                                                                    >
-                                                                        <div style={styles.cntCell}>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.cntClient
-                                                                                }
-                                                                            >
-                                                                                {mc.clientName ||
-                                                                                    "—"}
-                                                                            </span>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.smallMuted
-                                                                                }
-                                                                            >
-                                                                                {mc.allocatedToMe}{" "}
-                                                                                cases
-                                                                                {mcAmp > 0
-                                                                                    ? ` · ${formatMinutes(mcAmp * mc.allocatedToMe)}`
-                                                                                    : ""}
-                                                                            </span>
-                                                                        </div>
-                                                                        <div style={styles.cntText}>
-                                                                            {mc.subclientName ||
-                                                                                "—"}
-                                                                        </div>
-                                                                        <div style={styles.cntCell}>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.cntDate
-                                                                                }
-                                                                            >
-                                                                                {mc.workDate || "—"}
-                                                                            </span>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.smallMuted
-                                                                                }
-                                                                            >
-                                                                                {days > 0
-                                                                                    ? `(${days} day${days === 1 ? "" : "s"})`
-                                                                                    : "(today)"}
-                                                                            </span>
-                                                                        </div>
-                                                                        <div>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.statusDone
-                                                                                }
-                                                                            >
-                                                                                ●{" "}
-                                                                                {done
-                                                                                    ? "All added"
-                                                                                    : "Allocated"}
-                                                                            </span>
-                                                                        </div>
-                                                                        <div>
-                                                                            {carry ? (
-                                                                                <span
-                                                                                    style={
-                                                                                        styles.cntCarry
-                                                                                    }
-                                                                                >
-                                                                                    ↻ Carry Over
-                                                                                </span>
-                                                                            ) : (
-                                                                                <span
-                                                                                    style={
-                                                                                        styles.smallMuted
-                                                                                    }
-                                                                                >
-                                                                                    —
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                        <div style={styles.cntCell}>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.cntPendingNum
-                                                                                }
-                                                                            >
-                                                                                {mc.remaining}
-                                                                            </span>
-                                                                            <span
-                                                                                style={
-                                                                                    styles.smallMuted
-                                                                                }
-                                                                            >
-                                                                                pending
-                                                                            </span>
-                                                                        </div>
-                                                                        <div
-                                                                            style={styles.cntRight}
-                                                                        >
-                                                                            {!done ? (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    className="pf-btn pf-btn-solid"
-                                                                                    style={
-                                                                                        styles.rowSubmitBtn
-                                                                                    }
-                                                                                    onClick={() =>
-                                                                                        openAddCaseNumbers(
-                                                                                            mc
-                                                                                        )
-                                                                                    }
-                                                                                >
-                                                                                    Add Case Numbers
-                                                                                </button>
-                                                                            ) : (
-                                                                                <span
-                                                                                    style={
-                                                                                        styles.smallMuted
-                                                                                    }
-                                                                                >
-                                                                                    {mc.addedByMe} /{" "}
-                                                                                    {
-                                                                                        mc.allocatedToMe
-                                                                                    }{" "}
-                                                                                    added
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    );
-                                                }
-                                            );
-                                        })()}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {(isViewingOther || allocView === "cases") && (
+                    {showDetails && (
                         <>
-                            <div style={styles.allocSummaryRow}>
-                                <span style={styles.allocSummaryChip}>
-                                    Allocated: {filteredRows.length + countsToAdd}
+                            <div ref={detailRef} style={styles.detailHead}>
+                                <span style={styles.detailTitle}>
+                                    {activeTab === "past"
+                                        ? "Past Allocation"
+                                        : openCard === "submitted"
+                                          ? "Submitted Cases — Today"
+                                          : openCard === "pending"
+                                            ? "Pending Cases — Today"
+                                            : "All Allocated Cases — Today"}
                                 </span>
-                                <span style={styles.allocSummaryChip}>
-                                    With case number: {filteredRows.length}
-                                </span>
-                                {!isViewingOther && (
-                                    <span style={styles.allocSummaryChip}>
-                                        Waiting for case numbers: {countsToAdd}
-                                    </span>
+                                {activeTab === "today" && (
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.exportBtn}
+                                        onClick={() => setOpenCard(null)}
+                                    >
+                                        ✕ Close
+                                    </button>
                                 )}
                             </div>
 
-                            {/* ---- Table / mobile list ---- */}
-                            <div className="pf-card-hover" style={styles.tableCard}>
-                                {loading ? (
-                                    <EmptyState text="Loading…" styles={styles} />
-                                ) : filteredRows.length === 0 ? (
-                                    <EmptyState
-                                        text={
-                                            activeTab === "today"
-                                                ? "No allocation found for today."
-                                                : "No past allocations found."
+                            {/* ---- Counts / Cases toggle (left) + Search (right) ---- */}
+                            <div
+                                style={{
+                                    ...styles.allocViewRow,
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                }}
+                            >
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {!isViewingOther && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                className="pf-btn"
+                                                style={
+                                                    allocView === "counts"
+                                                        ? styles.allocViewBtnActive
+                                                        : styles.allocViewBtn
+                                                }
+                                                onClick={() => setAllocView("counts")}
+                                            >
+                                                Counts ({filteredCounts.length})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="pf-btn"
+                                                style={
+                                                    allocView === "cases"
+                                                        ? styles.allocViewBtnActive
+                                                        : styles.allocViewBtn
+                                                }
+                                                onClick={() => setAllocView("cases")}
+                                            >
+                                                Cases ({filteredRows.length})
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        gap: 10,
+                                        alignItems: "center",
+                                        width: isMobile ? "100%" : "auto",
+                                    }}
+                                >
+                                    {allocView === "cases" && (
+                                        <select
+                                            style={{ ...styles.textInput, minWidth: 130 }}
+                                            value={statusFilter}
+                                            onChange={(e) => setStatusFilter(e.target.value as any)}
+                                            aria-label="Status"
+                                        >
+                                            <option value="all">All Status</option>
+                                            <option value="PENDING">Pending</option>
+                                            <option value="SUBMITTED">Submitted</option>
+                                        </select>
+                                    )}
+                                    <input
+                                        style={{
+                                            ...styles.textInput,
+                                            width: isMobile ? "100%" : 300,
+                                        }}
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        placeholder={
+                                            allocView === "cases"
+                                                ? "Search by case number or service…"
+                                                : "Search by service or client…"
                                         }
-                                        styles={styles}
                                     />
-                                ) : isMobile ? (
-                                    <div style={styles.allocList}>
-                                        {filteredRows.map((c, i) => (
-                                            <MobileRow
-                                                key={c.id}
-                                                index={i + 1}
-                                                c={c}
-                                                ampMins={ampOf(c.productId)}
-                                                showAllocatedAt={showAllocatedAt}
-                                                onSubmit={() => handlePickForSubmit(c)}
-                                                onResolveQuery={openQueryModal}
-                                                clientCell={
-                                                    <ClientCell
-                                                        c={c}
-                                                        clients={clients}
-                                                        subclients={subclients}
-                                                        saving={savingClientCaseId === c.id}
-                                                        onChange={(kind, v) =>
-                                                            handleCaseClientChange(c, kind, v)
+                                </div>
+                            </div>
+
+                            {/* ---- Counts view (table: case # / client / sub-client / service / date / status) ---- */}
+                            {!isViewingOther && allocView === "counts" && (
+                                <div className="pf-card-hover" style={styles.cntCard}>
+                                    <div style={styles.cntTop}>
+                                        <div>
+                                            <div style={styles.countsCardTitle}>
+                                                Counts (no case number yet) — add case numbers
+                                            </div>
+                                            <div style={styles.smallMuted}>
+                                                These were allocated to you as a count. Add the real
+                                                case number(s), pick the client for each and a
+                                                status.
+                                            </div>
+                                        </div>
+                                        <span style={styles.countsBadge}>
+                                            {countsToAdd} pending
+                                        </span>
+                                    </div>
+                                    {filteredCounts.length === 0 ? (
+                                        <EmptyState
+                                            text={
+                                                activeTab === "today"
+                                                    ? "No counts waiting for today."
+                                                    : "No past counts found."
+                                            }
+                                            styles={styles}
+                                        />
+                                    ) : (
+                                        <div style={{ overflowX: "auto", padding: "0 20px 20px" }}>
+                                            <div style={styles.cntGroups}>
+                                                {(() => {
+                                                    // group the counts by service
+                                                    const groups = new Map<string, MyCountRow[]>();
+                                                    filteredCounts.forEach((m) => {
+                                                        const k = m.productName || "No service";
+                                                        if (!groups.has(k)) groups.set(k, []);
+                                                        groups.get(k)!.push(m);
+                                                    });
+                                                    const dotColors = [
+                                                        BRAND.blue,
+                                                        "#6C8EF5",
+                                                        BRAND.green,
+                                                        BRAND.amber,
+                                                    ];
+                                                    return Array.from(groups.entries()).map(
+                                                        ([service, rows], gi) => {
+                                                            const gAdded = rows.reduce(
+                                                                (t, r) => t + r.addedByMe,
+                                                                0
+                                                            );
+                                                            const gTotal = rows.reduce(
+                                                                (t, r) => t + r.allocatedToMe,
+                                                                0
+                                                            );
+                                                            return (
+                                                                <div
+                                                                    key={service}
+                                                                    style={styles.cntGroup}
+                                                                >
+                                                                    <div
+                                                                        style={styles.cntGroupHead}
+                                                                    >
+                                                                        <span
+                                                                            style={{
+                                                                                ...styles.cntDot,
+                                                                                background:
+                                                                                    dotColors[
+                                                                                        gi %
+                                                                                            dotColors.length
+                                                                                    ],
+                                                                            }}
+                                                                        />
+                                                                        <span
+                                                                            style={
+                                                                                styles.cntGroupName
+                                                                            }
+                                                                        >
+                                                                            {service}
+                                                                        </span>
+                                                                        <span
+                                                                            style={
+                                                                                styles.cntCountPill
+                                                                            }
+                                                                        >
+                                                                            {rows.length}{" "}
+                                                                            {rows.length === 1
+                                                                                ? "Case"
+                                                                                : "Cases"}
+                                                                        </span>
+                                                                        <span style={{ flex: 1 }} />
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMuted
+                                                                            }
+                                                                        >
+                                                                            Total Added
+                                                                        </span>
+                                                                        <span
+                                                                            style={
+                                                                                styles.cntGroupTotal
+                                                                            }
+                                                                        >
+                                                                            {gAdded} / {gTotal}
+                                                                        </span>
+                                                                    </div>
+                                                                    {rows.map((mc, ri) => {
+                                                                        const done =
+                                                                            mc.remaining === 0;
+                                                                        const mcAmp = ampOf(
+                                                                            mc.productId
+                                                                        );
+                                                                        const carry =
+                                                                            !!mc.workDate &&
+                                                                            mc.workDate <
+                                                                                todayStr();
+                                                                        const days = mc.workDate
+                                                                            ? Math.max(
+                                                                                  0,
+                                                                                  Math.round(
+                                                                                      (new Date(
+                                                                                          todayStr()
+                                                                                      ).getTime() -
+                                                                                          new Date(
+                                                                                              mc.workDate
+                                                                                          ).getTime()) /
+                                                                                          86400000
+                                                                                  )
+                                                                              )
+                                                                            : 0;
+                                                                        return (
+                                                                            <div
+                                                                                key={mc.id}
+                                                                                style={{
+                                                                                    ...styles.cntRow,
+                                                                                    borderTop:
+                                                                                        ri === 0
+                                                                                            ? "none"
+                                                                                            : "1px solid #eef0f6",
+                                                                                }}
+                                                                            >
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.cntCell
+                                                                                    }
+                                                                                >
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.cntClient
+                                                                                        }
+                                                                                    >
+                                                                                        {mc.clientName ||
+                                                                                            "—"}
+                                                                                    </span>
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.smallMuted
+                                                                                        }
+                                                                                    >
+                                                                                        {
+                                                                                            mc.allocatedToMe
+                                                                                        }{" "}
+                                                                                        cases
+                                                                                        {mcAmp > 0
+                                                                                            ? ` · ${formatMinutes(mcAmp * mc.allocatedToMe)}`
+                                                                                            : ""}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.cntText
+                                                                                    }
+                                                                                >
+                                                                                    {mc.subclientName ||
+                                                                                        "—"}
+                                                                                </div>
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.cntCell
+                                                                                    }
+                                                                                >
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.cntDate
+                                                                                        }
+                                                                                    >
+                                                                                        {mc.workDate ||
+                                                                                            "—"}
+                                                                                    </span>
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.smallMuted
+                                                                                        }
+                                                                                    >
+                                                                                        {days > 0
+                                                                                            ? `(${days} day${days === 1 ? "" : "s"})`
+                                                                                            : "(today)"}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.statusDone
+                                                                                        }
+                                                                                    >
+                                                                                        ●{" "}
+                                                                                        {done
+                                                                                            ? "All added"
+                                                                                            : "Allocated"}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    {carry ? (
+                                                                                        <span
+                                                                                            style={
+                                                                                                styles.cntCarry
+                                                                                            }
+                                                                                        >
+                                                                                            ↻ Carry
+                                                                                            Over
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span
+                                                                                            style={
+                                                                                                styles.smallMuted
+                                                                                            }
+                                                                                        >
+                                                                                            —
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.cntCell
+                                                                                    }
+                                                                                >
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.cntPendingNum
+                                                                                        }
+                                                                                    >
+                                                                                        {
+                                                                                            mc.remaining
+                                                                                        }
+                                                                                    </span>
+                                                                                    <span
+                                                                                        style={
+                                                                                            styles.smallMuted
+                                                                                        }
+                                                                                    >
+                                                                                        pending
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.cntRight
+                                                                                    }
+                                                                                >
+                                                                                    {!done ? (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="pf-btn pf-btn-solid"
+                                                                                            style={
+                                                                                                styles.rowSubmitBtn
+                                                                                            }
+                                                                                            onClick={() =>
+                                                                                                openAddCaseNumbers(
+                                                                                                    mc
+                                                                                                )
+                                                                                            }
+                                                                                        >
+                                                                                            Add Case
+                                                                                            Numbers
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <span
+                                                                                            style={
+                                                                                                styles.smallMuted
+                                                                                            }
+                                                                                        >
+                                                                                            {
+                                                                                                mc.addedByMe
+                                                                                            }{" "}
+                                                                                            /{" "}
+                                                                                            {
+                                                                                                mc.allocatedToMe
+                                                                                            }{" "}
+                                                                                            added
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
                                                         }
-                                                        readOnly={isViewingOther || !!c.missed}
-                                                        styles={styles}
-                                                    />
+                                                    );
+                                                })()}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {(isViewingOther || allocView === "cases") && (
+                                <>
+                                    <div style={styles.allocSummaryRow}>
+                                        <span style={styles.allocSummaryChip}>
+                                            Allocated: {filteredRows.length + countsToAdd}
+                                        </span>
+                                        <span style={styles.allocSummaryChip}>
+                                            With case number: {filteredRows.length}
+                                        </span>
+                                        {!isViewingOther && (
+                                            <span style={styles.allocSummaryChip}>
+                                                Waiting for case numbers: {countsToAdd}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {/* ---- Table / mobile list ---- */}
+                                    <div className="pf-card-hover" style={styles.tableCard}>
+                                        {loading ? (
+                                            <EmptyState text="Loading…" styles={styles} />
+                                        ) : filteredRows.length === 0 ? (
+                                            <EmptyState
+                                                text={
+                                                    activeTab === "today"
+                                                        ? "No allocation found for today."
+                                                        : "No past allocations found."
                                                 }
                                                 styles={styles}
                                             />
-                                        ))}
+                                        ) : isMobile ? (
+                                            <div style={styles.allocList}>
+                                                {filteredRows.map((c, i) => (
+                                                    <MobileRow
+                                                        key={c.id}
+                                                        index={i + 1}
+                                                        c={c}
+                                                        ampMins={ampOf(c.productId)}
+                                                        showAllocatedAt={showAllocatedAt}
+                                                        onSubmit={() => handlePickForSubmit(c)}
+                                                        onResolveQuery={openQueryModal}
+                                                        clientCell={
+                                                            <ClientCell
+                                                                c={c}
+                                                                clients={clients}
+                                                                subclients={subclients}
+                                                                saving={savingClientCaseId === c.id}
+                                                                onChange={(kind, v) =>
+                                                                    handleCaseClientChange(
+                                                                        c,
+                                                                        kind,
+                                                                        v
+                                                                    )
+                                                                }
+                                                                readOnly={
+                                                                    isViewingOther || !!c.missed
+                                                                }
+                                                                styles={styles}
+                                                            />
+                                                        }
+                                                        styles={styles}
+                                                    />
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <table style={styles.table}>
+                                                <colgroup>
+                                                    <col style={{ width: "5%" }} />
+                                                    <col style={{ width: "12%" }} />
+                                                    <col style={{ width: "12%" }} />
+                                                    <col style={{ width: "11%" }} />
+                                                    <col style={{ width: "17%" }} />
+                                                    <col style={{ width: "22%" }} />
+                                                    <col style={{ width: "11%" }} />
+                                                    <col style={{ width: "10%" }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th style={styles.th}>#</th>
+                                                        <th style={styles.th}>Case No.</th>
+                                                        <th style={styles.th}>Service</th>
+                                                        <th style={styles.th}>Date</th>
+                                                        <th style={styles.th}>
+                                                            {showAllocatedAt
+                                                                ? "Allocated At"
+                                                                : "Allocated"}
+                                                        </th>
+                                                        <th
+                                                            style={{
+                                                                ...styles.th,
+                                                                textAlign: "center",
+                                                            }}
+                                                        >
+                                                            Status
+                                                        </th>
+                                                        <th
+                                                            style={{
+                                                                ...styles.th,
+                                                                textAlign: "center",
+                                                            }}
+                                                        >
+                                                            Outcome
+                                                        </th>
+                                                        <th
+                                                            style={{
+                                                                ...styles.th,
+                                                                textAlign: "center",
+                                                            }}
+                                                        >
+                                                            Action
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {filteredRows.map((c, i) => {
+                                                        const submitted = isSubmitted(c);
+                                                        const rowAmp = ampOf(c.productId);
+                                                        return (
+                                                            <tr
+                                                                key={c.id}
+                                                                className="pf-row"
+                                                                style={{
+                                                                    ...styles.tr,
+                                                                    background:
+                                                                        i % 2 === 1
+                                                                            ? "#FAFBFF"
+                                                                            : "#fff",
+                                                                }}
+                                                            >
+                                                                <td style={styles.td}>{i + 1}</td>
+                                                                <td
+                                                                    style={{
+                                                                        ...styles.td,
+                                                                        fontWeight: fontWeight.bold,
+                                                                    }}
+                                                                >
+                                                                    {c.caseNumber}
+                                                                </td>
+                                                                <td style={styles.td}>
+                                                                    {c.productName || "-"}
+                                                                </td>
+                                                                <td style={styles.td}>
+                                                                    {formatDisplayDate(c.workDate)}
+                                                                </td>
+                                                                {/* NEW: allocation date + time, AMP time and age (manager side only) */}
+                                                                <td
+                                                                    style={{
+                                                                        ...styles.td,
+                                                                        whiteSpace: "normal",
+                                                                    }}
+                                                                >
+                                                                    <div>
+                                                                        {showAllocatedAt
+                                                                            ? formatDateTime(
+                                                                                  c.allocatedAt
+                                                                              )
+                                                                            : formatDisplayDate(
+                                                                                  allocDay(
+                                                                                      c.allocatedAt,
+                                                                                      c.workDate
+                                                                                  )
+                                                                              )}
+                                                                    </div>
+                                                                    {showAllocatedAt &&
+                                                                        (rowAmp > 0 ||
+                                                                            c.allocatedAt) && (
+                                                                            <div
+                                                                                style={
+                                                                                    styles.smallMuted
+                                                                                }
+                                                                            >
+                                                                                {rowAmp > 0
+                                                                                    ? `Time: ${formatMinutes(rowAmp)}`
+                                                                                    : ""}
+                                                                                {rowAmp > 0 &&
+                                                                                c.allocatedAt
+                                                                                    ? " · "
+                                                                                    : ""}
+                                                                                {c.allocatedAt
+                                                                                    ? allocAgeLabel(
+                                                                                          c
+                                                                                      )
+                                                                                    : ""}
+                                                                            </div>
+                                                                        )}
+                                                                </td>
+                                                                <td
+                                                                    style={{
+                                                                        ...styles.td,
+                                                                        textAlign: "center",
+                                                                    }}
+                                                                >
+                                                                    {c.missed ? (
+                                                                        <div>
+                                                                            <span
+                                                                                style={
+                                                                                    styles.statusPending
+                                                                                }
+                                                                            >
+                                                                                Pending
+                                                                            </span>
+                                                                            <div
+                                                                                style={
+                                                                                    styles.smallMuted
+                                                                                }
+                                                                            >
+                                                                                Not submitted ·
+                                                                                returned to pool
+                                                                            </div>
+                                                                        </div>
+                                                                    ) : submitted ? (
+                                                                        <span
+                                                                            style={
+                                                                                styles.statusDone
+                                                                            }
+                                                                        >
+                                                                            Submitted
+                                                                        </span>
+                                                                    ) : (
+                                                                        <div
+                                                                            style={{
+                                                                                display: "flex",
+                                                                                alignItems:
+                                                                                    "center",
+                                                                                justifyContent:
+                                                                                    "center",
+                                                                                gap: 8,
+                                                                                flexWrap: "wrap",
+                                                                            }}
+                                                                        >
+                                                                            <select
+                                                                                value={
+                                                                                    rowTypeById[
+                                                                                        c.id
+                                                                                    ] || ""
+                                                                                }
+                                                                                disabled={
+                                                                                    rowSubmittingId ===
+                                                                                    c.id
+                                                                                }
+                                                                                onChange={(e) =>
+                                                                                    setRowTypeById(
+                                                                                        (prev) => ({
+                                                                                            ...prev,
+                                                                                            [c.id]:
+                                                                                                e
+                                                                                                    .target
+                                                                                                    .value as
+                                                                                                    | ""
+                                                                                                    | SubmissionType,
+                                                                                        })
+                                                                                    )
+                                                                                }
+                                                                                style={{
+                                                                                    width: 150,
+                                                                                    height: 34,
+                                                                                    padding:
+                                                                                        "0 10px",
+                                                                                    borderRadius: 8,
+                                                                                    border: "1px solid #dfe3ee",
+                                                                                    outline: "none",
+                                                                                    fontSize: 13,
+                                                                                    background:
+                                                                                        "#fafafa",
+                                                                                    color: "#17181C",
+                                                                                    cursor: "pointer",
+                                                                                    boxSizing:
+                                                                                        "border-box",
+                                                                                }}
+                                                                            >
+                                                                                <option value="">
+                                                                                    Pending
+                                                                                </option>
+                                                                                {SUBMISSION_OPTIONS.map(
+                                                                                    (o) => (
+                                                                                        <option
+                                                                                            key={
+                                                                                                o.value
+                                                                                            }
+                                                                                            value={
+                                                                                                o.value
+                                                                                            }
+                                                                                        >
+                                                                                            {
+                                                                                                o.label
+                                                                                            }
+                                                                                        </option>
+                                                                                    )
+                                                                                )}
+                                                                            </select>
+                                                                            {rowTypeById[c.id] ===
+                                                                                "QUERY" && (
+                                                                                <input
+                                                                                    type="text"
+                                                                                    autoFocus
+                                                                                    placeholder="Query reason…"
+                                                                                    value={
+                                                                                        rowQueryById[
+                                                                                            c.id
+                                                                                        ] || ""
+                                                                                    }
+                                                                                    disabled={
+                                                                                        rowSubmittingId ===
+                                                                                        c.id
+                                                                                    }
+                                                                                    onChange={(e) =>
+                                                                                        setRowQueryById(
+                                                                                            (
+                                                                                                prev
+                                                                                            ) => ({
+                                                                                                ...prev,
+                                                                                                [c.id]:
+                                                                                                    e
+                                                                                                        .target
+                                                                                                        .value,
+                                                                                            })
+                                                                                        )
+                                                                                    }
+                                                                                    style={{
+                                                                                        width: 150,
+                                                                                        height: 34,
+                                                                                        padding:
+                                                                                            "0 10px",
+                                                                                        borderRadius: 8,
+                                                                                        border: "1px solid #dfe3ee",
+                                                                                        outline:
+                                                                                            "none",
+                                                                                        fontSize: 13,
+                                                                                        background:
+                                                                                            "#fff",
+                                                                                        color: "#17181C",
+                                                                                        boxSizing:
+                                                                                            "border-box",
+                                                                                    }}
+                                                                                />
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+                                                                <td
+                                                                    style={{
+                                                                        ...styles.td,
+                                                                        textAlign: "center",
+                                                                    }}
+                                                                >
+                                                                    {submitted ? (
+                                                                        <>
+                                                                            <span
+                                                                                style={{
+                                                                                    fontWeight:
+                                                                                        fontWeight.medium,
+                                                                                }}
+                                                                            >
+                                                                                {outcomeLabel(
+                                                                                    c.submissionType
+                                                                                )}
+                                                                            </span>
+                                                                            {isResolvedQuery(c) && (
+                                                                                <div
+                                                                                    style={
+                                                                                        styles.smallMuted
+                                                                                    }
+                                                                                >
+                                                                                    Query resolved
+                                                                                </div>
+                                                                            )}
+                                                                        </>
+                                                                    ) : (
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMuted
+                                                                            }
+                                                                        >
+                                                                            —
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td
+                                                                    style={{
+                                                                        ...styles.td,
+                                                                        textAlign: "center",
+                                                                    }}
+                                                                >
+                                                                    {c.missed ? (
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMuted
+                                                                            }
+                                                                        >
+                                                                            {formatDisplayDate(
+                                                                                localDateStr(
+                                                                                    c.returnedAt ??
+                                                                                        null
+                                                                                )
+                                                                            )}
+                                                                        </span>
+                                                                    ) : isOpenQuery(c) ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            style={
+                                                                                styles.rowSubmitBtn
+                                                                            }
+                                                                            onClick={openQueryModal}
+                                                                        >
+                                                                            Resolve
+                                                                        </button>
+                                                                    ) : submitted ? (
+                                                                        <span
+                                                                            style={
+                                                                                styles.smallMuted
+                                                                            }
+                                                                        >
+                                                                            {formatDisplayDate(
+                                                                                localDateStr(
+                                                                                    c.submittedAt
+                                                                                )
+                                                                            )}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <button
+                                                                            type="button"
+                                                                            style={{
+                                                                                ...styles.rowSubmitBtn,
+                                                                                opacity:
+                                                                                    canSubmitRow(
+                                                                                        c
+                                                                                    ) &&
+                                                                                    rowSubmittingId !==
+                                                                                        c.id
+                                                                                        ? 1
+                                                                                        : 0.5,
+                                                                                cursor:
+                                                                                    canSubmitRow(
+                                                                                        c
+                                                                                    ) &&
+                                                                                    rowSubmittingId !==
+                                                                                        c.id
+                                                                                        ? "pointer"
+                                                                                        : "not-allowed",
+                                                                            }}
+                                                                            disabled={
+                                                                                !canSubmitRow(c) ||
+                                                                                rowSubmittingId !==
+                                                                                    null
+                                                                            }
+                                                                            onClick={() =>
+                                                                                handleRowSubmit(c)
+                                                                            }
+                                                                        >
+                                                                            {rowSubmittingId ===
+                                                                            c.id
+                                                                                ? "Submitting…"
+                                                                                : "Submit"}
+                                                                        </button>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                        {clientCellError && (
+                                            <p style={styles.rowError}>{clientCellError}</p>
+                                        )}
+                                        {rowError && <p style={styles.rowError}>{rowError}</p>}
                                     </div>
-                                ) : (
-                                    <table style={styles.table}>
+
+                                    {/* ---- Submit Your Work (popup, opens right where "Submit" is clicked) ---- */}
+                                    {selected && (
+                                        <div
+                                            style={styles.bulkOverlay}
+                                            onClick={() => {
+                                                if (!submitting) setSelectedId(null);
+                                            }}
+                                        >
+                                            <div
+                                                ref={panelRef}
+                                                role="dialog"
+                                                aria-modal="true"
+                                                style={{
+                                                    ...styles.bulkModal,
+                                                    width: 640,
+                                                    textAlign: "left",
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <div style={styles.bulkModalHeader}>
+                                                    <div style={{ textAlign: "left" }}>
+                                                        <h3
+                                                            style={{
+                                                                ...styles.bulkModalTitle,
+                                                                textAlign: "left",
+                                                            }}
+                                                        >
+                                                            {isViewingOther
+                                                                ? `Submit Work for ${name}`
+                                                                : "Submit Your Work"}
+                                                        </h3>
+                                                        <p
+                                                            style={{
+                                                                ...styles.bulkModalSubtitle,
+                                                                textAlign: "left",
+                                                            }}
+                                                        >
+                                                            Confirm submission for case "
+                                                            {selected.caseNumber}"
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.closeBtn}
+                                                        onClick={() => setSelectedId(null)}
+                                                        disabled={submitting}
+                                                        aria-label="Close"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+
+                                                <div
+                                                    style={
+                                                        isMobile
+                                                            ? styles.submitGridMobile
+                                                            : styles.submitGrid
+                                                    }
+                                                >
+                                                    <div style={styles.filterField}>
+                                                        <label style={styles.smallLabel}>
+                                                            Case No.
+                                                        </label>
+                                                        <input
+                                                            style={{
+                                                                ...styles.textInput,
+                                                                background: "#f5f5fa",
+                                                            }}
+                                                            value={selected.caseNumber}
+                                                            disabled
+                                                        />
+                                                    </div>
+                                                    <div style={styles.filterField}>
+                                                        <label style={styles.smallLabel}>
+                                                            Service
+                                                        </label>
+                                                        <input
+                                                            style={{
+                                                                ...styles.textInput,
+                                                                background: "#f5f5fa",
+                                                            }}
+                                                            value={selected.productName || "-"}
+                                                            disabled
+                                                        />
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            ...styles.filterField,
+                                                            flex: 1,
+                                                            minWidth: 180,
+                                                        }}
+                                                    >
+                                                        <label style={styles.smallLabel}>
+                                                            Status *
+                                                        </label>
+                                                        <select
+                                                            style={styles.textInput}
+                                                            value={submitType}
+                                                            autoFocus
+                                                            onChange={(e) => {
+                                                                const v = e.target.value as
+                                                                    "" | SubmissionType;
+                                                                setSubmitType(v);
+                                                                if (v !== "QUERY")
+                                                                    setSubmitQueryText("");
+                                                            }}
+                                                        >
+                                                            <option value="">Select status</option>
+                                                            {SUBMISSION_OPTIONS.map((o) => (
+                                                                <option
+                                                                    key={o.value}
+                                                                    value={o.value}
+                                                                >
+                                                                    {o.label}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    {submitType === "QUERY" && (
+                                                        <div
+                                                            style={{
+                                                                ...styles.filterField,
+                                                                flex: "1 1 100%",
+                                                                minWidth: 220,
+                                                            }}
+                                                        >
+                                                            <label style={styles.smallLabel}>
+                                                                Query *
+                                                            </label>
+                                                            <input
+                                                                style={styles.textInput}
+                                                                value={submitQueryText}
+                                                                onChange={(e) =>
+                                                                    setSubmitQueryText(
+                                                                        e.target.value
+                                                                    )
+                                                                }
+                                                                placeholder="Describe the query…"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {submitError && (
+                                                    <p style={styles.rowError}>{submitError}</p>
+                                                )}
+
+                                                <div style={{ ...styles.infoBox, marginTop: 14 }}>
+                                                    <span style={styles.infoBoxIcon}>
+                                                        <InfoIcon />
+                                                    </span>
+                                                    <div>
+                                                        <strong>How it works?</strong>
+                                                        <p style={{ margin: "4px 0 0" }}>
+                                                            Choose the status — Completed, Completed
+                                                            by Team, Completed by Client or Query —
+                                                            and submit. "Query" needs a short note
+                                                            on what the query is; you can track and
+                                                            complete your queries later from "All
+                                                            Query" up top. Use "Bulk Submit" to
+                                                            submit every pending case for today in
+                                                            one click.
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ display: "flex", gap: 10 }}>
+                                                    <button
+                                                        type="button"
+                                                        className="pf-btn"
+                                                        style={{
+                                                            ...styles.closeBtn,
+                                                            width: "auto",
+                                                            height: "auto",
+                                                            borderRadius: radius.md,
+                                                            padding: "13px 22px",
+                                                            fontWeight: fontWeight.semibold,
+                                                        }}
+                                                        onClick={() => setSelectedId(null)}
+                                                        disabled={submitting}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="pf-btn pf-btn-solid"
+                                                        style={{
+                                                            ...styles.submitBtn,
+                                                            width: "auto",
+                                                            flex: 1,
+                                                            opacity:
+                                                                !canSubmitSingle || submitting
+                                                                    ? 0.6
+                                                                    : 1,
+                                                            cursor:
+                                                                !canSubmitSingle || submitting
+                                                                    ? "not-allowed"
+                                                                    : "pointer",
+                                                        }}
+                                                        disabled={!canSubmitSingle || submitting}
+                                                        onClick={handleSubmitWork}
+                                                    >
+                                                        {submitting ? "Submitting…" : "Submit Work"}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    )}
+
+                    {/* ---- Bulk Submit modal ---- */}
+                    {showBulkModal && (
+                        <div style={styles.bulkOverlay}>
+                            <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                                <div style={styles.bulkModalHeader}>
+                                    <div>
+                                        <h3 style={styles.bulkModalTitle}>
+                                            Bulk Submit — Today's Pending Cases
+                                        </h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            Every case below starts as "WIP" — only change the ones
+                                            you're ready to submit now; the rest stay pending for
+                                            later. A "Query" row also needs its text filled in.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={closeBulkModal}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <input
+                                    style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
+                                    value={bulkSearch}
+                                    onChange={(e) => setBulkSearch(e.target.value)}
+                                    placeholder="Search by case number, service or status…"
+                                />
+
+                                <div style={styles.bulkTableWrap}>
+                                    <table style={styles.bulkTable}>
                                         <colgroup>
-                                            <col style={{ width: "5%" }} />
-                                            <col style={{ width: "12%" }} />
-                                            <col style={{ width: "12%" }} />
-                                            <col style={{ width: "11%" }} />
-                                            <col style={{ width: "17%" }} />
-                                            <col style={{ width: "22%" }} />
-                                            <col style={{ width: "11%" }} />
-                                            <col style={{ width: "10%" }} />
+                                            <col style={{ width: "16%" }} />
+                                            <col style={{ width: "24%" }} />
+                                            <col style={{ width: "26%" }} />
+                                            <col style={{ width: "34%" }} />
                                         </colgroup>
                                         <thead>
                                             <tr>
-                                                <th style={styles.th}>#</th>
                                                 <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Service</th>
-                                                <th style={styles.th}>Date</th>
-                                                <th style={styles.th}>
-                                                    {showAllocatedAt ? "Allocated At" : "Allocated"}
-                                                </th>
-                                                <th style={{ ...styles.th, textAlign: "center" }}>
-                                                    Status
-                                                </th>
-                                                <th style={{ ...styles.th, textAlign: "center" }}>
-                                                    Outcome
-                                                </th>
-                                                <th style={{ ...styles.th, textAlign: "center" }}>
-                                                    Action
-                                                </th>
+                                                <th style={styles.th}>Status</th>
+                                                <th style={styles.th}>Query</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {filteredRows.map((c, i) => {
-                                                const submitted = isSubmitted(c);
-                                                const rowAmp = ampOf(c.productId);
-                                                return (
-                                                    <tr
-                                                        key={c.id}
-                                                        className="pf-row"
+                                            {bulkVisibleCases.length === 0 && (
+                                                <tr>
+                                                    <td
+                                                        colSpan={4}
                                                         style={{
-                                                            ...styles.tr,
-                                                            background:
-                                                                i % 2 === 1 ? "#FAFBFF" : "#fff",
+                                                            ...styles.td,
+                                                            textAlign: "center",
                                                         }}
                                                     >
-                                                        <td style={styles.td}>{i + 1}</td>
+                                                        <span style={styles.smallMuted}>
+                                                            No cases match "{bulkSearch}".
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {bulkVisibleCases.map((c) => {
+                                                const type = bulkTypeById[c.id] ?? "PENDING";
+                                                const queryMissing =
+                                                    type === "QUERY" &&
+                                                    !(bulkQueryById[c.id] || "").trim();
+                                                return (
+                                                    <tr key={c.id} style={styles.tr}>
                                                         <td
                                                             style={{
                                                                 ...styles.td,
@@ -3580,112 +4340,302 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         >
                                                             {c.caseNumber}
                                                         </td>
-                                                        <td style={styles.td}>
-                                                            {c.productName || "-"}
-                                                        </td>
-                                                        <td style={styles.td}>
-                                                            {formatDisplayDate(c.workDate)}
-                                                        </td>
-                                                        {/* NEW: allocation date + time, AMP time and age (manager side only) */}
                                                         <td
                                                             style={{
                                                                 ...styles.td,
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            <div>
-                                                                {showAllocatedAt
-                                                                    ? formatDateTime(c.allocatedAt)
-                                                                    : formatDisplayDate(
-                                                                          allocDay(
-                                                                              c.allocatedAt,
-                                                                              c.workDate
-                                                                          )
-                                                                      )}
-                                                            </div>
-                                                            {showAllocatedAt &&
-                                                                (rowAmp > 0 || c.allocatedAt) && (
-                                                                    <div style={styles.smallMuted}>
-                                                                        {rowAmp > 0
-                                                                            ? `Time: ${formatMinutes(rowAmp)}`
-                                                                            : ""}
-                                                                        {rowAmp > 0 && c.allocatedAt
-                                                                            ? " · "
-                                                                            : ""}
-                                                                        {c.allocatedAt
-                                                                            ? allocAgeLabel(c)
-                                                                            : ""}
-                                                                    </div>
-                                                                )}
+                                                            {c.productName || "-"}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <select
+                                                                style={{
+                                                                    ...styles.textInput,
+                                                                    width: "100%",
+                                                                    fontWeight:
+                                                                        type !== "PENDING"
+                                                                            ? fontWeight.semibold
+                                                                            : "normal",
+                                                                    color:
+                                                                        type !== "PENDING"
+                                                                            ? BRAND.blue
+                                                                            : undefined,
+                                                                }}
+                                                                value={type}
+                                                                onChange={(e) =>
+                                                                    setBulkType(
+                                                                        c.id,
+                                                                        e.target.value as
+                                                                            | "PENDING"
+                                                                            | SubmissionType
+                                                                    )
+                                                                }
+                                                            >
+                                                                <option value="PENDING">WIP</option>
+                                                                {SUBMISSION_OPTIONS.map((o) => (
+                                                                    <option
+                                                                        key={o.value}
+                                                                        value={o.value}
+                                                                    >
+                                                                        {o.label}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
                                                         </td>
                                                         <td
                                                             style={{
                                                                 ...styles.td,
-                                                                textAlign: "center",
+                                                                whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.missed ? (
-                                                                <div>
-                                                                    <span
-                                                                        style={styles.statusPending}
-                                                                    >
-                                                                        Pending
-                                                                    </span>
-                                                                    <div style={styles.smallMuted}>
-                                                                        Not submitted · returned to
-                                                                        pool
-                                                                    </div>
-                                                                </div>
-                                                            ) : submitted ? (
-                                                                <span style={styles.statusDone}>
-                                                                    Submitted
-                                                                </span>
-                                                            ) : (
-                                                                <div
+                                                            {type === "QUERY" ? (
+                                                                <input
                                                                     style={{
-                                                                        display: "flex",
-                                                                        alignItems: "center",
-                                                                        justifyContent: "center",
-                                                                        gap: 8,
-                                                                        flexWrap: "wrap",
+                                                                        ...styles.textInput,
+                                                                        width: "100%",
+                                                                        border: queryMissing
+                                                                            ? `1px solid ${BRAND.red || "#e04b4b"}`
+                                                                            : styles.textInput
+                                                                                  .border,
                                                                     }}
+                                                                    value={
+                                                                        bulkQueryById[c.id] ?? ""
+                                                                    }
+                                                                    onChange={(e) =>
+                                                                        setBulkQuery(
+                                                                            c.id,
+                                                                            e.target.value
+                                                                        )
+                                                                    }
+                                                                    placeholder="Describe the query…"
+                                                                />
+                                                            ) : (
+                                                                <span style={styles.smallMuted}>
+                                                                    —
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {bulkError && <p style={styles.rowError}>{bulkError}</p>}
+
+                                <div style={styles.bulkModalFooter}>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.bulkCancelBtn}
+                                        onClick={closeBulkModal}
+                                        disabled={bulkSubmitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-solid"
+                                        style={{
+                                            ...styles.submitBtn,
+                                            width: "auto",
+                                            flex: 1,
+                                            opacity: bulkSubmitting || !bulkCanSubmit ? 0.6 : 1,
+                                            cursor:
+                                                bulkSubmitting || !bulkCanSubmit
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                        onClick={handleBulkSubmit}
+                                        disabled={bulkSubmitting || !bulkCanSubmit}
+                                        title={
+                                            !bulkCanSubmit
+                                                ? "Change at least one case's status away from WIP first"
+                                                : undefined
+                                        }
+                                    >
+                                        {bulkSubmitting
+                                            ? "Submitting…"
+                                            : bulkRowsToSubmit.length > 0
+                                              ? `Submit (${bulkRowsToSubmit.length})`
+                                              : "Submit"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ---- All Query modal ---- */}
+                    {showQueryModal && (
+                        <div style={styles.bulkOverlay}>
+                            <div
+                                style={{ ...styles.bulkModal, width: 940 }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div style={styles.bulkModalHeader}>
+                                    <div>
+                                        <h3 style={styles.bulkModalTitle}>All Queries</h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            Every query raised, across all dates. Once a query is
+                                            sorted out, mark it as completed from here. If the team
+                                            completes one, it moves to Query Completed on its own
+                                            (as "Completed by Team").
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={closeQueryModal}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <div style={styles.queryTilesRow}>
+                                    <QueryTile
+                                        label="In Query"
+                                        value={openQueries.length}
+                                        tint={BRAND.red}
+                                        active={queryView === "OPEN"}
+                                        onClick={() => setQueryView("OPEN")}
+                                        styles={styles}
+                                    />
+                                    <QueryTile
+                                        label="Query Completed"
+                                        value={resolvedQueries.length}
+                                        tint={BRAND.green}
+                                        active={queryView === "RESOLVED"}
+                                        onClick={() => setQueryView("RESOLVED")}
+                                        styles={styles}
+                                    />
+                                    <QueryTile
+                                        label="Total Queries"
+                                        value={openQueries.length + resolvedQueries.length}
+                                        tint={BRAND.blue}
+                                        active={false}
+                                        styles={styles}
+                                    />
+                                </div>
+
+                                <input
+                                    style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
+                                    value={querySearch}
+                                    onChange={(e) => setQuerySearch(e.target.value)}
+                                    placeholder="Search by case number, service or query…"
+                                />
+
+                                <div style={styles.bulkTableWrap}>
+                                    <table style={{ ...styles.bulkTable, minWidth: 820 }}>
+                                        <colgroup>
+                                            <col style={{ width: "14%" }} />
+                                            <col style={{ width: "16%" }} />
+                                            <col style={{ width: "13%" }} />
+                                            <col style={{ width: "22%" }} />
+                                            <col style={{ width: "35%" }} />
+                                        </colgroup>
+                                        <thead>
+                                            <tr>
+                                                <th style={styles.th}>Case No.</th>
+                                                <th style={styles.th}>Service</th>
+                                                <th style={styles.th}>Date</th>
+                                                <th style={styles.th}>Query</th>
+                                                <th style={styles.th}>
+                                                    {queryView === "OPEN"
+                                                        ? "Complete as"
+                                                        : "Completed as"}
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {visibleQueries.length === 0 && (
+                                                <tr>
+                                                    <td
+                                                        colSpan={5}
+                                                        style={{
+                                                            ...styles.td,
+                                                            textAlign: "center",
+                                                        }}
+                                                    >
+                                                        <span style={styles.smallMuted}>
+                                                            {querySearch.trim()
+                                                                ? `No queries match "${querySearch}".`
+                                                                : queryView === "OPEN"
+                                                                  ? "No open queries."
+                                                                  : "No completed queries yet."}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {visibleQueries.map((c) => {
+                                                const chosen = resolveTypeById[c.id] || "";
+                                                const busy = resolvingId === c.id;
+                                                return (
+                                                    <tr key={c.id} style={styles.tr}>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontWeight: fontWeight.bold,
+                                                            }}
+                                                        >
+                                                            {c.caseNumber}
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                whiteSpace: "normal",
+                                                            }}
+                                                        >
+                                                            {c.productName || "-"}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            {formatDisplayDate(c.workDate)}
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                whiteSpace: "normal",
+                                                                wordBreak: "break-word",
+                                                            }}
+                                                        >
+                                                            {c.queryText || "—"}
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                whiteSpace: "normal",
+                                                            }}
+                                                        >
+                                                            {queryView === "OPEN" ? (
+                                                                <div
+                                                                    style={styles.queryResolveCell}
                                                                 >
                                                                     <select
-                                                                        value={
-                                                                            rowTypeById[c.id] || ""
-                                                                        }
-                                                                        disabled={
-                                                                            rowSubmittingId === c.id
-                                                                        }
+                                                                        style={{
+                                                                            ...styles.textInput,
+                                                                            flex: 1,
+                                                                            minWidth: 0,
+                                                                        }}
+                                                                        value={chosen}
+                                                                        disabled={busy}
                                                                         onChange={(e) =>
-                                                                            setRowTypeById(
+                                                                            setResolveTypeById(
                                                                                 (prev) => ({
                                                                                     ...prev,
                                                                                     [c.id]: e.target
                                                                                         .value as
-                                                                                        | ""
-                                                                                        | SubmissionType,
+                                                                                        | QueryResolution
+                                                                                        | "",
                                                                                 })
                                                                             )
                                                                         }
-                                                                        style={{
-                                                                            width: 150,
-                                                                            height: 34,
-                                                                            padding: "0 10px",
-                                                                            borderRadius: 8,
-                                                                            border: "1px solid #dfe3ee",
-                                                                            outline: "none",
-                                                                            fontSize: 13,
-                                                                            background: "#fafafa",
-                                                                            color: "#17181C",
-                                                                            cursor: "pointer",
-                                                                            boxSizing: "border-box",
-                                                                        }}
                                                                     >
                                                                         <option value="">
-                                                                            Pending
+                                                                            Select…
                                                                         </option>
-                                                                        {SUBMISSION_OPTIONS.map(
+                                                                        {RESOLUTION_OPTIONS.map(
                                                                             (o) => (
                                                                                 <option
                                                                                     key={o.value}
@@ -3696,139 +4646,33 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                             )
                                                                         )}
                                                                     </select>
-                                                                    {rowTypeById[c.id] ===
-                                                                        "QUERY" && (
-                                                                        <input
-                                                                            type="text"
-                                                                            autoFocus
-                                                                            placeholder="Query reason…"
-                                                                            value={
-                                                                                rowQueryById[
-                                                                                    c.id
-                                                                                ] || ""
-                                                                            }
-                                                                            disabled={
-                                                                                rowSubmittingId ===
-                                                                                c.id
-                                                                            }
-                                                                            onChange={(e) =>
-                                                                                setRowQueryById(
-                                                                                    (prev) => ({
-                                                                                        ...prev,
-                                                                                        [c.id]:
-                                                                                            e.target
-                                                                                                .value,
-                                                                                    })
-                                                                                )
-                                                                            }
-                                                                            style={{
-                                                                                width: 150,
-                                                                                height: 34,
-                                                                                padding: "0 10px",
-                                                                                borderRadius: 8,
-                                                                                border: "1px solid #dfe3ee",
-                                                                                outline: "none",
-                                                                                fontSize: 13,
-                                                                                background: "#fff",
-                                                                                color: "#17181C",
-                                                                                boxSizing:
-                                                                                    "border-box",
-                                                                            }}
-                                                                        />
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </td>
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                textAlign: "center",
-                                                            }}
-                                                        >
-                                                            {submitted ? (
-                                                                <>
-                                                                    <span
+                                                                    <button
+                                                                        type="button"
                                                                         style={{
-                                                                            fontWeight:
-                                                                                fontWeight.medium,
+                                                                            ...styles.rowSubmitBtn,
+                                                                            opacity:
+                                                                                !chosen || busy
+                                                                                    ? 0.5
+                                                                                    : 1,
+                                                                            cursor:
+                                                                                !chosen || busy
+                                                                                    ? "not-allowed"
+                                                                                    : "pointer",
                                                                         }}
+                                                                        disabled={!chosen || busy}
+                                                                        onClick={() =>
+                                                                            handleResolveQuery(c)
+                                                                        }
                                                                     >
-                                                                        {outcomeLabel(
-                                                                            c.submissionType
-                                                                        )}
-                                                                    </span>
-                                                                    {isResolvedQuery(c) && (
-                                                                        <div
-                                                                            style={
-                                                                                styles.smallMuted
-                                                                            }
-                                                                        >
-                                                                            Query resolved
-                                                                        </div>
-                                                                    )}
-                                                                </>
+                                                                        {busy
+                                                                            ? "Saving…"
+                                                                            : "Complete"}
+                                                                    </button>
+                                                                </div>
                                                             ) : (
-                                                                <span style={styles.smallMuted}>
-                                                                    —
+                                                                <span style={styles.statusDone}>
+                                                                    {outcomeLabel(c.submissionType)}
                                                                 </span>
-                                                            )}
-                                                        </td>
-                                                        <td
-                                                            style={{
-                                                                ...styles.td,
-                                                                textAlign: "center",
-                                                            }}
-                                                        >
-                                                            {c.missed ? (
-                                                                <span style={styles.smallMuted}>
-                                                                    {formatDisplayDate(
-                                                                        localDateStr(
-                                                                            c.returnedAt ?? null
-                                                                        )
-                                                                    )}
-                                                                </span>
-                                                            ) : isOpenQuery(c) ? (
-                                                                <button
-                                                                    type="button"
-                                                                    style={styles.rowSubmitBtn}
-                                                                    onClick={openQueryModal}
-                                                                >
-                                                                    Resolve
-                                                                </button>
-                                                            ) : submitted ? (
-                                                                <span style={styles.smallMuted}>
-                                                                    {formatDisplayDate(
-                                                                        localDateStr(c.submittedAt)
-                                                                    )}
-                                                                </span>
-                                                            ) : (
-                                                                <button
-                                                                    type="button"
-                                                                    style={{
-                                                                        ...styles.rowSubmitBtn,
-                                                                        opacity:
-                                                                            canSubmitRow(c) &&
-                                                                            rowSubmittingId !== c.id
-                                                                                ? 1
-                                                                                : 0.5,
-                                                                        cursor:
-                                                                            canSubmitRow(c) &&
-                                                                            rowSubmittingId !== c.id
-                                                                                ? "pointer"
-                                                                                : "not-allowed",
-                                                                    }}
-                                                                    disabled={
-                                                                        !canSubmitRow(c) ||
-                                                                        rowSubmittingId !== null
-                                                                    }
-                                                                    onClick={() =>
-                                                                        handleRowSubmit(c)
-                                                                    }
-                                                                >
-                                                                    {rowSubmittingId === c.id
-                                                                        ? "Submitting…"
-                                                                        : "Submit"}
-                                                                </button>
                                                             )}
                                                         </td>
                                                     </tr>
@@ -3836,178 +4680,408 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             })}
                                         </tbody>
                                     </table>
-                                )}
-                                {clientCellError && (
-                                    <p style={styles.rowError}>{clientCellError}</p>
-                                )}
-                                {rowError && <p style={styles.rowError}>{rowError}</p>}
-                            </div>
+                                </div>
 
-                            {/* ---- Submit Your Work (popup, opens right where "Submit" is clicked) ---- */}
-                            {selected && (
-                                <div
-                                    style={styles.bulkOverlay}
-                                    onClick={() => {
-                                        if (!submitting) setSelectedId(null);
-                                    }}
-                                >
-                                    <div
-                                        ref={panelRef}
-                                        role="dialog"
-                                        aria-modal="true"
-                                        style={{
-                                            ...styles.bulkModal,
-                                            width: 640,
-                                            textAlign: "left",
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
+                                {queryError && <p style={styles.rowError}>{queryError}</p>}
+                                {queryNotice && (
+                                    <p style={{ ...styles.rowError, color: BRAND.blue }}>
+                                        {queryNotice}
+                                    </p>
+                                )}
+
+                                <div style={styles.bulkModalFooter}>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.bulkCancelBtn}
+                                        onClick={closeQueryModal}
                                     >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showSelfAllocModal && (
+                        <div style={styles.bulkOverlay}>
+                            <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                                {selfAllocSuccessCount !== null ? (
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            alignItems: "center",
+                                            textAlign: "center",
+                                            gap: 10,
+                                            padding: "28px 10px 10px",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                width: 56,
+                                                height: 56,
+                                                borderRadius: "50%",
+                                                background: withAlpha(BRAND.green, 0.12),
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                color: BRAND.green,
+                                            }}
+                                        >
+                                            <CheckIcon />
+                                        </div>
+                                        <h3 style={styles.bulkModalTitle}>Allocated!</h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            {selfAllocSuccessCount} case
+                                            {selfAllocSuccessCount === 1 ? "" : "s"} allocated to
+                                            yourself.{" "}
+                                            {selfAllocMode === "counts"
+                                                ? `You'll find ${
+                                                      selfAllocSuccessCount === 1 ? "it" : "them"
+                                                  } under "Counts" — add the case number${
+                                                      selfAllocSuccessCount === 1 ? "" : "s"
+                                                  } there.`
+                                                : `You'll find ${
+                                                      selfAllocSuccessCount === 1 ? "it" : "them"
+                                                  } in Today's Allocation below, ready to submit.`}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-solid"
+                                            style={{
+                                                ...styles.submitBtn,
+                                                width: "auto",
+                                                padding: "10px 28px",
+                                            }}
+                                            onClick={closeSelfAllocModal}
+                                        >
+                                            Done
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
                                         <div style={styles.bulkModalHeader}>
-                                            <div style={{ textAlign: "left" }}>
-                                                <h3
-                                                    style={{
-                                                        ...styles.bulkModalTitle,
-                                                        textAlign: "left",
-                                                    }}
-                                                >
-                                                    {isViewingOther
-                                                        ? `Submit Work for ${name}`
-                                                        : "Submit Your Work"}
-                                                </h3>
-                                                <p
-                                                    style={{
-                                                        ...styles.bulkModalSubtitle,
-                                                        textAlign: "left",
-                                                    }}
-                                                >
-                                                    Confirm submission for case "
-                                                    {selected.caseNumber}"
+                                            <div>
+                                                <h3 style={styles.bulkModalTitle}>Self Allocate</h3>
+                                                <p style={styles.bulkModalSubtitle}>
+                                                    Pick a service, then take cases that already
+                                                    have a case number, or take a count of cases
+                                                    whose numbers aren't known yet (you add the
+                                                    numbers later). Only services your team (
+                                                    {myTeamRaw || "no team set"}) is aligned to show
+                                                    up here.
                                                 </p>
                                             </div>
                                             <button
                                                 type="button"
                                                 style={styles.closeBtn}
-                                                onClick={() => setSelectedId(null)}
-                                                disabled={submitting}
+                                                onClick={closeSelfAllocModal}
                                                 aria-label="Close"
                                             >
                                                 ✕
                                             </button>
                                         </div>
 
-                                        <div
-                                            style={
-                                                isMobile
-                                                    ? styles.submitGridMobile
-                                                    : styles.submitGrid
-                                            }
-                                        >
-                                            <div style={styles.filterField}>
-                                                <label style={styles.smallLabel}>Case No.</label>
-                                                <input
-                                                    style={{
-                                                        ...styles.textInput,
-                                                        background: "#f5f5fa",
-                                                    }}
-                                                    value={selected.caseNumber}
-                                                    disabled
-                                                />
-                                            </div>
-                                            <div style={styles.filterField}>
-                                                <label style={styles.smallLabel}>Service</label>
-                                                <input
-                                                    style={{
-                                                        ...styles.textInput,
-                                                        background: "#f5f5fa",
-                                                    }}
-                                                    value={selected.productName || "-"}
-                                                    disabled
-                                                />
-                                            </div>
-                                            <div
-                                                style={{
-                                                    ...styles.filterField,
-                                                    flex: 1,
-                                                    minWidth: 180,
-                                                }}
-                                            >
-                                                <label style={styles.smallLabel}>Status *</label>
-                                                <select
-                                                    style={styles.textInput}
-                                                    value={submitType}
-                                                    autoFocus
-                                                    onChange={(e) => {
-                                                        const v = e.target.value as
-                                                            "" | SubmissionType;
-                                                        setSubmitType(v);
-                                                        if (v !== "QUERY") setSubmitQueryText("");
-                                                    }}
-                                                >
-                                                    <option value="">Select status</option>
-                                                    {SUBMISSION_OPTIONS.map((o) => (
-                                                        <option key={o.value} value={o.value}>
-                                                            {o.label}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            {submitType === "QUERY" && (
-                                                <div
-                                                    style={{
-                                                        ...styles.filterField,
-                                                        flex: "1 1 100%",
-                                                        minWidth: 220,
-                                                    }}
-                                                >
-                                                    <label style={styles.smallLabel}>Query *</label>
-                                                    <input
-                                                        style={styles.textInput}
-                                                        value={submitQueryText}
-                                                        onChange={(e) =>
-                                                            setSubmitQueryText(e.target.value)
-                                                        }
-                                                        placeholder="Describe the query…"
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {submitError && (
-                                            <p style={styles.rowError}>{submitError}</p>
-                                        )}
-
-                                        <div style={{ ...styles.infoBox, marginTop: 14 }}>
-                                            <span style={styles.infoBoxIcon}>
-                                                <InfoIcon />
-                                            </span>
-                                            <div>
-                                                <strong>How it works?</strong>
-                                                <p style={{ margin: "4px 0 0" }}>
-                                                    Choose the status — Completed, Completed by
-                                                    Team, Completed by Client or Query — and submit.
-                                                    "Query" needs a short note on what the query is;
-                                                    you can track and complete your queries later
-                                                    from "All Query" up top. Use "Bulk Submit" to
-                                                    submit every pending case for today in one
-                                                    click.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <div style={{ display: "flex", gap: 10 }}>
+                                        <div style={styles.selfAllocModeRow}>
                                             <button
                                                 type="button"
                                                 className="pf-btn"
-                                                style={{
-                                                    ...styles.closeBtn,
-                                                    width: "auto",
-                                                    height: "auto",
-                                                    borderRadius: radius.md,
-                                                    padding: "13px 22px",
-                                                    fontWeight: fontWeight.semibold,
-                                                }}
-                                                onClick={() => setSelectedId(null)}
-                                                disabled={submitting}
+                                                style={
+                                                    selfAllocMode === "cases"
+                                                        ? styles.selfAllocModeBtnActive
+                                                        : styles.selfAllocModeBtn
+                                                }
+                                                onClick={() => switchSelfAllocMode("cases")}
+                                            >
+                                                With case number
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="pf-btn"
+                                                style={
+                                                    selfAllocMode === "counts"
+                                                        ? styles.selfAllocModeBtnActive
+                                                        : styles.selfAllocModeBtn
+                                                }
+                                                onClick={() => switchSelfAllocMode("counts")}
+                                            >
+                                                Count only (add numbers later)
+                                            </button>
+                                        </div>
+
+                                        <div style={{ marginBottom: 14 }}>
+                                            <label style={styles.smallLabel}>Service</label>
+                                            {selfAllocServicesLoading ? (
+                                                <p style={styles.smallMuted}>Loading services…</p>
+                                            ) : selfAllocServicesError ? (
+                                                <p style={styles.rowError}>
+                                                    {selfAllocServicesError}
+                                                </p>
+                                            ) : !myTeamRaw ? (
+                                                <p style={styles.smallMuted}>
+                                                    You don't have a team set on your profile, so no
+                                                    service can be matched to you. Ask your manager
+                                                    to set your team.
+                                                </p>
+                                            ) : selfAllocServices.length === 0 ? (
+                                                <p style={styles.smallMuted}>
+                                                    No services are aligned to your team (
+                                                    {myTeamRaw}) yet.
+                                                </p>
+                                            ) : (
+                                                <select
+                                                    style={{ ...styles.textInput, width: "100%" }}
+                                                    value={selfAllocServiceId}
+                                                    onChange={(e) =>
+                                                        selfAllocMode === "counts"
+                                                            ? loadAvailableCounts(e.target.value)
+                                                            : loadSelfAllocCases(e.target.value)
+                                                    }
+                                                >
+                                                    <option value="">Select a service…</option>
+                                                    {selfAllocServices.map((s) => (
+                                                        <option key={s.id} value={s.id}>
+                                                            {s.product_name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            )}
+                                        </div>
+
+                                        {selfAllocServiceId && selfAllocMode === "counts" && (
+                                            <div style={styles.bulkTableWrap}>
+                                                {availableCountsLoading ? (
+                                                    <p style={styles.smallMuted}>
+                                                        Loading remaining counts…
+                                                    </p>
+                                                ) : availableCountsError ? (
+                                                    <p style={styles.rowError}>
+                                                        {availableCountsError}
+                                                    </p>
+                                                ) : availableCounts.length === 0 ? (
+                                                    <p style={styles.smallMuted}>
+                                                        No unallocated counts left on this service.
+                                                    </p>
+                                                ) : (
+                                                    <table style={styles.bulkTable}>
+                                                        <colgroup>
+                                                            <col style={{ width: "36%" }} />
+                                                            <col style={{ width: "20%" }} />
+                                                            <col style={{ width: "16%" }} />
+                                                            <col style={{ width: "28%" }} />
+                                                        </colgroup>
+                                                        <thead>
+                                                            <tr>
+                                                                <th style={styles.th}>
+                                                                    Client / Subclient
+                                                                </th>
+                                                                <th style={styles.th}>Date</th>
+                                                                <th style={styles.th}>Available</th>
+                                                                <th style={styles.th}>
+                                                                    How many to take
+                                                                </th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {availableCounts.map((c) => (
+                                                                <tr key={c.id} style={styles.tr}>
+                                                                    <td
+                                                                        style={{
+                                                                            ...styles.td,
+                                                                            whiteSpace: "normal",
+                                                                        }}
+                                                                    >
+                                                                        {[
+                                                                            c.clientName,
+                                                                            c.subclientName,
+                                                                        ]
+                                                                            .filter(Boolean)
+                                                                            .join(" / ") || "-"}
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        {formatDisplayDate(
+                                                                            c.workDate
+                                                                        )}
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        {c.unallocated}
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        <div
+                                                                            style={{
+                                                                                display: "flex",
+                                                                                gap: 6,
+                                                                                alignItems:
+                                                                                    "center",
+                                                                            }}
+                                                                        >
+                                                                            <input
+                                                                                type="number"
+                                                                                min={0}
+                                                                                max={c.unallocated}
+                                                                                style={{
+                                                                                    ...styles.textInput,
+                                                                                    width: 80,
+                                                                                    padding:
+                                                                                        "6px 8px",
+                                                                                }}
+                                                                                value={
+                                                                                    selfAllocQtyById[
+                                                                                        c.id
+                                                                                    ] ?? 0
+                                                                                }
+                                                                                onChange={(e) =>
+                                                                                    setSelfAllocQty(
+                                                                                        c,
+                                                                                        Number(
+                                                                                            e.target
+                                                                                                .value
+                                                                                        )
+                                                                                    )
+                                                                                }
+                                                                            />
+                                                                            <button
+                                                                                type="button"
+                                                                                className="pf-btn pf-btn-outline"
+                                                                                style={
+                                                                                    styles.selfAllocAllBtn
+                                                                                }
+                                                                                onClick={() =>
+                                                                                    setSelfAllocQty(
+                                                                                        c,
+                                                                                        c.unallocated
+                                                                                    )
+                                                                                }
+                                                                            >
+                                                                                All
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {selfAllocServiceId && selfAllocMode === "cases" && (
+                                            <div style={styles.bulkTableWrap}>
+                                                {selfAllocCasesLoading ? (
+                                                    <p style={styles.smallMuted}>
+                                                        Loading remaining cases…
+                                                    </p>
+                                                ) : selfAllocCasesError ? (
+                                                    <p style={styles.rowError}>
+                                                        {selfAllocCasesError}
+                                                    </p>
+                                                ) : selfAllocCases.length === 0 ? (
+                                                    <p style={styles.smallMuted}>
+                                                        No pending cases left on this service.
+                                                    </p>
+                                                ) : (
+                                                    <table style={styles.bulkTable}>
+                                                        <colgroup>
+                                                            <col style={{ width: "10%" }} />
+                                                            <col style={{ width: "30%" }} />
+                                                            <col style={{ width: "30%" }} />
+                                                            <col style={{ width: "30%" }} />
+                                                        </colgroup>
+                                                        <thead>
+                                                            <tr>
+                                                                <th style={styles.th}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={
+                                                                            selfAllocCases.length >
+                                                                                0 &&
+                                                                            selfAllocSelectedIds.size ===
+                                                                                selfAllocCases.length
+                                                                        }
+                                                                        onChange={
+                                                                            toggleSelfAllocSelectAll
+                                                                        }
+                                                                        aria-label="Select all"
+                                                                    />
+                                                                </th>
+                                                                <th style={styles.th}>Case No.</th>
+                                                                <th style={styles.th}>
+                                                                    Client / Subclient
+                                                                </th>
+                                                                <th style={styles.th}>Date</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {selfAllocCases.map((c) => (
+                                                                <tr
+                                                                    key={c.id}
+                                                                    style={{
+                                                                        ...styles.tr,
+                                                                        cursor: "pointer",
+                                                                    }}
+                                                                    onClick={() =>
+                                                                        toggleSelfAllocCase(c.id)
+                                                                    }
+                                                                >
+                                                                    <td
+                                                                        style={styles.td}
+                                                                        onClick={(e) =>
+                                                                            e.stopPropagation()
+                                                                        }
+                                                                    >
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={selfAllocSelectedIds.has(
+                                                                                c.id
+                                                                            )}
+                                                                            onChange={() =>
+                                                                                toggleSelfAllocCase(
+                                                                                    c.id
+                                                                                )
+                                                                            }
+                                                                        />
+                                                                    </td>
+                                                                    <td
+                                                                        style={{
+                                                                            ...styles.td,
+                                                                            fontWeight:
+                                                                                fontWeight.bold,
+                                                                        }}
+                                                                    >
+                                                                        {c.caseNumber}
+                                                                    </td>
+                                                                    <td
+                                                                        style={{
+                                                                            ...styles.td,
+                                                                            whiteSpace: "normal",
+                                                                        }}
+                                                                    >
+                                                                        {[
+                                                                            c.clientName,
+                                                                            c.subclientName,
+                                                                        ]
+                                                                            .filter(Boolean)
+                                                                            .join(" / ") || "-"}
+                                                                    </td>
+                                                                    <td style={styles.td}>
+                                                                        {c.workDate}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div style={styles.bulkModalFooter}>
+                                            <button
+                                                type="button"
+                                                className="pf-btn pf-btn-outline"
+                                                style={styles.bulkCancelBtn}
+                                                onClick={closeSelfAllocModal}
+                                                disabled={selfAllocSubmitting}
                                             >
                                                 Cancel
                                             </button>
@@ -4019,351 +5093,234 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                     width: "auto",
                                                     flex: 1,
                                                     opacity:
-                                                        !canSubmitSingle || submitting ? 0.6 : 1,
+                                                        selfAllocSubmitting ||
+                                                        selfAllocPickedCount === 0
+                                                            ? 0.6
+                                                            : 1,
                                                     cursor:
-                                                        !canSubmitSingle || submitting
+                                                        selfAllocSubmitting ||
+                                                        selfAllocPickedCount === 0
                                                             ? "not-allowed"
                                                             : "pointer",
                                                 }}
-                                                disabled={!canSubmitSingle || submitting}
-                                                onClick={handleSubmitWork}
+                                                onClick={
+                                                    selfAllocMode === "counts"
+                                                        ? submitSelfAllocCounts
+                                                        : submitSelfAllocation
+                                                }
+                                                disabled={
+                                                    selfAllocSubmitting ||
+                                                    selfAllocPickedCount === 0
+                                                }
                                             >
-                                                {submitting ? "Submitting…" : "Submit Work"}
+                                                {selfAllocSubmitting
+                                                    ? "Allocating…"
+                                                    : selfAllocPickedCount > 0
+                                                      ? `Allocate (${selfAllocPickedCount})`
+                                                      : "Allocate"}
                                             </button>
                                         </div>
-                                    </div>
-                                </div>
-                            )}
-                        </>
+                                    </>
+                                )}
+                            </div>
+                        </div>
                     )}
-                </>
-            )}
 
-            {/* ---- Bulk Submit modal ---- */}
-            {showBulkModal && (
-                <div style={styles.bulkOverlay}>
-                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.bulkModalHeader}>
-                            <div>
-                                <h3 style={styles.bulkModalTitle}>
-                                    Bulk Submit — Today's Pending Cases
-                                </h3>
-                                <p style={styles.bulkModalSubtitle}>
-                                    Every case below starts as "WIP" — only change the ones you're
-                                    ready to submit now; the rest stay pending for later. A "Query"
-                                    row also needs its text filled in.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                style={styles.closeBtn}
-                                onClick={closeBulkModal}
-                                aria-label="Close"
+                    {/* ---- Add Case Numbers modal — per-case client / subclient + status ---- */}
+                    {addCnCount && (
+                        <div style={styles.bulkOverlay}>
+                            <div
+                                style={{ ...styles.bulkModal, width: 980 }}
+                                onClick={(e) => e.stopPropagation()}
                             >
-                                ✕
-                            </button>
-                        </div>
+                                <div style={styles.bulkModalHeader}>
+                                    <div>
+                                        <h3 style={styles.bulkModalTitle}>Add Case Numbers</h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            {addCnCount.productName || "Service"} ·{" "}
+                                            {formatDisplayDate(addCnCount.workDate)} —{" "}
+                                            <strong>{addCnCount.remaining}</strong> case
+                                            {addCnCount.remaining === 1 ? "" : "s"} left to add.
+                                            Type the case number, pick its client (every case can
+                                            have a different one) and its status — WIP / Pending
+                                            keeps it pending, any other status submits it right
+                                            away.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={closeAddCaseNumbers}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
 
-                        <input
-                            style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
-                            value={bulkSearch}
-                            onChange={(e) => setBulkSearch(e.target.value)}
-                            placeholder="Search by case number, service or status…"
-                        />
-
-                        <div style={styles.bulkTableWrap}>
-                            <table style={styles.bulkTable}>
-                                <colgroup>
-                                    <col style={{ width: "16%" }} />
-                                    <col style={{ width: "24%" }} />
-                                    <col style={{ width: "26%" }} />
-                                    <col style={{ width: "34%" }} />
-                                </colgroup>
-                                <thead>
-                                    <tr>
-                                        <th style={styles.th}>Case No.</th>
-                                        <th style={styles.th}>Service</th>
-                                        <th style={styles.th}>Status</th>
-                                        <th style={styles.th}>Query</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {bulkVisibleCases.length === 0 && (
-                                        <tr>
-                                            <td
-                                                colSpan={4}
-                                                style={{ ...styles.td, textAlign: "center" }}
-                                            >
-                                                <span style={styles.smallMuted}>
-                                                    No cases match "{bulkSearch}".
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    )}
-                                    {bulkVisibleCases.map((c) => {
-                                        const type = bulkTypeById[c.id] ?? "PENDING";
-                                        const queryMissing =
-                                            type === "QUERY" && !(bulkQueryById[c.id] || "").trim();
-                                        return (
-                                            <tr key={c.id} style={styles.tr}>
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontWeight: fontWeight.bold,
-                                                    }}
-                                                >
-                                                    {c.caseNumber}
-                                                </td>
-                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                                    {c.productName || "-"}
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <select
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                            fontWeight:
-                                                                type !== "PENDING"
-                                                                    ? fontWeight.semibold
-                                                                    : "normal",
-                                                            color:
-                                                                type !== "PENDING"
-                                                                    ? BRAND.blue
-                                                                    : undefined,
-                                                        }}
-                                                        value={type}
-                                                        onChange={(e) =>
-                                                            setBulkType(
-                                                                c.id,
-                                                                e.target.value as
-                                                                    "PENDING" | SubmissionType
-                                                            )
-                                                        }
-                                                    >
-                                                        <option value="PENDING">WIP</option>
-                                                        {SUBMISSION_OPTIONS.map((o) => (
-                                                            <option key={o.value} value={o.value}>
-                                                                {o.label}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                                    {type === "QUERY" ? (
-                                                        <input
-                                                            style={{
-                                                                ...styles.textInput,
-                                                                width: "100%",
-                                                                border: queryMissing
-                                                                    ? `1px solid ${BRAND.red || "#e04b4b"}`
-                                                                    : styles.textInput.border,
-                                                            }}
-                                                            value={bulkQueryById[c.id] ?? ""}
-                                                            onChange={(e) =>
-                                                                setBulkQuery(c.id, e.target.value)
-                                                            }
-                                                            placeholder="Describe the query…"
-                                                        />
-                                                    ) : (
-                                                        <span style={styles.smallMuted}>—</span>
-                                                    )}
-                                                </td>
+                                <label style={styles.smallLabel}>
+                                    Case numbers, client &amp; status
+                                </label>
+                                <div
+                                    style={{
+                                        ...styles.bulkTableWrap,
+                                        marginTop: 4,
+                                        marginBottom: 6,
+                                    }}
+                                >
+                                    <table style={{ ...styles.bulkTable, minWidth: 880 }}>
+                                        <colgroup>
+                                            <col style={{ width: "5%" }} />
+                                            <col style={{ width: "17%" }} />
+                                            <col style={{ width: "21%" }} />
+                                            <col style={{ width: "19%" }} />
+                                            <col style={{ width: "17%" }} />
+                                            <col style={{ width: "21%" }} />
+                                        </colgroup>
+                                        <thead>
+                                            <tr>
+                                                <th style={styles.th}>#</th>
+                                                <th style={styles.th}>Case No.</th>
+                                                <th style={styles.th}>Client *</th>
+                                                <th style={styles.th}>Subclient</th>
+                                                <th style={styles.th}>Status</th>
+                                                <th style={styles.th}>Query</th>
                                             </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {bulkError && <p style={styles.rowError}>{bulkError}</p>}
-
-                        <div style={styles.bulkModalFooter}>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.bulkCancelBtn}
-                                onClick={closeBulkModal}
-                                disabled={bulkSubmitting}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-solid"
-                                style={{
-                                    ...styles.submitBtn,
-                                    width: "auto",
-                                    flex: 1,
-                                    opacity: bulkSubmitting || !bulkCanSubmit ? 0.6 : 1,
-                                    cursor:
-                                        bulkSubmitting || !bulkCanSubmit
-                                            ? "not-allowed"
-                                            : "pointer",
-                                }}
-                                onClick={handleBulkSubmit}
-                                disabled={bulkSubmitting || !bulkCanSubmit}
-                                title={
-                                    !bulkCanSubmit
-                                        ? "Change at least one case's status away from WIP first"
-                                        : undefined
-                                }
-                            >
-                                {bulkSubmitting
-                                    ? "Submitting…"
-                                    : bulkRowsToSubmit.length > 0
-                                      ? `Submit (${bulkRowsToSubmit.length})`
-                                      : "Submit"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ---- All Query modal ---- */}
-            {showQueryModal && (
-                <div style={styles.bulkOverlay}>
-                    <div
-                        style={{ ...styles.bulkModal, width: 940 }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={styles.bulkModalHeader}>
-                            <div>
-                                <h3 style={styles.bulkModalTitle}>All Queries</h3>
-                                <p style={styles.bulkModalSubtitle}>
-                                    Every query raised, across all dates. Once a query is sorted
-                                    out, mark it as completed from here. If the team completes one,
-                                    it moves to Query Completed on its own (as "Completed by Team").
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                style={styles.closeBtn}
-                                onClick={closeQueryModal}
-                                aria-label="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div style={styles.queryTilesRow}>
-                            <QueryTile
-                                label="In Query"
-                                value={openQueries.length}
-                                tint={BRAND.red}
-                                active={queryView === "OPEN"}
-                                onClick={() => setQueryView("OPEN")}
-                                styles={styles}
-                            />
-                            <QueryTile
-                                label="Query Completed"
-                                value={resolvedQueries.length}
-                                tint={BRAND.green}
-                                active={queryView === "RESOLVED"}
-                                onClick={() => setQueryView("RESOLVED")}
-                                styles={styles}
-                            />
-                            <QueryTile
-                                label="Total Queries"
-                                value={openQueries.length + resolvedQueries.length}
-                                tint={BRAND.blue}
-                                active={false}
-                                styles={styles}
-                            />
-                        </div>
-
-                        <input
-                            style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
-                            value={querySearch}
-                            onChange={(e) => setQuerySearch(e.target.value)}
-                            placeholder="Search by case number, service or query…"
-                        />
-
-                        <div style={styles.bulkTableWrap}>
-                            <table style={{ ...styles.bulkTable, minWidth: 820 }}>
-                                <colgroup>
-                                    <col style={{ width: "14%" }} />
-                                    <col style={{ width: "16%" }} />
-                                    <col style={{ width: "13%" }} />
-                                    <col style={{ width: "22%" }} />
-                                    <col style={{ width: "35%" }} />
-                                </colgroup>
-                                <thead>
-                                    <tr>
-                                        <th style={styles.th}>Case No.</th>
-                                        <th style={styles.th}>Service</th>
-                                        <th style={styles.th}>Date</th>
-                                        <th style={styles.th}>Query</th>
-                                        <th style={styles.th}>
-                                            {queryView === "OPEN" ? "Complete as" : "Completed as"}
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {visibleQueries.length === 0 && (
-                                        <tr>
-                                            <td
-                                                colSpan={5}
-                                                style={{ ...styles.td, textAlign: "center" }}
-                                            >
-                                                <span style={styles.smallMuted}>
-                                                    {querySearch.trim()
-                                                        ? `No queries match "${querySearch}".`
-                                                        : queryView === "OPEN"
-                                                          ? "No open queries."
-                                                          : "No completed queries yet."}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    )}
-                                    {visibleQueries.map((c) => {
-                                        const chosen = resolveTypeById[c.id] || "";
-                                        const busy = resolvingId === c.id;
-                                        return (
-                                            <tr key={c.id} style={styles.tr}>
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        fontWeight: fontWeight.bold,
-                                                    }}
-                                                >
-                                                    {c.caseNumber}
-                                                </td>
-                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                                    {c.productName || "-"}
-                                                </td>
-                                                <td style={styles.td}>
-                                                    {formatDisplayDate(c.workDate)}
-                                                </td>
-                                                <td
-                                                    style={{
-                                                        ...styles.td,
-                                                        whiteSpace: "normal",
-                                                        wordBreak: "break-word",
-                                                    }}
-                                                >
-                                                    {c.queryText || "—"}
-                                                </td>
-                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                                    {queryView === "OPEN" ? (
-                                                        <div style={styles.queryResolveCell}>
+                                        </thead>
+                                        <tbody>
+                                            {addCnRows.map((r, i) => {
+                                                const queryMissing =
+                                                    r.status === "QUERY" && !r.query.trim();
+                                                const rowSubOptions = subclients.filter(
+                                                    (s) => s.clientId === r.clientId
+                                                );
+                                                // WIP / Pending are the "not submitted" statuses
+                                                const isNotSubmitted =
+                                                    r.status === "WIP" || r.status === "PENDING";
+                                                return (
+                                                    <tr key={i} style={styles.tr}>
+                                                        <td style={styles.td}>{i + 1}</td>
+                                                        <td style={styles.td}>
+                                                            <input
+                                                                style={{
+                                                                    ...styles.textInput,
+                                                                    width: "100%",
+                                                                }}
+                                                                value={r.cn}
+                                                                maxLength={50}
+                                                                disabled={addCnSubmitting}
+                                                                placeholder={
+                                                                    caseNumberRequired
+                                                                        ? "Case number"
+                                                                        : "Case number (optional)"
+                                                                }
+                                                                onChange={(e) =>
+                                                                    setAddCnRow(i, {
+                                                                        cn: e.target.value,
+                                                                    })
+                                                                }
+                                                                onPaste={(e) => {
+                                                                    const t =
+                                                                        e.clipboardData.getData(
+                                                                            "text"
+                                                                        );
+                                                                    if (/[\n,\t]/.test(t.trim())) {
+                                                                        e.preventDefault();
+                                                                        pasteAddCnRows(i, t);
+                                                                    }
+                                                                }}
+                                                            />
+                                                        </td>
+                                                        <td style={styles.td}>
                                                             <select
                                                                 style={{
                                                                     ...styles.textInput,
-                                                                    flex: 1,
-                                                                    minWidth: 0,
+                                                                    width: "100%",
                                                                 }}
-                                                                value={chosen}
-                                                                disabled={busy}
+                                                                value={r.clientId}
+                                                                disabled={addCnSubmitting}
                                                                 onChange={(e) =>
-                                                                    setResolveTypeById((prev) => ({
-                                                                        ...prev,
-                                                                        [c.id]: e.target.value as
-                                                                            QueryResolution | "",
-                                                                    }))
+                                                                    setAddCnRow(i, {
+                                                                        clientId: e.target.value,
+                                                                        subclientId: "",
+                                                                    })
                                                                 }
                                                             >
-                                                                <option value="">Select…</option>
-                                                                {RESOLUTION_OPTIONS.map((o) => (
+                                                                <option value="">
+                                                                    Select client
+                                                                </option>
+                                                                {clients.map((cl) => (
+                                                                    <option
+                                                                        key={cl.id}
+                                                                        value={cl.id}
+                                                                    >
+                                                                        {cl.name}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <select
+                                                                style={{
+                                                                    ...styles.textInput,
+                                                                    width: "100%",
+                                                                }}
+                                                                value={r.subclientId}
+                                                                disabled={
+                                                                    addCnSubmitting || !r.clientId
+                                                                }
+                                                                onChange={(e) =>
+                                                                    setAddCnRow(i, {
+                                                                        subclientId: e.target.value,
+                                                                    })
+                                                                }
+                                                            >
+                                                                <option value="">
+                                                                    {!r.clientId
+                                                                        ? "Pick client first"
+                                                                        : rowSubOptions.length === 0
+                                                                          ? "No subclients"
+                                                                          : "Subclient (optional)"}
+                                                                </option>
+                                                                {rowSubOptions.map((s) => (
+                                                                    <option key={s.id} value={s.id}>
+                                                                        {s.name}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <select
+                                                                style={{
+                                                                    ...styles.textInput,
+                                                                    width: "100%",
+                                                                    fontWeight: !isNotSubmitted
+                                                                        ? fontWeight.semibold
+                                                                        : "normal",
+                                                                    color: !isNotSubmitted
+                                                                        ? BRAND.blue
+                                                                        : undefined,
+                                                                }}
+                                                                value={r.status}
+                                                                disabled={addCnSubmitting}
+                                                                onChange={(e) =>
+                                                                    setAddCnRow(i, {
+                                                                        status: e.target.value as
+                                                                            | "WIP"
+                                                                            | "PENDING"
+                                                                            | SubmissionType,
+                                                                        query:
+                                                                            e.target.value ===
+                                                                            "QUERY"
+                                                                                ? r.query
+                                                                                : "",
+                                                                    })
+                                                                }
+                                                            >
+                                                                <option value="WIP">WIP</option>
+                                                                <option value="PENDING">
+                                                                    Pending
+                                                                </option>
+                                                                {SUBMISSION_OPTIONS.map((o) => (
                                                                     <option
                                                                         key={o.value}
                                                                         value={o.value}
@@ -4372,404 +5329,98 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     </option>
                                                                 ))}
                                                             </select>
-                                                            <button
-                                                                type="button"
-                                                                style={{
-                                                                    ...styles.rowSubmitBtn,
-                                                                    opacity:
-                                                                        !chosen || busy ? 0.5 : 1,
-                                                                    cursor:
-                                                                        !chosen || busy
-                                                                            ? "not-allowed"
-                                                                            : "pointer",
-                                                                }}
-                                                                disabled={!chosen || busy}
-                                                                onClick={() =>
-                                                                    handleResolveQuery(c)
-                                                                }
-                                                            >
-                                                                {busy ? "Saving…" : "Complete"}
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <span style={styles.statusDone}>
-                                                            {outcomeLabel(c.submissionType)}
-                                                        </span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {queryError && <p style={styles.rowError}>{queryError}</p>}
-                        {queryNotice && (
-                            <p style={{ ...styles.rowError, color: BRAND.blue }}>{queryNotice}</p>
-                        )}
-
-                        <div style={styles.bulkModalFooter}>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.bulkCancelBtn}
-                                onClick={closeQueryModal}
-                            >
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {showSelfAllocModal && (
-                <div style={styles.bulkOverlay}>
-                    <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
-                        {selfAllocSuccessCount !== null ? (
-                            <div
-                                style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    alignItems: "center",
-                                    textAlign: "center",
-                                    gap: 10,
-                                    padding: "28px 10px 10px",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width: 56,
-                                        height: 56,
-                                        borderRadius: "50%",
-                                        background: withAlpha(BRAND.green, 0.12),
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        color: BRAND.green,
-                                    }}
-                                >
-                                    <CheckIcon />
-                                </div>
-                                <h3 style={styles.bulkModalTitle}>Allocated!</h3>
-                                <p style={styles.bulkModalSubtitle}>
-                                    {selfAllocSuccessCount} case
-                                    {selfAllocSuccessCount === 1 ? "" : "s"} allocated to yourself.{" "}
-                                    {selfAllocMode === "counts"
-                                        ? `You'll find ${
-                                              selfAllocSuccessCount === 1 ? "it" : "them"
-                                          } under "Counts" — add the case number${
-                                              selfAllocSuccessCount === 1 ? "" : "s"
-                                          } there.`
-                                        : `You'll find ${
-                                              selfAllocSuccessCount === 1 ? "it" : "them"
-                                          } in Today's Allocation below, ready to submit.`}
-                                </p>
-                                <button
-                                    type="button"
-                                    className="pf-btn pf-btn-solid"
-                                    style={{
-                                        ...styles.submitBtn,
-                                        width: "auto",
-                                        padding: "10px 28px",
-                                    }}
-                                    onClick={closeSelfAllocModal}
-                                >
-                                    Done
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <div style={styles.bulkModalHeader}>
-                                    <div>
-                                        <h3 style={styles.bulkModalTitle}>Self Allocate</h3>
-                                        <p style={styles.bulkModalSubtitle}>
-                                            Pick a service, then take cases that already have a case
-                                            number, or take a count of cases whose numbers aren't
-                                            known yet (you add the numbers later). Only services
-                                            your team ({myTeamRaw || "no team set"}) is aligned to
-                                            show up here.
-                                        </p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        style={styles.closeBtn}
-                                        onClick={closeSelfAllocModal}
-                                        aria-label="Close"
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-
-                                <div style={styles.selfAllocModeRow}>
-                                    <button
-                                        type="button"
-                                        className="pf-btn"
-                                        style={
-                                            selfAllocMode === "cases"
-                                                ? styles.selfAllocModeBtnActive
-                                                : styles.selfAllocModeBtn
-                                        }
-                                        onClick={() => switchSelfAllocMode("cases")}
-                                    >
-                                        With case number
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="pf-btn"
-                                        style={
-                                            selfAllocMode === "counts"
-                                                ? styles.selfAllocModeBtnActive
-                                                : styles.selfAllocModeBtn
-                                        }
-                                        onClick={() => switchSelfAllocMode("counts")}
-                                    >
-                                        Count only (add numbers later)
-                                    </button>
-                                </div>
-
-                                <div style={{ marginBottom: 14 }}>
-                                    <label style={styles.smallLabel}>Service</label>
-                                    {selfAllocServicesLoading ? (
-                                        <p style={styles.smallMuted}>Loading services…</p>
-                                    ) : selfAllocServicesError ? (
-                                        <p style={styles.rowError}>{selfAllocServicesError}</p>
-                                    ) : !myTeamRaw ? (
-                                        <p style={styles.smallMuted}>
-                                            You don't have a team set on your profile, so no service
-                                            can be matched to you. Ask your manager to set your
-                                            team.
-                                        </p>
-                                    ) : selfAllocServices.length === 0 ? (
-                                        <p style={styles.smallMuted}>
-                                            No services are aligned to your team ({myTeamRaw}) yet.
-                                        </p>
-                                    ) : (
-                                        <select
-                                            style={{ ...styles.textInput, width: "100%" }}
-                                            value={selfAllocServiceId}
-                                            onChange={(e) =>
-                                                selfAllocMode === "counts"
-                                                    ? loadAvailableCounts(e.target.value)
-                                                    : loadSelfAllocCases(e.target.value)
-                                            }
-                                        >
-                                            <option value="">Select a service…</option>
-                                            {selfAllocServices.map((s) => (
-                                                <option key={s.id} value={s.id}>
-                                                    {s.product_name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-
-                                {selfAllocServiceId && selfAllocMode === "counts" && (
-                                    <div style={styles.bulkTableWrap}>
-                                        {availableCountsLoading ? (
-                                            <p style={styles.smallMuted}>
-                                                Loading remaining counts…
-                                            </p>
-                                        ) : availableCountsError ? (
-                                            <p style={styles.rowError}>{availableCountsError}</p>
-                                        ) : availableCounts.length === 0 ? (
-                                            <p style={styles.smallMuted}>
-                                                No unallocated counts left on this service.
-                                            </p>
-                                        ) : (
-                                            <table style={styles.bulkTable}>
-                                                <colgroup>
-                                                    <col style={{ width: "36%" }} />
-                                                    <col style={{ width: "20%" }} />
-                                                    <col style={{ width: "16%" }} />
-                                                    <col style={{ width: "28%" }} />
-                                                </colgroup>
-                                                <thead>
-                                                    <tr>
-                                                        <th style={styles.th}>
-                                                            Client / Subclient
-                                                        </th>
-                                                        <th style={styles.th}>Date</th>
-                                                        <th style={styles.th}>Available</th>
-                                                        <th style={styles.th}>How many to take</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {availableCounts.map((c) => (
-                                                        <tr key={c.id} style={styles.tr}>
-                                                            <td
-                                                                style={{
-                                                                    ...styles.td,
-                                                                    whiteSpace: "normal",
-                                                                }}
-                                                            >
-                                                                {[c.clientName, c.subclientName]
-                                                                    .filter(Boolean)
-                                                                    .join(" / ") || "-"}
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                {formatDisplayDate(c.workDate)}
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                {c.unallocated}
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                <div
-                                                                    style={{
-                                                                        display: "flex",
-                                                                        gap: 6,
-                                                                        alignItems: "center",
-                                                                    }}
-                                                                >
-                                                                    <input
-                                                                        type="number"
-                                                                        min={0}
-                                                                        max={c.unallocated}
-                                                                        style={{
-                                                                            ...styles.textInput,
-                                                                            width: 80,
-                                                                            padding: "6px 8px",
-                                                                        }}
-                                                                        value={
-                                                                            selfAllocQtyById[
-                                                                                c.id
-                                                                            ] ?? 0
-                                                                        }
-                                                                        onChange={(e) =>
-                                                                            setSelfAllocQty(
-                                                                                c,
-                                                                                Number(
-                                                                                    e.target.value
-                                                                                )
-                                                                            )
-                                                                        }
-                                                                    />
-                                                                    <button
-                                                                        type="button"
-                                                                        className="pf-btn pf-btn-outline"
-                                                                        style={
-                                                                            styles.selfAllocAllBtn
-                                                                        }
-                                                                        onClick={() =>
-                                                                            setSelfAllocQty(
-                                                                                c,
-                                                                                c.unallocated
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        All
-                                                                    </button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        )}
-                                    </div>
-                                )}
-
-                                {selfAllocServiceId && selfAllocMode === "cases" && (
-                                    <div style={styles.bulkTableWrap}>
-                                        {selfAllocCasesLoading ? (
-                                            <p style={styles.smallMuted}>
-                                                Loading remaining cases…
-                                            </p>
-                                        ) : selfAllocCasesError ? (
-                                            <p style={styles.rowError}>{selfAllocCasesError}</p>
-                                        ) : selfAllocCases.length === 0 ? (
-                                            <p style={styles.smallMuted}>
-                                                No pending cases left on this service.
-                                            </p>
-                                        ) : (
-                                            <table style={styles.bulkTable}>
-                                                <colgroup>
-                                                    <col style={{ width: "10%" }} />
-                                                    <col style={{ width: "30%" }} />
-                                                    <col style={{ width: "30%" }} />
-                                                    <col style={{ width: "30%" }} />
-                                                </colgroup>
-                                                <thead>
-                                                    <tr>
-                                                        <th style={styles.th}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={
-                                                                    selfAllocCases.length > 0 &&
-                                                                    selfAllocSelectedIds.size ===
-                                                                        selfAllocCases.length
-                                                                }
-                                                                onChange={toggleSelfAllocSelectAll}
-                                                                aria-label="Select all"
-                                                            />
-                                                        </th>
-                                                        <th style={styles.th}>Case No.</th>
-                                                        <th style={styles.th}>
-                                                            Client / Subclient
-                                                        </th>
-                                                        <th style={styles.th}>Date</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {selfAllocCases.map((c) => (
-                                                        <tr
-                                                            key={c.id}
+                                                        </td>
+                                                        <td
                                                             style={{
-                                                                ...styles.tr,
-                                                                cursor: "pointer",
+                                                                ...styles.td,
+                                                                whiteSpace: "normal",
                                                             }}
-                                                            onClick={() =>
-                                                                toggleSelfAllocCase(c.id)
-                                                            }
                                                         >
-                                                            <td
-                                                                style={styles.td}
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
+                                                            {r.status === "QUERY" ? (
                                                                 <input
-                                                                    type="checkbox"
-                                                                    checked={selfAllocSelectedIds.has(
-                                                                        c.id
-                                                                    )}
-                                                                    onChange={() =>
-                                                                        toggleSelfAllocCase(c.id)
+                                                                    style={{
+                                                                        ...styles.textInput,
+                                                                        width: "100%",
+                                                                        border: queryMissing
+                                                                            ? `1px solid ${STATUS_RED}`
+                                                                            : styles.textInput
+                                                                                  .border,
+                                                                    }}
+                                                                    value={r.query}
+                                                                    disabled={addCnSubmitting}
+                                                                    placeholder="Describe the query…"
+                                                                    onChange={(e) =>
+                                                                        setAddCnRow(i, {
+                                                                            query: e.target.value,
+                                                                        })
                                                                     }
                                                                 />
-                                                            </td>
-                                                            <td
-                                                                style={{
-                                                                    ...styles.td,
-                                                                    fontWeight: fontWeight.bold,
-                                                                }}
-                                                            >
-                                                                {c.caseNumber}
-                                                            </td>
-                                                            <td
-                                                                style={{
-                                                                    ...styles.td,
-                                                                    whiteSpace: "normal",
-                                                                }}
-                                                            >
-                                                                {[c.clientName, c.subclientName]
-                                                                    .filter(Boolean)
-                                                                    .join(" / ") || "-"}
-                                                            </td>
-                                                            <td style={styles.td}>{c.workDate}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                                            ) : (
+                                                                <span style={styles.smallMuted}>
+                                                                    —
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        flexWrap: "wrap",
+                                        marginBottom: 12,
+                                    }}
+                                >
+                                    <span style={styles.smallMuted}>
+                                        {addCnParsed.length} of {addCnCount.remaining} entered
+                                        {addCnSubmitCount > 0
+                                            ? ` · ${addCnSubmitCount} will be submitted`
+                                            : ""}
+                                    </span>
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-outline"
+                                            style={styles.selfAllocAllBtn}
+                                            disabled={addCnSubmitting || addCnRows.length < 2}
+                                            onClick={applyFirstClientToAll}
+                                        >
+                                            Apply row 1 client to all
+                                        </button>
+                                        {addCnRows.length < addCnCount.remaining && (
+                                            <button
+                                                type="button"
+                                                className="pf-btn pf-btn-outline"
+                                                style={styles.selfAllocAllBtn}
+                                                disabled={addCnSubmitting}
+                                                onClick={() =>
+                                                    setAddCnRows((prev) => [
+                                                        ...prev,
+                                                        blankAddCnRow(addCnCount),
+                                                    ])
+                                                }
+                                            >
+                                                + Add row
+                                            </button>
                                         )}
                                     </div>
-                                )}
+                                </div>
+
+                                {addCnError && <p style={styles.rowError}>{addCnError}</p>}
 
                                 <div style={styles.bulkModalFooter}>
                                     <button
                                         type="button"
                                         className="pf-btn pf-btn-outline"
                                         style={styles.bulkCancelBtn}
-                                        onClick={closeSelfAllocModal}
-                                        disabled={selfAllocSubmitting}
+                                        onClick={closeAddCaseNumbers}
+                                        disabled={addCnSubmitting}
                                     >
                                         Cancel
                                     </button>
@@ -4781,339 +5432,41 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             width: "auto",
                                             flex: 1,
                                             opacity:
-                                                selfAllocSubmitting || selfAllocPickedCount === 0
+                                                addCnSubmitting ||
+                                                addCnParsed.length === 0 ||
+                                                addCnMissingClient
                                                     ? 0.6
                                                     : 1,
                                             cursor:
-                                                selfAllocSubmitting || selfAllocPickedCount === 0
+                                                addCnSubmitting ||
+                                                addCnParsed.length === 0 ||
+                                                addCnMissingClient
                                                     ? "not-allowed"
                                                     : "pointer",
                                         }}
-                                        onClick={
-                                            selfAllocMode === "counts"
-                                                ? submitSelfAllocCounts
-                                                : submitSelfAllocation
+                                        onClick={submitAddCaseNumbers}
+                                        disabled={
+                                            addCnSubmitting ||
+                                            addCnParsed.length === 0 ||
+                                            addCnMissingClient
                                         }
-                                        disabled={selfAllocSubmitting || selfAllocPickedCount === 0}
+                                        title={
+                                            addCnMissingClient
+                                                ? "Select a client for every case number you typed"
+                                                : undefined
+                                        }
                                     >
-                                        {selfAllocSubmitting
-                                            ? "Allocating…"
-                                            : selfAllocPickedCount > 0
-                                              ? `Allocate (${selfAllocPickedCount})`
-                                              : "Allocate"}
+                                        {addCnSubmitting
+                                            ? "Saving…"
+                                            : addCnParsed.length > 0
+                                              ? `Submit (${addCnParsed.length})`
+                                              : "Submit"}
                                     </button>
                                 </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* ---- Add Case Numbers modal — per-case client / subclient + status ---- */}
-            {addCnCount && (
-                <div style={styles.bulkOverlay}>
-                    <div
-                        style={{ ...styles.bulkModal, width: 980 }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={styles.bulkModalHeader}>
-                            <div>
-                                <h3 style={styles.bulkModalTitle}>Add Case Numbers</h3>
-                                <p style={styles.bulkModalSubtitle}>
-                                    {addCnCount.productName || "Service"} ·{" "}
-                                    {formatDisplayDate(addCnCount.workDate)} —{" "}
-                                    <strong>{addCnCount.remaining}</strong> case
-                                    {addCnCount.remaining === 1 ? "" : "s"} left to add. Type the
-                                    case number, pick its client (every case can have a different
-                                    one) and its status — WIP / Pending keeps it pending, any other
-                                    status submits it right away.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                style={styles.closeBtn}
-                                onClick={closeAddCaseNumbers}
-                                aria-label="Close"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <label style={styles.smallLabel}>Case numbers, client &amp; status</label>
-                        <div style={{ ...styles.bulkTableWrap, marginTop: 4, marginBottom: 6 }}>
-                            <table style={{ ...styles.bulkTable, minWidth: 880 }}>
-                                <colgroup>
-                                    <col style={{ width: "5%" }} />
-                                    <col style={{ width: "17%" }} />
-                                    <col style={{ width: "21%" }} />
-                                    <col style={{ width: "19%" }} />
-                                    <col style={{ width: "17%" }} />
-                                    <col style={{ width: "21%" }} />
-                                </colgroup>
-                                <thead>
-                                    <tr>
-                                        <th style={styles.th}>#</th>
-                                        <th style={styles.th}>Case No.</th>
-                                        <th style={styles.th}>Client *</th>
-                                        <th style={styles.th}>Subclient</th>
-                                        <th style={styles.th}>Status</th>
-                                        <th style={styles.th}>Query</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {addCnRows.map((r, i) => {
-                                        const queryMissing =
-                                            r.status === "QUERY" && !r.query.trim();
-                                        const rowSubOptions = subclients.filter(
-                                            (s) => s.clientId === r.clientId
-                                        );
-                                        // WIP / Pending are the "not submitted" statuses
-                                        const isNotSubmitted =
-                                            r.status === "WIP" || r.status === "PENDING";
-                                        return (
-                                            <tr key={i} style={styles.tr}>
-                                                <td style={styles.td}>{i + 1}</td>
-                                                <td style={styles.td}>
-                                                    <input
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                        }}
-                                                        value={r.cn}
-                                                        maxLength={50}
-                                                        disabled={addCnSubmitting}
-                                                        placeholder={
-                                                            caseNumberRequired
-                                                                ? "Case number"
-                                                                : "Case number (optional)"
-                                                        }
-                                                        onChange={(e) =>
-                                                            setAddCnRow(i, { cn: e.target.value })
-                                                        }
-                                                        onPaste={(e) => {
-                                                            const t =
-                                                                e.clipboardData.getData("text");
-                                                            if (/[\n,\t]/.test(t.trim())) {
-                                                                e.preventDefault();
-                                                                pasteAddCnRows(i, t);
-                                                            }
-                                                        }}
-                                                    />
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <select
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                        }}
-                                                        value={r.clientId}
-                                                        disabled={addCnSubmitting}
-                                                        onChange={(e) =>
-                                                            setAddCnRow(i, {
-                                                                clientId: e.target.value,
-                                                                subclientId: "",
-                                                            })
-                                                        }
-                                                    >
-                                                        <option value="">Select client</option>
-                                                        {clients.map((cl) => (
-                                                            <option key={cl.id} value={cl.id}>
-                                                                {cl.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <select
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                        }}
-                                                        value={r.subclientId}
-                                                        disabled={addCnSubmitting || !r.clientId}
-                                                        onChange={(e) =>
-                                                            setAddCnRow(i, {
-                                                                subclientId: e.target.value,
-                                                            })
-                                                        }
-                                                    >
-                                                        <option value="">
-                                                            {!r.clientId
-                                                                ? "Pick client first"
-                                                                : rowSubOptions.length === 0
-                                                                  ? "No subclients"
-                                                                  : "Subclient (optional)"}
-                                                        </option>
-                                                        {rowSubOptions.map((s) => (
-                                                            <option key={s.id} value={s.id}>
-                                                                {s.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                <td style={styles.td}>
-                                                    <select
-                                                        style={{
-                                                            ...styles.textInput,
-                                                            width: "100%",
-                                                            fontWeight: !isNotSubmitted
-                                                                ? fontWeight.semibold
-                                                                : "normal",
-                                                            color: !isNotSubmitted
-                                                                ? BRAND.blue
-                                                                : undefined,
-                                                        }}
-                                                        value={r.status}
-                                                        disabled={addCnSubmitting}
-                                                        onChange={(e) =>
-                                                            setAddCnRow(i, {
-                                                                status: e.target.value as
-                                                                    | "WIP"
-                                                                    | "PENDING"
-                                                                    | SubmissionType,
-                                                                query:
-                                                                    e.target.value === "QUERY"
-                                                                        ? r.query
-                                                                        : "",
-                                                            })
-                                                        }
-                                                    >
-                                                        <option value="WIP">WIP</option>
-                                                        <option value="PENDING">Pending</option>
-                                                        {SUBMISSION_OPTIONS.map((o) => (
-                                                            <option key={o.value} value={o.value}>
-                                                                {o.label}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                <td style={{ ...styles.td, whiteSpace: "normal" }}>
-                                                    {r.status === "QUERY" ? (
-                                                        <input
-                                                            style={{
-                                                                ...styles.textInput,
-                                                                width: "100%",
-                                                                border: queryMissing
-                                                                    ? `1px solid ${STATUS_RED}`
-                                                                    : styles.textInput.border,
-                                                            }}
-                                                            value={r.query}
-                                                            disabled={addCnSubmitting}
-                                                            placeholder="Describe the query…"
-                                                            onChange={(e) =>
-                                                                setAddCnRow(i, {
-                                                                    query: e.target.value,
-                                                                })
-                                                            }
-                                                        />
-                                                    ) : (
-                                                        <span style={styles.smallMuted}>—</span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div
-                            style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                gap: 10,
-                                flexWrap: "wrap",
-                                marginBottom: 12,
-                            }}
-                        >
-                            <span style={styles.smallMuted}>
-                                {addCnParsed.length} of {addCnCount.remaining} entered
-                                {addCnSubmitCount > 0
-                                    ? ` · ${addCnSubmitCount} will be submitted`
-                                    : ""}
-                            </span>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                <button
-                                    type="button"
-                                    className="pf-btn pf-btn-outline"
-                                    style={styles.selfAllocAllBtn}
-                                    disabled={addCnSubmitting || addCnRows.length < 2}
-                                    onClick={applyFirstClientToAll}
-                                >
-                                    Apply row 1 client to all
-                                </button>
-                                {addCnRows.length < addCnCount.remaining && (
-                                    <button
-                                        type="button"
-                                        className="pf-btn pf-btn-outline"
-                                        style={styles.selfAllocAllBtn}
-                                        disabled={addCnSubmitting}
-                                        onClick={() =>
-                                            setAddCnRows((prev) => [
-                                                ...prev,
-                                                blankAddCnRow(addCnCount),
-                                            ])
-                                        }
-                                    >
-                                        + Add row
-                                    </button>
-                                )}
                             </div>
                         </div>
-
-                        {addCnError && <p style={styles.rowError}>{addCnError}</p>}
-
-                        <div style={styles.bulkModalFooter}>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.bulkCancelBtn}
-                                onClick={closeAddCaseNumbers}
-                                disabled={addCnSubmitting}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-solid"
-                                style={{
-                                    ...styles.submitBtn,
-                                    width: "auto",
-                                    flex: 1,
-                                    opacity:
-                                        addCnSubmitting ||
-                                        addCnParsed.length === 0 ||
-                                        addCnMissingClient
-                                            ? 0.6
-                                            : 1,
-                                    cursor:
-                                        addCnSubmitting ||
-                                        addCnParsed.length === 0 ||
-                                        addCnMissingClient
-                                            ? "not-allowed"
-                                            : "pointer",
-                                }}
-                                onClick={submitAddCaseNumbers}
-                                disabled={
-                                    addCnSubmitting ||
-                                    addCnParsed.length === 0 ||
-                                    addCnMissingClient
-                                }
-                                title={
-                                    addCnMissingClient
-                                        ? "Select a client for every case number you typed"
-                                        : undefined
-                                }
-                            >
-                                {addCnSubmitting
-                                    ? "Saving…"
-                                    : addCnParsed.length > 0
-                                      ? `Submit (${addCnParsed.length})`
-                                      : "Submit"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    )}
+                </>
             )}
 
             {selfAllocToast && <div style={styles.toast}>{selfAllocToast}</div>}
@@ -5138,6 +5491,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             {/* NEW: managers — open queries of my team (+ urgent > 48h) */}
             <TeamQueriesPopup
                 enabled={
+                    !isBlueMode &&
                     !isViewingOther &&
                     !!myId &&
                     TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase())
@@ -5910,6 +6264,129 @@ function TeamQueriesPopup({
                 </div>
             )}
         </>
+    );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Blue Collar: work-submission history (replaces the case sections)      */
+/* ---------------------------------------------------------------------- */
+type BlueSubmission = { workDate: string; services: string[]; note: string };
+
+function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
+    const [data, setData] = useState<{
+        role: string;
+        locationName: string;
+        submissions: BlueSubmission[];
+    } | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState("");
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            setErr("");
+            try {
+                const url = `${API_BASE}/api/blue/my-submissions${
+                    employeeId ? `?employeeId=${encodeURIComponent(employeeId)}` : ""
+                }`;
+                const res = await authFetch(url, { cache: "no-store" });
+                const json = await safeJson(res);
+                if (!res.ok || json.success === false) throw new Error(json.message || "Failed");
+                if (!cancelled) setData(json.data);
+            } catch (e: any) {
+                if (!cancelled) setErr(e?.message || "Could not load work history.");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [employeeId]);
+
+    const today = todayStr();
+    const todays = data?.submissions.find((s) => s.workDate === today) || null;
+    const chip: CSSProperties = {
+        display: "inline-block",
+        padding: "2px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+        background: "#EAF0FB",
+        color: "#1E40AF",
+    };
+
+    return (
+        <div
+            style={{
+                background: "#fff",
+                borderRadius: 16,
+                padding: 20,
+                boxShadow: "0 10px 30px rgba(0,0,0,.06)",
+            }}
+        >
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#17181C", flex: 1 }}>
+                    Work Submissions
+                </span>
+                {data?.role && <span style={chip}>{data.role}</span>}
+                {data?.locationName && (
+                    <span style={{ ...chip, background: "#F3F4F6", color: "#374151" }}>
+                        {data.locationName}
+                    </span>
+                )}
+                <span
+                    style={{
+                        ...chip,
+                        background: todays ? "#DCFCE7" : "#FEF3C7",
+                        color: todays ? "#166534" : "#92400E",
+                    }}
+                >
+                    {todays ? "Submitted today" : "Not submitted today"}
+                </span>
+            </div>
+            <p style={{ margin: "4px 0 14px", fontSize: 13, color: "#767F92" }}>
+                Services ticked as done, last 30 days.
+            </p>
+
+            {loading && <div style={{ color: "#9099AC", fontSize: 13 }}>Loading…</div>}
+            {err && <div style={{ color: "#B91C1C", fontSize: 13 }}>{err}</div>}
+            {!loading && !err && data && data.submissions.length === 0 && (
+                <div style={{ color: "#9099AC", fontSize: 13 }}>No submissions yet.</div>
+            )}
+            {data?.submissions.map((s) => (
+                <div
+                    key={s.workDate}
+                    style={{
+                        display: "flex",
+                        gap: 14,
+                        padding: "10px 0",
+                        borderTop: "1px solid #F1F2F6",
+                        flexWrap: "wrap",
+                        alignItems: "flex-start",
+                    }}
+                >
+                    <div style={{ width: 96, fontWeight: 600, fontSize: 13, color: "#3D4459" }}>
+                        {formatDisplayDate(s.workDate)}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {s.services.map((n) => (
+                                <span key={n} style={chip}>
+                                    {n}
+                                </span>
+                            ))}
+                        </div>
+                        {s.note && (
+                            <div style={{ marginTop: 6, fontSize: 12.5, color: "#5B6479" }}>
+                                {s.note}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ))}
+        </div>
     );
 }
 

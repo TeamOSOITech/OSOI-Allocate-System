@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
+import { useCollarMode } from "../context/collarmode";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
@@ -10,6 +11,8 @@ type MenuItem = {
     icon: string;
     path: string;
     roles: string[];
+    // Which mode shows this link. Omitted = both modes.
+    mode?: "WHITE" | "BLUE";
 };
 
 // Role groups replacing the old ADMIN/MANAGER/EMPLOYEE checks — mirrors
@@ -37,12 +40,28 @@ const menuItems: MenuItem[] = [
         path: "/report",
         roles: EVERYONE,
     },
+    // ---- Blue Collar (manpower-based) links: day-to-day first ----
+    {
+        label: "Team View",
+        icon: "ti ti-users-group",
+        path: "/blue/team-view",
+        roles: ADMIN_AND_VERTICAL_HEAD,
+        mode: "BLUE",
+    },
+    {
+        label: "Submit Work",
+        icon: "ti ti-checklist",
+        path: "/blue/submit",
+        roles: ["TEAM_MEMBER"],
+        mode: "BLUE",
+    },
     // /dashboard route is gated to ADMIN_TIER_ROLES in App.jsx, so this
     // link uses the same role list to avoid showing it to someone who'd
     // just hit a 403 clicking through.
     {
         label: "Dashboard",
         icon: "ti ti-layout-dashboard",
+        mode: "WHITE",
         path: "/dashboard",
         // /dashboard route in App.jsx is gated to ADMIN_TIER_ROLES, which
         // already includes OPS_MANAGER — this link was narrower than the
@@ -61,8 +80,16 @@ const menuItems: MenuItem[] = [
         roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"],
     },
     {
+        label: "Locations",
+        icon: "ti ti-map-pin",
+        path: "/blue/locations",
+        roles: ADMIN_TIER,
+        mode: "BLUE",
+    },
+    {
         label: "Services",
         icon: "ti ti-package",
+        mode: "WHITE",
         path: "/services",
         // Role-based access Phase 2: Normal User now sees this again,
         // alongside admin-tier + Vertical Head.
@@ -71,6 +98,7 @@ const menuItems: MenuItem[] = [
     {
         label: "Clients Preview",
         icon: "ti ti-users",
+        mode: "WHITE",
         path: "/clients",
         roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
@@ -83,6 +111,7 @@ const menuItems: MenuItem[] = [
     {
         label: "Daily Work",
         icon: "ti ti-clipboard-plus",
+        mode: "WHITE",
         path: "/daily-work",
         roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER", "VERTICAL_HEAD"],
     },
@@ -105,12 +134,14 @@ const menuItems: MenuItem[] = [
     {
         label: "Production Reports",
         icon: "ti ti-file-analytics",
+        mode: "WHITE",
         path: "/production-reports",
         roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"],
     },
     {
         label: "History",
         icon: "ti ti-history",
+        mode: "WHITE",
         path: "/history",
         roles: ["AUDIT_MANAGER"],
     },
@@ -168,6 +199,14 @@ const menuItems: MenuItem[] = [
         path: SHARED_PATH,
         roles: EVERYONE,
     },
+    // NEW: staff choose which cases each client can see.
+    {
+        label: "Client Sharing",
+        icon: "ti ti-share",
+        mode: "WHITE",
+        path: "/client-sharing",
+        roles: ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"],
+    },
 ];
 
 const pathToLabel: Record<string, string> = {
@@ -187,7 +226,11 @@ const pathToLabel: Record<string, string> = {
     "/subscription": "Upgrade",
     "/approvals": "Approvals",
     "/client-dashboard": "Client Dashboard",
+    "/client-sharing": "Client Sharing",
     "/shared-with-me": "Shared with me",
+    "/blue/team-view": "Team View",
+    "/blue/locations": "Locations",
+    "/blue/submit": "Submit Work",
 };
 
 // ---- Brand palette ----
@@ -238,6 +281,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     const userStr = localStorage.getItem("user");
     const user = userStr ? JSON.parse(userStr) : null;
     const role = user?.role || "TEAM_MEMBER";
+    const { mode: collarMode } = useCollarMode();
 
     // Pages shared with this login: how many in total (the sidebar entry
     // only appears when > 0) and how many are new since they last opened it.
@@ -282,7 +326,10 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
               ),
           ]
         : menuItems.filter(
-              (item) => item.roles.includes(role) && (item.path !== SHARED_PATH || shareCount > 0)
+              (item) =>
+                  item.roles.includes(role) &&
+                  (!item.mode || item.mode === collarMode) &&
+                  (item.path !== SHARED_PATH || shareCount > 0)
           );
 
     const handleLogout = () => {
@@ -506,7 +553,16 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
                                             }}
                                             aria-hidden="true"
                                         />
-                                        <span>{item.label}</span>
+                                        <span
+                                            style={{
+                                                whiteSpace: "nowrap",
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                minWidth: 0,
+                                            }}
+                                        >
+                                            {item.label}
+                                        </span>
                                         {item.path === SHARED_PATH && newShares > 0 && (
                                             <span
                                                 aria-label={`${newShares} new`}

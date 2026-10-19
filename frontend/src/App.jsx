@@ -4,6 +4,7 @@ import Header from "./components/header";
 import Sidebar from "./components/sidebar";
 import { ThemeProvider } from "./context/themecontext";
 import { RoleLabelsProvider } from "./context/roleLabelsContext";
+import { CollarModeProvider } from "./context/collarmode";
 import { authFetch } from "./utils/authFetch";
 import { getCurrentUser } from "./utils/auth";
 
@@ -57,8 +58,13 @@ const Subscription = lazy(() => import("./pages/subscription"));
 // but was never wired into routing/sidebar — see the route + sidebar
 // entry below.
 const Approvals = lazy(() => import("./pages/admin/approvals"));
-// NEW: Client Dashboard (CLIENT role only).
+// NEW: Blue Collar (manpower-based) mode pages.
+const BlueTeamView = lazy(() => import("./pages/blue/teamview"));
+const BlueLocations = lazy(() => import("./pages/blue/locations"));
+const BlueSubmitWork = lazy(() => import("./pages/blue/submitwork"));
+// NEW: Client Dashboard (CLIENT role only) + staff-side Client Sharing.
 const ClientDashboard = lazy(() => import("./pages/clientportal/clientdashboard"));
+const ClientSharing = lazy(() => import("./pages/admin/clientsharing"));
 // NEW: "Shared with me" — pages that staff shared with ANY logged-in user
 // (any role, any organization). Read-only.
 const SharedWithMe = lazy(() => import("./pages/clientportal/sharedwithme"));
@@ -103,6 +109,8 @@ const NORMAL_USER_ALLOWED_PATHS = [
     "/subscription",
     // NEW: pages shared with this login by staff (read-only).
     "/shared-with-me",
+    // NEW: Blue Collar employee's tick-and-submit page.
+    "/blue/submit",
 ];
 const NORMAL_USER_HOME = "/report";
 const CLIENT_HOME = "/client-dashboard";
@@ -384,98 +392,155 @@ function App() {
 
     return (
         <ThemeProvider>
-            <BrowserRouter>
-                <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
-                    <Routes>
-                        <Route path="/login" element={<Login />} />
+            <CollarModeProvider>
+                <BrowserRouter>
+                    <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+                        <Routes>
+                            <Route path="/login" element={<Login />} />
 
-                        {/* NEW: Home page — Holidays + Birthdays. Open to every logged-in
+                            {/* NEW: Home page — Holidays + Birthdays. Open to every logged-in
                         role (no requiredRole), same as Profile. This is also
                         NORMAL_USER_HOME above, so Team Member lands here right after login. */}
-                        <Route
-                            path="/report"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Home user={user} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/report"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Home user={user} />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* NEW: Client Dashboard — the only page a CLIENT login can open. */}
-                        <Route
-                            path="/client-dashboard"
-                            element={
-                                <PrivateRoute requiredRole="CLIENT">
-                                    <AppLayout onLogout={handleLogout}>
-                                        <ClientDashboard />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            {/* NEW: Client Dashboard — the only page a CLIENT login can open. */}
+                            <Route
+                                path="/client-dashboard"
+                                element={
+                                    <PrivateRoute requiredRole="CLIENT">
+                                        <AppLayout onLogout={handleLogout}>
+                                            <ClientDashboard />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* NEW: Shared with me — pages staff shared with this login
+                            {/* NEW: Client Sharing — staff choose what each client sees. */}
+                            <Route
+                                path="/client-sharing"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            "SUPER_ADMIN",
+                                            "OPS_MANAGER",
+                                            "PROCESS_LEAD",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            <ClientSharing />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+
+                            {/* NEW: Shared with me — pages staff shared with this login
                         (any role, any organization). Read-only. The sidebar only
                         shows the link when something has actually been shared. */}
-                        <Route
-                            path="/shared-with-me"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <SharedWithMe />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/shared-with-me"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <SharedWithMe />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        <Route path="/forgot-password" element={<ForgotPassword />} />
-                        <Route path="/reset-password" element={<ResetPassword />} />
+                            {/* NEW: Blue Collar (manpower-based) mode. */}
+                            <Route
+                                path="/blue/team-view"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <BlueTeamView />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+                            <Route
+                                path="/blue/locations"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <BlueLocations />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+                            <Route
+                                path="/blue/submit"
+                                element={
+                                    <PrivateRoute requiredRole={["TEAM_MEMBER"]}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <BlueSubmitWork />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        <Route
-                            path="/clients"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Clients user={user} onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route path="/forgot-password" element={<ForgotPassword />} />
+                            <Route path="/reset-password" element={<ResetPassword />} />
 
-                        <Route
-                            path="/dashboard"
-                            element={
-                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Dashboard user={user} onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/clients"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            ...ADMIN_AND_VERTICAL_HEAD_ROLES,
+                                            "TEAM_MEMBER",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Clients user={user} onLogout={handleLogout} />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
+                            <Route
+                                path="/dashboard"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Dashboard user={user} onLogout={handleLogout} />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+
+                            {/* NEW: Daily Work — Page 2, feeds Smart Auto / Manual Allocation.
 Gated the same as Clients Preview: admin-tier + Vertical Head,
 since creating a batch requires tasks.allocate.team/org on the
 backend anyway (Vertical Head = own team, others = org-wide).
 TEAM_MEMBER (Normal User) is also allowed in as of role-based
 access Phase 1 — this is their "Daily Assigned Work" page. */}
-                        <Route
-                            path="/daily-work"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        <DailyWork />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/daily-work"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            ...ADMIN_AND_VERTICAL_HEAD_ROLES,
+                                            "TEAM_MEMBER",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            <DailyWork />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* "Today's Allocation" — Page 4. Same route for everyone, but a
+                            {/* "Today's Allocation" — Page 4. Same route for everyone, but a
                     different experience by role:
                       - Admin-tier (Super Admin / Ops Manager / Audit Manager /
                         Process Lead): the existing full manager view — Smart
@@ -489,14 +554,17 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         on the backend, which hard-codes employee_id to the
                         caller's own id regardless of anything in the
                         request body). */}
-                        <Route
-                            path="/todays-allocation"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={[...ADMIN_AND_VERTICAL_HEAD_ROLES, "TEAM_MEMBER"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        {/* CHANGED: Vertical Head now gets the ManualAllocation
+                            <Route
+                                path="/todays-allocation"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            ...ADMIN_AND_VERTICAL_HEAD_ROLES,
+                                            "TEAM_MEMBER",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            {/* CHANGED: Vertical Head now gets the ManualAllocation
                                         grid (same as Process Lead/Ops Manager/Audit Manager/
                                         Super Admin) instead of the self-allocate-only view —
                                         Vertical Head can allocate to their OWN team's cases on
@@ -507,72 +575,76 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                         Member is the only role left on the self-allocate-only
                                         view — they can still pick up their OWN pending work,
                                         but can never allocate to anyone else. */}
-                                        {user?.role === "TEAM_MEMBER" ? (
-                                            <SelfAllocation />
-                                        ) : (
-                                            <ManualAllocation />
-                                        )}
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                                            {user?.role === "TEAM_MEMBER" ? (
+                                                <SelfAllocation />
+                                            ) : (
+                                                <ManualAllocation />
+                                            )}
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* REMOVED: standalone /attendance route. Leave-marking now
+                            {/* REMOVED: standalone /attendance route. Leave-marking now
                     lives inline inside Manual/Smart Allocation (manualallocation.tsx)
                     instead of a separate page — one place instead of two. */}
 
-                        {/* NEW: Production Reports — Page 8. Open to everyone, same as
+                            {/* NEW: Production Reports — Page 8. Open to everyone, same as
                     Report/History — read-only view over Daily Work data. */}
-                        <Route
-                            path="/production-reports"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <ProductionReports />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/production-reports"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <ProductionReports />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* Services (renamed from "Products" — the sidebar link,
+                            {/* Services (renamed from "Products" — the sidebar link,
                             page contents, and API were already called
                             "Services"; only the URL still said /products) */}
-                        <Route
-                            path="/services"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Products user={user} onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/services"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Products user={user} onLogout={handleLogout} />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* Old URL — keeps existing bookmarks/links working by
+                            {/* Old URL — keeps existing bookmarks/links working by
                             bouncing straight to the new /services path. */}
-                        <Route path="/products" element={<Navigate to="/services" replace />} />
-                        {/* FIX: a plain <Navigate> drops location.state, so the
+                            <Route path="/products" element={<Navigate to="/services" replace />} />
+                            {/* FIX: a plain <Navigate> drops location.state, so the
                             `state.from` that "Allocate Now" sends (used by the
                             Back button on Today's Allocation) was lost here. */}
-                        <Route
-                            path="/today's-allocation"
-                            element={<RedirectKeepState to="/todays-allocation" />}
-                        />
+                            <Route
+                                path="/today's-allocation"
+                                element={<RedirectKeepState to="/todays-allocation" />}
+                            />
 
-                        <Route
-                            path="/admin/add-user"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        <AddUser />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/admin/add-user"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            "SUPER_ADMIN",
+                                            "PROCESS_LEAD",
+                                            "OPS_MANAGER",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            <AddUser />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* Approvals — decision-makers only. Process Lead no
+                            {/* Approvals — decision-makers only. Process Lead no
                         longer gets page access here: they submit requests
                         via their normal actions (e.g. Add Service) and are
                         told "submitted for approval" inline — they don't
@@ -583,67 +655,71 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                         approvals.controller.js) is unaffected: it already
                         scopes what each caller can see/act on per-request,
                         this is purely the page-level gate. */}
-                        <Route
-                            path="/approvals"
-                            element={
-                                <PrivateRoute
-                                    requiredRole={["OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"]}
-                                >
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Approvals />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/approvals"
+                                element={
+                                    <PrivateRoute
+                                        requiredRole={[
+                                            "OPS_MANAGER",
+                                            "AUDIT_MANAGER",
+                                            "SUPER_ADMIN",
+                                        ]}
+                                    >
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Approvals />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* Billing — Admin only. Real page: client-wise
+                            {/* Billing — Admin only. Real page: client-wise
                         service pricing, read-only, sourced from GET /api/clients. */}
-                        <Route
-                            path="/billing"
-                            element={
-                                <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Billing />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/billing"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Billing />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* NEW: Subscription — org-level plan page (upgrade via
+                            {/* NEW: Subscription — org-level plan page (upgrade via
                         real Razorpay Checkout). Now open to every logged-in
                         role, not just SUPER_ADMIN — everyone can see the
                         current plan/pricing, but the page itself only lets
                         Super Admin or Ops Manager actually change it (see
                         subscription.tsx's canManagePlan); everyone else gets
                         a read-only "View only" version of the same page. */}
-                        <Route
-                            path="/subscription"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Subscription />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/subscription"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Subscription />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* Quality Scores — Admin and Manager only. Real QC page
+                            {/* Quality Scores — Admin and Manager only. Real QC page
                     (Page 7). */}
-                        <Route
-                            path="/quality-scores"
-                            element={
-                                <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <QC />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/quality-scores"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_AND_VERTICAL_HEAD_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <QC />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        {/* REMOVED: /qc-audit route (QcAudit component) —
+                            {/* REMOVED: /qc-audit route (QcAudit component) —
                     QC + Audit now both live on /quality-scores instead. */}
 
-                        {/* REMOVED: /workinprogress, /admin, /tasks routes — they
+                            {/* REMOVED: /workinprogress, /admin, /tasks routes — they
                     pointed at pages/workinprogress.tsx, which has been
                     deleted, and none of them are linked from the sidebar
                     anymore either. /billing below still is, so that one
@@ -651,51 +727,52 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                     a real page — see pages/admin/history.tsx — filterable
                     by employee/service/client/subclient/date/status,
                     backed by GET /api/allocations/history. */}
-                        <Route
-                            path="/history"
-                            element={
-                                <PrivateRoute requiredRole="SUPER_ADMIN">
-                                    <AppLayout onLogout={handleLogout}>
-                                        <History />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
-                        {/* Real Profile page (Page 9) — photo, role, team, department,
+                            <Route
+                                path="/history"
+                                element={
+                                    <PrivateRoute requiredRole="SUPER_ADMIN">
+                                        <AppLayout onLogout={handleLogout}>
+                                            <History />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+                            {/* Real Profile page (Page 9) — photo, role, team, department,
                     manager, today's + past allocations, and the Submit Work flow. */}
-                        <Route
-                            path="/profile"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Profile onLogout={handleLogout} />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/profile"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Profile onLogout={handleLogout} />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        <Route
-                            path="/employees"
-                            element={
-                                <PrivateRoute>
-                                    <AppLayout onLogout={handleLogout}>
-                                        <Employees />
-                                    </AppLayout>
-                                </PrivateRoute>
-                            }
-                        />
+                            <Route
+                                path="/employees"
+                                element={
+                                    <PrivateRoute>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <Employees />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
 
-                        <Route path="/register" element={<Register />} />
+                            <Route path="/register" element={<Register />} />
 
-                        <Route path="/" element={<Landing />} />
+                            <Route path="/" element={<Landing />} />
 
-                        {/* FIX (#16): must be LAST — react-router matches
+                            {/* FIX (#16): must be LAST — react-router matches
                             top to bottom, and "*" would otherwise swallow
                             every route defined after it. */}
-                        <Route path="*" element={<NotFound />} />
-                    </Routes>
-                </Suspense>
-            </BrowserRouter>
+                            <Route path="*" element={<NotFound />} />
+                        </Routes>
+                    </Suspense>
+                </BrowserRouter>
+            </CollarModeProvider>
         </ThemeProvider>
     );
 }

@@ -4,12 +4,14 @@ import { useRoleLabels } from "../../context/roleLabelsContext";
 import { getCurrentUser } from "../../utils/auth";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
+import { safeSheet } from "../../utils/safeSheet";
 import { useNavigate } from "react-router-dom";
 //import VoiceAssistant from "../../components/voiceAssistant";
 //import { speak } from "../../utils/speak";
 import FormErrorBoundary from "../../components/formErrorBoundary";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
+import { useCollarMode } from "../../context/collarmode";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -230,19 +232,6 @@ function isUnder18(dob: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(dob) && dob > maxDobStr();
 }
 
-// Date of Joining: cannot be in the future.
-const DOJ_FUTURE_ERROR = "Date of Joining cannot be in the future.";
-// latest allowed DOJ = today (local date, YYYY-MM-DD)
-function todayDateStr() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate()
-    ).padStart(2, "0")}`;
-}
-function isFutureDoj(doj: string) {
-    return /^\d{4}-\d{2}-\d{2}$/.test(doj) && doj > todayDateStr();
-}
-
 function mapBulkRow(row: any) {
     return {
         firstName: row["First Name"] || row["Full Name"] || "",
@@ -276,6 +265,29 @@ const BULK_REQUIRED_FIELDS: (keyof ReturnType<typeof mapBulkRow>)[] = [
 ];
 
 export default function AddUser() {
+    // White Collar (service-based) vs Blue Collar (manpower-based): whoever
+    // is added here belongs to the mode currently selected on Home.
+    const { mode: collarMode, isBlue } = useCollarMode();
+    const [blueLocations, setBlueLocations] = useState<{ id: string; name: string }[]>([]);
+    const [blueLocationId, setBlueLocationId] = useState("");
+    useEffect(() => {
+        if (!isBlue) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/blue/locations`, {
+                    cache: "no-store",
+                });
+                const json = await res.json();
+                if (!cancelled && res.ok) setBlueLocations(json.data || []);
+            } catch {
+                /* the Location dropdown just stays empty */
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [isBlue]);
     const navigate = useNavigate();
     const isMobile = useIsMobile();
     const { colors: BRAND } = useTheme();
@@ -465,14 +477,21 @@ export default function AddUser() {
     useEffect(() => {
         const fetchReportingManagers = async () => {
             try {
-                const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/employees`, {
-                    cache: "no-store",
-                });
+                // White mode: same list as before. Blue mode: managers can be
+                // anyone senior (incl. admins from the White side and Vertical
+                // Heads), so look across both worlds.
+                const res = await authFetch(
+                    `${import.meta.env.VITE_API_URL}/api/employees?collar=${isBlue ? "ALL" : "WHITE"}`,
+                    { cache: "no-store" }
+                );
                 if (!res.ok) throw new Error("Failed to load Reporting Managers");
                 const all = await res.json();
+                const managerRoles = isBlue
+                    ? [...REPORTING_MANAGER_ROLES, "VERTICAL_HEAD"]
+                    : REPORTING_MANAGER_ROLES;
                 setManagerUsers(
                     (all || [])
-                        .filter((e: any) => REPORTING_MANAGER_ROLES.includes(e.role))
+                        .filter((e: any) => managerRoles.includes(e.role))
                         .map((e: any) => ({
                             id: e.id,
                             name: e.name,
@@ -485,7 +504,7 @@ export default function AddUser() {
             }
         };
         fetchReportingManagers();
-    }, []);
+    }, [isBlue]);
 
     // Final dropdown list: real managers first, then custom ones, de-duplicated
     // by email (case-insensitive) and sorted by name. Derived from both
@@ -663,132 +682,28 @@ export default function AddUser() {
         alert("Password copied!");
     };
 
-    // Bulk-upload template with Excel dropdown validation (same idea as
-    // Data > Data Validation in Excel) so wrong values can't be typed:
-    //   Designation / Department / Teams / Reporting Manager / Role  -> list
-    //   Date of Birth    -> date, must be at least 18 years ago
-    //   Date of Joining  -> date, cannot be in the future
-    //   Email            -> must contain "@"
-    // The list values live on a hidden "Lists" sheet (a range reference
-    // has no 255-character limit like an inline list does).
-    const downloadTemplate = async () => {
-        const ExcelJS = (await import("exceljs")).default;
-        const wb = new ExcelJS.Workbook();
-        const ws = wb.addWorksheet("Users");
-        const lists = wb.addWorksheet("Lists", { state: "hidden" });
-
-        const MAX_ROW = 1000;
-        const columns = [
-            { header: "Full Name", width: 22 },
-            { header: "Email", width: 30 },
-            { header: "Contact Number", width: 16 },
-            { header: "Employee ID", width: 14 },
-            { header: "Designation", width: 24 },
-            { header: "Department", width: 20 },
-            { header: "Date of Birth", width: 16 },
-            { header: "Date of Joining", width: 16 },
-            { header: "Reporting Manager", width: 30 },
-            { header: "Teams", width: 20 },
-            { header: "Password", width: 16 },
-            { header: "Role", width: 18 },
-        ];
-        ws.columns = columns.map((c) => ({ header: c.header, key: c.header, width: c.width }));
-        ws.getRow(1).font = { bold: true };
-        ws.views = [{ state: "frozen", ySplit: 1 }];
-
-        const colLetter = (header: string) =>
-            ws.getColumn(columns.findIndex((c) => c.header === header) + 1).letter;
-
-        // dropdown sources — exactly what the Add User form's dropdowns offer
-        const listSources: { header: string; values: string[] }[] = [
-            { header: "Designation", values: designationOptions },
-            { header: "Department", values: departmentOptions },
-            { header: "Teams", values: teamsOptions },
-            { header: "Reporting Manager", values: reportingManagerOptions.map((m) => m.email) },
-            { header: "Role", values: roleOptions.map((r) => r.value) },
+    const downloadTemplate = () => {
+        const templateData = [
+            {
+                "Full Name": "John Doe",
+                Email: "john.doe@company.com",
+                "Contact Number": "9876543210",
+                "Employee ID": "EMP12345",
+                Designation: "Senior Developer",
+                Department: "Tech",
+                "Date of Birth": "1995-05-10",
+                "Date of Joining": "2023-01-15",
+                "Reporting Manager": "manager@company.com",
+                Teams: "Tech",
+                Password: "",
+                Role: "TEAM_MEMBER",
+            },
         ];
 
-        listSources.forEach((src, i) => {
-            const values = Array.from(new Set(src.values.filter(Boolean)));
-            values.forEach((v, r) => {
-                lists.getCell(r + 1, i + 1).value = v;
-            });
-            if (values.length === 0) return;
-            const listCol = lists.getColumn(i + 1).letter;
-            const range = `Lists!$${listCol}$1:$${listCol}$${values.length}`;
-            const letter = colLetter(src.header);
-            (ws as any).dataValidations.add(`${letter}2:${letter}${MAX_ROW}`, {
-                type: "list",
-                allowBlank: true,
-                formulae: [range],
-                showErrorMessage: true,
-                errorStyle: "stop",
-                errorTitle: "Invalid value",
-                error: `Please pick a ${src.header} from the dropdown list.`,
-            });
-        });
-
-        const emailCol = colLetter("Email");
-        const dobCol = colLetter("Date of Birth");
-        const dojCol = colLetter("Date of Joining");
-        (ws as any).dataValidations.add(`${emailCol}2:${emailCol}${MAX_ROW}`, {
-            type: "custom",
-            allowBlank: true,
-            formulae: [`ISNUMBER(FIND("@",${emailCol}2))`],
-            showErrorMessage: true,
-            errorStyle: "stop",
-            errorTitle: "Invalid email",
-            error: "Enter a valid company email address.",
-        });
-        (ws as any).dataValidations.add(`${dobCol}2:${dobCol}${MAX_ROW}`, {
-            type: "custom",
-            allowBlank: true,
-            formulae: [`AND(ISNUMBER(${dobCol}2),${dobCol}2<=EDATE(TODAY(),-216))`],
-            showErrorMessage: true,
-            errorStyle: "stop",
-            errorTitle: "Invalid Date of Birth",
-            error: "Employee must be at least 18 years old.",
-        });
-        (ws as any).dataValidations.add(`${dojCol}2:${dojCol}${MAX_ROW}`, {
-            type: "custom",
-            allowBlank: true,
-            formulae: [`AND(ISNUMBER(${dojCol}2),${dojCol}2<=TODAY())`],
-            showErrorMessage: true,
-            errorStyle: "stop",
-            errorTitle: "Invalid Date of Joining",
-            error: "Date of Joining cannot be in the future.",
-        });
-        ws.getColumn(dobCol).numFmt = "yyyy-mm-dd";
-        ws.getColumn(dojCol).numFmt = "yyyy-mm-dd";
-
-        // one sample row, using real dropdown values where available
-        const first = (header: string, fallback: string) =>
-            listSources.find((l) => l.header === header)?.values.find(Boolean) || fallback;
-        ws.addRow({
-            "Full Name": "John Doe",
-            Email: "john.doe@company.com",
-            "Contact Number": "9876543210",
-            "Employee ID": "EMP12345",
-            Designation: first("Designation", ""),
-            Department: first("Department", ""),
-            "Date of Birth": new Date(Date.UTC(1995, 4, 10)),
-            "Date of Joining": new Date(Date.UTC(2023, 0, 15)),
-            "Reporting Manager": first("Reporting Manager", ""),
-            Teams: first("Teams", ""),
-            Password: "",
-            Role: first("Role", "TEAM_MEMBER"),
-        });
-
-        const buffer = await wb.xlsx.writeBuffer();
-        const blob = new Blob([buffer], {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "bulk_add_users_template.xlsx";
-        a.click();
-        URL.revokeObjectURL(url);
+        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Users");
+        XLSX.writeFile(workbook, "bulk_add_users_template.xlsx");
     };
 
     const handleBulkUpload = async () => {
@@ -846,14 +761,6 @@ export default function AddUser() {
                     });
                     return;
                 }
-                if (isFutureDoj(u.doj)) {
-                    preFailedResults.push({
-                        email: u.email,
-                        success: false,
-                        message: DOJ_FUTURE_ERROR,
-                    });
-                    return;
-                }
                 if (!isProfessionalEmail(u.email)) {
                     preFailedResults.push({
                         email: u.email,
@@ -884,7 +791,9 @@ export default function AddUser() {
                     {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ users: validUsers }),
+                        body: JSON.stringify({
+                            users: validUsers.map((u: any) => ({ ...u, collarType: collarMode })),
+                        }),
                     }
                 );
 
@@ -940,11 +849,6 @@ export default function AddUser() {
             return;
         }
 
-        if (isFutureDoj(formData.doj)) {
-            setError(DOJ_FUTURE_ERROR);
-            return;
-        }
-
         if (!isProfessionalEmail(formData.email)) {
             setError(
                 "Please enter a professional company email (e.g. abc@osoitech.com). Gmail, Yahoo, Outlook etc. are not allowed."
@@ -988,6 +892,8 @@ export default function AddUser() {
                     password: passwordToSend,
                     firstName,
                     lastName,
+                    collarType: collarMode,
+                    locationId: isBlue ? blueLocationId || null : null,
                 }),
             });
 
@@ -1267,7 +1173,9 @@ export default function AddUser() {
                                     </div>
                                     <div>
                                         <label style={labelStyle("designation")}>
-                                            Designation *
+                                            {isBlue
+                                                ? "Role / Designation * (e.g. Office Boy)"
+                                                : "Designation *"}
                                         </label>
                                         <select
                                             style={styles.input}
@@ -1484,6 +1392,37 @@ export default function AddUser() {
                                             }}
                                         />
                                     </div>
+                                    {isBlue && (
+                                        <div>
+                                            <label style={styles.label}>
+                                                Location (where they work)
+                                            </label>
+                                            <select
+                                                style={styles.input}
+                                                value={blueLocationId}
+                                                onChange={(e) => setBlueLocationId(e.target.value)}
+                                            >
+                                                <option value="">Select Location</option>
+                                                {blueLocations.map((l) => (
+                                                    <option key={l.id} value={l.id}>
+                                                        {l.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {blueLocations.length === 0 && (
+                                                <div
+                                                    style={{
+                                                        fontSize: 11,
+                                                        color: "#6B7280",
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    No locations yet — add them under Locations &
+                                                    Services.
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     <div>
                                         <label style={labelStyle("dob")}>Date of Birth</label>
                                         <input
@@ -1508,16 +1447,9 @@ export default function AddUser() {
                                             type="date"
                                             style={styles.input}
                                             value={formData.doj}
-                                            max={todayDateStr()}
-                                            onChange={(e) => {
-                                                const v = e.target.value;
-                                                if (isFutureDoj(v)) {
-                                                    setError(DOJ_FUTURE_ERROR);
-                                                    return;
-                                                }
-                                                if (error === DOJ_FUTURE_ERROR) setError("");
-                                                setFormData({ ...formData, doj: v });
-                                            }}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, doj: e.target.value })
+                                            }
                                         />
                                     </div>
                                 </div>

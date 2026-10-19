@@ -140,8 +140,11 @@ type ServiceCaseRow = {
     quantity: number | null;
     amount: number | null;
     submissionStatus: "PENDING" | "SUBMITTED";
-    submissionType: "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | null;
+    submissionType:
+        "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | "OUT_OF_SCOPE" | null;
     queryText: string | null;
+    // reason typed when the status was "Out of Scope"
+    outOfScopeReason?: string | null;
     submittedAt: string | null;
     // NEW: who actually pressed Submit (the employee, or a manager on their
     // behalf). Backend must send these.
@@ -202,6 +205,8 @@ function submissionLabel(type: ServiceCaseRow["submissionType"]) {
             return "Completed by Client";
         case "QUERY":
             return "Query";
+        case "OUT_OF_SCOPE":
+            return "Out of Scope";
         default:
             return "Not Submitted";
     }
@@ -1406,6 +1411,9 @@ export default function ProductionReport() {
                                                                     background: subPill.background,
                                                                     color: subPill.color,
                                                                 }}
+                                                                title={
+                                                                    r.outOfScopeReason || undefined
+                                                                }
                                                             >
                                                                 {subPill.label}
                                                             </span>
@@ -1593,6 +1601,9 @@ export default function ProductionReport() {
                                                                     background: subPill.background,
                                                                     color: subPill.color,
                                                                 }}
+                                                                title={
+                                                                    r.outOfScopeReason || undefined
+                                                                }
                                                             >
                                                                 {subPill.label}
                                                             </span>

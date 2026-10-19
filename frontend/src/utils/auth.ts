@@ -15,6 +15,8 @@ export interface CurrentUser {
     lastName?: string;
     department?: string;
     designation?: string;
+    // "BLUE" = manpower-based (Blue Collar) account; anything else = White Collar.
+    collarType?: "WHITE" | "BLUE";
 }
 
 export function getCurrentUser(): CurrentUser | null {

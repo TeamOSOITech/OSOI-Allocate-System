@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
+import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import MyPendingApprovals from "../../components/mypendingapprovals";
 
@@ -43,6 +44,9 @@ type Product = {
     // informational, same team names as the Teams dropdown on the Add
     // User / Employees pages.
     teams?: string[];
+    // NEW: whether this service comes with a case number. Missing/null on
+    // older rows is treated as true (the old behaviour).
+    has_case_number?: boolean;
     created_at?: string;
     updated_at?: string;
     // Stamped by the backend (see products.controller.js's
@@ -68,6 +72,7 @@ type ProductForm = {
     time_taken: string;
     time_unit: string;
     teams: string[];
+    has_case_number: boolean;
 };
 
 const emptyForm: ProductForm = {
@@ -75,6 +80,7 @@ const emptyForm: ProductForm = {
     time_taken: "",
     time_unit: "",
     teams: [],
+    has_case_number: true,
 };
 
 // Shape returned by GET /api/teams — same shape used on the Employees
@@ -220,8 +226,10 @@ const TIME_TAKEN_COLUMN = "Time Taken";
 // the bulk sheet, instead of every bulk-created service starting with an
 // empty teams list that had to be tagged manually afterwards from Edit.
 const TEAMS_COLUMN = "Teams";
+// NEW: optional Case Number column — Yes / No. Blank = Yes.
+const CASE_NUMBER_COLUMN = "Case Number";
 const BULK_REQUIRED_COLUMNS_TEXT = `${PRODUCT_NAME_COLUMN}, ${TIME_TAKEN_COLUMN}`;
-const BULK_OPTIONAL_COLUMNS_TEXT = `${TEAMS_COLUMN} (comma-separated, e.g. "Tech, SD" — each team must already exist)`;
+const BULK_OPTIONAL_COLUMNS_TEXT = `${TEAMS_COLUMN} (comma-separated, e.g. "Tech, SD" — each team must already exist); ${CASE_NUMBER_COLUMN} (Yes / No — blank means Yes)`;
 
 const Products = () => {
     // Matches backend's authorize("SUPER_ADMIN") gate on POST/bulk-upload
@@ -506,6 +514,7 @@ const Products = () => {
             time_taken: product.time_taken || "",
             time_unit: product.time_unit || "",
             teams: product.teams || [],
+            has_case_number: product.has_case_number !== false,
         });
         setTeamDropdownOpen(false);
         setEditTarget(product);
@@ -705,57 +714,20 @@ const Products = () => {
     // is now generated entirely client-side with the `xlsx` package —
     // same approach already used by the Add User page's "Sample Sheet"
     // button — so the download works with zero backend changes.
-    // Teams column has an Excel dropdown (Data Validation) fed from this
-    // org's teams (same list the Add/Edit Service form offers), so a
-    // wrong or misspelt team can't be typed. The list lives on a hidden
-    // "Lists" sheet. NOTE: a dropdown picks ONE team per cell; the upload
-    // still accepts "Tech, SD" typed by hand, but Excel will reject it —
-    // services needing several teams can be tagged from Edit afterwards.
-    const handleDownloadTemplate = async () => {
-        const ExcelJS = (await import("exceljs")).default;
-        const wb = new ExcelJS.Workbook();
-        const ws = wb.addWorksheet("Services");
-        const lists = wb.addWorksheet("Lists", { state: "hidden" });
-        const MAX_ROW = 1000;
-
-        ws.columns = [
-            { header: PRODUCT_NAME_COLUMN, key: "name", width: 30 },
-            { header: TIME_TAKEN_COLUMN, key: "time", width: 16 },
-            { header: TEAMS_COLUMN, key: "teams", width: 26 },
+    const handleDownloadTemplate = () => {
+        const templateData = [
+            {
+                [PRODUCT_NAME_COLUMN]: "Inventory Sync",
+                [TIME_TAKEN_COLUMN]: "2 hours",
+                [TEAMS_COLUMN]: teamsList[0]?.name || "",
+                [CASE_NUMBER_COLUMN]: "Yes",
+            },
         ];
-        ws.getRow(1).font = { bold: true };
-        ws.views = [{ state: "frozen", ySplit: 1 }];
 
-        const teamNames = Array.from(
-            new Set(teamsList.map((t) => (t.name || "").trim()).filter(Boolean))
-        );
-        teamNames.forEach((name, i) => {
-            lists.getCell(i + 1, 1).value = name;
-        });
-        if (teamNames.length > 0) {
-            (ws as any).dataValidations.add(`C2:C${MAX_ROW}`, {
-                type: "list",
-                allowBlank: true,
-                formulae: [`Lists!$A$1:$A$${teamNames.length}`],
-                showErrorMessage: true,
-                errorStyle: "stop",
-                errorTitle: "Invalid team",
-                error: "Please pick a Team from the dropdown list.",
-            });
-        }
-
-        ws.getRow(2).values = ["Inventory Sync", "2 hours", teamNames[0] || ""];
-
-        const buffer = await wb.xlsx.writeBuffer();
-        const blob = new Blob([buffer], {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "bulk_add_services_template.xlsx";
-        a.click();
-        URL.revokeObjectURL(url);
+        const worksheet = XLSX.utils.json_to_sheet(templateData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Services");
+        XLSX.writeFile(workbook, "bulk_add_services_template.xlsx");
     };
 
     // Bulk upload now lives in its own modal (matching the Add User page's
@@ -918,6 +890,26 @@ const Products = () => {
                         <option value="hours">Hours</option>
                     </select>
                 </div>
+            </div>
+
+            {/* NEW: Case Number — will this service have a case number or
+                not? Shown on both Add and Edit (this fieldset is shared).
+                Defaults to Yes. */}
+            <div style={{ gridColumn: "1 / -1" }}>
+                <label style={styles.formLabel}>Case Number</label>
+                <select
+                    style={styles.formInput}
+                    value={formState.has_case_number ? "yes" : "no"}
+                    onChange={(e) =>
+                        setFormState((prev) => ({
+                            ...prev,
+                            has_case_number: e.target.value === "yes",
+                        }))
+                    }
+                >
+                    <option value="yes">Yes — this service has a case number</option>
+                    <option value="no">No — this service has no case number</option>
+                </select>
             </div>
 
             {/* NEW: Teams — collapsed "Select Team" dropdown, multi-select via
@@ -1666,6 +1658,13 @@ const Products = () => {
                                 <span style={styles.detailsLabel}>Time Taken</span>
                                 <span style={styles.detailsValue}>
                                     {formatTimeTaken(viewDetails.time_taken, viewDetails.time_unit)}
+                                </span>
+                            </div>
+
+                            <div style={styles.detailsRow}>
+                                <span style={styles.detailsLabel}>Case Number</span>
+                                <span style={styles.detailsValue}>
+                                    {viewDetails.has_case_number === false ? "No" : "Yes"}
                                 </span>
                             </div>
 

@@ -13,8 +13,10 @@ import { useTheme, THEMES } from "../context/themecontext";
 import type { ThemeName } from "../context/themecontext";
 import { useOrgSettings, saveCaseNumberRequired } from "../context/orgsettings";
 import { fontFamily } from "../styles/theme";
+import { useCollarMode } from "../context/collarmode";
+import CollarToggle from "./collartoggle";
 
-type SectionKey = "appearance" | "logo" | "work" | "plan";
+type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode";
 
 interface Props {
     open: boolean;
@@ -89,6 +91,8 @@ export default function SettingsModal({
     onLogoChange,
 }: Props) {
     const navigate = useNavigate();
+    // White Collar / Blue Collar switch lives here (admin-side roles only).
+    const { mode: collarMode, canToggle: canSwitchMode } = useCollarMode();
     const { colors: BRAND, themeName, setThemeName } = useTheme();
     const { caseNumberRequired } = useOrgSettings();
     const [section, setSection] = useState<SectionKey>("appearance");
@@ -136,6 +140,9 @@ export default function SettingsModal({
 
     const nav: { key: SectionKey; label: string; icon: string }[] = [
         { key: "appearance", label: "Appearance", icon: "ti-palette" },
+        ...(canSwitchMode
+            ? [{ key: "mode" as SectionKey, label: "Work mode", icon: "ti-switch-horizontal" }]
+            : []),
         ...(canEditLogo ? [{ key: "logo" as SectionKey, label: "Logo", icon: "ti-photo" }] : []),
         { key: "plan", label: "Plan & upgrade", icon: "ti-rocket" },
         ...(canEditWorkRules
@@ -327,6 +334,40 @@ export default function SettingsModal({
                                             </button>
                                         );
                                     })}
+                                </div>
+                            </>
+                        )}
+
+                        {section === "mode" && canSwitchMode && (
+                            <>
+                                <h4 style={s.h2}>Work mode</h4>
+                                <p style={s.sub}>
+                                    Switch between <b>White Collar</b> (service-based work) and{" "}
+                                    <b>Blue Collar</b> (manpower-based work). The menu, Add User and
+                                    Employee Preview then show only that mode's people and pages.
+                                </p>
+                                <div style={s.card}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontWeight: 600, fontSize: 14 }}>
+                                            Current mode:{" "}
+                                            {collarMode === "BLUE" ? "Blue Collar" : "White Collar"}
+                                        </div>
+                                        <div
+                                            style={{
+                                                fontSize: 12.5,
+                                                color: "#767F92",
+                                                marginTop: 2,
+                                            }}
+                                        >
+                                            Saved on this device. Switching takes you back to Home.
+                                        </div>
+                                    </div>
+                                    <CollarToggle
+                                        onChange={() => {
+                                            onClose();
+                                            navigate("/report");
+                                        }}
+                                    />
                                 </div>
                             </>
                         )}
