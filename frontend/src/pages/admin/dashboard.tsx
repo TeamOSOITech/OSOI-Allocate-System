@@ -66,6 +66,17 @@ function todayStr() {
     return `${y}-${m}-${day}`;
 }
 
+// Local-day [start, end] as ISO timestamps for "YYYY-MM-DD" bounds —
+// used to filter by allocated_at / submitted_at (the real event time).
+function dayBoundsISO(fromDate: string, toDate: string): { start: string; end: string } {
+    const [fy, fm, fd] = fromDate.split("-").map(Number);
+    const [ty, tm, td] = toDate.split("-").map(Number);
+    return {
+        start: new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString(),
+        end: new Date(ty, tm - 1, td, 23, 59, 59, 999).toISOString(),
+    };
+}
+
 function formatDisplayDate(iso: string) {
     const [y, m, d] = iso.split("-");
     if (!y || !m || !d) return iso;
@@ -744,54 +755,60 @@ export default function Dashboard({ user }: DashboardProps) {
     // SUBMITTED) by the assigned employee for today's work date.
     const [caseCompletedCount, setCaseCompletedCount] = useState(0);
     const [caseCountsLoading, setCaseCountsLoading] = useState(true);
-    const caseRemainingCount = caseTotalCount - caseAllocatedCount;
+    const [caseRemainingCount, setCaseRemainingCount] = useState(0);
 
     const fetchCaseCounts = async (silent = false) => {
         if (!silent) setCaseCountsLoading(true);
         try {
-            const baseParams = new URLSearchParams();
-            baseParams.set("page", "1");
-            baseParams.set("pageSize", "1");
-            baseParams.set("workDate", todayStr());
-            // Carries forward any still-PENDING case from an earlier date
-            // instead of undercounting "Remaining" — same flag the Cases
-            // tab sends.
-            baseParams.set("includeBacklog", "true");
+            const { start, end } = dayBoundsISO(todayStr(), todayStr());
+            const mk = (extra: Record<string, string>) => {
+                const p = new URLSearchParams({ page: "1", pageSize: "1", ...extra });
+                return authFetch(`${API_BASE}/api/service-cases?${p.toString()}`);
+            };
 
-            const allocatedParams = new URLSearchParams(baseParams);
-            allocatedParams.set("allocationStatus", "ALLOCATED");
-
-            const completedParams = new URLSearchParams(baseParams);
-            completedParams.set("submissionStatus", "SUBMITTED");
-
-            const [totalRes, allocatedRes, completedRes] = await Promise.all([
-                authFetch(`${API_BASE}/api/service-cases?${baseParams.toString()}`),
-                authFetch(`${API_BASE}/api/service-cases?${allocatedParams.toString()}`),
-                authFetch(`${API_BASE}/api/service-cases?${completedParams.toString()}`),
+            // Remaining = every still-unallocated case in the pool
+            //   (today's + carried-over backlog; rollover returns old
+            //   unfinished cases to PENDING, so work_date <= today).
+            // Allocated = cases whose allocation happened TODAY
+            //   (allocated_at), whatever their work_date is.
+            // Completed = cases submitted TODAY (submitted_at).
+            // Total     = Remaining + Allocated today.
+            const [remRes, allocRes, compRes] = await Promise.all([
+                mk({
+                    workDate: todayStr(),
+                    includeBacklog: "true",
+                    allocationStatus: "PENDING",
+                }),
+                mk({
+                    allocationStatus: "ALLOCATED",
+                    allocatedFrom: start,
+                    allocatedTo: end,
+                }),
+                mk({
+                    submissionStatus: "SUBMITTED",
+                    submittedFrom: start,
+                    submittedTo: end,
+                }),
             ]);
-            const [totalJson, allocatedJson, completedJson] = await Promise.all([
-                totalRes.json(),
-                allocatedRes.json(),
-                completedRes.json(),
+            const [remJson, allocJson, compJson] = await Promise.all([
+                remRes.json(),
+                allocRes.json(),
+                compRes.json(),
             ]);
-            setCaseCompletedCount(
-                completedRes.ok && completedJson.success
-                    ? (completedJson.pagination?.total ?? 0)
-                    : 0
-            );
-            setCaseTotalCount(
-                totalRes.ok && totalJson.success ? (totalJson.pagination?.total ?? 0) : 0
-            );
-            setCaseAllocatedCount(
-                allocatedRes.ok && allocatedJson.success
-                    ? (allocatedJson.pagination?.total ?? 0)
-                    : 0
-            );
+            const num = (res: Response, json: any) =>
+                res.ok && json.success ? (json.pagination?.total ?? 0) : 0;
+            const remaining = num(remRes, remJson);
+            const allocated = num(allocRes, allocJson);
+            setCaseRemainingCount(remaining);
+            setCaseAllocatedCount(allocated);
+            setCaseCompletedCount(num(compRes, compJson));
+            setCaseTotalCount(remaining + allocated);
         } catch (err) {
             console.error("Failed to fetch today's case counts:", err);
             if (!silent) {
                 setCaseTotalCount(0);
                 setCaseAllocatedCount(0);
+                setCaseRemainingCount(0);
                 setCaseCompletedCount(0);
             }
         } finally {
@@ -890,12 +907,13 @@ export default function Dashboard({ user }: DashboardProps) {
         async (mode: "month" | "year", key: string): Promise<number | null> => {
             try {
                 const { from, to } = periodRange(mode, key);
+                const { start, end } = dayBoundsISO(from, to);
                 const params = new URLSearchParams({
                     page: "1",
                     pageSize: "1",
                     submissionStatus: "SUBMITTED",
-                    workDateFrom: from,
-                    workDateTo: to,
+                    submittedFrom: start,
+                    submittedTo: end,
                 });
                 const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
                 const json = await res.json();
