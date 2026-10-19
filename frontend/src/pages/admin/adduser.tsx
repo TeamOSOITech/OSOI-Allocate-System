@@ -4,7 +4,6 @@ import { useRoleLabels } from "../../context/roleLabelsContext";
 import { getCurrentUser } from "../../utils/auth";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
-import { safeSheet } from "../../utils/safeSheet";
 import { useNavigate } from "react-router-dom";
 //import VoiceAssistant from "../../components/voiceAssistant";
 //import { speak } from "../../utils/speak";
@@ -664,28 +663,132 @@ export default function AddUser() {
         alert("Password copied!");
     };
 
-    const downloadTemplate = () => {
-        const templateData = [
-            {
-                "Full Name": "John Doe",
-                Email: "john.doe@company.com",
-                "Contact Number": "9876543210",
-                "Employee ID": "EMP12345",
-                Designation: "Senior Developer",
-                Department: "Tech",
-                "Date of Birth": "1995-05-10",
-                "Date of Joining": "2023-01-15",
-                "Reporting Manager": "manager@company.com",
-                Teams: "Tech",
-                Password: "",
-                Role: "TEAM_MEMBER",
-            },
+    // Bulk-upload template with Excel dropdown validation (same idea as
+    // Data > Data Validation in Excel) so wrong values can't be typed:
+    //   Designation / Department / Teams / Reporting Manager / Role  -> list
+    //   Date of Birth    -> date, must be at least 18 years ago
+    //   Date of Joining  -> date, cannot be in the future
+    //   Email            -> must contain "@"
+    // The list values live on a hidden "Lists" sheet (a range reference
+    // has no 255-character limit like an inline list does).
+    const downloadTemplate = async () => {
+        const ExcelJS = (await import("exceljs")).default;
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet("Users");
+        const lists = wb.addWorksheet("Lists", { state: "hidden" });
+
+        const MAX_ROW = 1000;
+        const columns = [
+            { header: "Full Name", width: 22 },
+            { header: "Email", width: 30 },
+            { header: "Contact Number", width: 16 },
+            { header: "Employee ID", width: 14 },
+            { header: "Designation", width: 24 },
+            { header: "Department", width: 20 },
+            { header: "Date of Birth", width: 16 },
+            { header: "Date of Joining", width: 16 },
+            { header: "Reporting Manager", width: 30 },
+            { header: "Teams", width: 20 },
+            { header: "Password", width: 16 },
+            { header: "Role", width: 18 },
+        ];
+        ws.columns = columns.map((c) => ({ header: c.header, key: c.header, width: c.width }));
+        ws.getRow(1).font = { bold: true };
+        ws.views = [{ state: "frozen", ySplit: 1 }];
+
+        const colLetter = (header: string) =>
+            ws.getColumn(columns.findIndex((c) => c.header === header) + 1).letter;
+
+        // dropdown sources — exactly what the Add User form's dropdowns offer
+        const listSources: { header: string; values: string[] }[] = [
+            { header: "Designation", values: designationOptions },
+            { header: "Department", values: departmentOptions },
+            { header: "Teams", values: teamsOptions },
+            { header: "Reporting Manager", values: reportingManagerOptions.map((m) => m.email) },
+            { header: "Role", values: roleOptions.map((r) => r.value) },
         ];
 
-        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Users");
-        XLSX.writeFile(workbook, "bulk_add_users_template.xlsx");
+        listSources.forEach((src, i) => {
+            const values = Array.from(new Set(src.values.filter(Boolean)));
+            values.forEach((v, r) => {
+                lists.getCell(r + 1, i + 1).value = v;
+            });
+            if (values.length === 0) return;
+            const listCol = lists.getColumn(i + 1).letter;
+            const range = `Lists!$${listCol}$1:$${listCol}$${values.length}`;
+            const letter = colLetter(src.header);
+            (ws as any).dataValidations.add(`${letter}2:${letter}${MAX_ROW}`, {
+                type: "list",
+                allowBlank: true,
+                formulae: [range],
+                showErrorMessage: true,
+                errorStyle: "stop",
+                errorTitle: "Invalid value",
+                error: `Please pick a ${src.header} from the dropdown list.`,
+            });
+        });
+
+        const emailCol = colLetter("Email");
+        const dobCol = colLetter("Date of Birth");
+        const dojCol = colLetter("Date of Joining");
+        (ws as any).dataValidations.add(`${emailCol}2:${emailCol}${MAX_ROW}`, {
+            type: "custom",
+            allowBlank: true,
+            formulae: [`ISNUMBER(FIND("@",${emailCol}2))`],
+            showErrorMessage: true,
+            errorStyle: "stop",
+            errorTitle: "Invalid email",
+            error: "Enter a valid company email address.",
+        });
+        (ws as any).dataValidations.add(`${dobCol}2:${dobCol}${MAX_ROW}`, {
+            type: "custom",
+            allowBlank: true,
+            formulae: [`AND(ISNUMBER(${dobCol}2),${dobCol}2<=EDATE(TODAY(),-216))`],
+            showErrorMessage: true,
+            errorStyle: "stop",
+            errorTitle: "Invalid Date of Birth",
+            error: "Employee must be at least 18 years old.",
+        });
+        (ws as any).dataValidations.add(`${dojCol}2:${dojCol}${MAX_ROW}`, {
+            type: "custom",
+            allowBlank: true,
+            formulae: [`AND(ISNUMBER(${dojCol}2),${dojCol}2<=TODAY())`],
+            showErrorMessage: true,
+            errorStyle: "stop",
+            errorTitle: "Invalid Date of Joining",
+            error: "Date of Joining cannot be in the future.",
+        });
+        ws.getColumn(dobCol).numFmt = "yyyy-mm-dd";
+        ws.getColumn(dojCol).numFmt = "yyyy-mm-dd";
+
+        // one sample row, using real dropdown values where available
+        const first = (header: string, fallback: string) =>
+            listSources.find((l) => l.header === header)?.values.find(Boolean) || fallback;
+        ws.addRow({
+            "Full Name": "John Doe",
+            Email: "john.doe@company.com",
+            "Contact Number": "9876543210",
+            "Employee ID": "EMP12345",
+            Designation: first("Designation", ""),
+            Department: first("Department", ""),
+            "Date of Birth": new Date(Date.UTC(1995, 4, 10)),
+            "Date of Joining": new Date(Date.UTC(2023, 0, 15)),
+            "Reporting Manager": first("Reporting Manager", ""),
+            Teams: first("Teams", ""),
+            Password: "",
+            Role: first("Role", "TEAM_MEMBER"),
+        });
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "bulk_add_users_template.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
     };
 
     const handleBulkUpload = async () => {

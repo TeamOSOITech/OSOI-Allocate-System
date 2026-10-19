@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
-import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import MyPendingApprovals from "../../components/mypendingapprovals";
 
@@ -706,19 +705,57 @@ const Products = () => {
     // is now generated entirely client-side with the `xlsx` package —
     // same approach already used by the Add User page's "Sample Sheet"
     // button — so the download works with zero backend changes.
-    const handleDownloadTemplate = () => {
-        const templateData = [
-            {
-                [PRODUCT_NAME_COLUMN]: "Inventory Sync",
-                [TIME_TAKEN_COLUMN]: "2 hours",
-                [TEAMS_COLUMN]: teamsList[0]?.name || "",
-            },
-        ];
+    // Teams column has an Excel dropdown (Data Validation) fed from this
+    // org's teams (same list the Add/Edit Service form offers), so a
+    // wrong or misspelt team can't be typed. The list lives on a hidden
+    // "Lists" sheet. NOTE: a dropdown picks ONE team per cell; the upload
+    // still accepts "Tech, SD" typed by hand, but Excel will reject it —
+    // services needing several teams can be tagged from Edit afterwards.
+    const handleDownloadTemplate = async () => {
+        const ExcelJS = (await import("exceljs")).default;
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet("Services");
+        const lists = wb.addWorksheet("Lists", { state: "hidden" });
+        const MAX_ROW = 1000;
 
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Services");
-        XLSX.writeFile(workbook, "bulk_add_services_template.xlsx");
+        ws.columns = [
+            { header: PRODUCT_NAME_COLUMN, key: "name", width: 30 },
+            { header: TIME_TAKEN_COLUMN, key: "time", width: 16 },
+            { header: TEAMS_COLUMN, key: "teams", width: 26 },
+        ];
+        ws.getRow(1).font = { bold: true };
+        ws.views = [{ state: "frozen", ySplit: 1 }];
+
+        const teamNames = Array.from(
+            new Set(teamsList.map((t) => (t.name || "").trim()).filter(Boolean))
+        );
+        teamNames.forEach((name, i) => {
+            lists.getCell(i + 1, 1).value = name;
+        });
+        if (teamNames.length > 0) {
+            (ws as any).dataValidations.add(`C2:C${MAX_ROW}`, {
+                type: "list",
+                allowBlank: true,
+                formulae: [`Lists!$A$1:$A$${teamNames.length}`],
+                showErrorMessage: true,
+                errorStyle: "stop",
+                errorTitle: "Invalid team",
+                error: "Please pick a Team from the dropdown list.",
+            });
+        }
+
+        ws.getRow(2).values = ["Inventory Sync", "2 hours", teamNames[0] || ""];
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "bulk_add_services_template.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
     };
 
     // Bulk upload now lives in its own modal (matching the Add User page's
