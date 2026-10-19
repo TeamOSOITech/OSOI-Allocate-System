@@ -590,6 +590,23 @@ async function listServiceCases(req, res) {
       }
     }
 
+    // Dashboard KPI cards: "allocated today" / "completed today" must be
+    // judged by WHEN the allocation / submission actually happened, not by
+    // work_date (a carried-over case keeps its old work_date but is
+    // allocated/submitted today). These take full ISO timestamps.
+    for (const key of [
+      "allocatedFrom",
+      "allocatedTo",
+      "submittedFrom",
+      "submittedTo",
+    ]) {
+      if (req.query[key] && Number.isNaN(Date.parse(String(req.query[key])))) {
+        return res
+          .status(400)
+          .json({ success: false, message: `${key} must be an ISO date-time` });
+      }
+    }
+
     // Applies every filter (productId, date range, client/subclient,
     // the search box's OR clause, etc.) to a freshly-created query
     // builder. Supabase-js query builders aren't cloneable, so this
@@ -665,6 +682,18 @@ async function listServiceCases(req, res) {
       }
       if (req.query.submissionStatus) {
         filtered = filtered.eq("submission_status", req.query.submissionStatus);
+      }
+      if (req.query.allocatedFrom) {
+        filtered = filtered.gte("allocated_at", req.query.allocatedFrom);
+      }
+      if (req.query.allocatedTo) {
+        filtered = filtered.lte("allocated_at", req.query.allocatedTo);
+      }
+      if (req.query.submittedFrom) {
+        filtered = filtered.gte("submitted_at", req.query.submittedFrom);
+      }
+      if (req.query.submittedTo) {
+        filtered = filtered.lte("submitted_at", req.query.submittedTo);
       }
       // Quality Scores (QC) page filter. qc_status only ever holds the
       // plain values 'PENDING' / 'PASSED' / 'FAILED'.
