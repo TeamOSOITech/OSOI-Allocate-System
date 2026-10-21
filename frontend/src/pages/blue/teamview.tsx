@@ -6,6 +6,7 @@
 // location or Standby from here.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { getCurrentUser } from "../../utils/auth";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
@@ -43,6 +44,173 @@ type TeamView = {
 
 const isAway = (s: string) => s === "LEAVE" || s === "ABSENT";
 
+// ---- design tokens (soft gradient header, white rounded cards) ----
+const NAVY = "#1B2559";
+const MUTED = "#6B7280";
+const LINE = "#EEF1F8";
+const initials = (name: string) =>
+    name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase())
+        .join("") || "?";
+
+const filterBox: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#fff",
+    borderRadius: radius.sm,
+    padding: "7px 11px",
+    boxShadow: "0 1px 6px rgba(30,64,175,0.08)",
+    color: "#374151",
+};
+const bareField: CSSProperties = {
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    color: "#374151",
+    fontFamily: "inherit",
+};
+const chip = (bg: string, fg: string): CSSProperties => ({
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "5px 12px",
+    borderRadius: radius.pill,
+    background: bg,
+    color: fg,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+});
+const teamCard = (_accent: string): CSSProperties => ({
+    position: "relative",
+    overflow: "hidden",
+    background: "#fff",
+    borderRadius: radius.lg,
+    padding: "12px 14px 12px 18px",
+    boxShadow: "0 4px 14px rgba(30,64,175,0.07)",
+    border: `1px solid ${LINE}`,
+});
+const accentBar = (accent: string): CSSProperties => ({
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    background: accent,
+});
+const BLUE_BAR = "linear-gradient(180deg,#3B82F6,#6366F1)";
+const AMBER_BAR = "linear-gradient(180deg,#F59E0B,#FCD34D)";
+
+const AVATARS: [string, string][] = [
+    ["#DBEAFE", "#1D4ED8"],
+    ["#EDE9FE", "#6D28D9"],
+    ["#FCE7F3", "#BE185D"],
+    ["#DCFCE7", "#15803D"],
+    ["#FEF3C7", "#B45309"],
+    ["#CFFAFE", "#0E7490"],
+];
+const avatarColors = (name: string) => {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return AVATARS[h % AVATARS.length];
+};
+const STATUS_DOT: Record<string, string> = {
+    PRESENT: "#22C55E",
+    HALF_DAY: "#F59E0B",
+    LEAVE: "#EF4444",
+    ABSENT: "#9CA3AF",
+};
+
+// hover polish - only for people who have not asked for reduced motion
+const TV_CSS = `
+@media (prefers-reduced-motion: no-preference) {
+  .tv-card { transition: transform .18s ease, box-shadow .18s ease; }
+  .tv-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(30,64,175,.14) !important; }
+  .tv-stat { transition: transform .18s ease; }
+  .tv-stat:hover { transform: translateY(-1px); }
+}
+.tv-row { transition: background .15s ease; }
+.tv-row:hover { background: #F6F8FF; }
+`;
+
+function StatTile({
+    icon,
+    label,
+    value,
+    bg,
+    fg,
+}: {
+    icon: string;
+    label: string;
+    value: number;
+    bg: string;
+    fg: string;
+}) {
+    return (
+        <div
+            className="tv-stat"
+            style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                background: "#fff",
+                border: `1px solid ${LINE}`,
+                borderRadius: radius.md,
+                padding: "7px 16px 7px 8px",
+                boxShadow: "0 1px 6px rgba(30,64,175,0.08)",
+            }}
+        >
+            <span
+                aria-hidden="true"
+                style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: radius.sm,
+                    background: bg,
+                    color: fg,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 17,
+                }}
+            >
+                <i className={`ti ${icon}`} />
+            </span>
+            <div style={{ textAlign: "left" }}>
+                <div
+                    style={{
+                        fontSize: fontSize["2xl"],
+                        fontWeight: fontWeight.bold,
+                        color: NAVY,
+                        lineHeight: 1.1,
+                    }}
+                >
+                    {value}
+                </div>
+                <div style={{ fontSize: fontSize.xs, color: MUTED }}>{label}</div>
+            </div>
+        </div>
+    );
+}
+
+function Filter({ icon, children }: { icon: string; children: ReactNode }) {
+    return (
+        <label style={filterBox}>
+            <i
+                className={`ti ${icon}`}
+                aria-hidden="true"
+                style={{ fontSize: 15, color: "#4B5563" }}
+            />
+            {children}
+        </label>
+    );
+}
+
 export default function BlueTeamView() {
     const isMobile = useIsMobileBlue();
     const role = getCurrentUser()?.role || "";
@@ -57,6 +225,15 @@ export default function BlueTeamView() {
     const [locFilter, setLocFilter] = useState("");
     const [search, setSearch] = useState("");
     const [moving, setMoving] = useState<Person | null>(null);
+    // which team cards have "View all" open (key = manager::team)
+    const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+    const toggleGroup = (k: string) =>
+        setOpenGroups((prev) => {
+            const next = new Set(prev);
+            if (next.has(k)) next.delete(k);
+            else next.add(k);
+            return next;
+        });
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -187,160 +364,625 @@ export default function BlueTeamView() {
 
     const renderPerson = (p: Person) => {
         const meta = STATUS_META[p.status] || STATUS_META.PRESENT;
+        const [avBg, avFg] = avatarColors(p.name);
         return (
             <div
                 key={p.id}
+                className="tv-row"
                 style={{
                     display: "flex",
                     alignItems: "center",
                     gap: 10,
-                    padding: "9px 0",
-                    borderTop: "1px solid #F3F4F6",
                     flexWrap: "wrap",
+                    margin: "0 -8px",
+                    padding: "8px",
+                    borderRadius: radius.md,
+                    borderTop: `1px solid ${LINE}`,
                 }}
             >
-                <div style={{ flex: "1 1 160px", minWidth: 0 }}>
-                    <div style={{ fontWeight: fontWeight.semibold, fontSize: fontSize.base }}>
-                        {p.name}
+                <div
+                    style={{
+                        flex: "1 1 150px",
+                        minWidth: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        textAlign: "left",
+                    }}
+                >
+                    <div style={{ position: "relative", flex: "0 0 36px" }}>
+                        <div
+                            aria-hidden="true"
+                            style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: radius.circle,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: avBg,
+                                color: avFg,
+                                fontWeight: fontWeight.bold,
+                                fontSize: fontSize.xs,
+                            }}
+                        >
+                            {initials(p.name)}
+                        </div>
+                        <span
+                            title={meta.label}
+                            style={{
+                                position: "absolute",
+                                right: -1,
+                                bottom: -1,
+                                width: 10,
+                                height: 10,
+                                borderRadius: radius.circle,
+                                background: STATUS_DOT[p.status] || "#22C55E",
+                                border: "2px solid #fff",
+                            }}
+                        />
                     </div>
-                    <div style={{ fontSize: fontSize.xs, color: "#6B7280" }}>
-                        {p.designation || "No role set"}
+                    <div style={{ minWidth: 0 }}>
+                        <div
+                            style={{
+                                fontWeight: fontWeight.semibold,
+                                fontSize: fontSize.md,
+                                color: NAVY,
+                            }}
+                        >
+                            {p.name}
+                        </div>
+                        <div style={{ fontSize: fontSize.xs, color: MUTED }}>
+                            {p.designation || "No role set"}
+                            {p.submittedCount > 0 && (
+                                <span style={{ color: "#6D28D9", fontWeight: fontWeight.medium }}>
+                                    {" "}
+                                    · {p.submittedCount} tasks done
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </div>
-                <span style={ui.pill("#EFF6FF", "#1E40AF")}>
-                    <i className="ti ti-map-pin" aria-hidden="true" />{" "}
-                    {p.locationName || "No location"}
-                </span>
-                {p.submittedCount > 0 && (
-                    <span style={ui.pill("#F5F3FF", "#5B21B6")}>{p.submittedCount} tasks done</span>
-                )}
-                {canMark ? (
-                    <select
-                        value={p.status}
-                        onChange={(e) => markStatus(p, e.target.value)}
+
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span
                         style={{
-                            ...ui.input,
-                            padding: "4px 8px",
-                            fontSize: fontSize.sm,
-                            background: meta.bg,
-                            color: meta.fg,
-                            fontWeight: fontWeight.semibold,
-                            border: "none",
+                            ...chip("#EDE9FE", "#5B21B6"),
+                            padding: "4px 10px",
+                            fontSize: fontSize.xs,
                         }}
                     >
-                        {Object.entries(STATUS_META).map(([k, v]) => (
-                            <option key={k} value={k}>
-                                {v.label}
-                            </option>
-                        ))}
-                    </select>
-                ) : (
-                    <span style={ui.pill(meta.bg, meta.fg)}>{meta.label}</span>
-                )}
-                {canManage && (
-                    <button style={ui.ghostBtn} onClick={() => setMoving(p)}>
-                        <i className="ti ti-arrows-exchange" aria-hidden="true" /> Move
-                    </button>
-                )}
+                        <i className="ti ti-map-pin" aria-hidden="true" />
+                        {p.locationName || "No location"}
+                    </span>
+                    {canMark ? (
+                        <span style={{ position: "relative", display: "inline-flex" }}>
+                            <select
+                                value={p.status}
+                                onChange={(e) => markStatus(p, e.target.value)}
+                                style={{
+                                    ...bareField,
+                                    appearance: "none",
+                                    WebkitAppearance: "none",
+                                    cursor: "pointer",
+                                    padding: "5px 26px 5px 12px",
+                                    borderRadius: radius.pill,
+                                    background: meta.bg,
+                                    color: meta.fg,
+                                    fontWeight: fontWeight.semibold,
+                                    fontSize: fontSize.sm,
+                                }}
+                            >
+                                {Object.entries(STATUS_META).map(([k, v]) => (
+                                    <option key={k} value={k}>
+                                        {v.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <i
+                                className="ti ti-chevron-down"
+                                aria-hidden="true"
+                                style={{
+                                    position: "absolute",
+                                    right: 9,
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    pointerEvents: "none",
+                                    color: meta.fg,
+                                    fontSize: 13,
+                                }}
+                            />
+                        </span>
+                    ) : (
+                        <span style={chip(meta.bg, meta.fg)}>{meta.label}</span>
+                    )}
+                    {canManage && (
+                        <button
+                            style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "5px 12px",
+                                borderRadius: radius.pill,
+                                border: "1px solid #DDE3F0",
+                                background: "#fff",
+                                color: "#3730A3",
+                                fontSize: fontSize.sm,
+                                fontWeight: fontWeight.medium,
+                                fontFamily: "inherit",
+                                cursor: "pointer",
+                            }}
+                            onClick={() => setMoving(p)}
+                        >
+                            <i className="ti ti-arrows-exchange" aria-hidden="true" /> Move
+                        </button>
+                    )}
+                </div>
             </div>
         );
     };
 
-    const renderTeam = (team: string, people: Person[]) => {
-        const need = required.get(team.toLowerCase());
+    const renderTeam = (team: string, people: Person[], groupKey: string, isStandby = false) => {
+        const need = isStandby ? undefined : required.get(team.toLowerCase());
         const present = presentByTeam.get(team.toLowerCase()) || 0;
         const short = need !== undefined ? need - present : null;
+        const presentHere = people.filter((x) => !isAway(x.status)).length;
+        const awayHere = people.length - presentHere;
+        const hasNeed = need !== undefined && need > 0;
+        const pct = hasNeed
+            ? Math.min(100, Math.round((present / need!) * 100))
+            : people.length
+              ? Math.round((presentHere / people.length) * 100)
+              : 0;
+        const barColor =
+            pct >= 100
+                ? "linear-gradient(90deg,#34D399,#10B981)"
+                : pct >= 60
+                  ? "linear-gradient(90deg,#FBBF24,#F59E0B)"
+                  : "linear-gradient(90deg,#FB7185,#EF4444)";
+
+        // locations in this team, biggest first
+        const locCount = new Map<string, number>();
+        people.forEach((x) => {
+            const k = x.locationName || "No location";
+            locCount.set(k, (locCount.get(k) || 0) + 1);
+        });
+        const locList = [...locCount.entries()].sort((x, y) => y[1] - x[1]);
+
+        // a search shows matching people straight away, so no toggle then
+        const forceOpen = search.trim() !== "";
+        const isOpen = forceOpen || openGroups.has(groupKey);
+        const accent = isStandby ? AMBER_BAR : BLUE_BAR;
+
         return (
-            <div key={team} style={{ ...ui.card, padding: 14 }}>
+            <div
+                key={groupKey}
+                className="tv-card"
+                style={{
+                    ...teamCard(accent),
+                    ...(isStandby ? { background: "#FFFBEB", borderColor: "#FDE68A" } : {}),
+                }}
+            >
+                <span style={accentBar(accent)} />
+
+                {/* title row */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div
+                        aria-hidden="true"
+                        style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: radius.sm,
+                            background: isStandby
+                                ? "linear-gradient(135deg,#F59E0B,#FBBF24)"
+                                : "linear-gradient(135deg,#3B82F6,#6366F1)",
+                            color: "#fff",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 17,
+                            boxShadow: "0 3px 8px rgba(99,102,241,0.35)",
+                        }}
+                    >
+                        <i className={isStandby ? "ti ti-armchair" : "ti ti-users-group"} />
+                    </div>
+                    <div
+                        style={{
+                            fontWeight: fontWeight.bold,
+                            fontSize: fontSize.lg,
+                            color: NAVY,
+                            flex: 1,
+                            minWidth: 110,
+                            textAlign: "left",
+                        }}
+                    >
+                        {team}
+                    </div>
+                    {short !== null && short > 0 && (
+                        <span
+                            style={{
+                                ...chip("#FEE2E2", "#991B1B"),
+                                padding: "3px 10px",
+                                fontSize: fontSize.xs,
+                            }}
+                        >
+                            Short by {short}
+                        </span>
+                    )}
+                    {short !== null && short <= 0 && hasNeed && (
+                        <span
+                            style={{
+                                ...chip("#DCFCE7", "#166534"),
+                                padding: "3px 10px",
+                                fontSize: fontSize.xs,
+                            }}
+                        >
+                            Fully staffed
+                        </span>
+                    )}
+                    {!isStandby &&
+                        (canManage ? (
+                            <label
+                                style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    fontSize: fontSize.sm,
+                                    color: MUTED,
+                                }}
+                            >
+                                Need
+                                <input
+                                    type="number"
+                                    min={0}
+                                    defaultValue={need ?? ""}
+                                    key={`${team}-${need ?? "x"}`}
+                                    placeholder="0"
+                                    style={{
+                                        ...bareField,
+                                        width: 44,
+                                        padding: "4px 8px",
+                                        borderRadius: radius.sm,
+                                        background: "#EEF4FF",
+                                        textAlign: "center",
+                                    }}
+                                    onBlur={(e) => {
+                                        const v = e.target.value;
+                                        if (v === "" || Number(v) === need) return;
+                                        saveRequirement(team, Number(v));
+                                    }}
+                                />
+                            </label>
+                        ) : (
+                            need !== undefined && (
+                                <span
+                                    style={{
+                                        ...chip("#F3F4F6", "#374151"),
+                                        padding: "3px 10px",
+                                        fontSize: fontSize.xs,
+                                    }}
+                                >
+                                    Need {need}
+                                </span>
+                            )
+                        ))}
+                </div>
+
+                {/* summary: present / absent / locations + View all */}
                 <div
                     style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 10,
+                        gap: 6,
                         flexWrap: "wrap",
-                        marginBottom: 4,
+                        marginTop: 10,
                     }}
                 >
-                    <div style={{ fontWeight: fontWeight.bold, fontSize: fontSize.lg, flex: 1 }}>
-                        {team}
-                    </div>
-                    <span style={ui.pill("#DCFCE7", "#166534")}>
-                        {present} present / {people.length}
+                    <span
+                        style={{
+                            ...chip("#DCFCE7", "#166534"),
+                            padding: "3px 10px",
+                            fontSize: fontSize.xs,
+                        }}
+                    >
+                        <i className="ti ti-circle-check-filled" aria-hidden="true" />
+                        {presentHere} present
                     </span>
-                    {short !== null && short > 0 && (
-                        <span style={ui.pill("#FEE2E2", "#991B1B")}>Short by {short}</span>
+                    <span
+                        style={{
+                            ...(awayHere > 0
+                                ? chip("#FEE2E2", "#B91C1C")
+                                : chip("#F3F4F6", "#6B7280")),
+                            padding: "3px 10px",
+                            fontSize: fontSize.xs,
+                        }}
+                    >
+                        <i className="ti ti-user-x" aria-hidden="true" />
+                        {awayHere} absent
+                    </span>
+                    {locList.slice(0, 3).map(([name, count]) => (
+                        <span
+                            key={name}
+                            style={{
+                                ...chip("#EDE9FE", "#5B21B6"),
+                                padding: "3px 10px",
+                                fontSize: fontSize.xs,
+                            }}
+                        >
+                            <i className="ti ti-map-pin" aria-hidden="true" />
+                            {name} · {count}
+                        </span>
+                    ))}
+                    {locList.length > 3 && (
+                        <span
+                            style={{
+                                ...chip("#F3F4F6", "#4B5563"),
+                                padding: "3px 10px",
+                                fontSize: fontSize.xs,
+                            }}
+                        >
+                            +{locList.length - 3} more
+                        </span>
                     )}
-                    {short !== null && short <= 0 && (
-                        <span style={ui.pill("#DCFCE7", "#166534")}>Fully staffed</span>
-                    )}
-                    {canManage ? (
-                        <label style={{ fontSize: fontSize.xs, color: "#6B7280" }}>
-                            Need{" "}
-                            <input
-                                type="number"
-                                min={0}
-                                defaultValue={need ?? ""}
-                                key={`${team}-${need ?? "x"}`}
-                                placeholder="0"
-                                style={{ ...ui.input, width: 64, padding: "4px 6px" }}
-                                onBlur={(e) => {
-                                    const v = e.target.value;
-                                    if (v === "" || Number(v) === need) return;
-                                    saveRequirement(team, Number(v));
-                                }}
+                    {!forceOpen && (
+                        <button
+                            type="button"
+                            aria-expanded={isOpen}
+                            onClick={() => toggleGroup(groupKey)}
+                            style={{
+                                marginLeft: "auto",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "4px 12px",
+                                borderRadius: radius.pill,
+                                border: "1px solid #C7D2FE",
+                                background: isOpen ? "#E0E7FF" : "#fff",
+                                color: "#3730A3",
+                                fontSize: fontSize.sm,
+                                fontWeight: fontWeight.semibold,
+                                fontFamily: "inherit",
+                                cursor: "pointer",
+                            }}
+                        >
+                            {isOpen ? "Hide" : `View all (${people.length})`}
+                            <i
+                                className={`ti ti-chevron-${isOpen ? "up" : "down"}`}
+                                aria-hidden="true"
                             />
-                        </label>
-                    ) : (
-                        need !== undefined && (
-                            <span style={ui.pill("#F3F4F6", "#374151")}>Need {need}</span>
-                        )
+                        </button>
                     )}
                 </div>
-                {people.map(renderPerson)}
+
+                {/* staffing progress */}
+                <div style={{ margin: "10px 0 2px" }}>
+                    <div
+                        style={{
+                            height: 6,
+                            borderRadius: radius.pill,
+                            background: isStandby ? "#FEF3C7" : "#EEF2FF",
+                            overflow: "hidden",
+                        }}
+                    >
+                        <div
+                            style={{
+                                width: `${pct}%`,
+                                height: "100%",
+                                borderRadius: radius.pill,
+                                background: barColor,
+                                transition: "width .4s ease",
+                            }}
+                        />
+                    </div>
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            marginTop: 4,
+                            fontSize: fontSize.xs,
+                            color: MUTED,
+                        }}
+                    >
+                        <span>
+                            {hasNeed
+                                ? `${present} of ${need} needed`
+                                : `${presentHere} of ${people.length} present`}
+                        </span>
+                        <span style={{ fontWeight: fontWeight.medium }}>{pct}%</span>
+                    </div>
+                </div>
+
+                {/* employee details - only after View all */}
+                {isOpen && <div style={{ marginTop: 6 }}>{people.map(renderPerson)}</div>}
             </div>
         );
     };
 
+    const sectionTitle = (icon: string, title: string, extra?: ReactNode) => (
+        <h3
+            style={{
+                margin: "0 0 10px",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: fontSize.xl,
+                fontWeight: fontWeight.bold,
+                color: NAVY,
+                textAlign: "left",
+            }}
+        >
+            <span
+                aria-hidden="true"
+                style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: radius.sm,
+                    background: "#E0E7FF",
+                    color: "#4338CA",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 16,
+                }}
+            >
+                <i className={`ti ${icon}`} />
+            </span>
+            {title}
+            {extra}
+            <span style={{ flex: 1, height: 1, background: LINE, minWidth: 16 }} />
+        </h3>
+    );
+
     return (
-        <div style={isMobile ? ui.pageMobile : ui.page}>
-            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 220 }}>
-                    <h2 style={ui.title}>Team View</h2>
-                    <p style={ui.sub}>
+        <div
+            style={{
+                ...(isMobile ? ui.pageMobile : ui.page),
+                background: "linear-gradient(180deg,#F1F6FF 0%,#FFFFFF 380px)",
+            }}
+        >
+            <style>{TV_CSS}</style>
+
+            {/* ---- header ---- */}
+            <div
+                style={{
+                    position: "relative",
+                    overflow: "hidden",
+                    display: "flex",
+                    gap: 12,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    padding: isMobile ? "12px" : "14px 18px",
+                    borderRadius: radius.lg,
+                    background: "linear-gradient(120deg,#E3EEFF 0%,#EAEDFF 50%,#F1E4FF 100%)",
+                    boxShadow: "0 4px 16px rgba(99,102,241,0.10)",
+                }}
+            >
+                <span
+                    aria-hidden="true"
+                    style={{
+                        position: "absolute",
+                        right: -50,
+                        top: -60,
+                        width: 190,
+                        height: 190,
+                        borderRadius: radius.circle,
+                        background: "rgba(167,139,250,0.22)",
+                    }}
+                />
+                <span
+                    aria-hidden="true"
+                    style={{
+                        position: "absolute",
+                        right: 150,
+                        bottom: -80,
+                        width: 150,
+                        height: 150,
+                        borderRadius: radius.circle,
+                        background: "rgba(96,165,250,0.16)",
+                    }}
+                />
+                <div
+                    aria-hidden="true"
+                    style={{
+                        position: "relative",
+                        width: 44,
+                        height: 44,
+                        borderRadius: radius.md,
+                        background: "linear-gradient(135deg,#3B82F6,#6366F1)",
+                        color: "#fff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 22,
+                        boxShadow: "0 6px 14px rgba(99,102,241,0.35)",
+                    }}
+                >
+                    <i className="ti ti-users" />
+                </div>
+                <div style={{ position: "relative", flex: 1, minWidth: 200, textAlign: "left" }}>
+                    <h2
+                        style={{
+                            ...ui.title,
+                            fontSize: fontSize["4xl"],
+                            background: "linear-gradient(90deg,#1B2559,#4338CA)",
+                            WebkitBackgroundClip: "text",
+                            backgroundClip: "text",
+                            WebkitTextFillColor: "transparent",
+                            width: "fit-content",
+                        }}
+                    >
+                        Team View
+                    </h2>
+                    <p style={{ ...ui.sub, fontSize: fontSize.sm }}>
                         Blue Collar — manager-wise teams, who is in and who is on leave.
                     </p>
                 </div>
-                <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value || todayYmd())}
-                    style={ui.input}
-                />
-                <select
-                    value={locFilter}
-                    onChange={(e) => setLocFilter(e.target.value)}
-                    style={ui.input}
+                <div
+                    style={{
+                        position: "relative",
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        width: isMobile ? "100%" : "auto",
+                    }}
                 >
-                    <option value="">All locations</option>
-                    <option value="__none">No location</option>
-                    {(data?.locations || []).map((l) => (
-                        <option key={l.id} value={l.id}>
-                            {l.name}
-                        </option>
-                    ))}
-                </select>
-                <input
-                    placeholder="Search name / role / team"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    style={{ ...ui.input, minWidth: 190 }}
-                />
+                    <Filter icon="ti-calendar">
+                        <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value || todayYmd())}
+                            style={bareField}
+                        />
+                    </Filter>
+                    <Filter icon="ti-map-pin">
+                        <select
+                            value={locFilter}
+                            onChange={(e) => setLocFilter(e.target.value)}
+                            style={{ ...bareField, cursor: "pointer" }}
+                        >
+                            <option value="">All locations</option>
+                            <option value="__none">No location</option>
+                            {(data?.locations || []).map((l) => (
+                                <option key={l.id} value={l.id}>
+                                    {l.name}
+                                </option>
+                            ))}
+                        </select>
+                    </Filter>
+                    <Filter icon="ti-search">
+                        <input
+                            placeholder="Search name / role / team"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            style={{ ...bareField, minWidth: 150 }}
+                        />
+                    </Filter>
+                </div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, margin: "16px 0", flexWrap: "wrap" }}>
-                <span style={ui.pill("#EFF6FF", "#1E40AF")}>{totals.total} people</span>
-                <span style={ui.pill("#DCFCE7", "#166534")}>{totals.present} present</span>
-                <span style={ui.pill("#FEE2E2", "#991B1B")}>{totals.away} on leave / absent</span>
+            {/* ---- summary tiles ---- */}
+            <div style={{ display: "flex", gap: 10, margin: "14px 0", flexWrap: "wrap" }}>
+                <StatTile
+                    icon="ti-users"
+                    label="People"
+                    value={totals.total}
+                    bg="#DBEAFE"
+                    fg="#1D4ED8"
+                />
+                <StatTile
+                    icon="ti-circle-check-filled"
+                    label="Present"
+                    value={totals.present}
+                    bg="#D1FAE5"
+                    fg="#047857"
+                />
+                <StatTile
+                    icon="ti-user-x"
+                    label="On leave / absent"
+                    value={totals.away}
+                    bg="#FEE2E2"
+                    fg="#DC2626"
+                />
             </div>
 
             {error && <div style={ui.error}>{error}</div>}
@@ -355,35 +997,38 @@ export default function BlueTeamView() {
             )}
 
             {!loading && standby.length > 0 && (
-                <section style={{ marginBottom: 24 }}>
-                    <h3 style={{ margin: "0 0 10px", fontSize: fontSize["2xl"] }}>
-                        <i className="ti ti-armchair" aria-hidden="true" /> Standby team
-                        <span style={{ ...ui.pill("#FEF3C7", "#92400E"), marginLeft: 10 }}>
-                            {standby.filter((p) => !isAway(p.status)).length} available
-                        </span>
-                    </h3>
-                    <div style={{ ...ui.card, borderColor: "#FDE68A", background: "#FFFBEB" }}>
-                        {standby.map(renderPerson)}
+                <section style={{ marginBottom: 20 }}>
+                    {sectionTitle("ti-armchair", "Standby team")}
+                    <div
+                        style={{
+                            display: "grid",
+                            gap: 12,
+                            gridTemplateColumns: isMobile
+                                ? "1fr"
+                                : "repeat(auto-fill,minmax(440px,1fr))",
+                        }}
+                    >
+                        {renderTeam(data?.standbyTeam || "Standby", standby, "__standby", true)}
                     </div>
                 </section>
             )}
 
             {!loading &&
                 byManager.map(([key, m]) => (
-                    <section key={key} style={{ marginBottom: 26 }}>
-                        <h3 style={{ margin: "0 0 10px", fontSize: fontSize["2xl"] }}>
-                            <i className="ti ti-user-star" aria-hidden="true" /> {m.name}
+                    <section key={key} style={{ marginBottom: 20 }}>
+                        {sectionTitle(
+                            "ti-user-star",
+                            m.name,
                             <span
                                 style={{
                                     fontSize: fontSize.sm,
-                                    color: "#6B7280",
+                                    color: MUTED,
                                     fontWeight: fontWeight.regular,
                                 }}
                             >
-                                {" "}
                                 — {[...m.teams.values()].reduce((n, l) => n + l.length, 0)} people
                             </span>
-                        </h3>
+                        )}
                         <div
                             style={{
                                 display: "grid",
@@ -395,7 +1040,9 @@ export default function BlueTeamView() {
                         >
                             {[...m.teams.entries()]
                                 .sort((a, b) => a[0].localeCompare(b[0]))
-                                .map(([team, people]) => renderTeam(team, people))}
+                                .map(([team, people]) =>
+                                    renderTeam(team, people, `${key}::${team}`)
+                                )}
                         </div>
                     </section>
                 ))}

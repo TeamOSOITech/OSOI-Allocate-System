@@ -321,6 +321,8 @@ export default function AddUser() {
         department: "",
         dob: "",
         doj: "",
+        // NEW: optional last working day (not in REQUIRED_FIELDS).
+        doe: "",
         reportingManager: "",
         Teams: "",
         password: "",
@@ -847,6 +849,37 @@ export default function AddUser() {
         setBulkError("");
     };
 
+    // NEW: "+" next to Location (Blue Collar) - creates the location via the
+    // same endpoint the Locations page uses, then selects it right away.
+    const addBlueLocation = async (name: string) => {
+        try {
+            const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/blue/locations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name }),
+            });
+            const json = await res.json().catch(() => null);
+            if (res.status === 409) {
+                // already exists - just select it
+                const existing = blueLocations.find(
+                    (l) => l.name.trim().toLowerCase() === name.trim().toLowerCase()
+                );
+                if (existing) setBlueLocationId(String(existing.id));
+                return;
+            }
+            if (!res.ok) throw new Error(json?.message || "Failed to add location.");
+            const loc = json.data;
+            setBlueLocations((prev) =>
+                [...prev, { id: String(loc.id), name: loc.name }].sort((a, b) =>
+                    a.name.localeCompare(b.name)
+                )
+            );
+            setBlueLocationId(String(loc.id));
+        } catch (err: any) {
+            setError(err?.message || "Failed to add location.");
+        }
+    };
+
     const validateRequired = () => {
         const missing = REQUIRED_FIELDS.filter((field) => !formData[field]);
         return missing;
@@ -862,6 +895,11 @@ export default function AddUser() {
 
         if (isUnder18(formData.dob)) {
             setError(DOB_AGE_ERROR);
+            return;
+        }
+
+        if (formData.doe && formData.doj && formData.doe < formData.doj) {
+            setError("Date of Exit can't be before Date of Joining.");
             return;
         }
 
@@ -1426,6 +1464,11 @@ export default function AddUser() {
                                                     </option>
                                                 ))}
                                             </select>
+                                            <InlineAddOption
+                                                styles={styles}
+                                                placeholder="e.g. Gurugram Warehouse"
+                                                onAdd={addBlueLocation}
+                                            />
                                             {blueLocations.length === 0 && (
                                                 <div
                                                     style={{
@@ -1434,8 +1477,7 @@ export default function AddUser() {
                                                         marginTop: 4,
                                                     }}
                                                 >
-                                                    No locations yet — add them under Locations &
-                                                    Services.
+                                                    No locations yet — use the + button to add one.
                                                 </div>
                                             )}
                                         </div>
@@ -1466,6 +1508,18 @@ export default function AddUser() {
                                             value={formData.doj}
                                             onChange={(e) =>
                                                 setFormData({ ...formData, doj: e.target.value })
+                                            }
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={labelStyle("doe")}>Date of Exit</label>
+                                        <input
+                                            type="date"
+                                            style={styles.input}
+                                            value={formData.doe}
+                                            min={formData.doj || undefined}
+                                            onChange={(e) =>
+                                                setFormData({ ...formData, doe: e.target.value })
                                             }
                                         />
                                     </div>
