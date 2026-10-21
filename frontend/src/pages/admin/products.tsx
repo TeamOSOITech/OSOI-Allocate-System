@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
-import * as XLSX from "xlsx";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import MyPendingApprovals from "../../components/mypendingapprovals";
 
@@ -719,20 +718,25 @@ const Products = () => {
     // is now generated entirely client-side with the `xlsx` package —
     // same approach already used by the Add User page's "Sample Sheet"
     // button — so the download works with zero backend changes.
-    const handleDownloadTemplate = () => {
-        const templateData = [
-            {
-                [PRODUCT_NAME_COLUMN]: "Inventory Sync",
-                [TIME_TAKEN_COLUMN]: "2 hours",
-                [TEAMS_COLUMN]: teamsList[0]?.name || "",
-                [CASE_NUMBER_COLUMN]: "Yes",
-            },
-        ];
-
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Services");
-        XLSX.writeFile(workbook, "bulk_add_services_template.xlsx");
+    // CHANGED: sample sheet now comes from the backend so it has dropdown
+    // validation (Teams, Case Number Yes/No) - SheetJS can't write it.
+    const handleDownloadTemplate = async () => {
+        try {
+            const res = await authFetch(`${ENDPOINT}/bulk/template`, { cache: "no-store" });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const href = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = href;
+            a.download = "bulk_add_services_template.xlsx";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(href);
+        } catch (err) {
+            console.error("Failed to download template:", err);
+            alert("Could not download the sample sheet. Please try again.");
+        }
     };
 
     // Bulk upload now lives in its own modal (matching the Add User page's

@@ -4,7 +4,6 @@ import { useRoleLabels } from "../../context/roleLabelsContext";
 import { getCurrentUser } from "../../utils/auth";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
-import { safeSheet } from "../../utils/safeSheet";
 import { useNavigate } from "react-router-dom";
 //import VoiceAssistant from "../../components/voiceAssistant";
 //import { speak } from "../../utils/speak";
@@ -232,6 +231,25 @@ function isUnder18(dob: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(dob) && dob > maxDobStr();
 }
 
+const downloadXlsxFromApi = async (url: string, filename: string) => {
+    try {
+        const res = await authFetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(href);
+    } catch (err) {
+        console.error("Failed to download template:", err);
+        alert("Could not download the sample sheet. Please try again.");
+    }
+};
+
 function mapBulkRow(row: any) {
     return {
         firstName: row["First Name"] || row["Full Name"] || "",
@@ -326,6 +344,17 @@ export default function AddUser() {
     const labelStyle = (field: keyof typeof formData) => ({
         ...styles.label,
         ...(isRequired(field) ? styles.labelRequired : {}),
+    });
+
+    // NEW: after a failed submit, every REQUIRED field that is still empty
+    // gets a red border. It clears by itself as soon as the field is filled
+    // (computed from formData, not stored), and resets after a successful add.
+    const [showFieldErrors, setShowFieldErrors] = useState(false);
+    const inputStyle = (field: keyof typeof formData) => ({
+        ...styles.input,
+        ...(showFieldErrors && isRequired(field) && !formData[field]
+            ? { border: "1px solid #dc2626", background: "#fff5f5" }
+            : {}),
     });
 
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -682,29 +711,15 @@ export default function AddUser() {
         alert("Password copied!");
     };
 
-    const downloadTemplate = () => {
-        const templateData = [
-            {
-                "Full Name": "John Doe",
-                Email: "john.doe@company.com",
-                "Contact Number": "9876543210",
-                "Employee ID": "EMP12345",
-                Designation: "Senior Developer",
-                Department: "Tech",
-                "Date of Birth": "1995-05-10",
-                "Date of Joining": "2023-01-15",
-                "Reporting Manager": "manager@company.com",
-                Teams: "Tech",
-                Password: "",
-                Role: "TEAM_MEMBER",
-            },
-        ];
-
-        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Users");
-        XLSX.writeFile(workbook, "bulk_add_users_template.xlsx");
-    };
+    // CHANGED: the sample sheet now comes from the backend (exceljs) so it
+    // carries dropdown validation - Role, Teams, Reporting Manager,
+    // Department, Designation - plus email / phone / date checks. SheetJS
+    // (used before) cannot write data validation.
+    const downloadTemplate = () =>
+        downloadXlsxFromApi(
+            `${import.meta.env.VITE_API_URL}/api/users/bulk-add-user/template`,
+            "bulk_add_users_template.xlsx"
+        );
 
     const handleBulkUpload = async () => {
         if (!bulkFile) {
@@ -840,6 +855,7 @@ export default function AddUser() {
     const handleRegister = async () => {
         const missing = validateRequired();
         if (missing.length > 0) {
+            setShowFieldErrors(true);
             setError("Please fill all required fields.");
             return;
         }
@@ -914,6 +930,7 @@ export default function AddUser() {
             }
 
             setShowSuccess(true);
+            setShowFieldErrors(false);
             //speak("User submitted successfully.");
         } catch (err: any) {
             setError(err?.message || "Something went wrong");
@@ -1111,7 +1128,7 @@ export default function AddUser() {
                                     <div>
                                         <label style={labelStyle("fullName")}>Full Name *</label>
                                         <input
-                                            style={styles.input}
+                                            style={inputStyle("fullName")}
                                             value={formData.fullName}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1126,7 +1143,7 @@ export default function AddUser() {
                                         <label style={labelStyle("email")}>Email *</label>
                                         <input
                                             type="email"
-                                            style={styles.input}
+                                            style={inputStyle("email")}
                                             value={formData.email}
                                             onChange={(e) =>
                                                 setFormData({ ...formData, email: e.target.value })
@@ -1160,7 +1177,7 @@ export default function AddUser() {
                                             Employee ID *
                                         </label>
                                         <input
-                                            style={styles.input}
+                                            style={inputStyle("employeeId")}
                                             value={formData.employeeId}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1178,7 +1195,7 @@ export default function AddUser() {
                                                 : "Designation *"}
                                         </label>
                                         <select
-                                            style={styles.input}
+                                            style={inputStyle("designation")}
                                             value={formData.designation}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1212,7 +1229,7 @@ export default function AddUser() {
                                     <div>
                                         <label style={labelStyle("department")}>Department *</label>
                                         <select
-                                            style={styles.input}
+                                            style={inputStyle("department")}
                                             value={formData.department}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1259,7 +1276,7 @@ export default function AddUser() {
                                     <div>
                                         <label style={labelStyle("role")}>Role *</label>
                                         <select
-                                            style={styles.input}
+                                            style={inputStyle("role")}
                                             value={formData.role}
                                             onChange={(e) =>
                                                 setFormData({ ...formData, role: e.target.value })
@@ -1291,7 +1308,7 @@ export default function AddUser() {
                                             Reporting Manager Email *
                                         </label>
                                         <select
-                                            style={styles.input}
+                                            style={inputStyle("reportingManager")}
                                             value={formData.reportingManager}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1364,7 +1381,7 @@ export default function AddUser() {
                                     <div>
                                         <label style={labelStyle("Teams")}>Teams *</label>
                                         <select
-                                            style={styles.input}
+                                            style={inputStyle("Teams")}
                                             value={formData.Teams}
                                             onChange={(e) =>
                                                 setFormData({
@@ -1445,7 +1462,7 @@ export default function AddUser() {
                                         <label style={labelStyle("doj")}>Date of Joining *</label>
                                         <input
                                             type="date"
-                                            style={styles.input}
+                                            style={inputStyle("doj")}
                                             value={formData.doj}
                                             onChange={(e) =>
                                                 setFormData({ ...formData, doj: e.target.value })
