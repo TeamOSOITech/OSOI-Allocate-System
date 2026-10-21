@@ -395,6 +395,9 @@ async function createUserAndGenerateResetLink({
         Department: metadata?.department || null,
         "Date of Birth": metadata?.dob || null,
         "Date of Joining": metadata?.doj || null,
+        // NEW: optional. Only written when given, so Add User keeps working
+        // even before the "Date of Exit" column has been created.
+        ...(metadata?.doe ? { "Date of Exit": metadata.doe } : {}),
         "Reporting Manager": metadata?.reportingManager || null,
         "Worked In Teams": metadata?.workedInTeams || null,
         Designation: metadata?.designation || null,
@@ -567,6 +570,15 @@ async function processAddUserRequest(body, requester) {
     };
   }
 
+  // NEW: optional Date of Exit can't be before Date of Joining (yyyy-mm-dd
+  // strings compare correctly as text).
+  if (body.doe && body.doj && String(body.doe) < String(body.doj)) {
+    return {
+      statusCode: 400,
+      body: { message: "Date of Exit can't be before Date of Joining." },
+    };
+  }
+
   if (!isProfessionalEmail(email)) {
     return {
       statusCode: 400,
@@ -670,6 +682,7 @@ async function processAddUserRequest(body, requester) {
       department: body.department,
       dob: body.dob,
       doj: body.doj,
+      doe: body.doe || null,
       reportingManager: body.reportingManager,
       workedInTeams: body.Teams,
       role: requestedRole,

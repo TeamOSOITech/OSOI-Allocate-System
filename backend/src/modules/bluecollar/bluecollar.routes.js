@@ -20,6 +20,11 @@
 //   GET    /my-services                    the logged-in employee's tick-list
 //   POST   /submissions                    employee submits ticked services
 //   GET    /submissions?date=              admin view of submissions
+//   GET    /allocations?date=              manager: who is allocated which services
+//   PUT    /allocations                    manager: save a day's allocation
+//   GET    /my-allocations                 a person's allocated work (Profile)
+//
+// Allocation table: blue_allocations (see blue_allocations.sql).
 
 const express = require("express");
 const multer = require("multer");
@@ -563,7 +568,13 @@ async function servicesForEmployee(orgId, userId) {
   if (error) throw error;
   const row = me?.[0];
   if (!row)
-    return { role: "", locationId: null, locationName: "", services: [] };
+    return {
+      role: "",
+      locationId: null,
+      locationName: "",
+      services: [],
+      allocated: false,
+    };
 
   const role = clean(row.Designation);
   const locationId = row.blue_location_id || null;
@@ -600,11 +611,33 @@ async function servicesForEmployee(orgId, userId) {
     });
   services.sort((a, b) => a.name.localeCompare(b.name));
 
+  // If a manager allocated services to this person for today, only those
+  // can be ticked. No allocation -> the full role list, as before.
+  let allocated = null;
+  try {
+    const { data: al } = await supabase
+      .from("blue_allocations")
+      .select("services")
+      .eq("organization_id", orgId)
+      .eq("employee_id", userId)
+      .eq("work_date", todayYmdInAppTz())
+      .limit(1);
+    if (al?.[0] && Array.isArray(al[0].services) && al[0].services.length) {
+      allocated = new Set(al[0].services.map(norm));
+    }
+  } catch (e) {
+    console.error("[bluecollar] allocation lookup skipped:", e?.message || e);
+  }
+  const visible = allocated
+    ? services.filter((s) => allocated.has(norm(s.name)))
+    : services;
+
   return {
     role,
     locationId,
     locationName: locationId ? locName[locationId] || "" : "",
-    services,
+    services: visible,
+    allocated: Boolean(allocated),
   };
 }
 
@@ -763,6 +796,274 @@ router.get("/submissions", authorize(...MANAGER_ROLES), async (req, res) => {
     });
   } catch (err) {
     fail(res, err, 500, "Failed to load submissions.");
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/*  Work allocation: a manager gives each person their services       */
+/* ------------------------------------------------------------------ */
+
+// Services a person may be given = those mapped to their Designation at
+// their location (or every location when they have none yet).
+function allowedServiceNames(roleServiceRows, designation, locationId) {
+  const role = norm(designation);
+  if (!role) return [];
+  const seen = new Set();
+  const out = [];
+  (roleServiceRows || [])
+    .filter(
+      (r) =>
+        norm(r.role_name) === role &&
+        (!locationId || r.location_id === locationId),
+    )
+    .forEach((r) => {
+      const k = norm(r.service_name);
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(r.service_name);
+    });
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+// Same visibility rule as /team-view: a Vertical Head only sees own team.
+function visibleBluePeople(req, everyone) {
+  let blue = everyone.filter((e) => e.collarType === "BLUE");
+  if (req.user.role === "VERTICAL_HEAD") {
+    const self = everyone.find((e) => e.id === req.user.userId);
+    const ownTeam = norm(self?.team);
+    blue = blue.filter(
+      (e) => e.id === req.user.userId || (ownTeam && norm(e.team) === ownTeam),
+    );
+  }
+  return blue;
+}
+
+router.get("/allocations", authorize(...MANAGER_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user.organizationId;
+    const today = todayYmdInAppTz();
+    const date = isIsoDate(req.query.date) ? req.query.date : today;
+
+    const [everyone, locations, attendance, rs, al, sub] = await Promise.all([
+      employeesService.fetchAllEmployees(orgId, "ALL"),
+      fetchLocations(orgId),
+      attendanceService.fetchAttendanceForDate(orgId, date),
+      supabase
+        .from("blue_role_services")
+        .select("location_id, role_name, service_name")
+        .eq("organization_id", orgId),
+      supabase
+        .from("blue_allocations")
+        .select("employee_id, services")
+        .eq("organization_id", orgId)
+        .eq("work_date", date),
+      supabase
+        .from("blue_submissions")
+        .select("employee_id, services")
+        .eq("organization_id", orgId)
+        .eq("work_date", date),
+    ]);
+    if (rs.error) throw rs.error;
+    if (al.error) throw al.error;
+    if (sub.error) throw sub.error;
+
+    const attById = new Map(attendance.map((a) => [a.employee_id, a.status]));
+    const allocById = new Map(
+      (al.data || []).map((r) => [r.employee_id, r.services || []]),
+    );
+    const doneById = new Map(
+      (sub.data || []).map((r) => [r.employee_id, r.services || []]),
+    );
+    const locName = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+
+    const people = visibleBluePeople(req, everyone).map((e) => ({
+      id: e.id,
+      name: e.name || e.email,
+      designation: clean(e.designation),
+      team: clean(e.team) || "Unassigned",
+      locationId: e.locationId || "",
+      locationName: e.locationId ? locName[e.locationId] || "" : "",
+      status: attById.get(e.id) || "PRESENT",
+      services: allowedServiceNames(rs.data, e.designation, e.locationId),
+      allocated: allocById.get(e.id) || [],
+      done: doneById.get(e.id) || [],
+    }));
+
+    res.json({ success: true, data: { date, today, locations, people } });
+  } catch (err) {
+    fail(res, err, 500, "Failed to load allocation.");
+  }
+});
+
+router.put(
+  "/allocations",
+  requirePermission("employees.manage"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const date = req.body?.date;
+      if (!isIsoDate(date)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "A valid date is required." });
+      }
+      if (date < todayYmdInAppTz()) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot change the allocation of a past date.",
+        });
+      }
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (items.length === 0 || items.length > 500) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Nothing to save." });
+      }
+
+      const [everyone, rs] = await Promise.all([
+        employeesService.fetchAllEmployees(orgId, "ALL"),
+        supabase
+          .from("blue_role_services")
+          .select("location_id, role_name, service_name")
+          .eq("organization_id", orgId),
+      ]);
+      if (rs.error) throw rs.error;
+      const byId = new Map(
+        visibleBluePeople(req, everyone).map((e) => [e.id, e]),
+      );
+
+      const nowIso = new Date().toISOString();
+      const upserts = [];
+      const clearIds = [];
+      for (const it of items) {
+        const emp = byId.get(clean(it?.employeeId));
+        if (!emp) {
+          return res.status(404).json({
+            success: false,
+            message: "A Blue Collar employee in the list was not found.",
+          });
+        }
+        const allowed = new Map(
+          allowedServiceNames(rs.data, emp.designation, emp.locationId).map(
+            (n) => [norm(n), n],
+          ),
+        );
+        const picked = Array.isArray(it.services) ? it.services : [];
+        const services = [];
+        for (const p of picked) {
+          const hit = allowed.get(norm(p));
+          if (!hit) {
+            return res.status(400).json({
+              success: false,
+              message: `"${clean(p)}" is not mapped to ${emp.name}'s role.`,
+            });
+          }
+          if (!services.includes(hit)) services.push(hit);
+        }
+        if (services.length) {
+          upserts.push({
+            organization_id: orgId,
+            employee_id: emp.id,
+            location_id: emp.locationId || null,
+            work_date: date,
+            services,
+            allocated_by: req.user.userId,
+            updated_at: nowIso,
+          });
+        } else {
+          clearIds.push(emp.id);
+        }
+      }
+
+      if (upserts.length) {
+        const { error } = await supabase
+          .from("blue_allocations")
+          .upsert(upserts, { onConflict: "employee_id,work_date" });
+        if (error) throw error;
+      }
+      if (clearIds.length) {
+        const { error } = await supabase
+          .from("blue_allocations")
+          .delete()
+          .eq("organization_id", orgId)
+          .eq("work_date", date)
+          .in("employee_id", clearIds);
+        if (error) throw error;
+      }
+      res.json({
+        success: true,
+        data: { saved: upserts.length, cleared: clearIds.length },
+      });
+    } catch (err) {
+      fail(res, err, 500, "Failed to save allocation.");
+    }
+  },
+);
+
+// A person's allocated work: the last N days plus the next two weeks, with
+// how much of each day they have ticked as done. A manager may pass
+// ?employeeId= to see someone else's (used by the Profile page).
+router.get("/my-allocations", async (req, res) => {
+  try {
+    const orgId = req.user.organizationId;
+    const wanted = clean(req.query.employeeId);
+    const targetId =
+      wanted && wanted !== req.user.userId ? wanted : req.user.userId;
+    if (
+      targetId !== req.user.userId &&
+      !MANAGER_ROLES.includes(req.user.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only view your own allocation.",
+      });
+    }
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 90);
+    const today = todayYmdInAppTz();
+    const [y, m, d] = today.split("-").map(Number);
+    const ymd = (offset) =>
+      new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10);
+
+    const [alloc, subs] = await Promise.all([
+      supabase
+        .from("blue_allocations")
+        .select("work_date, services")
+        .eq("organization_id", orgId)
+        .eq("employee_id", targetId)
+        .gte("work_date", ymd(-days))
+        .lte("work_date", ymd(14))
+        .order("work_date", { ascending: false }),
+      supabase
+        .from("blue_submissions")
+        .select("work_date, services")
+        .eq("organization_id", orgId)
+        .eq("employee_id", targetId)
+        .gte("work_date", ymd(-days))
+        .lte("work_date", today),
+    ]);
+    if (alloc.error) throw alloc.error;
+    if (subs.error) throw subs.error;
+
+    const doneByDate = new Map(
+      (subs.data || []).map((s) => [s.work_date, (s.services || []).map(norm)]),
+    );
+    res.json({
+      success: true,
+      data: {
+        today,
+        allocations: (alloc.data || []).map((r) => {
+          const done = doneByDate.get(r.work_date) || [];
+          const services = r.services || [];
+          return {
+            workDate: r.work_date,
+            services,
+            done: services.filter((s) => done.includes(norm(s))),
+          };
+        }),
+      },
+    });
+  } catch (err) {
+    fail(res, err, 500, "Failed to load allocation.");
   }
 });
 

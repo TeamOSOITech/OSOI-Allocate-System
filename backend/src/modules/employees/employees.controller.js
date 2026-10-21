@@ -10,6 +10,7 @@ const {
   canDeleteTargetRole,
 } = require("../../config/permissions");
 const employeesService = require("./employees.service");
+const supabase = require("../../config/supabaseClient");
 
 // CHANGED: which roles may change another user's role at all, and which
 // roles each of them may ASSIGN. Mirrors ASSIGNABLE_ROLES in employees.tsx.
@@ -171,6 +172,22 @@ async function updateEmployee(req, res) {
     );
     if (!updated) {
       return res.status(404).json({ error: "Employee not found" });
+    }
+    // Keep the profiles table's copy of the name in step with user_master so
+    // anything still reading profiles.first_name/last_name shows the new name.
+    // Best effort only - the employee update above has already succeeded.
+    if (body.name !== undefined) {
+      try {
+        await supabase
+          .from("profiles")
+          .update({
+            first_name: updatePayload["First Name"],
+            last_name: updatePayload["Last Name"],
+          })
+          .eq("user_id", id);
+      } catch (syncError) {
+        console.error("Could not sync profiles name:", syncError);
+      }
     }
     res.json(updated);
   } catch (error) {
