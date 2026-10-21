@@ -6,6 +6,7 @@ import { useTheme } from "../context/themecontext";
 import { useRoleLabels } from "../context/roleLabelsContext";
 import { useOrgSettings } from "../context/orgsettings";
 import { useCollarMode } from "../context/collarmode";
+import BlueAllocationBlock from "./blue/allocationblock";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -1115,13 +1116,16 @@ export default function Profile({ onLogout }: ProfileProps) {
     // own cached details (that would show YOUR email/role under THEIR name).
     const fallbackUser = isViewingOther ? null : cachedUser;
 
+    // The employee record (user_master) is where a name edit is saved, so it
+    // is the source of truth. `profiles.first_name/last_name` is only a copy
+    // made at signup and goes stale after an edit - use it as a fallback.
+    const profileName = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim();
     const name =
-        profile?.first_name || profile?.last_name
-            ? `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim()
-            : employee?.name ||
-              (fallbackUser?.firstName
-                  ? `${fallbackUser.firstName} ${fallbackUser.lastName || ""}`.trim()
-                  : fallbackUser?.email || "User");
+        employee?.name?.trim() ||
+        profileName ||
+        (fallbackUser?.firstName
+            ? `${fallbackUser.firstName} ${fallbackUser.lastName || ""}`.trim()
+            : fallbackUser?.email || "User");
 
     const email = profile?.email || employee?.email || fallbackUser?.email || "-";
     const role = profile?.role || employee?.role || fallbackUser?.role || "-";
@@ -6415,15 +6419,45 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
 
     const today = todayStr();
     const todays = data?.submissions.find((s) => s.workDate === today) || null;
-    const chip: CSSProperties = {
-        display: "inline-block",
-        padding: "2px 10px",
+    const submissions = data?.submissions || [];
+    const totalServices = submissions.reduce((n, s) => n + s.services.length, 0);
+
+    const MONTHS = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ];
+    const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const parts = (ymd: string) => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return {
+            day: d,
+            month: MONTHS[(m || 1) - 1],
+            weekday: DAYS[new Date(Date.UTC(y, (m || 1) - 1, d)).getUTCDay()],
+        };
+    };
+
+    const pill = (bg: string, fg: string): CSSProperties => ({
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "4px 11px",
         borderRadius: 999,
         fontSize: 12,
         fontWeight: 600,
-        background: "#EAF0FB",
-        color: "#1E40AF",
-    };
+        background: bg,
+        color: fg,
+        whiteSpace: "nowrap",
+    });
 
     return (
         <div
@@ -6432,68 +6466,242 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                 borderRadius: 16,
                 padding: 20,
                 boxShadow: "0 10px 30px rgba(0,0,0,.06)",
+                textAlign: "left",
             }}
         >
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#17181C", flex: 1 }}>
-                    Work Submissions
-                </span>
-                {data?.role && <span style={chip}>{data.role}</span>}
-                {data?.locationName && (
-                    <span style={{ ...chip, background: "#F3F4F6", color: "#374151" }}>
-                        {data.locationName}
-                    </span>
-                )}
+            {/* header: title on the left, who/where/today on the right */}
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <span
+                    aria-hidden="true"
                     style={{
-                        ...chip,
-                        background: todays ? "#DCFCE7" : "#FEF3C7",
-                        color: todays ? "#166534" : "#92400E",
-                    }}
-                >
-                    {todays ? "Submitted today" : "Not submitted today"}
-                </span>
-            </div>
-            <p style={{ margin: "4px 0 14px", fontSize: 13, color: "#767F92" }}>
-                Services ticked as done, last 30 days.
-            </p>
-
-            {loading && <div style={{ color: "#9099AC", fontSize: 13 }}>Loading…</div>}
-            {err && <div style={{ color: "#B91C1C", fontSize: 13 }}>{err}</div>}
-            {!loading && !err && data && data.submissions.length === 0 && (
-                <div style={{ color: "#9099AC", fontSize: 13 }}>No submissions yet.</div>
-            )}
-            {data?.submissions.map((s) => (
-                <div
-                    key={s.workDate}
-                    style={{
+                        flex: "0 0 42px",
+                        width: 42,
+                        height: 42,
+                        borderRadius: 12,
+                        background: "linear-gradient(135deg,#3B82F6,#6366F1)",
+                        color: "#fff",
                         display: "flex",
-                        gap: 14,
-                        padding: "10px 0",
-                        borderTop: "1px solid #F1F2F6",
-                        flexWrap: "wrap",
-                        alignItems: "flex-start",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 21,
+                        boxShadow: "0 6px 14px rgba(99,102,241,0.3)",
                     }}
                 >
-                    <div style={{ width: 96, fontWeight: 600, fontSize: 13, color: "#3D4459" }}>
-                        {formatDisplayDate(s.workDate)}
+                    <i className="ti ti-clipboard-check" />
+                </span>
+                <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#17181C" }}>
+                        Work Submissions
                     </div>
-                    <div style={{ flex: 1, minWidth: 200 }}>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {s.services.map((n) => (
-                                <span key={n} style={chip}>
-                                    {n}
-                                </span>
-                            ))}
-                        </div>
-                        {s.note && (
-                            <div style={{ marginTop: 6, fontSize: 12.5, color: "#5B6479" }}>
-                                {s.note}
-                            </div>
-                        )}
+                    <div style={{ fontSize: 13, color: "#767F92", marginTop: 2 }}>
+                        Services ticked as done in the last 30 days.
                     </div>
                 </div>
-            ))}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    {data?.role && (
+                        <span style={pill("#EAF0FB", "#1E40AF")}>
+                            <i className="ti ti-id-badge-2" aria-hidden="true" />
+                            {data.role}
+                        </span>
+                    )}
+                    {data?.locationName && (
+                        <span style={pill("#EDE9FE", "#5B21B6")}>
+                            <i className="ti ti-map-pin" aria-hidden="true" />
+                            {data.locationName}
+                        </span>
+                    )}
+                    {data && (
+                        <span
+                            style={pill(
+                                todays ? "#DCFCE7" : "#FEF3C7",
+                                todays ? "#166534" : "#92400E"
+                            )}
+                        >
+                            <i
+                                className={`ti ${todays ? "ti-circle-check-filled" : "ti-clock"}`}
+                                aria-hidden="true"
+                            />
+                            {todays ? "Submitted today" : "Not submitted today"}
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            {/* quick numbers */}
+            {data && submissions.length > 0 && (
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "16px 0 6px" }}>
+                    {[
+                        {
+                            v: submissions.length,
+                            l: submissions.length === 1 ? "day submitted" : "days submitted",
+                            bg: "#EEF2FF",
+                            fg: "#3730A3",
+                        },
+                        {
+                            v: totalServices,
+                            l: totalServices === 1 ? "service done" : "services done",
+                            bg: "#ECFDF5",
+                            fg: "#047857",
+                        },
+                    ].map((t) => (
+                        <div
+                            key={t.l}
+                            style={{
+                                display: "flex",
+                                alignItems: "baseline",
+                                gap: 8,
+                                padding: "8px 14px",
+                                borderRadius: 12,
+                                background: t.bg,
+                            }}
+                        >
+                            <span
+                                style={{
+                                    fontSize: 22,
+                                    fontWeight: 800,
+                                    color: t.fg,
+                                    lineHeight: 1,
+                                }}
+                            >
+                                {t.v}
+                            </span>
+                            <span style={{ fontSize: 12.5, color: "#4B5563", fontWeight: 600 }}>
+                                {t.l}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {loading && (
+                <div style={{ color: "#9099AC", fontSize: 13, marginTop: 16 }}>Loading…</div>
+            )}
+            {err && (
+                <div
+                    style={{
+                        marginTop: 16,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        background: "#FEF2F2",
+                        border: "1px solid #FECACA",
+                        color: "#B91C1C",
+                        fontSize: 13,
+                    }}
+                >
+                    {err}
+                </div>
+            )}
+
+            {!loading && !err && data && submissions.length === 0 && (
+                <div
+                    style={{
+                        marginTop: 16,
+                        padding: "28px 16px",
+                        borderRadius: 14,
+                        border: "1.5px dashed #D6DCF5",
+                        background: "#FAFBFF",
+                        textAlign: "center",
+                    }}
+                >
+                    <i
+                        className="ti ti-clipboard-list"
+                        aria-hidden="true"
+                        style={{
+                            fontSize: 30,
+                            color: "#A5B4FC",
+                            display: "block",
+                            marginBottom: 6,
+                        }}
+                    />
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#3D4459" }}>
+                        No submissions yet
+                    </div>
+                    <div style={{ fontSize: 12.5, color: "#767F92", marginTop: 3 }}>
+                        Services ticked as done on Submit Work will show up here, day by day.
+                    </div>
+                </div>
+            )}
+
+            {/* day-by-day history */}
+            {submissions.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                    {submissions.map((s, i) => {
+                        const d = parts(s.workDate);
+                        const isToday = s.workDate === today;
+                        return (
+                            <div
+                                key={s.workDate}
+                                style={{
+                                    display: "flex",
+                                    gap: 14,
+                                    padding: "12px 0",
+                                    borderTop: i === 0 ? "none" : "1px solid #F1F2F6",
+                                    alignItems: "flex-start",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        flex: "0 0 52px",
+                                        width: 52,
+                                        padding: "6px 0",
+                                        borderRadius: 12,
+                                        textAlign: "center",
+                                        background: isToday ? "#DCFCE7" : "#EEF2FF",
+                                        color: isToday ? "#166534" : "#3730A3",
+                                    }}
+                                >
+                                    <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.1 }}>
+                                        {d.day}
+                                    </div>
+                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{d.month}</div>
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div
+                                        style={{
+                                            fontSize: 12.5,
+                                            color: "#767F92",
+                                            marginBottom: 6,
+                                        }}
+                                    >
+                                        <span style={{ fontWeight: 700, color: "#3D4459" }}>
+                                            {isToday ? "Today" : d.weekday}
+                                        </span>{" "}
+                                        · {s.services.length}{" "}
+                                        {s.services.length === 1 ? "service" : "services"}
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                        {s.services.map((n) => (
+                                            <span key={n} style={pill("#F3F4F8", "#374151")}>
+                                                <i
+                                                    className="ti ti-check"
+                                                    aria-hidden="true"
+                                                    style={{ color: "#16A34A" }}
+                                                />
+                                                {n}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    {s.note && (
+                                        <div
+                                            style={{
+                                                marginTop: 8,
+                                                padding: "6px 10px",
+                                                borderLeft: "3px solid #C7D2FE",
+                                                background: "#FAFBFF",
+                                                borderRadius: "0 8px 8px 0",
+                                                fontSize: 12.5,
+                                                color: "#5B6479",
+                                            }}
+                                        >
+                                            {s.note}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }

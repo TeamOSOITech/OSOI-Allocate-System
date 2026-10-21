@@ -286,8 +286,15 @@ export default function AddUser() {
     // White Collar (service-based) vs Blue Collar (manpower-based): whoever
     // is added here belongs to the mode currently selected on Home.
     const { mode: collarMode, isBlue } = useCollarMode();
-    const [blueLocations, setBlueLocations] = useState<{ id: string; name: string }[]>([]);
+    const [blueLocations, setBlueLocations] = useState<
+        { id: string; name: string; employeeCount?: number }[]
+    >([]);
     const [blueLocationId, setBlueLocationId] = useState("");
+    // "Locations" popup (Blue Collar) - add / remove locations without leaving this page
+    const [showLocationsModal, setShowLocationsModal] = useState(false);
+    const [locModalName, setLocModalName] = useState("");
+    const [locModalSaving, setLocModalSaving] = useState(false);
+    const [locModalError, setLocModalError] = useState("");
     useEffect(() => {
         if (!isBlue) return;
         let cancelled = false;
@@ -880,6 +887,69 @@ export default function AddUser() {
         }
     };
 
+    // "Locations" popup: add a location (does not touch the form's selected location)
+    const addLocationFromModal = async () => {
+        const name = locModalName.trim();
+        if (!name) return;
+        setLocModalSaving(true);
+        setLocModalError("");
+        try {
+            const res = await authFetch(`${import.meta.env.VITE_API_URL}/api/blue/locations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name }),
+            });
+            const json = await res.json().catch(() => null);
+            if (res.status === 409) {
+                setLocModalError(`"${name}" already exists.`);
+                return;
+            }
+            if (!res.ok) throw new Error(json?.message || "Failed to add location.");
+            const loc = json.data;
+            setBlueLocations((prev) =>
+                [...prev, { id: String(loc.id), name: loc.name, employeeCount: 0 }].sort((a, b) =>
+                    a.name.localeCompare(b.name)
+                )
+            );
+            setLocModalName("");
+        } catch (err: any) {
+            setLocModalError(err?.message || "Failed to add location.");
+        } finally {
+            setLocModalSaving(false);
+        }
+    };
+
+    // "Locations" popup: remove a location (its people become "No location")
+    const deleteLocationFromModal = async (l: {
+        id: string;
+        name: string;
+        employeeCount?: number;
+    }) => {
+        const n = l.employeeCount ?? 0;
+        if (
+            !window.confirm(
+                `Delete "${l.name}"? Its role-service mappings are removed and ${n} ${n === 1 ? "person becomes" : "people become"} "No location".`
+            )
+        )
+            return;
+        setLocModalError("");
+        try {
+            const res = await authFetch(
+                `${import.meta.env.VITE_API_URL}/api/blue/locations/${l.id}`,
+                {
+                    method: "DELETE",
+                }
+            );
+            const json = await res.json().catch(() => null);
+            if (!res.ok || json?.success === false)
+                throw new Error(json?.message || "Could not delete location.");
+            setBlueLocations((prev) => prev.filter((x) => x.id !== l.id));
+            if (blueLocationId === l.id) setBlueLocationId("");
+        } catch (err: any) {
+            setLocModalError(err?.message || "Could not delete location.");
+        }
+    };
+
     const validateRequired = () => {
         const missing = REQUIRED_FIELDS.filter((field) => !formData[field]);
         return missing;
@@ -1056,6 +1126,24 @@ export default function AddUser() {
                                     Register a new Team, Department or Role without creating a user
                                 </span>
                             </span>
+                            {isBlue && (
+                                <span className="au-tooltip-wrap">
+                                    <button
+                                        style={styles.addTeamBtnMobile}
+                                        onClick={() => setShowLocationsModal(true)}
+                                        type="button"
+                                        aria-label="Locations"
+                                    >
+                                        <i
+                                            className="ti ti-map-pin"
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                    </button>
+                                    <span className="au-tooltip-bubble">
+                                        Add or remove locations
+                                    </span>
+                                </span>
+                            )}
                             <span className="au-tooltip-wrap">
                                 <button
                                     style={styles.templateBtnMobile}
@@ -1116,6 +1204,24 @@ export default function AddUser() {
                                             a user
                                         </span>
                                     </span>
+                                    {isBlue && (
+                                        <span className="au-tooltip-wrap">
+                                            <button
+                                                style={styles.addTeamBtn}
+                                                onClick={() => setShowLocationsModal(true)}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="ti ti-map-pin"
+                                                    style={{ fontSize: fontSize.md }}
+                                                />
+                                                Locations
+                                            </button>
+                                            <span className="au-tooltip-bubble">
+                                                Add or remove the places your people work at
+                                            </span>
+                                        </span>
+                                    )}
                                     <span className="au-tooltip-wrap">
                                         <button
                                             style={styles.templateBtn}
@@ -1870,6 +1976,145 @@ export default function AddUser() {
                                 >
                                     {addTeamSaving ? "Saving…" : "Save"}
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {isBlue && showLocationsModal && (
+                    <div style={styles.overlay}>
+                        <div style={styles.addTeamModal} onClick={(e) => e.stopPropagation()}>
+                            <div style={styles.bulkModalHeader}>
+                                <h3 style={styles.bulkModalTitle}>Locations</h3>
+                                <p style={styles.bulkModalSubtitle}>
+                                    Add the places your people work at. Services for each location
+                                    are set from the Services page.
+                                </p>
+                                <button
+                                    style={styles.closeBtn}
+                                    onClick={() => {
+                                        setShowLocationsModal(false);
+                                        setLocModalError("");
+                                        setLocModalName("");
+                                    }}
+                                    type="button"
+                                    aria-label="Close"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div style={styles.addTeamBody}>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                    <input
+                                        style={{ ...styles.input, flex: 1 }}
+                                        value={locModalName}
+                                        onChange={(e) => setLocModalName(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                addLocationFromModal();
+                                            }
+                                        }}
+                                        placeholder="e.g. Gurugram Warehouse"
+                                        aria-label="New location name"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={addLocationFromModal}
+                                        disabled={locModalSaving || !locModalName.trim()}
+                                        style={{
+                                            ...styles.bulkUploadBtn,
+                                            opacity:
+                                                locModalSaving || !locModalName.trim() ? 0.6 : 1,
+                                            cursor:
+                                                locModalSaving || !locModalName.trim()
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                    >
+                                        {locModalSaving ? "Adding…" : "Add"}
+                                    </button>
+                                </div>
+
+                                {locModalError && <p style={styles.error}>{locModalError}</p>}
+
+                                <div style={{ maxHeight: 280, overflowY: "auto" }}>
+                                    {blueLocations.length === 0 && (
+                                        <p
+                                            style={{
+                                                margin: 0,
+                                                fontSize: fontSize.sm,
+                                                color: "#6B7280",
+                                            }}
+                                        >
+                                            No locations yet. Type a name above and press Add.
+                                        </p>
+                                    )}
+                                    {blueLocations.map((l) => (
+                                        <div
+                                            key={l.id}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 10,
+                                                padding: "10px 0",
+                                                borderTop: "1px solid #F3F4F6",
+                                            }}
+                                        >
+                                            <i
+                                                className="ti ti-map-pin"
+                                                aria-hidden="true"
+                                                style={{ color: BRAND.blue }}
+                                            />
+                                            <span
+                                                style={{
+                                                    flex: 1,
+                                                    minWidth: 0,
+                                                    fontWeight: fontWeight.semibold,
+                                                    fontSize: fontSize.base,
+                                                    color: "#111827",
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {l.name}
+                                            </span>
+                                            <span
+                                                style={{
+                                                    fontSize: fontSize.xs,
+                                                    fontWeight: fontWeight.semibold,
+                                                    color: "#374151",
+                                                    background: "#F3F4F6",
+                                                    borderRadius: 999,
+                                                    padding: "3px 10px",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {l.employeeCount ?? 0}{" "}
+                                                {(l.employeeCount ?? 0) === 1 ? "person" : "people"}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => deleteLocationFromModal(l)}
+                                                aria-label={`Delete ${l.name}`}
+                                                title="Delete"
+                                                style={{
+                                                    border: "none",
+                                                    background: "transparent",
+                                                    color: "#B91C1C",
+                                                    cursor: "pointer",
+                                                    fontSize: fontSize.lg,
+                                                    padding: 4,
+                                                    lineHeight: 1,
+                                                }}
+                                            >
+                                                <i className="ti ti-trash" aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -62,6 +62,7 @@ const Approvals = lazy(() => import("./pages/admin/approvals"));
 const BlueTeamView = lazy(() => import("./pages/blue/teamview"));
 const BlueLocations = lazy(() => import("./pages/blue/locations"));
 const BlueSubmitWork = lazy(() => import("./pages/blue/submitwork"));
+const BlueAllocate = lazy(() => import("./pages/blue/allocate"));
 // NEW: Client Dashboard (CLIENT role only) + staff-side Client Sharing.
 const ClientDashboard = lazy(() => import("./pages/clientportal/clientdashboard"));
 const ClientSharing = lazy(() => import("./pages/admin/clientsharing"));
@@ -473,6 +474,16 @@ function App() {
                                     <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
                                         <AppLayout onLogout={handleLogout}>
                                             <BlueLocations />
+                                        </AppLayout>
+                                    </PrivateRoute>
+                                }
+                            />
+                            <Route
+                                path="/blue/allocate"
+                                element={
+                                    <PrivateRoute requiredRole={ADMIN_TIER_ROLES}>
+                                        <AppLayout onLogout={handleLogout}>
+                                            <BlueAllocate />
                                         </AppLayout>
                                     </PrivateRoute>
                                 }

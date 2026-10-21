@@ -173,6 +173,13 @@ const menuItems: MenuItem[] = [
     },
     */
     {
+        label: "Allocate Work",
+        icon: "ti ti-user-check",
+        path: "/blue/allocate",
+        roles: ADMIN_TIER,
+        mode: "BLUE",
+    },
+    {
         // FIX: /profile route in App.jsx has no requiredRole (every logged-in
         // user, including TEAM_MEMBER via NORMAL_USER_ALLOWED_PATHS, can
         // already reach it directly) — but this sidebar entry was gated to
@@ -229,6 +236,7 @@ const pathToLabel: Record<string, string> = {
     "/client-sharing": "Client Sharing",
     "/shared-with-me": "Shared with me",
     "/blue/team-view": "Team View",
+    "/blue/allocate": "Allocate Work",
     "/blue/locations": "Locations",
     "/blue/submit": "Submit Work",
 };

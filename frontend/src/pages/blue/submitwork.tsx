@@ -2,6 +2,7 @@
 //
 // Blue Collar employee's end-of-day submit: a dropdown of ONLY the
 // services mapped to their role (and location), each with a tick box.
+// When a manager has allocated work for today, only those services show.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../../utils/authFetch";
@@ -15,6 +16,7 @@ type MyServices = {
     role: string;
     locationName: string;
     services: Service[];
+    allocated?: boolean;
     workDate: string;
     submitted: { services: string[]; note: string; updatedAt: string } | null;
 };
@@ -95,7 +97,11 @@ export default function BlueSubmitWork() {
     return (
         <div style={isMobile ? ui.pageMobile : ui.page}>
             <h2 style={ui.title}>Submit Work</h2>
-            <p style={ui.sub}>Tick what you finished today.</p>
+            <p style={ui.sub}>
+                {info?.allocated
+                    ? "Your manager allocated these services for today. Tick what you finished."
+                    : "Tick what you finished today."}
+            </p>
 
             {loading && <p style={ui.sub}>Loading…</p>}
             {error && <div style={ui.error}>{error}</div>}
@@ -113,6 +119,9 @@ export default function BlueSubmitWork() {
                             {info.locationName || "No location"}
                         </span>
                         <span style={ui.pill("#F3F4F6", "#374151")}>{info.workDate}</span>
+                        {info.allocated && (
+                            <span style={ui.pill("#EDE9FE", "#5B21B6")}>Allocated for today</span>
+                        )}
                         {alreadySubmitted && (
                             <span style={ui.pill("#DCFCE7", "#166534")}>Submitted today</span>
                         )}
