@@ -1,12 +1,10 @@
 // src/pages/blue/allocate.tsx
 //
-// Blue Collar "Allocate Work": a manager picks a date, then gives every
-// present employee the services they must do that day (or presses
-// "Auto Allocate" and edits the result). The employee's Submit Work page
-// then shows only the services allocated to them.
-//
-// Services offered for a person = the Role -> Services map (Services page)
-// for their Designation + Location.
+// Blue Collar "Allocate Work": every present employee automatically gets the
+// services mapped to their Designation (Services page), so nothing has to be
+// allocated day by day. A manager only uses this page to give someone an
+// EXTRA duty for a date (e.g. the pantry cleaner is absent, so the office boy
+// covers it). The employee's Submit Work page shows role duties + extras.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
@@ -25,8 +23,9 @@ type Person = {
     locationId: string;
     locationName: string;
     status: string;
-    services: string[]; // services this person may be given
-    allocated: string[]; // saved allocation for the date
+    services: string[]; // own role duties (automatic)
+    extraOptions: string[]; // services that can be given as an extra duty
+    extras: string[]; // extra duties saved for the date
     done: string[]; // what they submitted for the date
 };
 type Payload = {
@@ -134,7 +133,7 @@ function ServicePicker({
                 </div>
             )}
             {value.length === 0 && disabled && (
-                <span style={{ fontSize: fontSize.sm, color: "#a7b3c8" }}>Nothing allocated</span>
+                <span style={{ fontSize: fontSize.sm, color: "#a7b3c8" }}>No extra duty</span>
             )}
             {!disabled && (
                 <button
@@ -148,7 +147,7 @@ function ServicePicker({
                         className={`ti ${value.length ? "ti-pencil" : "ti-plus"}`}
                         aria-hidden="true"
                     />
-                    {value.length ? "Change services" : "Add services"}
+                    {value.length ? "Change extra duty" : "Add extra duty"}
                 </button>
             )}
             {open && (
@@ -256,7 +255,7 @@ export default function BlueAllocate() {
             setData(p);
             const next: Record<string, string[]> = {};
             p.people.forEach((x) => {
-                next[x.id] = isAway(x.status) ? [] : x.allocated;
+                next[x.id] = isAway(x.status) ? [] : x.extras;
             });
             setDraft(next);
         } catch (e: any) {
@@ -275,7 +274,7 @@ export default function BlueAllocate() {
     const original = useMemo(() => {
         const m: Record<string, string[]> = {};
         data?.people.forEach((p) => {
-            m[p.id] = isAway(p.status) ? [] : p.allocated;
+            m[p.id] = isAway(p.status) ? [] : p.extras;
         });
         return m;
     }, [data]);
@@ -319,64 +318,18 @@ export default function BlueAllocate() {
     const stats = useMemo(() => {
         const people = data?.people || [];
         const present = people.filter((p) => !isAway(p.status));
-        const allocated = present.filter((p) => (draft[p.id] || []).length > 0).length;
+        const withExtra = present.filter((p) => (draft[p.id] || []).length > 0).length;
         const noServices = present.filter((p) => p.services.length === 0).length;
         return {
             present: present.length,
-            allocated,
-            pending: present.length - allocated - noServices,
+            withExtra,
+            onDuty: present.length - noServices,
             away: people.length - present.length,
             noServices,
         };
     }, [data, draft]);
 
     const setFor = (id: string, v: string[]) => setDraft((d) => ({ ...d, [id]: v }));
-
-    // Spread a group's services over its people: every service gets an owner
-    // and everyone gets something when there are enough services. The start
-    // point rotates daily so the same person is not always given the same one.
-    const spread = (people: Person[], ordinal: number) => {
-        const P = [...people].sort((a, b) => a.name.localeCompare(b.name));
-        const svc = [...P[0].services].sort((a, b) => a.localeCompare(b));
-        const n = P.length;
-        const s = svc.length;
-        const off = ordinal % Math.max(n, s);
-        const got: Record<string, string[]> = {};
-        P.forEach((p) => (got[p.id] = []));
-        if (n >= s) P.forEach((p, i) => got[p.id].push(svc[(i + off) % s]));
-        else svc.forEach((name, j) => got[P[(j + off) % n].id].push(name));
-        return got;
-    };
-    const ordinalOf = () =>
-        data ? Math.floor(Date.parse(`${data.date}T00:00:00Z`) / 86400000) || 0 : 0;
-
-    const autoAllocate = (only?: Person[]) => {
-        if (!data) return;
-        const pool = (only || data.people).filter(
-            (p) => !isAway(p.status) && p.services.length > 0
-        );
-        const groups = new Map<string, Person[]>();
-        pool.forEach((p) => {
-            const k = `${p.locationId}::${norm(p.designation)}`;
-            if (!groups.has(k)) groups.set(k, []);
-            groups.get(k)!.push(p);
-        });
-        const next = { ...draft };
-        let touched = 0;
-        groups.forEach((people) => {
-            const got = spread(people, ordinalOf());
-            people.forEach((p) => {
-                next[p.id] = got[p.id] || [];
-                touched++;
-            });
-        });
-        setDraft(next);
-        flash(
-            touched
-                ? `Auto-allocated for ${touched} ${touched === 1 ? "person" : "people"}. Review, then press Save.`
-                : "No one with mapped services to allocate."
-        );
-    };
 
     const clearAll = () => {
         const next = { ...draft };
@@ -394,13 +347,13 @@ export default function BlueAllocate() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     date: data.date,
-                    items: changedIds.map((id) => ({ employeeId: id, services: draft[id] || [] })),
+                    items: changedIds.map((id) => ({ employeeId: id, extras: draft[id] || [] })),
                 }),
             });
             const json = await res.json();
             if (!res.ok || json.success === false)
                 throw new Error(json.message || "Failed to save");
-            flash("Allocation saved. Employees will see it on Submit Work.");
+            flash("Extra duties saved. Employees will see them on Submit Work.");
             load(date);
         } catch (e: any) {
             setError(e?.message || "Failed to save.");
@@ -426,12 +379,15 @@ export default function BlueAllocate() {
     }, [data]);
 
     const steps: [string, string][] = [
-        ["Pick the date", "Today or a future day. Past days are view only."],
         [
-            "Give each person services",
-            "Press Add services on their card, or use Auto Allocate and edit it.",
+            "Duties are automatic",
+            "Everyone who is present already has the services mapped to their role.",
         ],
-        ["Press Save", "Employees then see only these on their Submit Work page."],
+        [
+            "Someone absent?",
+            "Open a present person's card and press Add extra duty to cover the missing service.",
+        ],
+        ["Press Save", "The person then sees role duties + the extra duty on Submit Work."],
     ];
 
     return (
@@ -450,7 +406,10 @@ export default function BlueAllocate() {
             <div style={isMobile ? S.headerRowMobile : S.headerRow}>
                 <div style={{ textAlign: "left" }}>
                     <h2 style={S.pageTitle}>Allocate Work</h2>
-                    <p style={S.headerSubtext}>Decide who does which service today.</p>
+                    <p style={S.headerSubtext}>
+                        Roles do their own services automatically. Add an extra duty only when
+                        someone is missing.
+                    </p>
                 </div>
                 <div style={S.headerActions}>
                     <input
@@ -468,18 +427,6 @@ export default function BlueAllocate() {
                             onClick={() => setShowHelp(true)}
                         >
                             <i className="ti ti-help-circle" /> How it works
-                        </button>
-                    )}
-                    {!readOnly && (
-                        <button
-                            type="button"
-                            className="al-btn"
-                            style={S.secondaryBtn}
-                            onClick={() => autoAllocate()}
-                            disabled={loading}
-                        >
-                            <i className="ti ti-wand" style={{ fontSize: fontSize.md }} />
-                            Auto Allocate
                         </button>
                     )}
                     {!readOnly && (
@@ -513,7 +460,7 @@ export default function BlueAllocate() {
                     >
                         <i className="ti ti-x" />
                     </button>
-                    <div style={S.helpTitle}>How to allocate</div>
+                    <div style={S.helpTitle}>How it works</div>
                     <div
                         style={{
                             display: "grid",
@@ -548,9 +495,10 @@ export default function BlueAllocate() {
                         ))}
                     </div>
                     <div style={S.helpNote}>
-                        <i className="ti ti-info-circle" /> A person can only be given services
-                        mapped to their <b>Designation</b> at their <b>Location</b> on the Services
-                        page. If a card says "No services mapped", add them there first.
+                        <i className="ti ti-info-circle" /> Role duties come from the Services page
+                        (<b>Designation</b> at their <b>Location</b>). If a card says "No services
+                        mapped", add them there first. Extra duty can be any other service of the
+                        same location.
                     </div>
                 </div>
             )}
@@ -577,8 +525,8 @@ export default function BlueAllocate() {
                     <div style={{ flex: 1, minWidth: 220, textAlign: "left" }}>
                         <b>
                             {stats.noServices}{" "}
-                            {stats.noServices === 1 ? "person has" : "people have"} no services to
-                            allocate.
+                            {stats.noServices === 1 ? "person has" : "people have"} no role duties
+                            mapped.
                         </b>{" "}
                         No services are mapped for: {unmappedRoles.slice(0, 4).join(", ")}
                         {unmappedRoles.length > 4 ? ` +${unmappedRoles.length - 4} more` : ""}.
@@ -614,17 +562,17 @@ export default function BlueAllocate() {
                     />
                     <StatTile
                         icon="ti-circle-check"
-                        label="Allocated"
-                        value={stats.allocated}
+                        label="On role duties"
+                        value={stats.onDuty}
                         bg="#DBEAFE"
                         fg="#1D4ED8"
                     />
                     <StatTile
-                        icon="ti-hourglass"
-                        label="Waiting for allocation"
-                        value={Math.max(stats.pending, 0)}
-                        bg="#FEF3C7"
-                        fg="#B45309"
+                        icon="ti-plus"
+                        label="With extra duty"
+                        value={stats.withExtra}
+                        bg="#EDE9FE"
+                        fg="#5B21B6"
                     />
                     <StatTile
                         icon="ti-user-off"
@@ -671,9 +619,9 @@ export default function BlueAllocate() {
                         className="al-btn"
                         style={S.ghostBtn}
                         onClick={clearAll}
-                        title="Clear allocation for everyone shown"
+                        title="Remove extra duties for everyone shown"
                     >
-                        <i className="ti ti-eraser" /> Clear shown
+                        <i className="ti ti-eraser" /> Clear extras
                     </button>
                 )}
             </div>
@@ -722,11 +670,26 @@ export default function BlueAllocate() {
                                     .sort((a, b) => a[1].role.localeCompare(b[1].role))
                                     .map(([key, grp]) => {
                                         const options = grp.people[0]?.services || [];
+                                        const extraOpts = grp.people[0]?.extraOptions || [];
                                         const live = grp.people.filter((p) => !isAway(p.status));
-                                        const covered = new Set(
-                                            live.flatMap((p) => draft[p.id] || [])
+                                        // a service is covered when someone present at this
+                                        // location does it (own role or as an extra duty)
+                                        const coveredAtLoc = new Set(
+                                            visible
+                                                .filter(
+                                                    (p) =>
+                                                        !isAway(p.status) &&
+                                                        p.locationId === grp.people[0]?.locationId
+                                                )
+                                                .flatMap((p) => [
+                                                    ...p.services,
+                                                    ...(draft[p.id] || []),
+                                                ])
+                                                .map(norm)
                                         );
-                                        const unassigned = options.filter((o) => !covered.has(o));
+                                        const unassigned = options.filter(
+                                            (o) => !coveredAtLoc.has(norm(o))
+                                        );
                                         const av = avatarOf(grp.role);
                                         return (
                                             <div
@@ -748,14 +711,11 @@ export default function BlueAllocate() {
                                                             ? "person"
                                                             : "people"}{" "}
                                                         · {options.length}{" "}
-                                                        {options.length === 1
-                                                            ? "service"
-                                                            : "services"}
+                                                        {options.length === 1 ? "duty" : "duties"}
                                                     </span>
                                                     {!readOnly &&
                                                         options.length > 0 &&
-                                                        unassigned.length > 0 &&
-                                                        live.length > 0 && (
+                                                        unassigned.length > 0 && (
                                                             <span
                                                                 style={ui.pill(
                                                                     "#FEF3C7",
@@ -764,31 +724,12 @@ export default function BlueAllocate() {
                                                                 title={unassigned.join(", ")}
                                                             >
                                                                 <i className="ti ti-alert-triangle" />{" "}
-                                                                Not assigned:{" "}
+                                                                Nobody to do:{" "}
                                                                 {unassigned.slice(0, 3).join(", ")}
                                                                 {unassigned.length > 3
                                                                     ? ` +${unassigned.length - 3}`
                                                                     : ""}
                                                             </span>
-                                                        )}
-                                                    <span style={{ flex: 1 }} />
-                                                    {!readOnly &&
-                                                        options.length > 0 &&
-                                                        live.length > 0 && (
-                                                            <button
-                                                                type="button"
-                                                                className="al-btn"
-                                                                style={{
-                                                                    ...S.ghostBtn,
-                                                                    padding: "6px 10px",
-                                                                }}
-                                                                onClick={() =>
-                                                                    autoAllocate(grp.people)
-                                                                }
-                                                                title={`Auto allocate only ${grp.role}`}
-                                                            >
-                                                                <i className="ti ti-wand" /> Auto
-                                                            </button>
                                                         )}
                                                 </div>
 
@@ -814,7 +755,10 @@ export default function BlueAllocate() {
                                                                 STATUS_META.PRESENT;
                                                             const away = isAway(p.status);
                                                             const mine = draft[p.id] || [];
-                                                            const doneCount = mine.filter((s) =>
+                                                            const dutyList = away
+                                                                ? []
+                                                                : [...options, ...mine];
+                                                            const doneCount = dutyList.filter((s) =>
                                                                 p.done.includes(s)
                                                             ).length;
                                                             return (
@@ -863,22 +807,24 @@ export default function BlueAllocate() {
                                                                             </span>
                                                                         </div>
                                                                         {!away &&
-                                                                            mine.length > 0 && (
+                                                                            dutyList.length > 0 && (
                                                                                 <span
                                                                                     style={ui.pill(
                                                                                         doneCount ===
-                                                                                            mine.length
+                                                                                            dutyList.length
                                                                                             ? "#DCFCE7"
                                                                                             : "#F3F4F6",
                                                                                         doneCount ===
-                                                                                            mine.length
+                                                                                            dutyList.length
                                                                                             ? "#166534"
                                                                                             : "#374151"
                                                                                     )}
                                                                                     title="Services the employee has ticked as done"
                                                                                 >
                                                                                     {doneCount}/
-                                                                                    {mine.length}{" "}
+                                                                                    {
+                                                                                        dutyList.length
+                                                                                    }{" "}
                                                                                     done
                                                                                 </span>
                                                                             )}
@@ -898,29 +844,112 @@ export default function BlueAllocate() {
                                                                                     color: "#a7b3c8",
                                                                                 }}
                                                                             >
-                                                                                No allocation while{" "}
+                                                                                No duties while{" "}
                                                                                 {meta.label.toLowerCase()}
                                                                                 .
                                                                             </span>
-                                                                        ) : options.length === 0 ? (
-                                                                            <div style={S.noMap}>
-                                                                                <i className="ti ti-alert-circle" />{" "}
-                                                                                No services mapped
-                                                                                to {grp.role}
-                                                                                {p.locationName
-                                                                                    ? ` at ${p.locationName}`
-                                                                                    : ""}
-                                                                                .
-                                                                            </div>
                                                                         ) : (
-                                                                            <ServicePicker
-                                                                                options={options}
-                                                                                value={mine}
-                                                                                onChange={(v) =>
-                                                                                    setFor(p.id, v)
-                                                                                }
-                                                                                disabled={readOnly}
-                                                                            />
+                                                                            <>
+                                                                                {options.length ===
+                                                                                0 ? (
+                                                                                    <div
+                                                                                        style={
+                                                                                            S.noMap
+                                                                                        }
+                                                                                    >
+                                                                                        <i className="ti ti-alert-circle" />{" "}
+                                                                                        No services
+                                                                                        mapped to{" "}
+                                                                                        {grp.role}
+                                                                                        {p.locationName
+                                                                                            ? ` at ${p.locationName}`
+                                                                                            : ""}
+                                                                                        .
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div
+                                                                                        style={
+                                                                                            S.ownBox
+                                                                                        }
+                                                                                    >
+                                                                                        <div
+                                                                                            style={
+                                                                                                S.ownLabel
+                                                                                            }
+                                                                                        >
+                                                                                            Role
+                                                                                            duties
+                                                                                            (automatic)
+                                                                                        </div>
+                                                                                        <div
+                                                                                            style={{
+                                                                                                display:
+                                                                                                    "flex",
+                                                                                                gap: 6,
+                                                                                                flexWrap:
+                                                                                                    "wrap",
+                                                                                            }}
+                                                                                        >
+                                                                                            {options.map(
+                                                                                                (
+                                                                                                    n
+                                                                                                ) => (
+                                                                                                    <span
+                                                                                                        key={
+                                                                                                            n
+                                                                                                        }
+                                                                                                        style={
+                                                                                                            S.ownChip
+                                                                                                        }
+                                                                                                    >
+                                                                                                        {
+                                                                                                            n
+                                                                                                        }
+                                                                                                    </span>
+                                                                                                )
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+                                                                                {(extraOpts.length >
+                                                                                    0 ||
+                                                                                    mine.length >
+                                                                                        0) && (
+                                                                                    <div
+                                                                                        style={{
+                                                                                            marginTop: 10,
+                                                                                        }}
+                                                                                    >
+                                                                                        <div
+                                                                                            style={
+                                                                                                S.ownLabel
+                                                                                            }
+                                                                                        >
+                                                                                            Extra
+                                                                                            duty
+                                                                                        </div>
+                                                                                        <ServicePicker
+                                                                                            options={
+                                                                                                extraOpts
+                                                                                            }
+                                                                                            value={
+                                                                                                mine
+                                                                                            }
+                                                                                            onChange={(
+                                                                                                v
+                                                                                            ) =>
+                                                                                                setFor(
+                                                                                                    p.id,
+                                                                                                    v
+                                                                                                )
+                                                                                            }
+                                                                                            disabled={
+                                                                                                readOnly
+                                                                                            }
+                                                                                        />
+                                                                                    </div>
+                                                                                )}
+                                                                            </>
                                                                         )}
                                                                     </div>
                                                                 </div>
@@ -1256,6 +1285,22 @@ const S: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         fontWeight: fontWeight.semibold,
         flexShrink: 0,
+    },
+    ownBox: { display: "flex", flexDirection: "column", gap: 6 },
+    ownLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#7c8aa3",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginBottom: 4,
+    },
+    ownChip: {
+        background: "#F1F5F9",
+        color: "#334155",
+        borderRadius: 999,
+        padding: "4px 10px",
+        fontSize: fontSize.sm,
     },
     noMap: {
         display: "flex",

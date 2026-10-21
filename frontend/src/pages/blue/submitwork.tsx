@@ -2,7 +2,7 @@
 //
 // Blue Collar employee's end-of-day submit: a dropdown of ONLY the
 // services mapped to their role (and location), each with a tick box.
-// When a manager has allocated work for today, only those services show.
+// Role services are automatic; an extra duty given by a manager for today is added.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../../utils/authFetch";
@@ -11,7 +11,7 @@ import { ui, useIsMobileBlue } from "./ui";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
-type Service = { id: string; name: string; locationName: string };
+type Service = { id: string; name: string; locationName: string; extra?: boolean };
 type MyServices = {
     role: string;
     locationName: string;
@@ -99,7 +99,7 @@ export default function BlueSubmitWork() {
             <h2 style={ui.title}>Submit Work</h2>
             <p style={ui.sub}>
                 {info?.allocated
-                    ? "Your manager allocated these services for today. Tick what you finished."
+                    ? "These are your role duties plus the extra duty your manager gave you today. Tick what you finished."
                     : "Tick what you finished today."}
             </p>
 
@@ -120,7 +120,7 @@ export default function BlueSubmitWork() {
                         </span>
                         <span style={ui.pill("#F3F4F6", "#374151")}>{info.workDate}</span>
                         {info.allocated && (
-                            <span style={ui.pill("#EDE9FE", "#5B21B6")}>Allocated for today</span>
+                            <span style={ui.pill("#EDE9FE", "#5B21B6")}>Extra duty today</span>
                         )}
                         {alreadySubmitted && (
                             <span style={ui.pill("#DCFCE7", "#166534")}>Submitted today</span>

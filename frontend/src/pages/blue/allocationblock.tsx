@@ -270,7 +270,7 @@ function SubmitWorkModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                         </div>
                         <div style={{ fontSize: 12, color: "#767F92", marginTop: 2 }}>
                             {info?.allocated
-                                ? "Your manager allocated these services for today. Tick what you finished."
+                                ? "Your role duties plus any extra duty from your manager. Tick what you finished."
                                 : "Tick what you finished today."}
                         </div>
                     </div>
@@ -525,7 +525,7 @@ export default function BlueAllocationBlock({ employeeId }: { employeeId?: strin
                         Allocated Work
                     </div>
                     <div style={{ fontSize: 12, color: "#767F92", marginTop: 2 }}>
-                        Services your manager allocated.
+                        Your role duties and any extra duty.
                     </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -548,9 +548,7 @@ export default function BlueAllocationBlock({ employeeId }: { employeeId?: strin
                         <span
                             style={todays ? pill("#DBEAFE", "#1E40AF") : pill("#F3F4F6", "#374151")}
                         >
-                            {todays
-                                ? `${todays.services.length} allocated today`
-                                : "Nothing allocated today"}
+                            {todays ? `${todays.services.length} duties today` : "No duties today"}
                         </span>
                     )}
                 </div>
@@ -593,7 +591,8 @@ export default function BlueAllocationBlock({ employeeId }: { employeeId?: strin
                         fontSize: 12,
                     }}
                 >
-                    No work allocated yet. It will show up here once a manager allocates it.
+                    No duties yet. Role duties show up here automatically once your role has
+                    services mapped.
                 </div>
             )}
 
