@@ -730,9 +730,10 @@ async function servicesForEmployee(orgId, userId) {
       timeSortKey(a.time) - timeSortKey(b.time) || a.name.localeCompare(b.name),
   );
 
-  // If a manager allocated services to this person for today, only those
-  // can be ticked. No allocation -> the full role list, as before.
-  let allocated = null;
+  // Duties are automatic: a present person always has their own role's
+  // services. A manager may add EXTRA duties for today (e.g. the pantry
+  // cleaner is absent, so the office boy covers it); those are appended.
+  let extraNames = [];
   try {
     const { data: al } = await supabase
       .from("blue_allocations")
@@ -741,22 +742,43 @@ async function servicesForEmployee(orgId, userId) {
       .eq("employee_id", userId)
       .eq("work_date", todayYmdInAppTz())
       .limit(1);
-    if (al?.[0] && Array.isArray(al[0].services) && al[0].services.length) {
-      allocated = new Set(al[0].services.map(norm));
-    }
+    if (al?.[0] && Array.isArray(al[0].services)) extraNames = al[0].services;
   } catch (e) {
-    console.error("[bluecollar] allocation lookup skipped:", e?.message || e);
+    console.error("[bluecollar] extra duty lookup skipped:", e?.message || e);
   }
-  const visible = allocated
-    ? services.filter((s) => allocated.has(norm(s.name)))
-    : services;
+  const ownKeys = new Set(services.map((s) => norm(s.name)));
+  const extraKeys = extraNames.map(norm).filter((k) => !ownKeys.has(k));
+  let extras = [];
+  if (extraKeys.length) {
+    let eq = supabase
+      .from("blue_role_services")
+      .select("id, location_id, service_name, service_time")
+      .eq("organization_id", orgId);
+    if (locationId) eq = eq.eq("location_id", locationId);
+    const { data: er } = await eq;
+    const seenE = new Set();
+    (er || []).forEach((r) => {
+      const key = norm(r.service_name);
+      if (!extraKeys.includes(key) || seenE.has(key)) return;
+      seenE.add(key);
+      extras.push({
+        id: r.id,
+        name: r.service_name,
+        time: r.service_time || "",
+        locationName: locName[r.location_id] || "",
+        extra: true,
+      });
+    });
+    extras.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const visible = [...services, ...extras];
 
   return {
     role,
     locationId,
     locationName: locationId ? locName[locationId] || "" : "",
     services: visible,
-    allocated: Boolean(allocated),
+    allocated: extras.length > 0,
   };
 }
 
@@ -944,6 +966,25 @@ function allowedServiceNames(roleServiceRows, designation, locationId) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
+// Services a person can be given AS AN EXTRA: every service at their
+// location that is not already part of their own role.
+function extraServiceOptions(roleServiceRows, designation, locationId) {
+  const own = new Set(
+    allowedServiceNames(roleServiceRows, designation, locationId).map(norm),
+  );
+  const seen = new Set();
+  const out = [];
+  (roleServiceRows || [])
+    .filter((r) => !locationId || r.location_id === locationId)
+    .forEach((r) => {
+      const k = norm(r.service_name);
+      if (own.has(k) || seen.has(k)) return;
+      seen.add(k);
+      out.push(r.service_name);
+    });
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 // Same visibility rule as /team-view: a Vertical Head only sees own team.
 function visibleBluePeople(req, everyone) {
   let blue = everyone.filter((e) => e.collarType === "BLUE");
@@ -1004,7 +1045,8 @@ router.get("/allocations", authorize(...MANAGER_ROLES), async (req, res) => {
       locationName: e.locationId ? locName[e.locationId] || "" : "",
       status: attById.get(e.id) || "PRESENT",
       services: allowedServiceNames(rs.data, e.designation, e.locationId),
-      allocated: allocById.get(e.id) || [],
+      extraOptions: extraServiceOptions(rs.data, e.designation, e.locationId),
+      extras: allocById.get(e.id) || [],
       done: doneById.get(e.id) || [],
     }));
 
@@ -1063,18 +1105,22 @@ router.put(
           });
         }
         const allowed = new Map(
-          allowedServiceNames(rs.data, emp.designation, emp.locationId).map(
+          extraServiceOptions(rs.data, emp.designation, emp.locationId).map(
             (n) => [norm(n), n],
           ),
         );
-        const picked = Array.isArray(it.services) ? it.services : [];
+        const picked = Array.isArray(it.extras)
+          ? it.extras
+          : Array.isArray(it.services)
+            ? it.services
+            : [];
         const services = [];
         for (const p of picked) {
           const hit = allowed.get(norm(p));
           if (!hit) {
             return res.status(400).json({
               success: false,
-              message: `"${clean(p)}" is not mapped to ${emp.name}'s role.`,
+              message: `"${clean(p)}" cannot be given to ${emp.name} as an extra duty.`,
             });
           }
           if (!services.includes(hit)) services.push(hit);
@@ -1166,21 +1212,42 @@ router.get("/my-allocations", async (req, res) => {
     const doneByDate = new Map(
       (subs.data || []).map((s) => [s.work_date, (s.services || []).map(norm)]),
     );
-    res.json({
-      success: true,
-      data: {
-        today,
-        allocations: (alloc.data || []).map((r) => {
-          const done = doneByDate.get(r.work_date) || [];
-          const services = r.services || [];
-          return {
-            workDate: r.work_date,
-            services,
-            done: services.filter((s) => done.includes(norm(s))),
-          };
-        }),
-      },
-    });
+    const subServices = new Map(
+      (subs.data || []).map((s) => [s.work_date, s.services || []]),
+    );
+    const extraByDate = new Map(
+      (alloc.data || []).map((r) => [r.work_date, r.services || []]),
+    );
+    // today = own role duties (automatic) + today's extras; any other day =
+    // extras given for that day plus whatever the person actually submitted.
+    const info = await servicesForEmployee(orgId, targetId);
+    const dates = new Set([
+      ...extraByDate.keys(),
+      ...subServices.keys(),
+      today,
+    ]);
+    const rows = [...dates]
+      .sort((a, b) => b.localeCompare(a))
+      .map((workDate) => {
+        let services;
+        if (workDate === today) {
+          services = info.services.map((s) => s.name);
+        } else {
+          services = [...(extraByDate.get(workDate) || [])];
+          (subServices.get(workDate) || []).forEach((n) => {
+            if (!services.some((x) => norm(x) === norm(n))) services.push(n);
+          });
+        }
+        const done = doneByDate.get(workDate) || [];
+        return {
+          workDate,
+          services,
+          extras: extraByDate.get(workDate) || [],
+          done: services.filter((s) => done.includes(norm(s))),
+        };
+      })
+      .filter((r) => r.services.length > 0);
+    res.json({ success: true, data: { today, allocations: rows } });
   } catch (err) {
     fail(res, err, 500, "Failed to load allocation.");
   }
