@@ -6,6 +6,12 @@ const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const productService = require("./products.service");
 const supabase = require("../../config/supabaseClient");
 const { getAllTeams } = require("../teams/teams.service");
+const ExcelJS = require("exceljs");
+const {
+  applyColumnValidation,
+  addRangeListValidation,
+  addInlineListValidation,
+} = require("../../utils/excelValidation");
 
 // APPROVAL: merges any PENDING SERVICE_* approval requests into the
 // normal product list so the person who just submitted one sees it right
@@ -557,7 +563,90 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+// ------------------------------------------------------------
+// GET /api/products/bulk/template
+// Bulk Add Services sample sheet with Excel dropdown validation:
+//   Teams        -> org teams (warning only: the cell may hold several,
+//                   comma-separated, e.g. "Tech, SD")
+//   Case Number  -> Yes / No
+//   Service Name -> required text, no duplicates inside the sheet
+// ------------------------------------------------------------
+async function downloadBulkProductTemplate(req, res) {
+  try {
+    const teams = (await getAllTeams(req.user.organizationId))
+      .map((t) => (typeof t === "string" ? t : t.name))
+      .filter(Boolean);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Services");
+    ws.columns = [
+      { header: "Service Name", key: "n", width: 28 }, // A
+      { header: "Time Taken", key: "t", width: 16 }, // B
+      { header: "Teams", key: "teams", width: 24 }, // C
+      { header: "Case Number", key: "c", width: 14 }, // D
+    ];
+    ws.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF2F5597" },
+      };
+    });
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.getColumn("B").numFmt = "@";
+    ws.addRow({
+      n: "Inventory Sync",
+      t: "2 hours",
+      teams: teams[0] || "",
+      c: "Yes",
+    });
+
+    const L = wb.addWorksheet("Lists", { state: "hidden" });
+    // Teams: dropdown helps, but "Tech, SD" (several teams) must stay legal.
+    if (teams.length) {
+      teams.forEach((v, i) => (L.getCell(i + 1, 1).value = v));
+      applyColumnValidation(ws, "C", {
+        type: "list",
+        formulae: [`Lists!$A$1:$A$${teams.length}`],
+        errorStyle: "warning",
+        errorTitle: "Team",
+        error:
+          "Pick a team from the list. To give several teams, type them comma-separated (each must already exist).",
+      });
+    }
+    addInlineListValidation(ws, "D", ["Yes", "No"], "Case Number option");
+
+    applyColumnValidation(ws, "A", {
+      type: "custom",
+      formulae: (r) => [
+        `AND(LEN(TRIM(A${r}))>0,COUNTIF($A$2:$A$2000,A${r})=1)`,
+      ],
+      errorTitle: "Service Name",
+      error: "Service Name can't be blank or repeated in this sheet.",
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="bulk_add_services_template.xlsx"',
+    );
+    res.send(Buffer.from(buf));
+  } catch (err) {
+    console.error("downloadBulkProductTemplate error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
 module.exports = {
+  downloadBulkProductTemplate,
   getAllProducts,
   getProductById,
   createProduct,

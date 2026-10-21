@@ -39,6 +39,12 @@ router.use(authenticate);
 // "Products" here = task catalog per client — everyone needs to read
 // this to allocate/report against it.
 router.get("/", productController.getAllProducts);
+// Must stay ABOVE "/:id" or "bulk" gets treated as an id.
+router.get(
+  "/bulk/template",
+  requireAnyPermission("products.manage"),
+  productController.downloadBulkProductTemplate,
+);
 router.get("/:id", productController.getProductById);
 
 // PERMISSIONS: create/bulk-upload/delete now use the "products.manage"

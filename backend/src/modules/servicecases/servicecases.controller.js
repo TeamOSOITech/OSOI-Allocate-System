@@ -61,6 +61,12 @@ const { getRecentLoad, orderByLeastLoad } = require("./fairness");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const { isIsoDate } = require("../../utils/orgGuards");
+// NEW: Excel dropdown validation for the bulk-upload template (same helpers
+// the Client / Subclient templates use).
+const {
+  applyColumnValidation,
+  addRangeListValidation,
+} = require("../../utils/excelValidation");
 // NEW: a client can only be used on a service it is mapped to.
 const {
   getMappedClientIds,
@@ -1051,10 +1057,109 @@ async function createServiceCases(req, res) {
 // ------------------------------------------------------------
 // GET /api/service-cases/upload/template
 //
-// Sample .xlsx for Upload mode — "Case Number" column (required) plus
-// the "Client Name" / "Subclient Name" columns uploadCustomServiceCases
-// below reads. Client/Subclient are optional in the actual upload.
+// Sample .xlsx for Upload mode - "Case Number" column (required) plus
+// the Service / "Client Name" / "Subclient Name" columns
+// uploadCustomServiceCases below reads.
+//
+// NEW (VALIDATION): Service, Client Name and Subclient Name are Excel
+// dropdowns, so a misspelt / unmapped value can't be typed:
+//   Service      -> this org's active services (Vertical Head: own team only)
+//   Client Name  -> only the clients MAPPED to the Service picked in the
+//                   same row (all active clients while Service is blank)
+//   Subclient    -> only the subclients of the Client picked in that row
+// The lists live on a hidden "Lists" sheet.
 // ------------------------------------------------------------
+async function buildCaseTemplateLists(req) {
+  const orgId = req.user.organizationId;
+  const byName = (a, b) => a.localeCompare(b);
+  const clean = (v) => String(v || "").trim();
+
+  const [prodRes, clientRes, subRes, mapRes] = await Promise.all([
+    supabase.from("service_master").select("*").eq("organization_id", orgId),
+    supabase
+      .from("clients")
+      .select("id, name, status")
+      .eq("organization_id", orgId),
+    supabase
+      .from("subclients")
+      .select("id, name, client_id, status")
+      .eq("organization_id", orgId),
+    supabase
+      .from("client_products")
+      .select("client_id, product_id")
+      .eq("organization_id", orgId),
+  ]);
+  [prodRes, clientRes, subRes, mapRes].forEach((r) => {
+    if (r.error) throw r.error;
+  });
+
+  // services (Vertical Head only sees own team's services)
+  let products = (prodRes.data || []).filter(
+    (p) => clean(p.product_name) && p.status !== "Inactive",
+  );
+  if (req.user.role === "VERTICAL_HEAD") {
+    const { data: self } = await supabase
+      .from("user_master")
+      .select('"Worked In Teams"')
+      .eq("Auth User Id", req.user.userId)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+    const ownTeam = clean(self?.["Worked In Teams"]).toLowerCase();
+    products = products.filter((p) =>
+      (p.teams || []).map((t) => clean(t).toLowerCase()).includes(ownTeam),
+    );
+  }
+  products.sort((a, b) => byName(clean(a.product_name), clean(b.product_name)));
+
+  const activeClients = (clientRes.data || []).filter(
+    (c) => clean(c.name) && c.status !== "Inactive",
+  );
+  const clientById = new Map(
+    activeClients.map((c) => [String(c.id), clean(c.name)]),
+  );
+
+  // service -> clients pairs (sorted by service, then client)
+  const serviceClientPairs = [];
+  products.forEach((p) => {
+    const names = [
+      ...new Set(
+        (mapRes.data || [])
+          .filter((m) => String(m.product_id) === String(p.id))
+          .map((m) => clientById.get(String(m.client_id)))
+          .filter(Boolean),
+      ),
+    ].sort(byName);
+    names.forEach((n) => serviceClientPairs.push([clean(p.product_name), n]));
+  });
+
+  // client -> subclients pairs (sorted by client, then subclient)
+  const clientSubPairs = [];
+  [...clientById.entries()]
+    .sort((a, b) => byName(a[1], b[1]))
+    .forEach(([cid, cname]) => {
+      const names = [
+        ...new Set(
+          (subRes.data || [])
+            .filter(
+              (s) =>
+                String(s.client_id) === cid &&
+                clean(s.name) &&
+                s.status !== "Inactive",
+            )
+            .map((s) => clean(s.name)),
+        ),
+      ].sort(byName);
+      names.forEach((n) => clientSubPairs.push([cname, n]));
+    });
+
+  return {
+    serviceNames: products.map((p) => clean(p.product_name)),
+    serviceClientPairs,
+    clientSubPairs,
+    allClients: [...new Set(clientById.values())].sort(byName),
+  };
+}
+
 async function downloadUploadTemplate(req, res) {
   try {
     const wb = new ExcelJS.Workbook();
@@ -1066,8 +1171,79 @@ async function downloadUploadTemplate(req, res) {
       { header: "Subclient Name", key: "subclient", width: 24 },
     ];
     ws.getRow(1).eachCell((cell) => styleHeaderCell(cell));
-    ws.addRow(["CASE-1001", "Income Tax", "ABC Ltd", "ABC North"]);
-    ws.addRow(["CASE-1002", "GST", "XYZ Pvt Ltd", ""]);
+
+    const lists = await buildCaseTemplateLists(req);
+
+    // Sample rows come from real data when possible, so they pass the
+    // dropdown rules; otherwise the old placeholders are used.
+    const firstPair = lists.serviceClientPairs[0];
+    const firstSub = firstPair
+      ? lists.clientSubPairs.find((p) => p[0] === firstPair[1])
+      : null;
+    ws.addRow([
+      "CASE-1001",
+      firstPair ? firstPair[0] : "Income Tax",
+      firstPair ? firstPair[1] : "ABC Ltd",
+      firstSub ? firstSub[1] : "",
+    ]);
+    ws.addRow(["CASE-1002", firstPair ? firstPair[0] : "GST", "", ""]);
+
+    // ---- hidden "Lists" sheet ----
+    // A: services | C:D service->client | F:G client->subclient
+    // I: all clients | K: placeholder messages
+    const listsSheet = wb.addWorksheet("Lists", { state: "hidden" });
+
+    // Service dropdown (plain list from col A)
+    addRangeListValidation(
+      ws,
+      listsSheet,
+      1,
+      "B",
+      lists.serviceNames,
+      "Service",
+    );
+
+    lists.serviceClientPairs.forEach(([svc, cl], i) => {
+      listsSheet.getCell(i + 1, 3).value = svc;
+      listsSheet.getCell(i + 1, 4).value = cl;
+    });
+    lists.clientSubPairs.forEach(([cl, sub], i) => {
+      listsSheet.getCell(i + 1, 6).value = cl;
+      listsSheet.getCell(i + 1, 7).value = sub;
+    });
+    lists.allClients.forEach((cl, i) => {
+      listsSheet.getCell(i + 1, 9).value = cl;
+    });
+    listsSheet.getCell(1, 11).value = "(no client mapped to this service)";
+    listsSheet.getCell(2, 11).value = "(no subclient for this client)";
+    listsSheet.getCell(3, 11).value = "(pick a Client first)";
+
+    const n1 = Math.max(lists.serviceClientPairs.length, 1);
+    const n2 = Math.max(lists.clientSubPairs.length, 1);
+    const n3 = Math.max(lists.allClients.length, 1);
+
+    // Client Name: clients mapped to the Service in column B of the SAME row
+    applyColumnValidation(ws, "C", {
+      type: "list",
+      formulae: (r) => [
+        `IF($B${r}="",Lists!$I$1:$I$${n3},IFERROR(OFFSET(Lists!$D$1,MATCH($B${r},Lists!$C$1:$C$${n1},0)-1,0,COUNTIF(Lists!$C$1:$C$${n1},$B${r}),1),Lists!$K$1))`,
+      ],
+      errorTitle: "Invalid Client",
+      error:
+        "Pick a Client from the dropdown (only clients mapped to the selected Service are listed).",
+    });
+
+    // Subclient Name: subclients of the Client in column C of the SAME row
+    applyColumnValidation(ws, "D", {
+      type: "list",
+      formulae: (r) => [
+        `IF($C${r}="",Lists!$K$3,IFERROR(OFFSET(Lists!$G$1,MATCH($C${r},Lists!$F$1:$F$${n2},0)-1,0,COUNTIF(Lists!$F$1:$F$${n2},$C${r}),1),Lists!$K$2))`,
+      ],
+      errorTitle: "Invalid Subclient",
+      error: "Pick a Subclient of the selected Client from the dropdown.",
+    });
+
+    ws.views = [{ state: "frozen", ySplit: 1 }];
 
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader(

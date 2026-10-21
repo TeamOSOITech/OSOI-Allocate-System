@@ -15,6 +15,7 @@ const { requirePermission } = require("../../middlewares/rbac");
 // (act immediately), same pattern as clients.routes.js.
 const { approvalGate } = require("../../middlewares/approvalGate");
 const userController = require("./user.controller");
+const { downloadBulkUserTemplate } = require("./bulkTemplate");
 
 const router = express.Router();
 
@@ -44,6 +45,14 @@ router.post(
 // bulkApprovalGate() used by clients/products) applies here unchanged.
 // Ops Manager / Super Admin are unaffected (act immediately).
 // ---------------------------------------------------------------------------
+// Sample .xlsx for Bulk Add Users, with dropdown validation (Role, Teams,
+// Reporting Manager, Department, Designation) + format checks.
+router.get(
+  "/bulk-add-user/template",
+  requirePermission("users.onboard"),
+  downloadBulkUserTemplate,
+);
+
 router.post(
   "/bulk-add-user",
   requirePermission("users.onboard"),
