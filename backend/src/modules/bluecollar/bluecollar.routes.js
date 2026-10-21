@@ -10,9 +10,9 @@
 //   GET    /locations                      list locations (+ headcount)
 //   POST   /locations                      add a location
 //   DELETE /locations/:id                  remove a location
-//   GET    /role-services                  Location / Role / Service rows
+//   GET    /role-services                  Location / Role / Service (+ Time) rows
 //   GET    /role-services/template         Excel template download
-//   POST   /role-services/upload           Excel upload (Location, Role, Service)
+//   POST   /role-services/upload           Excel upload (Location, Role, Service, optional Time)
 //   DELETE /role-services/:id              remove one mapping
 //   GET    /team-view?date=                managers -> teams -> people + attendance
 //   PUT    /team-requirements              how many people a team needs
@@ -25,6 +25,8 @@
 //   GET    /my-allocations                 a person's allocated work (Profile)
 //
 // Allocation table: blue_allocations (see blue_allocations.sql).
+// Optional service time: column blue_role_services.service_time (text), e.g.
+//   alter table public.blue_role_services add column if not exists service_time text;
 
 const express = require("express");
 const multer = require("multer");
@@ -77,6 +79,63 @@ const fail = (res, err, status = 500, message = "Something went wrong.") => {
 
 const clean = (v) => (v === null || v === undefined ? "" : String(v).trim());
 const norm = (v) => clean(v).toLowerCase();
+
+/* ------------------------------------------------------------------ */
+/*  Optional service time: "10:00 AM" or "10:00 AM - 11:00 AM"        */
+/* ------------------------------------------------------------------ */
+
+function parseOneTime(str) {
+  const m = String(str)
+    .trim()
+    .match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?$/i);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  const ap = m[3] ? m[3].toLowerCase() : "";
+  if (min > 59) return null;
+  if (ap) {
+    if (h < 1 || h > 12) return null;
+    if (ap === "p" && h < 12) h += 12;
+    if (ap === "a" && h === 12) h = 0;
+  } else if (h > 23) {
+    return null;
+  }
+  return { h, min };
+}
+
+const fmtOneTime = ({ h, min }) =>
+  `${((h + 11) % 12) + 1}:${String(min).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+
+// -> { ok: true, value: "" | "10:00 AM" | "10:00 AM - 11:00 AM" } or { ok: false }
+function normalizeServiceTime(raw) {
+  if (raw === null || raw === undefined || raw === "") {
+    return { ok: true, value: "" };
+  }
+  let parts;
+  if (typeof raw === "number") {
+    // an Excel time cell read as a day fraction
+    if (!(raw >= 0 && raw < 1)) return { ok: false };
+    const total = Math.round(raw * 1440) % 1440;
+    parts = [{ h: Math.floor(total / 60), min: total % 60 }];
+  } else {
+    const t = clean(raw);
+    if (!t) return { ok: true, value: "" };
+    // Excel turned a time cell into a date string -> the time is lost
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return { ok: false };
+    const bits = t.split(/\s*(?:-|–|—|\bto\b)\s*/i);
+    if (bits.length > 2) return { ok: false };
+    parts = bits.map(parseOneTime);
+    if (parts.some((x) => !x)) return { ok: false };
+  }
+  return { ok: true, value: parts.map(fmtOneTime).join(" - ") };
+}
+
+// minutes since midnight of the first time in the text (no time -> last)
+function timeSortKey(text) {
+  const first = clean(text).split(" - ")[0];
+  const p = first ? parseOneTime(first) : null;
+  return p ? p.h * 60 + p.min : 99999;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Locations                                                          */
@@ -180,7 +239,7 @@ router.get("/role-services", authorize(...MANAGER_ROLES), async (req, res) => {
     const [{ data, error }, locations] = await Promise.all([
       supabase
         .from("blue_role_services")
-        .select("id, location_id, role_name, service_name")
+        .select("id, location_id, role_name, service_name, service_time")
         .eq("organization_id", orgId)
         .order("role_name", { ascending: true })
         .order("service_name", { ascending: true }),
@@ -196,6 +255,7 @@ router.get("/role-services", authorize(...MANAGER_ROLES), async (req, res) => {
         locationName: locName[r.location_id] || "",
         role: r.role_name,
         service: r.service_name,
+        time: r.service_time || "",
       })),
     });
   } catch (err) {
@@ -214,13 +274,16 @@ router.get(
         { header: "Location", key: "location", width: 22 },
         { header: "Role", key: "role", width: 22 },
         { header: "Service", key: "service", width: 30 },
+        { header: "Time (optional)", key: "time", width: 24 },
       ];
       ws.getRow(1).font = { bold: true };
+      // keep Time as plain text so Excel does not turn "10:00 AM" into a date
+      ws.getColumn(4).numFmt = "@";
       [
-        ["Plant A", "Office Boy", "Jhadoo"],
-        ["Plant A", "Office Boy", "Pocha"],
-        ["Plant A", "Office Boy", "Washroom saaf"],
-        ["Plant A", "Office Boy", "Utensil cleaning"],
+        ["Plant A", "Office Boy", "Jhadoo", "09:00 AM"],
+        ["Plant A", "Office Boy", "Pocha", "09:30 AM"],
+        ["Plant A", "Office Boy", "Washroom saaf", "11:00 AM - 12:00 PM"],
+        ["Plant A", "Office Boy", "Utensil cleaning", ""],
       ].forEach((r) => ws.addRow(r));
       res.setHeader(
         "Content-Type",
@@ -263,9 +326,15 @@ router.post(
       );
 
       // headers are matched case-insensitively ("location", "LOCATION", ...)
-      const pick = (row, name) => {
+      const pickRaw = (row, name) => {
         const key = Object.keys(row).find((k) => norm(k) === name);
-        return key ? clean(row[key]) : "";
+        return key ? row[key] : "";
+      };
+      const pick = (row, name) => clean(pickRaw(row, name));
+      // "Time" or "Time (optional)" both work
+      const pickTime = (row) => {
+        const key = Object.keys(row).find((k) => /^time\b/.test(norm(k)));
+        return key ? row[key] : "";
       };
 
       const locations = await fetchLocations(orgId);
@@ -287,10 +356,20 @@ router.post(
           });
           continue;
         }
+        const tm = normalizeServiceTime(pickTime(row));
+        if (!tm.ok) {
+          errors.push({
+            line,
+            message:
+              'Time must look like "10:00 AM" or "10:00 AM - 11:00 AM" (type it as text).',
+          });
+          continue;
+        }
         toInsert.set(`${norm(location)}|${norm(role)}|${norm(service)}`, {
           location,
           role,
           service,
+          time: tm.value,
         });
       }
 
@@ -315,25 +394,59 @@ router.post(
         (created || []).forEach((l) => locIdByName.set(norm(l.name), l.id));
       }
 
-      const rows = [...toInsert.values()].map((r) => ({
-        organization_id: orgId,
-        location_id: locIdByName.get(norm(r.location)),
-        role_name: r.role,
-        service_name: r.service,
-      }));
+      // what is already saved, so we can tell new rows from updated times
+      const { data: existing, error: exErr } = await supabase
+        .from("blue_role_services")
+        .select("location_id, role_name, service_name, service_time")
+        .eq("organization_id", orgId);
+      if (exErr) throw exErr;
+      const existingByKey = new Map(
+        (existing || []).map((r) => [
+          `${r.location_id}|${norm(r.role_name)}|${norm(r.service_name)}`,
+          r,
+        ]),
+      );
 
+      const withTime = [];
+      const withoutTime = [];
       let added = 0;
-      if (rows.length) {
-        // ignoreDuplicates: a re-upload of the same sheet is harmless
-        const { data: inserted, error } = await supabase
+      let updated = 0;
+      for (const r of toInsert.values()) {
+        const locationId = locIdByName.get(norm(r.location));
+        const base = {
+          organization_id: orgId,
+          location_id: locationId,
+          role_name: r.role,
+          service_name: r.service,
+        };
+        const prev = existingByKey.get(
+          `${locationId}|${norm(r.role)}|${norm(r.service)}`,
+        );
+        if (!prev) added++;
+        if (r.time) {
+          withTime.push({ ...base, service_time: r.time });
+          if (prev && (prev.service_time || "") !== r.time) updated++;
+        } else {
+          withoutTime.push(base);
+        }
+      }
+      const total = withTime.length + withoutTime.length;
+      const onConflict = "organization_id,location_id,role_name,service_name";
+
+      // rows with a time: insert, or update the time of an existing service
+      if (withTime.length) {
+        const { error } = await supabase
           .from("blue_role_services")
-          .upsert(rows, {
-            onConflict: "organization_id,location_id,role_name,service_name",
-            ignoreDuplicates: true,
-          })
-          .select("id");
+          .upsert(withTime, { onConflict });
         if (error) throw error;
-        added = (inserted || []).length;
+      }
+      // rows without a time: a re-upload of the same sheet is harmless and
+      // never wipes a time that was set earlier
+      if (withoutTime.length) {
+        const { error } = await supabase
+          .from("blue_role_services")
+          .upsert(withoutTime, { onConflict, ignoreDuplicates: true });
+        if (error) throw error;
       }
 
       res.json({
@@ -341,7 +454,8 @@ router.post(
         data: {
           rowsInFile: rawRows.length,
           added,
-          alreadyExisted: Math.max(rows.length - added, 0),
+          updated,
+          alreadyExisted: Math.max(total - added, 0),
           newLocations: newLocations.length,
           errors,
         },
@@ -581,7 +695,7 @@ async function servicesForEmployee(orgId, userId) {
 
   let q = supabase
     .from("blue_role_services")
-    .select("id, location_id, role_name, service_name")
+    .select("id, location_id, role_name, service_name, service_time")
     .eq("organization_id", orgId)
     .ilike(
       "role_name",
@@ -606,10 +720,15 @@ async function servicesForEmployee(orgId, userId) {
       services.push({
         id: r.id,
         name: r.service_name,
+        time: r.service_time || "",
         locationName: locName[r.location_id] || "",
       });
     });
-  services.sort((a, b) => a.name.localeCompare(b.name));
+  // timed services first (earliest first), then the rest A-Z
+  services.sort(
+    (a, b) =>
+      timeSortKey(a.time) - timeSortKey(b.time) || a.name.localeCompare(b.name),
+  );
 
   // If a manager allocated services to this person for today, only those
   // can be ticked. No allocation -> the full role list, as before.
