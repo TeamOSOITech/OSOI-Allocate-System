@@ -2739,6 +2739,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 {profileSaveError && <p style={styles.rowError}>{profileSaveError}</p>}
             </div>
 
+            {isBlueMode && <BlueAllocationBlock employeeId={isViewingOther ? viewingId : null} />}
             {isBlueMode && <BlueWorkSummary employeeId={isViewingOther ? viewingId : null} />}
 
             {!isBlueMode && (
@@ -6392,6 +6393,14 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
     } | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState("");
+    const [tick, setTick] = useState(0);
+
+    // reload after the Submit Work popup saves
+    useEffect(() => {
+        const h = () => setTick((t) => t + 1);
+        window.addEventListener("blue-work-submitted", h);
+        return () => window.removeEventListener("blue-work-submitted", h);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -6415,7 +6424,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
         return () => {
             cancelled = true;
         };
-    }, [employeeId]);
+    }, [employeeId, tick]);
 
     const today = todayStr();
     const todays = data?.submissions.find((s) => s.workDate === today) || null;
@@ -6449,10 +6458,12 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
     const pill = (bg: string, fg: string): CSSProperties => ({
         display: "inline-flex",
         alignItems: "center",
-        gap: 5,
-        padding: "4px 11px",
+        gap: 4,
+        height: 24,
+        boxSizing: "border-box",
+        padding: "0 10px",
         borderRadius: 999,
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: 600,
         background: bg,
         color: fg,
@@ -6464,7 +6475,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
             style={{
                 background: "#fff",
                 borderRadius: 16,
-                padding: 20,
+                padding: "16px 18px",
                 boxShadow: "0 10px 30px rgba(0,0,0,.06)",
                 textAlign: "left",
             }}
@@ -6474,26 +6485,26 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                 <span
                     aria-hidden="true"
                     style={{
-                        flex: "0 0 42px",
-                        width: 42,
-                        height: 42,
-                        borderRadius: 12,
+                        flex: "0 0 36px",
+                        width: 36,
+                        height: 36,
+                        borderRadius: 10,
                         background: "linear-gradient(135deg,#3B82F6,#6366F1)",
                         color: "#fff",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: 21,
+                        fontSize: 18,
                         boxShadow: "0 6px 14px rgba(99,102,241,0.3)",
                     }}
                 >
                     <i className="ti ti-clipboard-check" />
                 </span>
                 <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#17181C" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#17181C" }}>
                         Work Submissions
                     </div>
-                    <div style={{ fontSize: 13, color: "#767F92", marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: "#767F92", marginTop: 2 }}>
                         Services ticked as done in the last 30 days.
                     </div>
                 </div>
@@ -6529,7 +6540,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
 
             {/* quick numbers */}
             {data && submissions.length > 0 && (
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "16px 0 6px" }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "12px 0 4px" }}>
                     {[
                         {
                             v: submissions.length,
@@ -6550,14 +6561,14 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                                 display: "flex",
                                 alignItems: "baseline",
                                 gap: 8,
-                                padding: "8px 14px",
+                                padding: "6px 12px",
                                 borderRadius: 12,
                                 background: t.bg,
                             }}
                         >
                             <span
                                 style={{
-                                    fontSize: 22,
+                                    fontSize: 18,
                                     fontWeight: 800,
                                     color: t.fg,
                                     lineHeight: 1,
@@ -6565,7 +6576,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                             >
                                 {t.v}
                             </span>
-                            <span style={{ fontSize: 12.5, color: "#4B5563", fontWeight: 600 }}>
+                            <span style={{ fontSize: 11.5, color: "#4B5563", fontWeight: 600 }}>
                                 {t.l}
                             </span>
                         </div>
@@ -6574,7 +6585,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
             )}
 
             {loading && (
-                <div style={{ color: "#9099AC", fontSize: 13, marginTop: 16 }}>Loading…</div>
+                <div style={{ color: "#9099AC", fontSize: 12, marginTop: 16 }}>Loading…</div>
             )}
             {err && (
                 <div
@@ -6596,7 +6607,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                 <div
                     style={{
                         marginTop: 16,
-                        padding: "28px 16px",
+                        padding: "22px 16px",
                         borderRadius: 14,
                         border: "1.5px dashed #D6DCF5",
                         background: "#FAFBFF",
@@ -6607,16 +6618,16 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                         className="ti ti-clipboard-list"
                         aria-hidden="true"
                         style={{
-                            fontSize: 30,
+                            fontSize: 26,
                             color: "#A5B4FC",
                             display: "block",
                             marginBottom: 6,
                         }}
                     />
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#3D4459" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#3D4459" }}>
                         No submissions yet
                     </div>
-                    <div style={{ fontSize: 12.5, color: "#767F92", marginTop: 3 }}>
+                    <div style={{ fontSize: 11.5, color: "#767F92", marginTop: 3 }}>
                         Services ticked as done on Submit Work will show up here, day by day.
                     </div>
                 </div>
@@ -6633,32 +6644,32 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                                 key={s.workDate}
                                 style={{
                                     display: "flex",
-                                    gap: 14,
-                                    padding: "12px 0",
+                                    gap: 12,
+                                    padding: "10px 0",
                                     borderTop: i === 0 ? "none" : "1px solid #F1F2F6",
                                     alignItems: "flex-start",
                                 }}
                             >
                                 <div
                                     style={{
-                                        flex: "0 0 52px",
-                                        width: 52,
-                                        padding: "6px 0",
-                                        borderRadius: 12,
+                                        flex: "0 0 44px",
+                                        width: 44,
+                                        padding: "5px 0",
+                                        borderRadius: 10,
                                         textAlign: "center",
                                         background: isToday ? "#DCFCE7" : "#EEF2FF",
                                         color: isToday ? "#166534" : "#3730A3",
                                     }}
                                 >
-                                    <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.1 }}>
+                                    <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.1 }}>
                                         {d.day}
                                     </div>
-                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{d.month}</div>
+                                    <div style={{ fontSize: 10, fontWeight: 700 }}>{d.month}</div>
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div
                                         style={{
-                                            fontSize: 12.5,
+                                            fontSize: 11.5,
                                             color: "#767F92",
                                             marginBottom: 6,
                                         }}
@@ -6689,7 +6700,7 @@ function BlueWorkSummary({ employeeId }: { employeeId: string | null }) {
                                                 borderLeft: "3px solid #C7D2FE",
                                                 background: "#FAFBFF",
                                                 borderRadius: "0 8px 8px 0",
-                                                fontSize: 12.5,
+                                                fontSize: 11.5,
                                                 color: "#5B6479",
                                             }}
                                         >

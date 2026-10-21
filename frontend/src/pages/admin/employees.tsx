@@ -1521,7 +1521,7 @@ export default function Employees() {
                                         }}
                                     />
                                 </div>
-                                <div style={{ minWidth: 0, paddingTop: 30 }}>
+                                <div style={{ minWidth: 0, paddingTop: 30, textAlign: "left" }}>
                                     {isEditingDrawer ? (
                                         <>
                                             <input
@@ -2997,12 +2997,18 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
     },
     drawerName: {
+        textAlign: "left",
         margin: "10px 0 2px",
         fontSize: fontSize["2xl"],
         fontWeight: fontWeight.bold,
         color: "#16233a",
     },
-    drawerDesignation: { margin: "0 0 8px", fontSize: fontSize.base, color: "#7d90a6" },
+    drawerDesignation: {
+        textAlign: "left",
+        margin: "0 0 8px",
+        fontSize: fontSize.base,
+        color: "#7d90a6",
+    },
     statusPill: {
         display: "inline-block",
         fontSize: fontSize.xs,

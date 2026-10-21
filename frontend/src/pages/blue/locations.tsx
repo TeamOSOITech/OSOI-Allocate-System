@@ -1,7 +1,7 @@
 // src/pages/blue/locations.tsx
 //
 // Blue Collar "Services": the Role -> Services map (Excel upload).
-// Excel columns: Location | Role | Service (one service per row).
+// Excel columns: Location | Role | Service | Time (optional) (one service per row).
 //
 // Styled to match the white-collar Services page (admin/products.tsx):
 // page title + subtext, white filter bar, grid/list toggle, coloured avatar
@@ -25,10 +25,12 @@ type RoleService = {
     locationName: string;
     role: string;
     service: string;
+    time?: string;
 };
 type UploadResult = {
     rowsInFile: number;
     added: number;
+    updated?: number;
     alreadyExisted: number;
     newLocations: number;
     errors: { line: number; message: string }[];
@@ -573,7 +575,37 @@ export default function BlueLocations() {
                             </div>
                             {details.items.map((r) => (
                                 <div key={r.id} style={S.detailsRow}>
-                                    <span style={S.detailsValue}>{r.service}</span>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            flexWrap: "wrap",
+                                            minWidth: 0,
+                                        }}
+                                    >
+                                        <span style={S.detailsValue}>{r.service}</span>
+                                        {r.time && (
+                                            <span
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: 4,
+                                                    height: 22,
+                                                    padding: "0 9px",
+                                                    borderRadius: 999,
+                                                    background: "#EEF2FF",
+                                                    color: "#3730A3",
+                                                    fontSize: 11,
+                                                    fontWeight: 600,
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                <i className="ti ti-clock" aria-hidden="true" />
+                                                {r.time}
+                                            </span>
+                                        )}
+                                    </div>
                                     {canManage && (
                                         <button
                                             type="button"
@@ -614,10 +646,12 @@ export default function BlueLocations() {
                         </div>
                         <div style={S.modalBody}>
                             <p style={{ ...S.headerSubtext, textAlign: "left", marginBottom: 12 }}>
-                                One service per row, with columns <b>Location</b>, <b>Role</b> and{" "}
-                                <b>Service</b>. A role must match the employee's Designation (for
-                                example "Office Boy"). New locations in the file are created
-                                automatically.
+                                One service per row, with columns <b>Location</b>, <b>Role</b>,{" "}
+                                <b>Service</b> and an optional <b>Time</b> (like 10:00 AM or 10:00
+                                AM - 11:00 AM, typed as text). Upload an existing service again with
+                                a Time to update its time. A role must match the employee's
+                                Designation (for example "Office Boy"). New locations in the file
+                                are created automatically.
                             </p>
 
                             <label
@@ -695,9 +729,9 @@ export default function BlueLocations() {
 
                             {result && (
                                 <div style={{ ...ui.ok, marginTop: 12, textAlign: "left" }}>
-                                    {result.added} added · {result.alreadyExisted} already existed ·{" "}
-                                    {result.newLocations} new location(s) · {result.rowsInFile} rows
-                                    in file
+                                    {result.added} added · {result.updated ?? 0} time updated ·{" "}
+                                    {result.alreadyExisted} already existed · {result.newLocations}{" "}
+                                    new location(s) · {result.rowsInFile} rows in file
                                     {result.errors.length > 0 && (
                                         <div style={{ color: "#B91C1C", marginTop: 6 }}>
                                             {result.errors.length} row(s) skipped:

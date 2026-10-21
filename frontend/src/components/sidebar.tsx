@@ -48,13 +48,6 @@ const menuItems: MenuItem[] = [
         roles: ADMIN_AND_VERTICAL_HEAD,
         mode: "BLUE",
     },
-    {
-        label: "Submit Work",
-        icon: "ti ti-checklist",
-        path: "/blue/submit",
-        roles: ["TEAM_MEMBER"],
-        mode: "BLUE",
-    },
     // /dashboard route is gated to ADMIN_TIER_ROLES in App.jsx, so this
     // link uses the same role list to avoid showing it to someone who'd
     // just hit a 403 clicking through.
@@ -80,8 +73,8 @@ const menuItems: MenuItem[] = [
         roles: ["SUPER_ADMIN", "PROCESS_LEAD", "OPS_MANAGER"],
     },
     {
-        label: "Locations",
-        icon: "ti ti-map-pin",
+        label: "Services",
+        icon: "ti ti-package",
         path: "/blue/locations",
         roles: ADMIN_TIER,
         mode: "BLUE",
@@ -237,7 +230,7 @@ const pathToLabel: Record<string, string> = {
     "/shared-with-me": "Shared with me",
     "/blue/team-view": "Team View",
     "/blue/allocate": "Allocate Work",
-    "/blue/locations": "Locations",
+    "/blue/locations": "Services",
     "/blue/submit": "Submit Work",
 };
 
