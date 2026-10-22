@@ -194,7 +194,12 @@ router.patch(
 //
 //   GET  /api/platform/tenant-access -> { canCreateTenant }
 //   POST /api/platform/tenants       -> creates org + its first SUPER_ADMIN
-//        body: { email, password, plan, organizationName? }
+//        body: { email, password, plan, role?, organizationName? }
+//        role: SUPER_ADMIN (default) | OPS_MANAGER | AUDIT_MANAGER |
+//              PROCESS_LEAD | VERTICAL_HEAD | TEAM_MEMBER
+//   GET   /api/platform/tenants            -> all tenants + their users + plan
+//   PATCH /api/platform/tenants/users/:userId/role  body: { role }
+//         -> change a tenant user's role later (never your own org's users)
 //        plan: "free" (up to 5 users) | "basic" | "professional" | "enterprise"
 //
 // Only the PLATFORM OWNER's Super Admin can do this — i.e. a SUPER_ADMIN
@@ -213,6 +218,16 @@ const {
 } = require("../billings/billing.service");
 
 const TENANT_PLANS = ["free", "basic", "professional", "enterprise"];
+// Roles the platform owner can give a tenant's login (CLIENT is excluded —
+// it needs a client link, so it's created from the client portal instead).
+const TENANT_ROLES = [
+  "SUPER_ADMIN",
+  "OPS_MANAGER",
+  "AUDIT_MANAGER",
+  "PROCESS_LEAD",
+  "VERTICAL_HEAD",
+  "TEAM_MEMBER",
+];
 
 async function getPlatformOrgId() {
   const fromEnv = (process.env.PLATFORM_ORG_ID || "").trim();
@@ -269,6 +284,14 @@ router.post(
         .toLowerCase();
       const orgName =
         String(req.body?.organizationName || "").trim() || email.split("@")[0];
+      const role = String(req.body?.role || "SUPER_ADMIN")
+        .trim()
+        .toUpperCase();
+      if (!TENANT_ROLES.includes(role)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Choose a valid role." });
+      }
 
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res
@@ -346,14 +369,14 @@ router.post(
       }
       authUserId = authData.user.id;
 
-      // 3. its first user: org-level SUPER_ADMIN
+      // 3. its first user, with the role chosen by the platform owner
       const { error: profileErr } = await supabase.from("user_master").insert({
         "Auth User Id": authUserId,
         "First Name": orgName,
         "Last Name": null,
         Email: email,
         "Login Email": email,
-        Role: "SUPER_ADMIN",
+        Role: role,
         organization_id: org.id,
       });
       if (profileErr) throw profileErr;
@@ -382,6 +405,7 @@ router.post(
           organizationName: orgName,
           email,
           plan,
+          role,
           userLimit: Number.isFinite(limit) ? limit : null, // null = unlimited
         },
       });
@@ -405,6 +429,151 @@ router.post(
         success: false,
         message: "Something went wrong on our end. Please try again.",
       });
+    }
+  },
+);
+
+// GET /api/platform/tenants — every tenant except the platform org itself,
+// with its plan and (up to 20) users, so roles can be changed from Settings.
+router.get(
+  "/platform/tenants",
+  authenticate,
+  authorize("SUPER_ADMIN"),
+  async (req, res) => {
+    try {
+      if (!(await isPlatformSuperAdmin(req.user))) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to view tenants.",
+        });
+      }
+      const platformOrgId = await getPlatformOrgId();
+
+      const { data: orgs, error: oErr } = await supabase
+        .from("organizations")
+        .select("id, name, created_at")
+        .neq("id", platformOrgId)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (oErr) throw oErr;
+      const orgIds = (orgs || []).map((o) => o.id);
+      if (orgIds.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+
+      const [usersRes, subsRes] = await Promise.all([
+        supabase
+          .from("user_master")
+          .select('id, "Email", "Role", organization_id')
+          .in("organization_id", orgIds)
+          .order("id", { ascending: true })
+          .limit(5000),
+        supabase
+          .from("subscriptions")
+          .select("organization_id, current_period_start, plans ( name )")
+          .eq("status", "active")
+          .in("organization_id", orgIds)
+          .order("current_period_start", { ascending: false }),
+      ]);
+      if (usersRes.error) throw usersRes.error;
+      if (subsRes.error) throw subsRes.error;
+
+      const usersByOrg = new Map();
+      (usersRes.data || []).forEach((u) => {
+        const k = String(u.organization_id);
+        if (!usersByOrg.has(k)) usersByOrg.set(k, []);
+        usersByOrg.get(k).push(u);
+      });
+      const planByOrg = new Map();
+      (subsRes.data || []).forEach((sub) => {
+        const k = String(sub.organization_id);
+        // rows are newest-first, keep the first seen
+        if (!planByOrg.has(k))
+          planByOrg.set(k, String(sub.plans?.name || "free").toLowerCase());
+      });
+
+      res.set("Cache-Control", "no-store");
+      res.json({
+        success: true,
+        data: orgs.map((o) => {
+          const users = usersByOrg.get(String(o.id)) || [];
+          return {
+            organizationId: o.id,
+            name: o.name,
+            createdAt: o.created_at,
+            plan: planByOrg.get(String(o.id)) || "free",
+            userCount: users.length,
+            users: users.slice(0, 20).map((u) => ({
+              userId: u.id,
+              email: u.Email,
+              role: u.Role,
+            })),
+          };
+        }),
+      });
+    } catch (err) {
+      console.error("LIST TENANTS ERROR:", err);
+      sendError(res, err, 400);
+    }
+  },
+);
+
+// PATCH /api/platform/tenants/users/:userId/role  body: { role }
+router.patch(
+  "/platform/tenants/users/:userId/role",
+  authenticate,
+  authorize("SUPER_ADMIN"),
+  async (req, res) => {
+    try {
+      if (!(await isPlatformSuperAdmin(req.user))) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to change tenant roles.",
+        });
+      }
+      const role = String(req.body?.role || "")
+        .trim()
+        .toUpperCase();
+      if (!TENANT_ROLES.includes(role)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Choose a valid role." });
+      }
+
+      const { data: target, error: tErr } = await supabase
+        .from("user_master")
+        .select('id, "Email", organization_id')
+        .eq("id", req.params.userId)
+        .maybeSingle();
+      if (tErr) throw tErr;
+      if (!target) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found." });
+      }
+      // only OTHER tenants' users — never your own organization's
+      const platformOrgId = await getPlatformOrgId();
+      if (String(target.organization_id) === String(platformOrgId)) {
+        return res.status(403).json({
+          success: false,
+          message: "Roles of your own organization are managed from Add User.",
+        });
+      }
+
+      const { error: uErr } = await supabase
+        .from("user_master")
+        .update({ Role: role })
+        .eq("id", target.id);
+      if (uErr) throw uErr;
+
+      res.json({
+        success: true,
+        message: `${target.Email} is now ${role}.`,
+        data: { userId: target.id, role },
+      });
+    } catch (err) {
+      console.error("CHANGE TENANT ROLE ERROR:", err);
+      sendError(res, err, 400);
     }
   },
 );
