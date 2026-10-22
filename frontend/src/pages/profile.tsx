@@ -1413,26 +1413,11 @@ export default function Profile({ onLogout }: ProfileProps) {
     }, [cases]);
 
     // ---------------------------------------------------------------
-    // Login reminder: EVERY time the user logs in, the first time their own
-    // profile opens afterwards, tell them if they have open queries.
-    // login.tsx sets the "pf_query_reminder_pending" flag; it is cleared
-    // here once handled, so a normal refresh / navigation does not repeat it.
+    // Open-query reminder: handled for EVERY role by <TeamQueriesPopup />
+    // below (scope comes from the backend: own / team / whole org), so the
+    // old "only mine" popup that lived here is gone - it would just have
+    // stacked on top of it.
     // ---------------------------------------------------------------
-    const [queryReminder, setQueryReminder] = useState<number | null>(null);
-    useEffect(() => {
-        if (loading || isViewingOther || !myId) return;
-        let pending = false;
-        try {
-            pending = window.localStorage.getItem("pf_query_reminder_pending") === "1";
-            if (pending) window.localStorage.removeItem("pf_query_reminder_pending");
-        } catch {
-            /* storage blocked - skip */
-        }
-        // Managers get the TEAM queries popup instead (it already includes
-        // their own queries), so don't show the "only mine" one on top of it.
-        const isManager = TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
-        if (pending && !isManager && openQueries.length > 0) setQueryReminder(openQueries.length);
-    }, [loading, isViewingOther, myId, openQueries.length]);
 
     const visibleQueries = useMemo(() => {
         const list = queryView === "OPEN" ? openQueries : resolvedQueries;
@@ -5714,14 +5699,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                 </div>
             )}
 
-            {/* NEW: managers — open queries of my team (+ urgent > 48h) */}
+            {/* Open-query reminder for every role (own / team / whole org) */}
             <TeamQueriesPopup
-                enabled={
-                    !isBlueMode &&
-                    !isViewingOther &&
-                    !!myId &&
-                    TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase())
-                }
+                userKey={myId}
+                onViewOwn={openQueryModal}
+                enabled={!isBlueMode && !isViewingOther && !!myId}
                 // NEW: "Go to this profile" -> opens that employee's profile with
                 // the All Query popup already open. Only roles that can view
                 // other profiles get the button.
@@ -5734,96 +5716,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                         : undefined
                 }
             />
-
-            {queryReminder !== null && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 450,
-                        background: "rgba(23,24,28,.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 16,
-                    }}
-                    onClick={() => setQueryReminder(null)}
-                >
-                    <div
-                        role="alertdialog"
-                        aria-modal="true"
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 400,
-                            background: "#fff",
-                            borderTop: "4px solid #F97066",
-                            borderRadius: 16,
-                            padding: "20px 22px",
-                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 14,
-                        }}
-                    >
-                        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                            <span style={{ color: "#F43F5E", display: "flex", marginTop: 2 }}>
-                                <QueryIcon />
-                            </span>
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 700, fontSize: 14, color: "#17181C" }}>
-                                    You have {queryReminder} open{" "}
-                                    {queryReminder === 1 ? "query" : "queries"}
-                                </div>
-                                <div style={{ fontSize: 13, color: "#5B6479", marginTop: 2 }}>
-                                    Your queries are waiting to be resolved. Please look at them.
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                aria-label="Dismiss"
-                                onClick={() => setQueryReminder(null)}
-                                style={{
-                                    border: "none",
-                                    background: "transparent",
-                                    cursor: "pointer",
-                                    fontSize: 16,
-                                    color: "#8A92A6",
-                                    lineHeight: 1,
-                                }}
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-outline"
-                                style={styles.exportBtn}
-                                onClick={() => setQueryReminder(null)}
-                            >
-                                Later
-                            </button>
-                            <button
-                                type="button"
-                                className="pf-btn pf-btn-solid"
-                                style={{
-                                    ...styles.exportBtn,
-                                    background: "linear-gradient(135deg, #FB7185, #F43F5E)",
-                                    color: "#fff",
-                                    border: "none",
-                                }}
-                                onClick={() => {
-                                    setQueryReminder(null);
-                                    openQueryModal();
-                                }}
-                            >
-                                View Queries
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {isAvatarPreviewOpen && photoUrl && (
                 <div style={styles.lightboxOverlay} onClick={() => setIsAvatarPreviewOpen(false)}>
@@ -6000,6 +5892,51 @@ const LOGIN_FLAG = "pf_team_query_popup_pending";
 // Roles that have a team / org view (same rule the backend enforces).
 const TEAM_QUERY_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD", "VERTICAL_HEAD"];
 
+// ---- reminder schedule -------------------------------------------------
+// The popup shows at most QR_MAX_PER_DAY times a day: once the first time
+// the user is on this page today (their first login), then again later in
+// the day, never closer together than QR_MIN_GAP_MS. Counted per user per
+// calendar day in localStorage; a "Later" / close click still counts.
+const QR_MAX_PER_DAY = 3;
+const QR_MIN_GAP_MS = 3 * 60 * 60 * 1000; // 3 hours
+const QR_CHECK_EVERY_MS = 5 * 60 * 1000; // while the page stays open
+
+type QrSched = { d: string; n: number; last: number };
+const qrKey = (userKey: string | null) => `pf_qr_sched:${userKey || "anon"}`;
+const qrToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+};
+function qrRead(userKey: string | null): QrSched {
+    try {
+        const raw = window.localStorage.getItem(qrKey(userKey));
+        const v = raw ? (JSON.parse(raw) as QrSched) : null;
+        if (v && v.d === qrToday()) return v;
+    } catch {
+        /* storage blocked / bad JSON - treat as nothing shown yet */
+    }
+    return { d: qrToday(), n: 0, last: 0 };
+}
+function qrIsDue(userKey: string | null) {
+    const v = qrRead(userKey);
+    if (v.n >= QR_MAX_PER_DAY) return false;
+    if (v.n === 0) return true; // first time today
+    return Date.now() - v.last >= QR_MIN_GAP_MS;
+}
+function qrRecordShown(userKey: string | null) {
+    const v = qrRead(userKey);
+    try {
+        window.localStorage.setItem(
+            qrKey(userKey),
+            JSON.stringify({ d: v.d, n: v.n + 1, last: Date.now() })
+        );
+    } catch {
+        /* storage blocked - skip */
+    }
+}
+
 type TeamQuery = {
     id: string;
     caseNumber: string;
@@ -6026,6 +5963,8 @@ type TeamQueryData = {
     urgentHours: number;
     members: TeamMember[];
     queries: TeamQuery[];
+    // who the list covers: SELF = only me, TEAM = my team, ORG = whole org
+    scope?: "SELF" | "TEAM" | "ORG";
 };
 
 // 53.5 -> "2d 5h", 5.2 -> "5h", 0.4 -> "<1h"
@@ -6080,10 +6019,15 @@ const tqBtnRed: React.CSSProperties = {
 
 function TeamQueriesPopup({
     enabled,
-    onOpenProfile,
+    onOpenProfile: onOpenProfileProp,
+    userKey,
+    onViewOwn,
 }: {
     enabled: boolean;
     onOpenProfile?: (employeeId: string) => void;
+    userKey: string | null;
+    // opens the user's own All Query popup (used when the scope is SELF)
+    onViewOwn?: () => void;
 }) {
     const [data, setData] = useState<TeamQueryData | null>(null);
     const [showSummary, setShowSummary] = useState(false);
@@ -6093,35 +6037,83 @@ function TeamQueriesPopup({
     useEffect(() => {
         if (!enabled) return;
         let cancelled = false;
-        (async () => {
-            let fromLogin = false;
-            try {
-                fromLogin = window.localStorage.getItem(LOGIN_FLAG) === "1";
-                if (fromLogin) window.localStorage.removeItem(LOGIN_FLAG);
-            } catch {
-                /* storage blocked */
-            }
+
+        // login.tsx sets this flag on every login; just clear it - the daily
+        // schedule (qrIsDue) decides whether a popup is actually due.
+        try {
+            window.localStorage.removeItem(LOGIN_FLAG);
+        } catch {
+            /* storage blocked */
+        }
+
+        const load = async (): Promise<TeamQueryData | null> => {
             try {
                 const res = await authFetch(`${API_BASE}/api/service-cases/team-queries`);
                 const json = await res.json();
-                if (cancelled || !res.ok || !json.success) return;
+                if (cancelled || !res.ok || !json.success) return null;
                 const d: TeamQueryData = json.data;
                 setData(d);
-                // popup on EVERY login while the team has open queries
-                if (fromLogin && d.totalOpen > 0) setShowSummary(true);
+                return d;
             } catch (err) {
                 console.error("team queries load failed:", err);
+                return null;
+            }
+        };
+
+        // Show the popup only when today's schedule allows it AND there is
+        // something open to remind about.
+        const maybeRemind = async () => {
+            if (!qrIsDue(userKey)) return;
+            const d = await load();
+            if (cancelled || !d || d.totalOpen === 0) return;
+            if (!qrIsDue(userKey)) return; // another tab may have just shown it
+            qrRecordShown(userKey);
+            setShowSummary(true);
+        };
+
+        (async () => {
+            const d = await load(); // always load: feeds the "reopen" pill
+            if (cancelled || !d) return;
+            if (d.totalOpen > 0 && qrIsDue(userKey)) {
+                qrRecordShown(userKey);
+                setShowSummary(true);
             }
         })();
+
+        // later reminders while the page stays open
+        const timer = window.setInterval(maybeRemind, QR_CHECK_EVERY_MS);
         return () => {
             cancelled = true;
+            window.clearInterval(timer);
         };
-    }, [enabled]);
+    }, [enabled, userKey]);
 
     const urgentList = useMemo(() => (data?.queries || []).filter((q) => q.urgent), [data]);
 
     if (!enabled || !data || data.totalOpen === 0) return null;
     const hasUrgent = data.urgentCount > 0;
+
+    // Wording + behaviour follow who the list covers (backend `scope`).
+    const scope = data.scope || "TEAM";
+    const isSelf = scope === "SELF";
+    const subject = isSelf
+        ? "You have"
+        : scope === "ORG"
+          ? "Your organization has"
+          : "Your team has";
+    const popupTitle = isSelf
+        ? "My Queries"
+        : scope === "ORG"
+          ? "Organization Queries"
+          : "Team Queries";
+    const pillLabel = isSelf ? "My queries" : scope === "ORG" ? "Org queries" : "Team queries";
+    // "Go to profile" makes no sense when the list is just my own queries.
+    const onOpenProfile = isSelf ? undefined : onOpenProfileProp;
+    // SELF: jump straight to my own query list; others: the details popup.
+    const openDetails = () => {
+        if (isSelf && onViewOwn) onViewOwn();
+        else setShowDetails(true);
+    };
 
     return (
         <>
@@ -6129,7 +6121,7 @@ function TeamQueriesPopup({
             {!showSummary && !showDetails && (
                 <button
                     type="button"
-                    onClick={() => setShowDetails(true)}
+                    onClick={openDetails}
                     style={{
                         position: "fixed",
                         right: 18,
@@ -6146,7 +6138,8 @@ function TeamQueriesPopup({
                         boxShadow: "0 8px 22px rgba(0,0,0,.22)",
                     }}
                 >
-                    {hasUrgent ? "⚠ " : ""}Team queries · {data.totalOpen}
+                    {hasUrgent ? "⚠ " : ""}
+                    {pillLabel} · {data.totalOpen}
                     {hasUrgent ? ` (${data.urgentCount} urgent)` : ""}
                 </button>
             )}
@@ -6217,13 +6210,26 @@ function TeamQueriesPopup({
                             </div>
                         )}
                         <div>
-                            <div style={{ fontWeight: 700, fontSize: 15, color: "#17181C" }}>
-                                Your team has {data.totalOpen} open{" "}
+                            <div
+                                style={{
+                                    fontWeight: 700,
+                                    fontSize: 15,
+                                    color: "#17181C",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                }}
+                            >
+                                <span style={{ color: TQ_RED, display: "flex" }}>
+                                    <QueryIcon />
+                                </span>
+                                {subject} {data.totalOpen} open{" "}
                                 {data.totalOpen === 1 ? "query" : "queries"}
                             </div>
                             <div style={{ fontSize: 13, color: "#5B6479", marginTop: 2 }}>
-                                Open View Details to see who has how many and how long they have
-                                been waiting.
+                                {isSelf
+                                    ? "Your queries are waiting to be resolved. Please look at them."
+                                    : "Open View Details to see who has how many and how long they have been waiting."}
                             </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -6239,10 +6245,10 @@ function TeamQueriesPopup({
                                 style={tqBtnRed}
                                 onClick={() => {
                                     setShowSummary(false);
-                                    setShowDetails(true);
+                                    openDetails();
                                 }}
                             >
-                                View Details
+                                {isSelf ? "View Queries" : "View Details"}
                             </button>
                         </div>
                     </div>
@@ -6279,7 +6285,7 @@ function TeamQueriesPopup({
                         >
                             <div>
                                 <div style={{ fontWeight: 700, fontSize: 16, color: "#17181C" }}>
-                                    Team Queries
+                                    {popupTitle}
                                 </div>
                                 <div style={{ fontSize: 12.5, color: "#5B6479" }}>
                                     {data.totalOpen} open

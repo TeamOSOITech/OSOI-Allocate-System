@@ -1072,20 +1072,6 @@ export default function ProductionReport() {
                             type="button"
                             style={{
                                 ...styles.quickBtn,
-                                ...(isToday ? styles.quickBtnActive : {}),
-                            }}
-                            onClick={() => {
-                                setFromDate(todayStr());
-                                setToDate(todayStr());
-                            }}
-                        >
-                            <i className="ti ti-calendar-event" />
-                            Today
-                        </button>
-                        <button
-                            type="button"
-                            style={{
-                                ...styles.quickBtn,
                                 ...(!isToday &&
                                 fromDate === firstOfMonthStr() &&
                                 toDate === todayStr()
