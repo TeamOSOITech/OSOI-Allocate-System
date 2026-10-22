@@ -2598,7 +2598,7 @@ function buildAllocationEmailHtml({
               <!-- Outlook desktop: real rounded button (VML) -->
               <!--[if mso]>
               <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${APP_LOGIN_URL}" style="height:48px;v-text-anchor:middle;width:230px;" arcsize="50%" stroke="f" fillcolor="#204297">
-                <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Allookate</center>
+                <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Login to Allookate</center>
               </v:roundrect>
               <![endif]-->
               <!-- Gmail / Apple Mail / Outlook.com / phones -->
@@ -2606,7 +2606,7 @@ function buildAllocationEmailHtml({
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
                 <tr>
                   <td class="bg-btn" align="center" bgcolor="#204297" style="background:#204297;background-image:linear-gradient(135deg,#08A1CE,#204297);border-radius:30px;padding:14px 40px;">
-                    <a class="txt-white" href="${APP_LOGIN_URL}" target="_blank" style="color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;display:inline-block;">Allookate</a>
+                    <a class="txt-white" href="${APP_LOGIN_URL}" target="_blank" style="color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;display:inline-block;">Login to Allookate</a>
                   </td>
                 </tr>
               </table>
