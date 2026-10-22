@@ -4,6 +4,8 @@
 //   Appearance  — theme color (every user)
 //   Logo        — change the organization logo (Super Admin only)
 //   Work rules  — "Case number required" switch (Super Admin / managers only)
+//   Create tenant — platform owner's Super Admin only: new organization with
+//                   email + password and a plan (Free = up to 5 users, ...)
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
@@ -15,8 +17,20 @@ import { useOrgSettings, saveCaseNumberRequired } from "../context/orgsettings";
 import { fontFamily } from "../styles/theme";
 import { useCollarMode } from "../context/collarmode";
 import CollarToggle from "./collartoggle";
+import { authFetch } from "../utils/authFetch";
+import { getCurrentUser } from "../utils/auth";
 
-type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode";
+const API_BASE = import.meta.env.VITE_API_URL;
+
+type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode" | "tenant";
+
+// Plans offered when creating a tenant (limits match PLAN_USER_LIMITS on the backend).
+const TENANT_PLAN_OPTIONS: { key: string; label: string; users: string }[] = [
+    { key: "free", label: "Free", users: "Up to 5 users" },
+    { key: "basic", label: "Basic", users: "Up to 25 users" },
+    { key: "professional", label: "Professional", users: "Up to 100 users" },
+    { key: "enterprise", label: "Enterprise", users: "Unlimited users" },
+];
 
 interface Props {
     open: boolean;
@@ -99,9 +113,38 @@ export default function SettingsModal({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const logoFileInputRef = useRef<HTMLInputElement>(null);
+
+    // ---- Create tenant (platform owner only) ----
+    const [canCreateTenant, setCanCreateTenant] = useState(false);
+    const [tenantOrgName, setTenantOrgName] = useState("");
+    const [tenantEmail, setTenantEmail] = useState("");
+    const [tenantPassword, setTenantPassword] = useState("");
+    const [tenantShowPw, setTenantShowPw] = useState(false);
+    const [tenantPlan, setTenantPlan] = useState("free");
+    const [tenantBusy, setTenantBusy] = useState(false);
+    const [tenantError, setTenantError] = useState("");
+    const [tenantOk, setTenantOk] = useState("");
     const [narrow, setNarrow] = useState(
         typeof window !== "undefined" ? window.innerWidth < 640 : false
     );
+
+    // Only the platform owner's Super Admin gets the "Create tenant" section.
+    useEffect(() => {
+        if (!open || getCurrentUser()?.role !== "SUPER_ADMIN") return;
+        let alive = true;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/platform/tenant-access`);
+                const json = await res.json();
+                if (alive) setCanCreateTenant(!!(res.ok && json?.data?.canCreateTenant));
+            } catch {
+                if (alive) setCanCreateTenant(false);
+            }
+        })();
+        return () => {
+            alive = false;
+        };
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -132,6 +175,42 @@ export default function SettingsModal({
         }
     };
 
+    const createTenant = async () => {
+        if (tenantBusy) return;
+        setTenantError("");
+        setTenantOk("");
+        if (!tenantEmail.trim()) return setTenantError("Enter the email (username).");
+        if (tenantPassword.length < 8)
+            return setTenantError("Password must be at least 8 characters.");
+        setTenantBusy(true);
+        try {
+            const res = await authFetch(`${API_BASE}/api/platform/tenants`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: tenantEmail.trim(),
+                    password: tenantPassword,
+                    plan: tenantPlan,
+                    organizationName: tenantOrgName.trim() || undefined,
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Could not create tenant.");
+            setTenantOk(
+                `${json.message} They can log in with ${json.data.email} and the password you set.`
+            );
+            setTenantOrgName("");
+            setTenantEmail("");
+            setTenantPassword("");
+            setTenantPlan("free");
+        } catch (e: any) {
+            setTenantError(e?.message || "Could not create tenant.");
+        } finally {
+            setTenantBusy(false);
+        }
+    };
+
     const handleLogoFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) onLogoChange?.(file);
@@ -147,6 +226,9 @@ export default function SettingsModal({
         { key: "plan", label: "Plan & upgrade", icon: "ti-rocket" },
         ...(canEditWorkRules
             ? [{ key: "work" as SectionKey, label: "Work rules", icon: "ti-adjustments" }]
+            : []),
+        ...(canCreateTenant
+            ? [{ key: "tenant" as SectionKey, label: "Create tenant", icon: "ti-building-plus" }]
             : []),
     ];
 
@@ -527,6 +609,178 @@ export default function SettingsModal({
                                         Upgrade
                                     </button>
                                 </div>
+                            </>
+                        )}
+
+                        {section === "tenant" && canCreateTenant && (
+                            <>
+                                <h4 style={s.h2}>Create tenant</h4>
+                                <p style={s.sub}>
+                                    Create a new organization with its own admin login. Enter the
+                                    email (username) and password, then choose the plan. Free allows
+                                    up to 5 users.
+                                </p>
+                                {(() => {
+                                    const field: CSSProperties = {
+                                        width: "100%",
+                                        boxSizing: "border-box",
+                                        padding: "10px 12px",
+                                        border: "1px solid #DFE3EE",
+                                        borderRadius: 10,
+                                        fontSize: 14,
+                                        outline: "none",
+                                        background: "#fff",
+                                    };
+                                    const label: CSSProperties = {
+                                        display: "block",
+                                        fontSize: 12.5,
+                                        fontWeight: 600,
+                                        color: "#4b5a70",
+                                        margin: "12px 0 6px",
+                                    };
+                                    return (
+                                        <div>
+                                            <label style={{ ...label, marginTop: 0 }}>
+                                                Organization name (optional)
+                                            </label>
+                                            <input
+                                                style={field}
+                                                value={tenantOrgName}
+                                                onChange={(e) => setTenantOrgName(e.target.value)}
+                                                placeholder="e.g. Acme Pvt Ltd"
+                                                disabled={tenantBusy}
+                                            />
+                                            <label style={label}>Email (username) *</label>
+                                            <input
+                                                style={field}
+                                                type="email"
+                                                autoComplete="off"
+                                                value={tenantEmail}
+                                                onChange={(e) => setTenantEmail(e.target.value)}
+                                                placeholder="admin@company.com"
+                                                disabled={tenantBusy}
+                                            />
+                                            <label style={label}>
+                                                Password * (min 8 characters)
+                                            </label>
+                                            <div style={{ position: "relative" }}>
+                                                <input
+                                                    style={{ ...field, paddingRight: 64 }}
+                                                    type={tenantShowPw ? "text" : "password"}
+                                                    autoComplete="new-password"
+                                                    value={tenantPassword}
+                                                    onChange={(e) =>
+                                                        setTenantPassword(e.target.value)
+                                                    }
+                                                    disabled={tenantBusy}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTenantShowPw((v) => !v)}
+                                                    style={{
+                                                        position: "absolute",
+                                                        right: 8,
+                                                        top: 6,
+                                                        border: "none",
+                                                        background: "transparent",
+                                                        color: BRAND.blue,
+                                                        fontWeight: 600,
+                                                        fontSize: 12.5,
+                                                        cursor: "pointer",
+                                                    }}
+                                                >
+                                                    {tenantShowPw ? "Hide" : "Show"}
+                                                </button>
+                                            </div>
+                                            <label style={label}>Plan *</label>
+                                            <div
+                                                style={{
+                                                    display: "grid",
+                                                    gridTemplateColumns:
+                                                        "repeat(auto-fill, minmax(150px, 1fr))",
+                                                    gap: 10,
+                                                }}
+                                            >
+                                                {TENANT_PLAN_OPTIONS.map((p) => {
+                                                    const active = tenantPlan === p.key;
+                                                    return (
+                                                        <button
+                                                            key={p.key}
+                                                            type="button"
+                                                            disabled={tenantBusy}
+                                                            onClick={() => setTenantPlan(p.key)}
+                                                            style={{
+                                                                textAlign: "left",
+                                                                padding: "10px 12px",
+                                                                borderRadius: 12,
+                                                                cursor: "pointer",
+                                                                background: active
+                                                                    ? `${BRAND.blue}10`
+                                                                    : "#fff",
+                                                                border: active
+                                                                    ? `2px solid ${BRAND.blue}`
+                                                                    : "1px solid #E6E9F3",
+                                                            }}
+                                                        >
+                                                            <div
+                                                                style={{
+                                                                    fontSize: 14,
+                                                                    fontWeight: 700,
+                                                                    color: "#1B1F4B",
+                                                                }}
+                                                            >
+                                                                {p.label}
+                                                            </div>
+                                                            <div
+                                                                style={{
+                                                                    fontSize: 12.5,
+                                                                    color: "#6b7a90",
+                                                                    marginTop: 2,
+                                                                }}
+                                                            >
+                                                                {p.users}
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                                {tenantError && (
+                                    <p style={{ color: "#DC2626", fontSize: 13, marginTop: 12 }}>
+                                        {tenantError}
+                                    </p>
+                                )}
+                                {tenantOk && (
+                                    <p style={{ color: "#15803D", fontSize: 13, marginTop: 12 }}>
+                                        {tenantOk}
+                                    </p>
+                                )}
+                                <button
+                                    type="button"
+                                    disabled={tenantBusy}
+                                    onClick={createTenant}
+                                    style={{
+                                        marginTop: 16,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        padding: "10px 20px",
+                                        border: "none",
+                                        borderRadius: 999,
+                                        cursor: tenantBusy ? "wait" : "pointer",
+                                        fontSize: 14,
+                                        fontWeight: 700,
+                                        color: "#fff",
+                                        opacity: tenantBusy ? 0.7 : 1,
+                                        background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+                                        boxShadow: `0 6px 16px ${BRAND.blue}40`,
+                                    }}
+                                >
+                                    <i className="ti ti-building-plus" />
+                                    {tenantBusy ? "Creating…" : "Create tenant"}
+                                </button>
                             </>
                         )}
 
