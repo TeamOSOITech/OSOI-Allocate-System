@@ -34,6 +34,8 @@ const {
 } = require("./servicecases.controller");
 // NEW: a client can only be used on a service it is mapped to.
 const { assertClientMappedToProduct } = require("./serviceClients");
+// Counts left without case numbers at day end go back to the pool, like cases.
+const { ensureRollover, startOfTodayISO } = require("./caseRollover");
 
 const orgIdOf = (req) => req.user.organizationId;
 const userIdOf = (req) => req.user.userId;
@@ -202,6 +204,10 @@ async function listMyCounts(req, res) {
     const workDate =
       validYmd(req.query.workDate) || new Date().toISOString().slice(0, 10);
     const productId = req.query.productId ? String(req.query.productId) : null;
+
+    // anything allocated on an earlier day and still without case numbers
+    // goes back to the pool before we answer
+    await ensureRollover(orgId);
 
     const { open, allocs } = await loadOpenCountsWithAllocations(
       orgId,
@@ -530,12 +536,23 @@ async function addCaseNumbersToCount(req, res) {
 
     const { data: myAlloc, error: aErr } = await supabase
       .from("service_case_count_allocations")
-      .select("quantity, fulfilled_quantity")
+      .select("quantity, fulfilled_quantity, allocated_at")
       .eq("organization_id", orgId)
       .eq("count_id", countId)
       .eq("employee_id", me)
       .maybeSingle();
     if (aErr) throw aErr;
+
+    // Same rule as cases: units allocated on an EARLIER day that never got
+    // their case numbers are returned to the pool and can't be submitted
+    // any more (with or without a case number).
+    if (myAlloc?.allocated_at && myAlloc.allocated_at < startOfTodayISO()) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "These cases were allocated on an earlier day and are being returned to the pool — they can no longer be submitted.",
+      });
+    }
 
     const remaining = myAlloc
       ? myAlloc.quantity - (myAlloc.fulfilled_quantity || 0)
@@ -936,7 +953,72 @@ async function fillCaseClient(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// GET /api/service-cases/my-missed-counts
+//
+// Count units allocated to the caller on an earlier day that never got
+// their case numbers and were returned to the pool (see caseRollover.js).
+// READ-ONLY history for Profile -> Past Allocation (Counts view).
+// ------------------------------------------------------------
+async function listMyMissedCounts(req, res) {
+  try {
+    const orgId = orgIdOf(req);
+    const me = userIdOf(req);
+    await ensureRollover(orgId);
+
+    const { data, error } = await supabase
+      .from("case_count_carryover_log")
+      .select("*")
+      .eq("organization_id", String(orgId))
+      .eq("employee_id", String(me))
+      .order("returned_at", { ascending: false })
+      .limit(2000);
+    if (error) throw error;
+
+    const rows = data || [];
+    const [productMap, clientMap, subclientMap] = await Promise.all([
+      getProductNameMap(
+        rows.map((r) => r.product_id),
+        orgId,
+      ),
+      getClientNameMap(
+        rows.map((r) => r.client_id),
+        orgId,
+      ),
+      getSubclientNameMap(
+        rows.map((r) => r.subclient_id),
+        orgId,
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: `missed-count-${r.id}`,
+        countId: r.count_id,
+        productId: r.product_id,
+        productName: productMap[r.product_id] || null,
+        clientId: r.client_id || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientId: r.subclient_id || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        workDate: r.work_date,
+        allocatedAt: r.allocated_at,
+        returnedAt: r.returned_at,
+        returnedQuantity: r.returned_quantity,
+      })),
+    });
+  } catch (err) {
+    console.error("listMyMissedCounts error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
 module.exports = {
+  listMyMissedCounts,
   listMyCounts,
   selfAllocateCounts,
   addCaseNumbersToCount,

@@ -56,6 +56,8 @@ const { sendPushToUsers } = require("../../utils/webpush");
 // MODIFIED: fair rotation (extra case goes to whoever got the least work
 // in the last 30 days) — now used by the case-number Smart Allocation too.
 const { getRecentLoad, orderByLeastLoad } = require("./fairness");
+// count-only work (no case number) is rolled over at day end like cases
+const { rolloverPendingCounts } = require("./caseRollover");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
@@ -4209,6 +4211,17 @@ async function rolloverAllOrgs() {
   if (n > 0) {
     console.log(`🔁 Rollover: ${n} pending case(s) returned to the pool.`);
   }
+  // count-only work (no case number) follows the same rule (caseRollover.js)
+  try {
+    const c = await rolloverPendingCounts(null);
+    if (c > 0) {
+      console.log(
+        `🔁 Rollover: ${c} pending count unit(s) returned to the pool.`,
+      );
+    }
+  } catch (err) {
+    console.error("rolloverPendingCounts failed:", err?.message || err);
+  }
   return n;
 }
 
@@ -4224,6 +4237,11 @@ async function ensureRollover(organizationId) {
   } catch (err) {
     // Missing table / transient DB error must never break the request.
     console.error("ensureRollover failed:", err?.message || err);
+  }
+  try {
+    await rolloverPendingCounts(organizationId || null);
+  } catch (err) {
+    console.error("ensureRollover (counts) failed:", err?.message || err);
   }
 }
 

@@ -51,6 +51,7 @@ const {
 // count, add real case numbers to it, and fill an empty client/subclient.
 const {
   listMyCounts,
+  listMyMissedCounts,
   selfAllocateCounts,
   addCaseNumbersToCount,
   fillCaseClient,
@@ -116,6 +117,8 @@ router.post("/count-allocations/clear", allocPerm, clearCountAllocations);
 // Any logged-in employee; "me" is always req.user.userId inside the
 // handlers, so these can only ever touch the caller's own allocations.
 router.get("/my-counts", listMyCounts);
+// Count units (no case number) left pending at day end — read-only history.
+router.get("/my-missed-counts", listMyMissedCounts);
 // NEW (ROLLOVER): cases left pending at day end (read-only history).
 router.get("/my-missed", listMyMissedCases);
 // NEW: managers — open queries of their team + which are over 48h.

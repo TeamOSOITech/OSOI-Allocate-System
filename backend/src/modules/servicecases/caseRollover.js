@@ -52,6 +52,17 @@
 //
 // (ids are text so this works whatever id type your other tables use.)
 //
+// COUNT-ONLY WORK (no case number yet) FOLLOWS THE SAME RULE
+//   Units allocated to an employee as a COUNT on an earlier day that still
+//   have no case number added (service_case_count_allocations.quantity >
+//   fulfilled_quantity) are sent back to the pool too: the employee's
+//   allocation shrinks to what was already added (or the row is removed if
+//   nothing was added). The pool figure (count.quantity - allocated) grows
+//   by the same amount, so the units show up again on Today's Allocation.
+//   Units that already have case numbers are never touched. One history row
+//   per return goes to `case_count_carryover_log` (read-only, Past
+//   Allocation) — see rolloverPendingCounts below for the table.
+//
 // TIMEZONE: "a new day" starts at midnight in APP_TIMEZONE
 // (.env, default Asia/Kolkata).
 
@@ -191,6 +202,150 @@ async function rolloverPendingCases(organizationId = null) {
   return totalReturned;
 }
 
+// ---- COUNT ROLLOVER ---------------------------------------------------
+//
+// REQUIRES THIS TABLE (run once in the Supabase SQL editor):
+//
+//   create table if not exists case_count_carryover_log (
+//     id uuid primary key default gen_random_uuid(),
+//     organization_id text not null,
+//     count_id text not null,
+//     product_id text,
+//     client_id text,
+//     subclient_id text,
+//     work_date date,
+//     employee_id text not null,
+//     allocated_at timestamptz not null,
+//     returned_quantity integer not null,
+//     returned_at timestamptz not null default now(),
+//     unique (count_id, employee_id, allocated_at)
+//   );
+//   create index if not exists case_count_carryover_log_emp_idx
+//     on case_count_carryover_log (organization_id, employee_id, returned_at desc);
+//
+// Allocations older than this many days were already swept by an earlier
+// run (the sweep runs every few minutes), so they are not re-scanned.
+const COUNT_LOOKBACK_DAYS = 45;
+
+async function rolloverPendingCounts(organizationId = null) {
+  const cutoff = startOfTodayISO();
+  const since = new Date(
+    Date.now() - COUNT_LOOKBACK_DAYS * 24 * 3600 * 1000,
+  ).toISOString();
+
+  // 1) every allocation made on an earlier day (paged, read-only first so
+  //    deleting rows below can't shift the pages).
+  const allocs = [];
+  for (let from = 0; from < 100000; from += BATCH) {
+    let q = supabase
+      .from("service_case_count_allocations")
+      .select(
+        "organization_id, count_id, employee_id, quantity, fulfilled_quantity, allocated_at",
+      )
+      .lt("allocated_at", cutoff)
+      .gte("allocated_at", since)
+      .order("allocated_at", { ascending: true })
+      .range(from, from + BATCH - 1);
+    if (organizationId) q = q.eq("organization_id", organizationId);
+    const { data, error } = await q;
+    if (error) throw error;
+    allocs.push(...(data || []));
+    if (!data || data.length < BATCH) break;
+  }
+
+  // 2) only the ones that still have units without a case number
+  const open = allocs.filter(
+    (a) => (a.quantity || 0) - (a.fulfilled_quantity || 0) > 0,
+  );
+  if (open.length === 0) return 0;
+
+  // count details for the history rows
+  const countIds = [...new Set(open.map((a) => a.count_id))];
+  const countMap = {};
+  for (let i = 0; i < countIds.length; i += 150) {
+    const { data, error } = await supabase
+      .from("service_case_counts")
+      .select("id, product_id, client_id, subclient_id, work_date")
+      .in("id", countIds.slice(i, i + 150));
+    if (error) throw error;
+    (data || []).forEach((c) => (countMap[String(c.id)] = c));
+  }
+
+  let returnedTotal = 0;
+  for (const a of open) {
+    const fulfilled = a.fulfilled_quantity || 0;
+    const returnedQty = (a.quantity || 0) - fulfilled;
+    const c = countMap[String(a.count_id)] || {};
+
+    // history FIRST so a returned count can never lose its record
+    const logRow = {
+      organization_id: String(a.organization_id),
+      count_id: String(a.count_id),
+      product_id: c.product_id != null ? String(c.product_id) : null,
+      client_id: c.client_id != null ? String(c.client_id) : null,
+      subclient_id: c.subclient_id != null ? String(c.subclient_id) : null,
+      work_date: c.work_date || null,
+      employee_id: String(a.employee_id),
+      allocated_at: a.allocated_at,
+      returned_quantity: returnedQty,
+    };
+    const { error: logErr } = await supabase
+      .from("case_count_carryover_log")
+      .upsert(logRow, {
+        onConflict: "count_id,employee_id,allocated_at",
+        ignoreDuplicates: true,
+      });
+    if (logErr) throw logErr;
+
+    // Return the units. Guarded on the exact quantity / fulfilled values we
+    // read, so units the employee added a split-second ago are NOT lost.
+    let moved = 0;
+    if (fulfilled === 0) {
+      let d = supabase
+        .from("service_case_count_allocations")
+        .delete()
+        .eq("organization_id", a.organization_id)
+        .eq("count_id", a.count_id)
+        .eq("employee_id", a.employee_id)
+        .eq("quantity", a.quantity)
+        .lt("allocated_at", cutoff);
+      d =
+        a.fulfilled_quantity == null
+          ? d.is("fulfilled_quantity", null)
+          : d.eq("fulfilled_quantity", 0);
+      const { data, error } = await d.select("count_id");
+      if (error) throw error;
+      moved = (data || []).length;
+    } else {
+      const { data, error } = await supabase
+        .from("service_case_count_allocations")
+        .update({ quantity: fulfilled })
+        .eq("organization_id", a.organization_id)
+        .eq("count_id", a.count_id)
+        .eq("employee_id", a.employee_id)
+        .eq("quantity", a.quantity)
+        .eq("fulfilled_quantity", fulfilled)
+        .lt("allocated_at", cutoff)
+        .select("count_id");
+      if (error) throw error;
+      moved = (data || []).length;
+    }
+
+    if (moved > 0) {
+      returnedTotal += returnedQty;
+    } else {
+      // changed under us (employee just added case numbers) — keep history truthful
+      await supabase
+        .from("case_count_carryover_log")
+        .delete()
+        .eq("count_id", String(a.count_id))
+        .eq("employee_id", String(a.employee_id))
+        .eq("allocated_at", a.allocated_at);
+    }
+  }
+  return returnedTotal;
+}
+
 // ---- LEAVE / HALF-DAY RELEASE -----------------------------------------
 //
 // When an employee is marked LEAVE (or put on a leave period that covers
@@ -253,6 +408,18 @@ async function rolloverAllOrgs() {
   if (n > 0) {
     console.log(`🔁 Rollover: ${n} pending case(s) returned to the pool.`);
   }
+  // count-only work (no case number) follows the same rule; a failure here
+  // (e.g. history table not created yet) must not break the case rollover.
+  try {
+    const c = await rolloverPendingCounts(null);
+    if (c > 0) {
+      console.log(
+        `🔁 Rollover: ${c} pending count unit(s) returned to the pool.`,
+      );
+    }
+  } catch (err) {
+    console.error("rolloverPendingCounts failed:", err?.message || err);
+  }
   return n;
 }
 
@@ -269,10 +436,16 @@ async function ensureRollover(organizationId) {
     // Missing table / transient DB error must never break the request.
     console.error("ensureRollover failed:", err?.message || err);
   }
+  try {
+    await rolloverPendingCounts(organizationId || null);
+  } catch (err) {
+    console.error("ensureRollover (counts) failed:", err?.message || err);
+  }
 }
 
 module.exports = {
   rolloverPendingCases,
+  rolloverPendingCounts,
   rolloverAllOrgs,
   ensureRollover,
   startOfTodayISO,
