@@ -4268,8 +4268,8 @@ async function ensureRollover(organizationId) {
 // ============================================================
 // MANAGER VIEW OF OPEN QUERIES  ->  GET /api/service-cases/team-queries
 //
-// Powers the popup a manager sees on the first login of the day
-// ("Your team has N open queries") and its "View Details" screen
+// Powers the open-query reminder popup (first login of the day, then a
+// couple more times during the day) and its "View Details" screen
 // (who has how many, and how long each query has been open).
 //
 // A query is "open" while submission_status = SUBMITTED and
@@ -4279,27 +4279,29 @@ async function ensureRollover(organizationId) {
 //
 // WHO SEES WHAT
 //   SUPER_ADMIN, OPS_MANAGER      -> every employee in the organization
-//   PROCESS_LEAD, VERTICAL_HEAD   -> their whole team: same "Worked In
+//                                    (scope "ORG")
+//   PROCESS_LEAD                  -> their whole team: same "Worked In
 //                                    Teams" OR "Reporting Manager" = their
 //                                    email, plus their own queries
-//   anyone else                   -> 403
+//                                    (scope "TEAM")
+//   TEAM_MEMBER, VERTICAL_HEAD,
+//   everyone else                 -> only their OWN queries (scope "SELF")
 //
 // URGENT = a query open for more than URGENT_HOURS (48) hours.
 
 const URGENT_HOURS = 48;
 const WHOLE_ORG_ROLES = ["SUPER_ADMIN", "OPS_MANAGER"];
-const TEAM_ROLES = ["PROCESS_LEAD", "VERTICAL_HEAD"];
+const TEAM_ROLES = ["PROCESS_LEAD"];
 
 async function listTeamQueries(req, res) {
   try {
     const { role, userId, organizationId } = req.user;
     const wholeOrg = WHOLE_ORG_ROLES.includes(role);
-    if (!wholeOrg && !TEAM_ROLES.includes(role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only managers can view team queries.",
-      });
-    }
+    const scope = wholeOrg
+      ? "ORG"
+      : TEAM_ROLES.includes(role)
+        ? "TEAM"
+        : "SELF";
 
     // ---- who is in scope ----
     // "My team" = same meaning as the Employees page:
@@ -4308,7 +4310,9 @@ async function listTeamQueries(req, res) {
     //     is the manager's email),
     //   - plus the manager themself (their own queries count too).
     let teamIds = null; // null = everyone in the org
-    if (!wholeOrg) {
+    if (scope === "SELF") {
+      teamIds = [userId]; // only my own queries
+    } else if (scope === "TEAM") {
       const { data: people, error: pErr } = await supabase
         .from("user_master")
         .select(
@@ -4340,6 +4344,7 @@ async function listTeamQueries(req, res) {
     }
 
     const empty = {
+      scope,
       totalOpen: 0,
       urgentCount: 0,
       urgentHours: URGENT_HOURS,
@@ -4439,6 +4444,7 @@ async function listTeamQueries(req, res) {
     res.json({
       success: true,
       data: {
+        scope,
         totalOpen: queries.length,
         urgentCount: queries.filter((x) => x.urgent).length,
         urgentHours: URGENT_HOURS,
