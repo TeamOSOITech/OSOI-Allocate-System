@@ -199,14 +199,8 @@ const menuItems: MenuItem[] = [
         path: SHARED_PATH,
         roles: EVERYONE,
     },
-    // NEW: staff choose which cases each client can see.
-    {
-        label: "Client Sharing",
-        icon: "ti ti-share",
-        mode: "WHITE",
-        path: "/client-sharing",
-        roles: ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"],
-    },
+    // "Client Sharing" removed from the sidebar for everyone (the page route
+    // in App.jsx is untouched).
 ];
 
 const pathToLabel: Record<string, string> = {

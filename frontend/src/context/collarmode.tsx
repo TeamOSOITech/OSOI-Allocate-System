@@ -2,7 +2,7 @@
 //
 // White Collar (service-based) vs Blue Collar (manpower-based) mode.
 //
-//  - Admin-side roles (anyone except TEAM_MEMBER / CLIENT) can flip the
+//  - Admin-side roles (anyone except TEAM_MEMBER / CLIENT / OPS_MANAGER) can flip the
 //    toggle on the Home page; their pick is remembered in localStorage.
 //  - A Team Member is locked to their own world (the collarType their
 //    account was created with) — they never see the toggle.
@@ -56,8 +56,13 @@ export function useCollarMode() {
 
     const user = getCurrentUser();
     const own: CollarMode = user?.collarType === "BLUE" ? "BLUE" : "WHITE";
+    // Ops Manager has no switch either (Settings > Work mode is hidden for them),
+    // so they always stay in their own account's mode.
     const canToggle =
-        Boolean(user?.role) && user?.role !== "TEAM_MEMBER" && user?.role !== "CLIENT";
+        Boolean(user?.role) &&
+        user?.role !== "TEAM_MEMBER" &&
+        user?.role !== "CLIENT" &&
+        user?.role !== "OPS_MANAGER";
     const mode: CollarMode = canToggle ? (ctx.stored ?? own) : own;
 
     return {
