@@ -224,9 +224,9 @@ type SearchEmp = {
 // Everything an employee can report when submitting a case. The stored
 // value for "Completed by Team" is still DONE_BY_TEAM (only its label was
 // renamed) so older rows keep working.
-type SubmissionType = "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY";
+type SubmissionType = "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | "OUT_OF_SCOPE";
 // What an open Query can be turned into once it's sorted out.
-type QueryResolution = Exclude<SubmissionType, "QUERY">;
+type QueryResolution = Exclude<SubmissionType, "QUERY" | "OUT_OF_SCOPE">;
 
 // Dropdown order + labels, shared by the Submit panel and the Bulk modal.
 const SUBMISSION_OPTIONS: { value: SubmissionType; label: string }[] = [
@@ -234,9 +234,23 @@ const SUBMISSION_OPTIONS: { value: SubmissionType; label: string }[] = [
     { value: "QUERY", label: "Query" },
     { value: "DONE_BY_TEAM", label: "Completed by Team" },
     { value: "DONE_BY_CLIENT", label: "Completed by Client" },
+    { value: "OUT_OF_SCOPE", label: "Out of Scope" },
 ];
 // Same list minus "Query" — what an open query can be completed as.
-const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter((o) => o.value !== "QUERY") as {
+// "Query" and "Out of Scope" both need a typed reason before they can be submitted.
+const needsReason = (t: string | null | undefined) => t === "QUERY" || t === "OUT_OF_SCOPE";
+const reasonPlaceholder = (t: string | null | undefined) =>
+    t === "OUT_OF_SCOPE" ? "Why is it out of scope?" : "Describe the query…";
+// Request-body fields for a typed reason (backend: queryText for Query,
+// reasonText for Out of Scope).
+const reasonFields = (t: string | null | undefined, text: string) => ({
+    queryText: t === "QUERY" ? text.trim() : undefined,
+    reasonText: t === "OUT_OF_SCOPE" ? text.trim() : undefined,
+});
+
+const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter(
+    (o) => o.value !== "QUERY" && o.value !== "OUT_OF_SCOPE"
+) as {
     value: QueryResolution;
     label: string;
 }[];
@@ -376,6 +390,10 @@ type MyCountRow = {
     remaining: number;
     // NEW: when these units were allocated to me (timestamp)
     allocatedAt?: string | null;
+    // NEW: read-only history row — these units were allocated to me on an
+    // earlier day, never got their case numbers and went back to the pool.
+    missed?: boolean;
+    returnedAt?: string | null;
 };
 type AvailableCountRow = {
     id: string;
@@ -693,6 +711,8 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     // Counts allocated to me (today AND past, including fully-added ones).
     const [myCounts, setMyCounts] = useState<MyCountRow[]>([]);
+    // counts left without case numbers at day end (returned to the pool) — read-only
+    const [missedCounts, setMissedCounts] = useState<MyCountRow[]>([]);
     // "Add Case Numbers" popup for one of those counts. Client / subclient
     // now live on EACH ROW (addCnRows), not as one popup-wide value.
     const [addCnCount, setAddCnCount] = useState<MyCountRow | null>(null);
@@ -846,6 +866,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         setCases([]);
         setBatches([]);
         setMyCounts([]);
+        setMissedCounts([]);
         setEmployee(null);
         setProfile(null);
         setPhotoPreview(null);
@@ -862,6 +883,38 @@ export default function Profile({ onLogout }: ProfileProps) {
             if (res.ok && json.success) setMyCounts(json.data?.mine || []);
         } catch (err) {
             console.error("Failed to load my counts:", err);
+        }
+    };
+
+    // Count units that were left without case numbers when their day ended
+    // (already back in the pool) — shown read-only under Past Allocation.
+    const loadMissedCounts = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/service-cases/my-missed-counts`);
+            const json = await safeJson(res);
+            if (res.ok && json.success) {
+                setMissedCounts(
+                    (json.data || []).map((row: any) => ({
+                        id: String(row.id),
+                        productId: row.productId != null ? String(row.productId) : "",
+                        productName: row.productName ?? null,
+                        clientId: row.clientId != null ? String(row.clientId) : null,
+                        clientName: row.clientName ?? null,
+                        subclientId: row.subclientId != null ? String(row.subclientId) : null,
+                        subclientName: row.subclientName ?? null,
+                        workDate: row.workDate,
+                        quantity: row.returnedQuantity ?? 0,
+                        allocatedToMe: row.returnedQuantity ?? 0,
+                        addedByMe: 0,
+                        remaining: row.returnedQuantity ?? 0,
+                        allocatedAt: row.allocatedAt ?? null,
+                        missed: true,
+                        returnedAt: row.returnedAt ?? null,
+                    }))
+                );
+            }
+        } catch (err) {
+            console.error("Failed to load missed counts:", err);
         }
     };
 
@@ -1019,8 +1072,13 @@ export default function Profile({ onLogout }: ProfileProps) {
             }
             loadMissed(targetId);
             // Counts endpoint is always "me" — skip it when viewing someone else.
-            if (!targetId) loadMyCounts();
-            else setMyCounts([]);
+            if (!targetId) {
+                loadMyCounts();
+                loadMissedCounts();
+            } else {
+                setMyCounts([]);
+                setMissedCounts([]);
+            }
         } catch (err: any) {
             setError(err?.message || "Could not load your profile");
         } finally {
@@ -1213,7 +1271,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     const filteredCounts = useMemo(() => {
         const today = todayStr();
         const q = search.trim().toLowerCase();
-        return myCounts
+        // returned-to-pool counts are history: Past tab only
+        const source = activeTab === "today" ? myCounts : [...myCounts, ...missedCounts];
+        return source
             .filter((m) =>
                 activeTab === "today"
                     ? allocDay(m.allocatedAt, m.workDate) === today
@@ -1229,11 +1289,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                         .includes(q)
             )
             .sort((a, b) => (b.workDate || "").localeCompare(a.workDate || ""));
-    }, [myCounts, activeTab, dateFilter, productFilter, search]);
+    }, [myCounts, missedCounts, activeTab, dateFilter, productFilter, search]);
 
-    // only the counts that still need case numbers.
+    // only the counts that still need case numbers (returned-to-pool ones can't be added to).
     const countsToAdd = useMemo(
-        () => filteredCounts.reduce((s, m) => s + m.remaining, 0),
+        () => filteredCounts.reduce((s, m) => s + (m.missed ? 0 : m.remaining), 0),
         [filteredCounts]
     );
 
@@ -1410,7 +1470,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     }, [selectedId, submitting]);
 
     const canSubmitSingle =
-        !!selected && !!submitType && (submitType !== "QUERY" || submitQueryText.trim() !== "");
+        !!selected && !!submitType && (!needsReason(submitType) || submitQueryText.trim() !== "");
 
     const handleSubmitWork = async () => {
         if (!selected || !canSubmitSingle) return;
@@ -1422,7 +1482,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     submissionType: submitType,
-                    queryText: submitType === "QUERY" ? submitQueryText.trim() : undefined,
+                    ...reasonFields(submitType, submitQueryText),
                     onBehalfOf: isViewingOther ? viewingId : undefined,
                 }),
             });
@@ -1445,7 +1505,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     // ---- Row submit: pick the status in the table, press Submit at the end ----
     const canSubmitRow = (c: CaseRow) => {
         const t = rowTypeById[c.id] || "";
-        return !!t && (t !== "QUERY" || (rowQueryById[c.id] || "").trim() !== "");
+        return !!t && (!needsReason(t) || (rowQueryById[c.id] || "").trim() !== "");
     };
 
     const handleRowSubmit = async (c: CaseRow) => {
@@ -1459,7 +1519,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     submissionType: t,
-                    queryText: t === "QUERY" ? (rowQueryById[c.id] || "").trim() : undefined,
+                    ...reasonFields(t, rowQueryById[c.id] || ""),
                     onBehalfOf: isViewingOther ? viewingId : undefined,
                 }),
             });
@@ -1500,7 +1560,8 @@ export default function Profile({ onLogout }: ProfileProps) {
             return label ? label.toLowerCase() : "wip";
         };
         return pendingTodayCases.filter((c) => {
-            const hay = `${c.caseNumber} ${c.productName || ""} ${statusLabel(c.id)}`.toLowerCase();
+            const hay =
+                `${c.caseNumber} ${c.productName || ""} ${c.clientName || ""} ${c.subclientName || ""} ${statusLabel(c.id)}`.toLowerCase();
             return hay.includes(q);
         });
     }, [pendingTodayCases, bulkSearch, bulkTypeById]);
@@ -1885,9 +1946,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                 );
                 return;
             }
-            if (r.status === "QUERY" && !r.query.trim()) {
+            if (needsReason(r.status) && !r.query.trim()) {
                 setAddCnError(
-                    `Enter the query text for ${r.cn.startsWith("__AUTO__") ? `row ${r.cn.replace("__AUTO__", "")}` : r.cn}.`
+                    `Enter the ${r.status === "OUT_OF_SCOPE" ? "reason" : "query text"} for ${r.cn.startsWith("__AUTO__") ? `row ${r.cn.replace("__AUTO__", "")}` : r.cn}.`
                 );
                 return;
             }
@@ -1911,7 +1972,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 r.cn.toUpperCase(),
                                 {
                                     submissionType: r.status === "PENDING" ? "WIP" : r.status,
-                                    queryText: r.status === "QUERY" ? r.query.trim() : undefined,
+                                    ...reasonFields(r.status, r.query),
                                     clientId: r.clientId,
                                     subclientId: r.subclientId || undefined,
                                 },
@@ -1983,7 +2044,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     const setBulkType = (id: string, value: "PENDING" | SubmissionType) => {
         setBulkTypeById((prev) => ({ ...prev, [id]: value }));
-        if (value !== "QUERY") {
+        if (!needsReason(value)) {
             setBulkQueryById((prev) => ({ ...prev, [id]: "" }));
         }
     };
@@ -2005,7 +2066,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     const bulkHasIncompleteQuery = useMemo(
         () =>
             bulkRowsToSubmit.some(
-                (c) => bulkTypeById[c.id] === "QUERY" && !(bulkQueryById[c.id] || "").trim()
+                (c) => needsReason(bulkTypeById[c.id]) && !(bulkQueryById[c.id] || "").trim()
             ),
         [bulkRowsToSubmit, bulkTypeById, bulkQueryById]
     );
@@ -2018,8 +2079,10 @@ export default function Profile({ onLogout }: ProfileProps) {
 
         for (const c of bulkRowsToSubmit) {
             const type = bulkTypeById[c.id];
-            if (type === "QUERY" && !(bulkQueryById[c.id] || "").trim()) {
-                setBulkError(`Enter the query text for ${c.caseNumber} before submitting.`);
+            if (needsReason(type) && !(bulkQueryById[c.id] || "").trim()) {
+                setBulkError(
+                    `Enter the ${type === "OUT_OF_SCOPE" ? "reason" : "query text"} for ${c.caseNumber} before submitting.`
+                );
                 return;
             }
         }
@@ -2027,8 +2090,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         const items = bulkRowsToSubmit.map((c) => ({
             id: c.id,
             submissionType: bulkTypeById[c.id],
-            queryText:
-                bulkTypeById[c.id] === "QUERY" ? (bulkQueryById[c.id] || "").trim() : undefined,
+            ...reasonFields(bulkTypeById[c.id], bulkQueryById[c.id] || ""),
         }));
 
         setBulkSubmitting(true);
@@ -3491,7 +3553,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     </div>
                                                                     {rows.map((mc, ri) => {
                                                                         const done =
-                                                                            mc.remaining === 0;
+                                                                            mc.remaining === 0 &&
+                                                                            !mc.missed;
                                                                         const mcAmp = ampOf(
                                                                             mc.productId
                                                                         );
@@ -3589,9 +3652,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                         }
                                                                                     >
                                                                                         ●{" "}
-                                                                                        {done
-                                                                                            ? "All added"
-                                                                                            : "Allocated"}
+                                                                                        {mc.missed
+                                                                                            ? "Not submitted"
+                                                                                            : done
+                                                                                              ? "All added"
+                                                                                              : "Allocated"}
                                                                                     </span>
                                                                                 </div>
                                                                                 <div>
@@ -3641,7 +3706,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                         styles.cntRight
                                                                                     }
                                                                                 >
-                                                                                    {!done ? (
+                                                                                    {mc.missed ? (
+                                                                                        <span
+                                                                                            style={
+                                                                                                styles.smallMuted
+                                                                                            }
+                                                                                        >
+                                                                                            Returned
+                                                                                            to pool
+                                                                                        </span>
+                                                                                    ) : !done ? (
                                                                                         <button
                                                                                             type="button"
                                                                                             className="pf-btn pf-btn-solid"
@@ -3977,12 +4051,20 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                     )
                                                                                 )}
                                                                             </select>
-                                                                            {rowTypeById[c.id] ===
-                                                                                "QUERY" && (
+                                                                            {needsReason(
+                                                                                rowTypeById[c.id]
+                                                                            ) && (
                                                                                 <input
                                                                                     type="text"
                                                                                     autoFocus
-                                                                                    placeholder="Query reason…"
+                                                                                    placeholder={
+                                                                                        rowTypeById[
+                                                                                            c.id
+                                                                                        ] ===
+                                                                                        "OUT_OF_SCOPE"
+                                                                                            ? "Out of scope reason…"
+                                                                                            : "Query reason…"
+                                                                                    }
                                                                                     value={
                                                                                         rowQueryById[
                                                                                             c.id
@@ -4258,7 +4340,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 const v = e.target.value as
                                                                     "" | SubmissionType;
                                                                 setSubmitType(v);
-                                                                if (v !== "QUERY")
+                                                                if (!needsReason(v))
                                                                     setSubmitQueryText("");
                                                             }}
                                                         >
@@ -4273,7 +4355,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             ))}
                                                         </select>
                                                     </div>
-                                                    {submitType === "QUERY" && (
+                                                    {needsReason(submitType) && (
                                                         <div
                                                             style={{
                                                                 ...styles.filterField,
@@ -4282,7 +4364,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             }}
                                                         >
                                                             <label style={styles.smallLabel}>
-                                                                Query *
+                                                                {submitType === "OUT_OF_SCOPE"
+                                                                    ? "Reason *"
+                                                                    : "Query *"}
                                                             </label>
                                                             <input
                                                                 style={styles.textInput}
@@ -4292,7 +4376,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                         e.target.value
                                                                     )
                                                                 }
-                                                                placeholder="Describe the query…"
+                                                                placeholder={reasonPlaceholder(
+                                                                    submitType
+                                                                )}
                                                             />
                                                         </div>
                                                     )}
@@ -4310,13 +4396,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         <strong>How it works?</strong>
                                                         <p style={{ margin: "4px 0 0" }}>
                                                             Choose the status — Completed, Completed
-                                                            by Team, Completed by Client or Query —
-                                                            and submit. "Query" needs a short note
-                                                            on what the query is; you can track and
-                                                            complete your queries later from "All
-                                                            Query" up top. Use "Bulk Submit" to
-                                                            submit every pending case for today in
-                                                            one click.
+                                                            by Team, Completed by Client, Query or
+                                                            Out of Scope — and submit. "Query" and
+                                                            "Out of Scope" need a short note (query
+                                                            / reason); you can track and complete
+                                                            your queries later from "All Query" up
+                                                            top. Use "Bulk Submit" to submit every
+                                                            pending case for today in one click.
                                                         </p>
                                                     </div>
                                                 </div>
@@ -4371,7 +4457,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                     {/* ---- Bulk Submit modal ---- */}
                     {showBulkModal && (
                         <div style={styles.bulkOverlay}>
-                            <div style={styles.bulkModal} onClick={(e) => e.stopPropagation()}>
+                            <div
+                                style={{ ...styles.bulkModal, width: 980 }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <div style={styles.bulkModalHeader}>
                                     <div>
                                         <h3 style={styles.bulkModalTitle}>
@@ -4380,7 +4469,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         <p style={styles.bulkModalSubtitle}>
                                             Every case below starts as "WIP" — only change the ones
                                             you're ready to submit now; the rest stay pending for
-                                            later. A "Query" row also needs its text filled in.
+                                            later. A "Query" or "Out of Scope" row also needs its
+                                            reason filled in.
                                         </p>
                                     </div>
                                     <button
@@ -4397,30 +4487,32 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
                                     value={bulkSearch}
                                     onChange={(e) => setBulkSearch(e.target.value)}
-                                    placeholder="Search by case number, service or status…"
+                                    placeholder="Search by case number, client, sub-client, service or status…"
                                 />
 
                                 <div style={styles.bulkTableWrap}>
-                                    <table style={styles.bulkTable}>
+                                    <table style={{ ...styles.bulkTable, minWidth: 880 }}>
                                         <colgroup>
+                                            <col style={{ width: "18%" }} />
                                             <col style={{ width: "16%" }} />
-                                            <col style={{ width: "24%" }} />
-                                            <col style={{ width: "26%" }} />
-                                            <col style={{ width: "34%" }} />
+                                            <col style={{ width: "18%" }} />
+                                            <col style={{ width: "20%" }} />
+                                            <col style={{ width: "28%" }} />
                                         </colgroup>
                                         <thead>
                                             <tr>
+                                                <th style={styles.th}>Client</th>
+                                                <th style={styles.th}>Sub-client</th>
                                                 <th style={styles.th}>Case No.</th>
-                                                <th style={styles.th}>Service</th>
                                                 <th style={styles.th}>Status</th>
-                                                <th style={styles.th}>Query</th>
+                                                <th style={styles.th}>Query / Reason</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {bulkVisibleCases.length === 0 && (
                                                 <tr>
                                                     <td
-                                                        colSpan={4}
+                                                        colSpan={5}
                                                         style={{
                                                             ...styles.td,
                                                             textAlign: "center",
@@ -4435,17 +4527,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             {bulkVisibleCases.map((c) => {
                                                 const type = bulkTypeById[c.id] ?? "PENDING";
                                                 const queryMissing =
-                                                    type === "QUERY" &&
+                                                    needsReason(type) &&
                                                     !(bulkQueryById[c.id] || "").trim();
                                                 return (
                                                     <tr key={c.id} style={styles.tr}>
                                                         <td
                                                             style={{
                                                                 ...styles.td,
-                                                                fontWeight: fontWeight.bold,
+                                                                whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.caseNumber}
+                                                            {c.clientName || "—"}
                                                         </td>
                                                         <td
                                                             style={{
@@ -4453,7 +4545,24 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.productName || "-"}
+                                                            {c.subclientName || "—"}
+                                                        </td>
+                                                        <td
+                                                            style={{
+                                                                ...styles.td,
+                                                                fontWeight: fontWeight.bold,
+                                                                whiteSpace: "normal",
+                                                            }}
+                                                        >
+                                                            {c.caseNumber}
+                                                            <div
+                                                                style={{
+                                                                    ...styles.smallMuted,
+                                                                    fontWeight: "normal",
+                                                                }}
+                                                            >
+                                                                {c.productName || ""}
+                                                            </div>
                                                         </td>
                                                         <td style={styles.td}>
                                                             <select
@@ -4496,7 +4605,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {type === "QUERY" ? (
+                                                            {needsReason(type) ? (
                                                                 <input
                                                                     style={{
                                                                         ...styles.textInput,
@@ -4515,7 +4624,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                             e.target.value
                                                                         )
                                                                     }
-                                                                    placeholder="Describe the query…"
+                                                                    placeholder={reasonPlaceholder(
+                                                                        type
+                                                                    )}
                                                                 />
                                                             ) : (
                                                                 <span style={styles.smallMuted}>
@@ -5290,13 +5401,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 <th style={styles.th}>Client *</th>
                                                 <th style={styles.th}>Subclient</th>
                                                 <th style={styles.th}>Status</th>
-                                                <th style={styles.th}>Query</th>
+                                                <th style={styles.th}>Query / Reason</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {addCnRows.map((r, i) => {
                                                 const queryMissing =
-                                                    r.status === "QUERY" && !r.query.trim();
+                                                    needsReason(r.status) && !r.query.trim();
                                                 const rowSubOptions = subclients.filter(
                                                     (s) =>
                                                         s.clientId === r.clientId &&
@@ -5421,11 +5532,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                             | "WIP"
                                                                             | "PENDING"
                                                                             | SubmissionType,
-                                                                        query:
-                                                                            e.target.value ===
-                                                                            "QUERY"
-                                                                                ? r.query
-                                                                                : "",
+                                                                        query: needsReason(
+                                                                            e.target.value
+                                                                        )
+                                                                            ? r.query
+                                                                            : "",
                                                                     })
                                                                 }
                                                             >
@@ -5449,7 +5560,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {r.status === "QUERY" ? (
+                                                            {needsReason(r.status) ? (
                                                                 <input
                                                                     style={{
                                                                         ...styles.textInput,
@@ -5461,7 +5572,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     }}
                                                                     value={r.query}
                                                                     disabled={addCnSubmitting}
-                                                                    placeholder="Describe the query…"
+                                                                    placeholder={reasonPlaceholder(
+                                                                        r.status
+                                                                    )}
                                                                     onChange={(e) =>
                                                                         setAddCnRow(i, {
                                                                             query: e.target.value,
