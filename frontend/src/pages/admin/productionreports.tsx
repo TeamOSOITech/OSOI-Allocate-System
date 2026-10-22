@@ -323,7 +323,10 @@ export default function ProductionReport() {
 
     // ---- client-wise cards ----
     const [cardCases, setCardCases] = useState<ServiceCaseRow[]>([]);
-    const [cardCounts, setCardCounts] = useState<CountRow[]>([]);
+    // Raw count-only rows from the API; the client-name filter is applied in
+    // the useMemo below so `clients` loading never re-triggers fetchCards.
+    const [rawCardCounts, setRawCardCounts] = useState<CountRow[]>([]);
+    const fetchSeq = useRef(0); // guards against stale/overlapping fetches
     const [cardsLoading, setCardsLoading] = useState(true);
     const [openGroup, setOpenGroup] = useState<string | null>(null);
     // After "View Details" is clicked the table opens BELOW all the cards;
@@ -452,14 +455,17 @@ export default function ProductionReport() {
     // client filters apply; Status / Submission / search do NOT, because the
     // cards ARE the Allocated / Pending / Submitted breakdown). ----
     const fetchCards = useCallback(async () => {
+        const seq = ++fetchSeq.current;
+        const isStale = () => seq !== fetchSeq.current;
         setCardsLoading(true);
         setError("");
         try {
-            const all: ServiceCaseRow[] = [];
-            for (let p = 1; p <= 60; p++) {
+            const PAGE = 100;
+            const MAX_PAGES = 60;
+            const fetchPage = async (p: number) => {
                 const params = new URLSearchParams();
                 params.set("page", String(p));
-                params.set("pageSize", "100");
+                params.set("pageSize", String(PAGE));
                 if (productId) params.set("productId", productId);
                 if (fromDate) params.set("workDateFrom", fromDate);
                 if (toDate) params.set("workDateTo", toDate);
@@ -469,49 +475,67 @@ export default function ProductionReport() {
                 const json = await res.json();
                 if (!res.ok || !json.success)
                     throw new Error(json?.message || `HTTP ${res.status}`);
-                const batch: ServiceCaseRow[] = json.data || [];
-                all.push(...batch);
-                if (batch.length < 100) break;
-            }
-            setCardCases(all);
+                return json;
+            };
 
-            // Count-only work with no case numbers yet. Optional: if that
-            // endpoint isn't deployed (or an employee filter is set, counts
-            // aren't per-employee) the cards just use cases.
-            let counts: CountRow[] = [];
-            if (!employeeId) {
-                try {
-                    const p = new URLSearchParams();
-                    p.set("workDate", toDate);
-                    if (productId) p.set("productId", productId);
-                    const res = await authFetch(
-                        `${API_BASE}/api/service-cases/count-allocations?${p.toString()}`
-                    );
-                    const json = await res.json();
-                    if (res.ok && json.success) {
-                        const selectedClientName = clientId
-                            ? clients.find((c) => c.id === clientId)?.name
-                            : null;
-                        counts = (json.data || []).filter(
-                            (c: CountRow) =>
-                                c.workDate >= fromDate &&
-                                (!selectedClientName || c.clientName === selectedClientName)
-                        );
-                    }
-                } catch {
-                    counts = [];
-                }
+            // Count-only work runs IN PARALLEL with the case pages (it used to
+            // wait for every page first). Optional: failures just mean no counts.
+            const countsPromise: Promise<CountRow[]> = employeeId
+                ? Promise.resolve([])
+                : (async () => {
+                      try {
+                          const p = new URLSearchParams();
+                          p.set("workDate", toDate);
+                          if (productId) p.set("productId", productId);
+                          const res = await authFetch(
+                              `${API_BASE}/api/service-cases/count-allocations?${p.toString()}`
+                          );
+                          const json = await res.json();
+                          return res.ok && json.success ? json.data || [] : [];
+                      } catch {
+                          return [];
+                      }
+                  })();
+
+            // Page 1 tells us totalPages; the rest are fetched in parallel
+            // batches instead of one-after-another.
+            const first = await fetchPage(1);
+            const all: ServiceCaseRow[] = [...(first.data || [])];
+            const totalPages = Math.min(first.pagination?.totalPages ?? 1, MAX_PAGES);
+            const BATCH = 6;
+            for (let start = 2; start <= totalPages; start += BATCH) {
+                if (isStale()) return;
+                const pages = [];
+                for (let p = start; p < start + BATCH && p <= totalPages; p++) pages.push(p);
+                const results = await Promise.all(pages.map(fetchPage)); // order preserved
+                results.forEach((r) => all.push(...(r.data || [])));
             }
-            setCardCounts(counts);
+
+            const counts = await countsPromise;
+            if (isStale()) return;
+            setCardCases(all);
+            setRawCardCounts(counts);
         } catch (err: any) {
+            if (isStale()) return;
             console.error("Failed to load client cards:", err);
             setError(err?.message || "Failed to load production report.");
             setCardCases([]);
-            setCardCounts([]);
+            setRawCardCounts([]);
         } finally {
-            setCardsLoading(false);
+            if (!isStale()) setCardsLoading(false);
         }
-    }, [productId, fromDate, toDate, employeeId, clientId, clients]);
+    }, [productId, fromDate, toDate, employeeId, clientId]);
+
+    // Client-name + from-date filter on count rows, done here (not in the
+    // fetch) so loading the clients dropdown doesn't trigger a refetch.
+    const cardCounts = useMemo(() => {
+        const selectedClientName = clientId ? clients.find((c) => c.id === clientId)?.name : null;
+        return rawCardCounts.filter(
+            (c) =>
+                c.workDate >= fromDate &&
+                (!selectedClientName || c.clientName === selectedClientName)
+        );
+    }, [rawCardCounts, clients, clientId, fromDate]);
 
     useEffect(() => {
         fetchCards();
