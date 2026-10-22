@@ -316,7 +316,7 @@ router.post(
       // Auth-level duplicates are still caught by createUser below.)
       const { data: existing, error: exErr } = await supabase
         .from("user_master")
-        .select("id")
+        .select('"Auth User Id"')
         .eq("Email", email)
         .limit(1);
       if (exErr) throw exErr;
@@ -465,9 +465,9 @@ router.get(
       const [usersRes, subsRes] = await Promise.all([
         supabase
           .from("user_master")
-          .select('id, "Email", "Role", organization_id')
+          .select('"Auth User Id", "Email", "Role", organization_id')
           .in("organization_id", orgIds)
-          .order("id", { ascending: true })
+          .order("Email", { ascending: true })
           .limit(5000),
         supabase
           .from("subscriptions")
@@ -505,7 +505,7 @@ router.get(
             plan: planByOrg.get(String(o.id)) || "free",
             userCount: users.length,
             users: users.slice(0, 20).map((u) => ({
-              userId: u.id,
+              userId: u["Auth User Id"],
               email: u.Email,
               role: u.Role,
             })),
@@ -543,8 +543,8 @@ router.patch(
 
       const { data: target, error: tErr } = await supabase
         .from("user_master")
-        .select('id, "Email", organization_id')
-        .eq("id", req.params.userId)
+        .select('"Auth User Id", "Email", organization_id')
+        .eq("Auth User Id", req.params.userId)
         .maybeSingle();
       if (tErr) throw tErr;
       if (!target) {
@@ -564,13 +564,13 @@ router.patch(
       const { error: uErr } = await supabase
         .from("user_master")
         .update({ Role: role })
-        .eq("id", target.id);
+        .eq("Auth User Id", target["Auth User Id"]);
       if (uErr) throw uErr;
 
       res.json({
         success: true,
         message: `${target.Email} is now ${role}.`,
-        data: { userId: target.id, role },
+        data: { userId: target["Auth User Id"], role },
       });
     } catch (err) {
       console.error("CHANGE TENANT ROLE ERROR:", err);
