@@ -188,4 +188,225 @@ router.patch(
   },
 );
 
+// ---------------------------------------------------------------
+// CREATE A NEW TENANT (organization) FROM INSIDE THE APP
+//   Settings -> "Create tenant": email + password + plan.
+//
+//   GET  /api/platform/tenant-access -> { canCreateTenant }
+//   POST /api/platform/tenants       -> creates org + its first SUPER_ADMIN
+//        body: { email, password, plan, organizationName? }
+//        plan: "free" (up to 5 users) | "basic" | "professional" | "enterprise"
+//
+// Only the PLATFORM OWNER's Super Admin can do this — i.e. a SUPER_ADMIN
+// of the platform organization. That is the org whose id is in the
+// PLATFORM_ORG_ID env var, or (if not set) the OLDEST organization (the
+// first tenant). A Super Admin of any other tenant gets 403, so tenants
+// can't create tenants.
+//
+// Free = no subscriptions row (the app already treats "no active
+// subscription" as Free, 5 users). Paid plans get an active subscriptions
+// row, same as the paid signup flow, so the existing seat limit applies.
+// ---------------------------------------------------------------
+const {
+  PLAN_USER_LIMITS,
+  getPlanByName,
+} = require("../billings/billing.service");
+
+const TENANT_PLANS = ["free", "basic", "professional", "enterprise"];
+
+async function getPlatformOrgId() {
+  const fromEnv = (process.env.PLATFORM_ORG_ID || "").trim();
+  if (fromEnv) return fromEnv;
+  const { data, error } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id ? String(data.id) : null;
+}
+
+async function isPlatformSuperAdmin(user) {
+  if (!user || user.role !== "SUPER_ADMIN") return false;
+  const platformOrgId = await getPlatformOrgId();
+  return !!platformOrgId && String(user.organizationId) === platformOrgId;
+}
+
+router.get("/platform/tenant-access", authenticate, async (req, res) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      data: { canCreateTenant: await isPlatformSuperAdmin(req.user) },
+    });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+router.post(
+  "/platform/tenants",
+  authenticate,
+  authorize("SUPER_ADMIN"),
+  async (req, res) => {
+    let organization = null;
+    let authUserId = null;
+    try {
+      if (!(await isPlatformSuperAdmin(req.user))) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to create tenants.",
+        });
+      }
+
+      const email = String(req.body?.email || "")
+        .trim()
+        .toLowerCase();
+      const password = String(req.body?.password || "");
+      const plan = String(req.body?.plan || "free")
+        .trim()
+        .toLowerCase();
+      const orgName =
+        String(req.body?.organizationName || "").trim() || email.split("@")[0];
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Enter a valid email." });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 8 characters.",
+        });
+      }
+      if (!TENANT_PLANS.includes(plan)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Choose a valid plan." });
+      }
+
+      // email already used (login accounts are unique across all tenants)
+      const [byEmail, byLogin] = await Promise.all([
+        supabase.from("user_master").select("id").eq("Email", email).limit(1),
+        supabase
+          .from("user_master")
+          .select("id")
+          .eq("Login Email", email)
+          .limit(1),
+      ]);
+      if (byEmail.error) throw byEmail.error;
+      if (byLogin.error) throw byLogin.error;
+      if ((byEmail.data || []).length > 0 || (byLogin.data || []).length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: "An account with this email already exists.",
+        });
+      }
+
+      // paid plan must exist in the plans table BEFORE anything is created
+      let planRow = null;
+      if (plan !== "free") {
+        planRow = await getPlanByName(supabase, plan);
+        if (!planRow) {
+          return res.status(400).json({
+            success: false,
+            message: `The "${plan}" plan is not set up in the plans table yet.`,
+          });
+        }
+      }
+
+      // 1. organization
+      const { data: org, error: orgErr } = await supabase
+        .from("organizations")
+        .insert({ name: orgName, status: "ACTIVE" })
+        .select()
+        .single();
+      if (orgErr) throw orgErr;
+      organization = org;
+
+      // 2. login (Supabase Auth) with the password given here
+      const { data: authData, error: authErr } =
+        await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+        });
+      if (authErr) {
+        if (/already|registered|exists/i.test(authErr.message || "")) {
+          await supabase.from("organizations").delete().eq("id", org.id);
+          organization = null;
+          return res.status(409).json({
+            success: false,
+            message: "An account with this email already exists.",
+          });
+        }
+        throw authErr;
+      }
+      authUserId = authData.user.id;
+
+      // 3. its first user: org-level SUPER_ADMIN
+      const { error: profileErr } = await supabase.from("user_master").insert({
+        "Auth User Id": authUserId,
+        "First Name": orgName,
+        "Last Name": null,
+        Email: email,
+        "Login Email": email,
+        Role: "SUPER_ADMIN",
+        organization_id: org.id,
+      });
+      if (profileErr) throw profileErr;
+
+      // 4. subscription (paid plans only; Free = no row)
+      if (planRow) {
+        const { error: subErr } = await supabase.from("subscriptions").insert({
+          organization_id: org.id,
+          plan_id: planRow.id,
+          status: "active",
+          price_per_user_snapshot: planRow.price_per_user,
+          current_period_start: new Date().toISOString(),
+          current_period_end: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        });
+        if (subErr) throw subErr;
+      }
+
+      const limit = PLAN_USER_LIMITS[plan];
+      res.status(201).json({
+        success: true,
+        message: `Tenant "${orgName}" created on the ${plan} plan.`,
+        data: {
+          organizationId: org.id,
+          organizationName: orgName,
+          email,
+          plan,
+          userLimit: Number.isFinite(limit) ? limit : null, // null = unlimited
+        },
+      });
+    } catch (err) {
+      console.error("CREATE TENANT ERROR:", err);
+      // roll back so no half-made tenant is left behind
+      if (authUserId) {
+        await supabase.auth.admin.deleteUser(authUserId).catch(() => {});
+      }
+      if (organization) {
+        await supabase
+          .from("organizations")
+          .delete()
+          .eq("id", organization.id)
+          .then(
+            () => {},
+            () => {},
+          );
+      }
+      res.status(500).json({
+        success: false,
+        message: "Something went wrong on our end. Please try again.",
+      });
+    }
+  },
+);
+
 module.exports = router;

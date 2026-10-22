@@ -1326,8 +1326,6 @@ async function uploadCustomServiceCases(req, res) {
 
     // Columns case-insensitive / whitespace-tolerant.
     const firstRowKeys = Object.keys(sheetRows[0] || {});
-    const caseNumberKey =
-      firstRowKeys.find((k) => squash(k) === "casenumber") || firstRowKeys[0];
     // NEW: "Service" column
     const serviceKey = firstRowKeys.find((k) =>
       ["service", "servicename", "product"].includes(squash(k)),
@@ -1338,6 +1336,28 @@ async function uploadCustomServiceCases(req, res) {
     const subclientNameKey = firstRowKeys.find((k) =>
       ["subclientname", "subclient"].includes(squash(k)),
     );
+    // FIX: the header may be "Case Number", "Case Numbers", "Case No",
+    // "Case #" ... (all accepted). If none matches, fall back to the first
+    // column that is NOT the Service / Client / Subclient column — it used
+    // to fall back to the very first column, which is "Service" in the
+    // usual layout, so every case number became the service name and all
+    // rows after the first of each service were skipped as duplicates.
+    const CASE_HEADERS = [
+      "casenumber",
+      "casenumbers",
+      "caseno",
+      "casenos",
+      "case#",
+      "caseid",
+      "case",
+    ];
+    const caseNumberKey =
+      firstRowKeys.find((k) => CASE_HEADERS.includes(squash(k))) ||
+      firstRowKeys.find(
+        (k) =>
+          k !== serviceKey && k !== clientNameKey && k !== subclientNameKey,
+      ) ||
+      firstRowKeys[0];
 
     if (!serviceKey && !defaultProductId) {
       return res.status(400).json({
