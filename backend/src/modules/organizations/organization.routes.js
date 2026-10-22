@@ -311,17 +311,16 @@ router.post(
       }
 
       // email already used (login accounts are unique across all tenants)
-      const [byEmail, byLogin] = await Promise.all([
-        supabase.from("user_master").select("id").eq("Email", email).limit(1),
-        supabase
-          .from("user_master")
-          .select("id")
-          .eq("Login Email", email)
-          .limit(1),
-      ]);
-      if (byEmail.error) throw byEmail.error;
-      if (byLogin.error) throw byLogin.error;
-      if ((byEmail.data || []).length > 0 || (byLogin.data || []).length > 0) {
+      // (filters on "Email" only — same check as the public signup; a filter
+      // on the spaced "Login Email" column made this query fail -> HTTP 500.
+      // Auth-level duplicates are still caught by createUser below.)
+      const { data: existing, error: exErr } = await supabase
+        .from("user_master")
+        .select("id")
+        .eq("Email", email)
+        .limit(1);
+      if (exErr) throw exErr;
+      if (existing && existing.length > 0) {
         return res.status(409).json({
           success: false,
           message: "An account with this email already exists.",
@@ -425,9 +424,11 @@ router.post(
             () => {},
           );
       }
+      // This endpoint is platform-owner only, so show the real reason
+      // instead of a generic message (easier to fix setup problems).
       res.status(500).json({
         success: false,
-        message: "Something went wrong on our end. Please try again.",
+        message: `Could not create the tenant: ${err?.message || "unknown error"}`,
       });
     }
   },
