@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties, ChangeEvent } from "react";
 import * as XLSX from "xlsx";
-import { safeSheet } from "../utils/safeSheet";
 import { authFetch } from "../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
@@ -2111,15 +2110,27 @@ function HolidaysModal({
     const [bulkError, setBulkError] = useState("");
     const [bulkResults, setBulkResults] = useState<BulkRowResult[] | null>(null);
 
-    const downloadTemplate = () => {
-        const templateData = [
-            { "Festival Name": "Gandhi Jayanti", Date: "02-Oct-2026" },
-            { "Festival Name": "Diwali", Date: "2026-11-08" },
-        ];
-        const worksheet = safeSheet(XLSX.utils.json_to_sheet(templateData));
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Holidays");
-        XLSX.writeFile(workbook, "bulk_holidays_template.xlsx");
+    // Sample sheet comes from the backend (exceljs) so the Date column
+    // carries Excel date validation.
+    const downloadTemplate = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/holidays/bulk/template`, {
+                cache: "no-store",
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const href = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = href;
+            a.download = "bulk_holidays_template.xlsx";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(href);
+        } catch (err) {
+            console.error("Failed to download holidays template:", err);
+            setBulkError("Could not download the sample sheet. Please try again.");
+        }
     };
 
     const handleBulkUpload = async () => {
