@@ -24,6 +24,24 @@ const API_BASE = import.meta.env.VITE_API_URL;
 
 type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode" | "tenant";
 
+// Roles the platform owner can give a tenant's login (same codes as the backend).
+const TENANT_ROLE_OPTIONS: { value: string; label: string }[] = [
+    { value: "SUPER_ADMIN", label: "Super Admin" },
+    { value: "OPS_MANAGER", label: "Ops Manager" },
+    { value: "AUDIT_MANAGER", label: "Audit Manager" },
+    { value: "PROCESS_LEAD", label: "Process Lead" },
+    { value: "VERTICAL_HEAD", label: "Vertical Head" },
+    { value: "TEAM_MEMBER", label: "Team Member" },
+];
+
+type TenantRow = {
+    organizationId: string;
+    name: string;
+    plan: string;
+    userCount: number;
+    users: { userId: string; email: string; role: string }[];
+};
+
 // Plans offered when creating a tenant (limits match PLAN_USER_LIMITS on the backend).
 const TENANT_PLAN_OPTIONS: { key: string; label: string; users: string }[] = [
     { key: "free", label: "Free", users: "Up to 5 users" },
@@ -121,6 +139,10 @@ export default function SettingsModal({
     const [tenantPassword, setTenantPassword] = useState("");
     const [tenantShowPw, setTenantShowPw] = useState(false);
     const [tenantPlan, setTenantPlan] = useState("free");
+    const [tenantRole, setTenantRole] = useState("SUPER_ADMIN");
+    const [tenants, setTenants] = useState<TenantRow[]>([]);
+    const [roleEdits, setRoleEdits] = useState<Record<string, string>>({});
+    const [roleSavingId, setRoleSavingId] = useState<string | null>(null);
     const [tenantBusy, setTenantBusy] = useState(false);
     const [tenantError, setTenantError] = useState("");
     const [tenantOk, setTenantOk] = useState("");
@@ -145,6 +167,51 @@ export default function SettingsModal({
             alive = false;
         };
     }, [open]);
+
+    const loadTenants = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/platform/tenants`);
+            const json = await res.json();
+            if (res.ok && json.success) {
+                setTenants(json.data || []);
+                setRoleEdits({});
+            }
+        } catch {
+            /* list is optional — creating still works */
+        }
+    };
+
+    useEffect(() => {
+        if (open && canCreateTenant && section === "tenant") loadTenants();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, canCreateTenant, section]);
+
+    const saveTenantRole = async (userId: string) => {
+        const role = roleEdits[userId];
+        if (!role || roleSavingId) return;
+        setRoleSavingId(userId);
+        setTenantError("");
+        setTenantOk("");
+        try {
+            const res = await authFetch(
+                `${API_BASE}/api/platform/tenants/users/${encodeURIComponent(userId)}/role`,
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ role }),
+                }
+            );
+            const json = await res.json();
+            if (!res.ok || !json.success)
+                throw new Error(json?.message || "Could not change role.");
+            setTenantOk(json.message || "Role updated.");
+            await loadTenants();
+        } catch (e: any) {
+            setTenantError(e?.message || "Could not change role.");
+        } finally {
+            setRoleSavingId(null);
+        }
+    };
 
     useEffect(() => {
         if (!open) return;
@@ -191,6 +258,7 @@ export default function SettingsModal({
                     email: tenantEmail.trim(),
                     password: tenantPassword,
                     plan: tenantPlan,
+                    role: tenantRole,
                     organizationName: tenantOrgName.trim() || undefined,
                 }),
             });
@@ -204,6 +272,8 @@ export default function SettingsModal({
             setTenantEmail("");
             setTenantPassword("");
             setTenantPlan("free");
+            setTenantRole("SUPER_ADMIN");
+            loadTenants();
         } catch (e: any) {
             setTenantError(e?.message || "Could not create tenant.");
         } finally {
@@ -692,6 +762,19 @@ export default function SettingsModal({
                                                     {tenantShowPw ? "Hide" : "Show"}
                                                 </button>
                                             </div>
+                                            <label style={label}>Role *</label>
+                                            <select
+                                                style={field}
+                                                value={tenantRole}
+                                                onChange={(e) => setTenantRole(e.target.value)}
+                                                disabled={tenantBusy}
+                                            >
+                                                {TENANT_ROLE_OPTIONS.map((r) => (
+                                                    <option key={r.value} value={r.value}>
+                                                        {r.label}
+                                                    </option>
+                                                ))}
+                                            </select>
                                             <label style={label}>Plan *</label>
                                             <div
                                                 style={{
@@ -781,6 +864,148 @@ export default function SettingsModal({
                                     <i className="ti ti-building-plus" />
                                     {tenantBusy ? "Creating…" : "Create tenant"}
                                 </button>
+
+                                <h4 style={{ ...s.h2, marginTop: 28 }}>Your tenants</h4>
+                                <p style={s.sub}>
+                                    Change a tenant user's role here any time — pick the new role
+                                    and press Save.
+                                </p>
+                                {tenants.length === 0 ? (
+                                    <p style={{ fontSize: 13, color: "#6b7a90" }}>
+                                        No tenants created yet.
+                                    </p>
+                                ) : (
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 10,
+                                        }}
+                                    >
+                                        {tenants.map((t) => (
+                                            <div
+                                                key={t.organizationId}
+                                                style={{
+                                                    border: "1px solid #E6E9F3",
+                                                    borderRadius: 12,
+                                                    padding: "12px 14px",
+                                                }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        gap: 10,
+                                                        flexWrap: "wrap",
+                                                    }}
+                                                >
+                                                    <strong
+                                                        style={{ color: "#1B1F4B", fontSize: 14 }}
+                                                    >
+                                                        {t.name}
+                                                    </strong>
+                                                    <span
+                                                        style={{ fontSize: 12.5, color: "#6b7a90" }}
+                                                    >
+                                                        {t.plan.charAt(0).toUpperCase() +
+                                                            t.plan.slice(1)}{" "}
+                                                        plan · {t.userCount} user
+                                                        {t.userCount === 1 ? "" : "s"}
+                                                    </span>
+                                                </div>
+                                                {t.users.map((u) => {
+                                                    const picked = roleEdits[u.userId] ?? u.role;
+                                                    const changed = picked !== u.role;
+                                                    return (
+                                                        <div
+                                                            key={u.userId}
+                                                            style={{
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: 8,
+                                                                marginTop: 8,
+                                                                flexWrap: "wrap",
+                                                            }}
+                                                        >
+                                                            <span
+                                                                style={{
+                                                                    flex: "1 1 180px",
+                                                                    minWidth: 0,
+                                                                    fontSize: 13,
+                                                                    color: "#4b5a70",
+                                                                    overflow: "hidden",
+                                                                    textOverflow: "ellipsis",
+                                                                }}
+                                                            >
+                                                                {u.email}
+                                                            </span>
+                                                            <select
+                                                                value={picked}
+                                                                disabled={roleSavingId === u.userId}
+                                                                onChange={(e) =>
+                                                                    setRoleEdits((prev) => ({
+                                                                        ...prev,
+                                                                        [u.userId]: e.target.value,
+                                                                    }))
+                                                                }
+                                                                style={{
+                                                                    padding: "7px 10px",
+                                                                    border: "1px solid #DFE3EE",
+                                                                    borderRadius: 8,
+                                                                    fontSize: 13,
+                                                                    background: "#fff",
+                                                                }}
+                                                            >
+                                                                {TENANT_ROLE_OPTIONS.map((r) => (
+                                                                    <option
+                                                                        key={r.value}
+                                                                        value={r.value}
+                                                                    >
+                                                                        {r.label}
+                                                                    </option>
+                                                                ))}
+                                                                {!TENANT_ROLE_OPTIONS.some(
+                                                                    (r) => r.value === u.role
+                                                                ) && (
+                                                                    <option value={u.role}>
+                                                                        {u.role}
+                                                                    </option>
+                                                                )}
+                                                            </select>
+                                                            <button
+                                                                type="button"
+                                                                disabled={
+                                                                    !changed ||
+                                                                    roleSavingId === u.userId
+                                                                }
+                                                                onClick={() =>
+                                                                    saveTenantRole(u.userId)
+                                                                }
+                                                                style={{
+                                                                    padding: "7px 14px",
+                                                                    border: "none",
+                                                                    borderRadius: 999,
+                                                                    fontSize: 13,
+                                                                    fontWeight: 700,
+                                                                    color: "#fff",
+                                                                    cursor: changed
+                                                                        ? "pointer"
+                                                                        : "not-allowed",
+                                                                    opacity: changed ? 1 : 0.45,
+                                                                    background: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.blue})`,
+                                                                }}
+                                                            >
+                                                                {roleSavingId === u.userId
+                                                                    ? "Saving…"
+                                                                    : "Save"}
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </>
                         )}
 
