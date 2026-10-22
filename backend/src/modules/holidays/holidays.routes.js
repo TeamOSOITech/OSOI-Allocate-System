@@ -35,6 +35,8 @@ const router = express.Router();
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
 const { authorize } = require("../../middlewares/rbac");
+const ExcelJS = require("exceljs");
+const { applyColumnValidation } = require("../../utils/excelValidation");
 
 router.use(authenticate);
 
@@ -246,12 +248,10 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
         .json({ success: false, message: "Festival/holiday name is required" });
     }
     if (!parsedDate) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: `Could not understand date "${req.body?.date}"`,
-        });
+      return res.status(400).json({
+        success: false,
+        message: `Could not understand date "${req.body?.date}"`,
+      });
     }
 
     const { data, error } = await supabase
@@ -270,6 +270,63 @@ router.post("/", authorize("SUPER_ADMIN"), async (req, res) => {
   } catch (err) {
     console.error("Failed to add holiday:", err);
     res.status(500).json({ success: false, message: "Failed to add holiday" });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/holidays/bulk/template - SUPER_ADMIN only                */
+/*  Sample .xlsx with Excel validation: Date must be a real date      */
+/*  (yyyy-mm-dd), Festival Name max 100 chars.                        */
+/* ------------------------------------------------------------------ */
+router.get("/bulk/template", authorize("SUPER_ADMIN"), async (req, res) => {
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Holidays");
+    ws.columns = [
+      { header: "Festival Name", key: "n", width: 30 }, // A
+      { header: "Date", key: "d", width: 16 }, // B
+    ];
+    ws.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF2F5597" },
+      };
+    });
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.getColumn("B").numFmt = "yyyy-mm-dd";
+    ws.addRow({ n: "Gandhi Jayanti", d: new Date(Date.UTC(2026, 9, 2)) });
+    ws.addRow({ n: "Diwali", d: new Date(Date.UTC(2026, 10, 8)) });
+
+    applyColumnValidation(ws, "A", {
+      type: "custom",
+      formulae: (r) => [`OR(A${r}="",LEN(A${r})<=100)`],
+      errorTitle: "Festival name too long",
+      error: "Festival Name can be at most 100 characters.",
+    });
+    applyColumnValidation(ws, "B", {
+      type: "custom",
+      formulae: (r) => [`OR(B${r}="",AND(ISNUMBER(B${r}),B${r}>36526))`],
+      errorTitle: "Invalid date",
+      error: "Enter a valid date (yyyy-mm-dd).",
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="bulk_holidays_template.xlsx"',
+    );
+    res.send(Buffer.from(buf));
+  } catch (err) {
+    console.error("Failed to build holidays template:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to build the template" });
   }
 });
 

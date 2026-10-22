@@ -31,6 +31,7 @@
 const express = require("express");
 const multer = require("multer");
 const ExcelJS = require("exceljs");
+const { applyColumnValidation } = require("../../utils/excelValidation");
 const router = express.Router();
 
 const supabase = require("../../config/supabaseClient");
@@ -268,6 +269,26 @@ router.get(
   authorize(...MANAGER_ROLES),
   async (req, res) => {
     try {
+      // Live org data on every download: current locations + roles already
+      // in use. New values are still allowed by the upload (it creates
+      // them), so these dropdowns only WARN instead of blocking.
+      const orgId = req.user.organizationId;
+      const [locs, roleRows] = await Promise.all([
+        fetchLocations(orgId),
+        supabase
+          .from("blue_role_services")
+          .select("role_name")
+          .eq("organization_id", orgId),
+      ]);
+      const locNames = [
+        ...new Set(locs.map((l) => clean(l.name)).filter(Boolean)),
+      ];
+      const roleNames = [
+        ...new Set(
+          (roleRows.data || []).map((r) => clean(r.role_name)).filter(Boolean),
+        ),
+      ].sort((a, b) => a.localeCompare(b));
+
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet("Role Services");
       ws.columns = [
@@ -285,6 +306,25 @@ router.get(
         ["Plant A", "Office Boy", "Washroom saaf", "11:00 AM - 12:00 PM"],
         ["Plant A", "Office Boy", "Utensil cleaning", ""],
       ].forEach((r) => ws.addRow(r));
+
+      // hidden Lists sheet: A locations | B roles
+      const L = wb.addWorksheet("Lists", { state: "hidden" });
+      [
+        ["A", 1, locNames, "Location"],
+        ["B", 2, roleNames, "Role"],
+      ].forEach(([col, idx, values, label]) => {
+        if (!values.length) return;
+        values.forEach((v, i) => (L.getCell(i + 1, idx).value = v));
+        const colL = String.fromCharCode(64 + idx);
+        applyColumnValidation(ws, col, {
+          type: "list",
+          formulae: [`Lists!$${colL}$1:$${colL}$${values.length}`],
+          errorStyle: "warning",
+          errorTitle: `New ${label}`,
+          error: `"${label}" isn't in the list. Keep it only if you want to add a new one.`,
+        });
+      });
+
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

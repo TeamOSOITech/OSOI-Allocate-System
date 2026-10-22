@@ -7,7 +7,9 @@
 // validation, so nothing was validated. Same exceljs helpers the Client /
 // Subclient / Service-case templates use.
 //
-//   Role               -> only roles THIS requester may assign (hard stop)
+//   Role               -> only roles THIS requester may assign (hard stop),
+//                         shown with the org's CUSTOM names (same labels the
+//                         Add User page dropdown shows, e.g. "Employee")
 //   Teams              -> org teams (hard stop)
 //   Reporting Manager  -> org user emails + added managers (hard stop)
 //   Department / Designation -> org values, but WARNING only (typing a new
@@ -16,6 +18,7 @@
 const ExcelJS = require("exceljs");
 const supabase = require("../../config/supabaseClient");
 const { ASSIGNABLE_ROLES } = require("../../config/permissions");
+const { getOrgRoleLabels } = require("../../utils/roleLabelsLookup");
 const { getAllTeams } = require("../teams/teams.service");
 const {
   applyColumnValidation,
@@ -65,8 +68,19 @@ async function loadLists(orgId) {
 
 async function downloadBulkUserTemplate(req, res) {
   try {
-    const lists = await loadLists(req.user.organizationId);
-    const roles = ASSIGNABLE_ROLES[req.user.role] || [];
+    // Lists are rebuilt from live org data on EVERY download, so the
+    // dropdowns always match what the pages show right now.
+    const [lists, roleLabels] = await Promise.all([
+      loadLists(req.user.organizationId),
+      getOrgRoleLabels(req.user.organizationId),
+    ]);
+    const roleCodes = ASSIGNABLE_ROLES[req.user.role] || [];
+    // Dropdown shows the custom label ("Employee"); upload maps it back
+    // to the role code (see resolveRoleCode in utils/roleLabelsLookup).
+    const roles = roleCodes.map((code) => roleLabels[code] || code);
+    const defaultRole = roleCodes.includes("TEAM_MEMBER")
+      ? roleLabels.TEAM_MEMBER
+      : roles[0] || "";
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Users");
@@ -110,7 +124,7 @@ async function downloadBulkUserTemplate(req, res) {
       rm: lists.managers[0] || "manager@company.com",
       t: lists.teams[0] || "Tech",
       p: "",
-      r: roles.includes("TEAM_MEMBER") ? "TEAM_MEMBER" : roles[0] || "",
+      r: defaultRole,
     });
 
     // hidden Lists sheet: A roles | B teams | C managers | D departments | E designations

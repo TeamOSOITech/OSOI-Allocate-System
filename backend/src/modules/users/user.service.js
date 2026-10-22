@@ -44,6 +44,10 @@ const buildResetPageLink = (linkData) => {
   )}&type=recovery`;
 };
 const { canAssignRole } = require("../../config/permissions");
+const {
+  getOrgRoleLabels,
+  resolveRoleCode,
+} = require("../../utils/roleLabelsLookup");
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
@@ -744,13 +748,19 @@ async function processBulkAddUserRequest(users, requester) {
   const results = [];
   const seenEmails = new Set();
 
-  const [limit, currentCount, existingAuthEmails, reportingManagerCandidates] =
-    await Promise.all([
-      getOrgUserLimit(organizationId),
-      getOrgUserCount(organizationId),
-      fetchAllAuthEmails(),
-      fetchOrgReportingManagerCandidates(organizationId),
-    ]);
+  const [
+    limit,
+    currentCount,
+    existingAuthEmails,
+    reportingManagerCandidates,
+    orgRoleLabels,
+  ] = await Promise.all([
+    getOrgUserLimit(organizationId),
+    getOrgUserCount(organizationId),
+    fetchAllAuthEmails(),
+    fetchOrgReportingManagerCandidates(organizationId),
+    getOrgRoleLabels(organizationId),
+  ]);
   let remainingSlots = Math.max(limit - currentCount, 0);
 
   const creatorDomain = getDomain(requesterEmail);
@@ -788,15 +798,14 @@ async function processBulkAddUserRequest(users, requester) {
       continue;
     }
 
-    const requestedRole = String(rawUser.role || "")
-      .toUpperCase()
-      .trim()
-      .replace(/[\s\-]+/g, "_");
+    // Excel Role cell may hold the org's CUSTOM name (e.g. "Employee") -
+    // map it back to the real role code before any permission check.
+    const requestedRole = resolveRoleCode(rawUser.role, orgRoleLabels);
     if (!canAssignRole(requesterRole, requestedRole)) {
       results.push({
         email,
         success: false,
-        message: `Your role (${requesterRole}) is not allowed to create a user with role ${requestedRole || "(missing)"}.`,
+        message: `Your role (${requesterRole}) is not allowed to create a user with role ${rawUser.role || "(missing)"}.`,
       });
       continue;
     }

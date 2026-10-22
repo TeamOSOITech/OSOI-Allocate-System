@@ -11,11 +11,19 @@ const {
   deleteDailyWork,
   seedDummyCases,
 } = require("./dailywork.controller");
+const { downloadBulkTemplate } = require("./bulkTemplate");
 
 router.use(authenticate);
 
 // Viewing daily work batches — koi bhi authenticated user (Dashboard
 // pending table + SmartAutoAllocation dropdown dono ko chahiye).
+// Sample .xlsx for the bulk upload, with a Service Name dropdown (live org
+// services) + Quantity > 0 check. Literal path, declared before "/:id".
+router.get(
+  "/bulk/template",
+  requireAnyPermission("tasks.allocate.team", "tasks.allocate.org"),
+  downloadBulkTemplate,
+);
 router.get("/", listDailyWork);
 router.get("/:id", getDailyWorkById);
 
