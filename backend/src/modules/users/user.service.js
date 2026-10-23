@@ -1,4 +1,5 @@
 // user.service.js
+const { escapeLike } = require("../../utils/likeEscape");
 //
 // All the actual business logic + Supabase/DB work for user creation.
 // Pulled out of user.routes.js (which used to hold routes, validation,
@@ -162,7 +163,7 @@ async function validateReportingManager(email, organizationId) {
   const { data: customMatch, error: customErr } = await supabaseAdmin
     .from("reporting_managers")
     .select("name")
-    .ilike("name", normalized)
+    .ilike("name", escapeLike(normalized))
     .eq("organization_id", organizationId)
     .maybeSingle();
 

@@ -1,4 +1,5 @@
 // src/modules/servicecases/servicecasecountself.controller.js
+const { todayInTz } = require("../../utils/dates");
 //
 // Employee-side (Profile page) endpoints for COUNT-ONLY entries
 // (service_case_counts — "20 cases pending", no case numbers yet):
@@ -201,8 +202,7 @@ async function listMyCounts(req, res) {
   try {
     const orgId = orgIdOf(req);
     const me = userIdOf(req);
-    const workDate =
-      validYmd(req.query.workDate) || new Date().toISOString().slice(0, 10);
+    const workDate = validYmd(req.query.workDate) || todayInTz();
     const productId = req.query.productId ? String(req.query.productId) : null;
 
     // anything allocated on an earlier day and still without case numbers
@@ -975,7 +975,27 @@ async function listMyMissedCounts(req, res) {
       .limit(2000);
     if (error) throw error;
 
-    const rows = data || [];
+    // Hide history rows whose count has since been fully resolved (every
+    // unit finally got its case number) — otherwise "carried forward" rows
+    // keep showing for work that is already done. Counts that are still
+    // open (fully or partly) keep their row.
+    const logRows = data || [];
+    const countIds = [...new Set(logRows.map((r) => String(r.count_id)))];
+    const doneCountIds = new Set();
+    for (let i = 0; i < countIds.length; i += 150) {
+      const { data: cs, error: cErr } = await supabase
+        .from("service_case_counts")
+        .select("id, quantity, fulfilled_count")
+        .eq("organization_id", String(orgId))
+        .in("id", countIds.slice(i, i + 150));
+      if (cErr) throw cErr;
+      (cs || []).forEach((c) => {
+        if ((c.fulfilled_count || 0) >= (c.quantity || 0)) {
+          doneCountIds.add(String(c.id));
+        }
+      });
+    }
+    const rows = logRows.filter((r) => !doneCountIds.has(String(r.count_id)));
     const [productMap, clientMap, subclientMap] = await Promise.all([
       getProductNameMap(
         rows.map((r) => r.product_id),

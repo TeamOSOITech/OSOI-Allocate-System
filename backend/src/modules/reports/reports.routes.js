@@ -1,4 +1,5 @@
 const { sendError } = require("../../utils/response");
+const { todayInTz } = require("../../utils/dates");
 const router = require("express").Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
@@ -16,7 +17,7 @@ router.post("/daily", async (req, res) => {
       pendingReasons,
       remarks,
     } = req.body;
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInTz();
 
     const { data, error } = await supabase
       .from("daily_reports")
@@ -70,7 +71,7 @@ router.get(
   ),
   async (req, res) => {
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayInTz();
 
       const { data, error } = await supabase
         .from("daily_reports")

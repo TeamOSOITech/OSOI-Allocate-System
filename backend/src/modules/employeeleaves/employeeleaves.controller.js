@@ -1,4 +1,5 @@
 // src/modules/employeeleaves/employeeleaves.controller.js
+const { todayInTz } = require("../../utils/dates");
 //
 // Leave PERIODS (from date -> to date) for an employee.
 //   GET    /api/employee-leaves?date=YYYY-MM-DD   leaves covering that date
@@ -17,7 +18,7 @@ const userIdOf = (req) => req.user.userId;
 
 const MAX_RANGE_DAYS = 366;
 const validYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
-const todayYmd = () => new Date().toISOString().slice(0, 10);
+const todayYmd = () => todayInTz();
 
 const shape = (r) => ({
   id: r.id,

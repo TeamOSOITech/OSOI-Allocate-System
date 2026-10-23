@@ -1,4 +1,5 @@
 const { sendError } = require("../../utils/response");
+const { todayInTz } = require("../../utils/dates");
 const router = require("express").Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
@@ -9,7 +10,7 @@ router.use(authenticate);
 // Get my tasks
 router.get("/my", async (req, res) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInTz();
 
     const { data: allTasks } = await supabase
       .from("tasks")

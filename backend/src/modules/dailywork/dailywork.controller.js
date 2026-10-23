@@ -1,4 +1,5 @@
 // src/modules/dailyWork/dailyWork.controller.js
+const { todayInTz } = require("../../utils/dates");
 //
 // PAGE 2 (Daily Work). Yahi flow ka entry point hai: koi log karta hai
 // "aaj `product` ka `total_qty` units aaya", aur yahi batch hai jise
@@ -279,7 +280,7 @@ async function deleteDailyWork(req, res) {
 async function seedDummyCases(req, res) {
   try {
     const orgId = req.user.organizationId;
-    const workDate = req.body?.date || new Date().toISOString().slice(0, 10);
+    const workDate = req.body?.date || todayInTz();
 
     const productsList = await dailyWorkService.fetchServicesForOrg(orgId);
     if (!productsList || productsList.length === 0) {

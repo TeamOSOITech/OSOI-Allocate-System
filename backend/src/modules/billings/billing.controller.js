@@ -75,7 +75,7 @@ const mockCheckoutHandler = async (req, res) => {
     // technically "production" but still shouldn't default to this
     // being open.
     const mockCheckoutBlocked =
-      process.env.NODE_ENV === "production" &&
+      process.env.NODE_ENV !== "development" &&
       process.env.ALLOW_MOCK_CHECKOUT !== "true";
 
     if (mockCheckoutBlocked) {
@@ -445,7 +445,7 @@ const verifyUpgradePaymentHandler = async (req, res) => {
 const mockUpgradeHandler = async (req, res) => {
   try {
     const mockCheckoutBlocked =
-      process.env.NODE_ENV === "production" &&
+      process.env.NODE_ENV !== "development" &&
       process.env.ALLOW_MOCK_CHECKOUT !== "true";
 
     if (mockCheckoutBlocked) {

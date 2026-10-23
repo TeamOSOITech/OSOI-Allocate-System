@@ -1,4 +1,6 @@
 // src/modules/servicecases/servicecases.controller.js
+const { todayInTz } = require("../../utils/dates");
+const { escapeLike } = require("../../utils/likeEscape");
 //
 // "Case Register" — the second tab on the Daily Work page. Where Daily
 // Work logs one BATCH row per service+date (e.g. "Billing, 10 units,
@@ -420,7 +422,7 @@ async function findMatchingIds(table, nameColumn, term, organizationId) {
     .from(table)
     .select("id")
     .eq("organization_id", organizationId)
-    .ilike(nameColumn, `%${term}%`);
+    .ilike(nameColumn, `%${escapeLike(term)}%`);
   if (error) throw error;
   return (data || []).map((r) => r.id);
 }
@@ -867,7 +869,7 @@ async function createServiceCases(req, res) {
   try {
     const { productId } = req.body;
     const quantity = Number(req.body.quantity);
-    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const workDate = req.body.workDate || todayInTz();
     // Client can be picked at creation time too (still editable later
     // from the table). Optional — null is fine.
     const clientId = req.body.clientId || null;
@@ -1294,7 +1296,7 @@ async function uploadCustomServiceCases(req, res) {
     const defaultProductId = req.body.productId
       ? String(req.body.productId)
       : null;
-    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const workDate = req.body.workDate || todayInTz();
 
     let sheetRows;
     try {
@@ -1678,7 +1680,7 @@ async function uploadCustomServiceCases(req, res) {
 async function manualCreateServiceCases(req, res) {
   try {
     const { productId } = req.body;
-    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const workDate = req.body.workDate || todayInTz();
     const clientId = req.body.clientId || null;
     const subclientId = req.body.subclientId || null;
     const rawCaseNumbers = Array.isArray(req.body.caseNumbers)
@@ -1896,7 +1898,7 @@ async function createCountOnlyEntry(req, res) {
   try {
     const { productId } = req.body;
     const quantity = Number(req.body.quantity);
-    const workDate = req.body.workDate || new Date().toISOString().slice(0, 10);
+    const workDate = req.body.workDate || todayInTz();
     const clientId = req.body.clientId || null;
     const subclientId = req.body.subclientId || null;
 
@@ -2651,7 +2653,7 @@ async function notifyAllocation(req, res) {
     const rawDate = (req.body.workDate || "").toString().slice(0, 10);
     const workDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
       ? rawDate
-      : new Date().toISOString().slice(0, 10);
+      : todayInTz();
 
     // only people who belong to THIS organization
     const { data: members, error } = await supabase

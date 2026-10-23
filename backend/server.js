@@ -83,6 +83,28 @@ app.use(
   }),
 );
 
+// Per-IP ceiling IN FRONT of the per-token limiter below. The token-keyed
+// limiter alone can be dodged by sending a different junk token on every
+// request (each gets a fresh bucket, and each invalid token costs a Supabase
+// getUser call). Generous so shared office IPs are not affected.
+// Tune with API_IP_RATE_LIMIT_MAX (requests per minute per IP, default 1200).
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: Number(process.env.API_IP_RATE_LIMIT_MAX) || 1200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) =>
+      req.method === "OPTIONS" || req.path.startsWith("/billing/webhook"),
+    keyGenerator: (req) => "ip:" + req.ip,
+    message: {
+      success: false,
+      message: "Too many requests. Please slow down and try again shortly.",
+    },
+  }),
+);
+
 // ========================
 // 🌐 CORS
 // ========================
@@ -373,11 +395,9 @@ process.on("unhandledRejection", (reason) => {
 });
 process.on("uncaughtException", (err) => {
   console.error("Uncaught exception:", err);
-  // Deliberately not calling process.exit() here — killing the process
-  // on every uncaught error would turn one bad request into a full
-  // outage for every other in-flight request. Better to log it and keep
-  // serving; if it becomes a real problem, add a process manager
-  // (pm2/systemd) that restarts on repeated crashes.
+  // After an uncaught exception the process state is undefined. Exit so the
+  // host (Render) restarts it cleanly instead of serving from a bad state.
+  process.exit(1);
 });
 
 // ========================

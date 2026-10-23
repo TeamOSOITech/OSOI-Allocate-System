@@ -1,4 +1,5 @@
 // registerWithPayment.controller.js (FIXED)
+const { escapeLike } = require("../../utils/likeEscape");
 //
 // This replaces the previous version, which was disconnected from the
 // rest of the app: it wrote to a `users` table with a bcrypt hash and
@@ -144,7 +145,7 @@ const registerWithPaymentHandler = async (req, res) => {
     const { data: plan } = await supabase
       .from("plans")
       .select("id, price_per_user")
-      .ilike("name", signup.plan)
+      .ilike("name", escapeLike(signup.plan))
       .single();
 
     if (plan) {

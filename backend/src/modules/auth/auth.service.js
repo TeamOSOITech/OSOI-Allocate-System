@@ -162,7 +162,13 @@ const forgotPassword = async (email) => {
   const { data: rows, error } = await supabase
     .from("user_master")
     .select('"Login Email", "Role"')
-    .eq("Email", email);
+    .ilike(
+      "Email",
+      String(email || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\\%_]/g, (ch) => `\\${ch}`),
+    );
 
   if (error) {
     console.error("FORGOT PASSWORD LOOKUP ERROR:", error);

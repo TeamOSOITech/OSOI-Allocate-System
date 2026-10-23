@@ -1,4 +1,6 @@
 // src/modules/clientportal/clientportal.controller.js
+const { todayInTz } = require("../../utils/dates");
+const { escapeLike } = require("../../utils/likeEscape");
 //
 // CLIENT DASHBOARD
 // ----------------
@@ -298,7 +300,7 @@ async function listClientCases(req, res) {
       const term = String(req.query.q)
         .replace(/[%,()*\\]/g, "")
         .trim();
-      if (term) q = q.ilike("case_number", `%${term}%`);
+      if (term) q = q.ilike("case_number", `%${escapeLike(term)}%`);
     }
 
     const { data: rows, error } = await q;
@@ -907,7 +909,7 @@ async function getSharedProductionReport(req, res) {
         message: "This share is not linked to a client.",
       });
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInTz();
     const from = DATE_RE.test(String(req.query.from || ""))
       ? String(req.query.from)
       : `${today.slice(0, 8)}01`;

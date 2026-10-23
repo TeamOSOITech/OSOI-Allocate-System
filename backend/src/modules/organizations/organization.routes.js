@@ -229,9 +229,16 @@ const TENANT_ROLES = [
   "TEAM_MEMBER",
 ];
 
+let _warnedNoPlatformOrg = false;
 async function getPlatformOrgId() {
   const fromEnv = (process.env.PLATFORM_ORG_ID || "").trim();
   if (fromEnv) return fromEnv;
+  if (!_warnedNoPlatformOrg) {
+    _warnedNoPlatformOrg = true;
+    console.warn(
+      "PLATFORM_ORG_ID is not set — falling back to the OLDEST organization as the platform org. Set PLATFORM_ORG_ID explicitly.",
+    );
+  }
   const { data, error } = await supabase
     .from("organizations")
     .select("id")

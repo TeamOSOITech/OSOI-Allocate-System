@@ -1,4 +1,5 @@
 // src/modules/clients/clients.service.js
+const { escapeLike } = require("../../utils/likeEscape");
 //
 // All Supabase/DB access for the clients module. Pulled out of
 // clients.routes.js so routes only wire up HTTP + middleware and the
@@ -138,7 +139,7 @@ async function findClientByName(orgId, name) {
     .from("clients")
     .select("*")
     .eq("organization_id", orgId)
-    .ilike("name", name)
+    .ilike("name", escapeLike(name))
     .maybeSingle();
 
   return data || null;
@@ -161,7 +162,7 @@ async function findSubclientByName(orgId, clientId, name) {
     .select("*")
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
-    .ilike("name", name)
+    .ilike("name", escapeLike(name))
     .maybeSingle();
 
   return data || null;

@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { escapeLike } = require("../../utils/likeEscape");
 
 // LAZY on purpose, both the `require` and the construction: the
 // "razorpay" package may not even be installed (this project runs
@@ -78,7 +79,7 @@ const getPlanByName = async (supabase, planKey) => {
   const { data, error } = await supabase
     .from("plans")
     .select("id, name, price_per_user")
-    .ilike("name", planKey)
+    .ilike("name", escapeLike(planKey))
     .maybeSingle();
 
   if (error) throw error;
