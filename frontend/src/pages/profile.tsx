@@ -1366,21 +1366,19 @@ export default function Profile({ onLogout }: ProfileProps) {
     // Past allocation totals (cases + counts still waiting for case numbers)
     const pastSummary = useMemo(() => {
         const today = todayStr();
-        const waiting = myCounts
-            .filter((m) => allocDay(m.allocatedAt, m.workDate) !== today)
-            .reduce((sum, m) => sum + m.remaining, 0);
+        // Past count rows still pending: SAME rows the "Counts (N)" tab shows
+        // (past, not today), so the card difference always equals that N.
+        const pastCountRows = [...myCounts, ...missedCounts].filter(
+            (m) => allocDay(m.allocatedAt, m.workDate) !== today
+        ).length;
+        const waiting = pastCountRows;
         // Cases that were carried forward earlier and are now done / back
         // with me are left out of the Past Received + Completed numbers.
         const countable = pastCases.filter((c) => !carriedBackIds.has(String(c.id)));
         const submitted = countable.filter(isSubmitted).length;
-        // Count units (no case number) that were carried forward and are
-        // still unresolved are PENDING work, so they belong in the total.
-        // Then "Completed" stays below "Received" and the bar is < 100%.
-        const missedCountUnits = missedCounts.reduce((sum, m) => sum + (m.quantity || 0), 0);
-        const pending =
-            countable.length - submitted + missedCases.length + missedCountUnits + waiting;
+        const pending = countable.length - submitted + missedCases.length + waiting;
         return {
-            total: countable.length + missedCases.length + missedCountUnits + waiting,
+            total: countable.length + missedCases.length + waiting,
             withNo: countable.length + missedCases.length,
             waiting,
             submitted,
@@ -3474,7 +3472,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             </div>
                                         </div>
                                         <span style={styles.countsBadge}>
-                                            {countsToAdd} pending
+                                            {filteredCounts.reduce(
+                                                (sum, m) => sum + m.remaining,
+                                                0
+                                            )}{" "}
+                                            pending
                                         </span>
                                     </div>
                                     {filteredCounts.length === 0 ? (
