@@ -257,6 +257,7 @@ const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter(
 
 type CaseRow = {
     id: string;
+    caseId?: string | null;
     caseNumber: string;
     productId: string;
     productName: string | null;
@@ -637,7 +638,7 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     const [activeTab, setActiveTab] = useState<"today" | "past">("today");
     // NEW: cases allocated to me earlier that I left pending (returned to the pool)
-    const [missedCases, setMissedCases] = useState<CaseRow[]>([]);
+    const [rawMissedCases, setMissedCases] = useState<CaseRow[]>([]);
     // Which list is open under the tabs — "Cases" or "Counts".
     const [allocView, setAllocView] = useState<"cases" | "counts">("cases");
     const [dateFilter, setDateFilter] = useState("");
@@ -985,6 +986,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             if (res.ok && json.success) {
                 setMissedCases(
                     (json.data || []).map((row: any) => ({
+                        caseId: row.caseId != null ? String(row.caseId) : null,
                         id: String(row.id),
                         caseNumber: row.caseNumber,
                         productId: row.productId != null ? String(row.productId) : "",
@@ -1244,6 +1246,24 @@ export default function Profile({ onLogout }: ProfileProps) {
         [cases, myCounts]
     );
 
+    // Carry-forward history rows whose case is now back in MY list (done, or
+    // allocated to me again) are not "missed" any more: hide them from the
+    // pending history and leave those cases out of the Past totals. Done
+    // fully on the frontend, no backend change needed.
+    const carriedBackIds = useMemo(() => {
+        const mine = new Set(cases.map((c) => String(c.id)));
+        const out = new Set<string>();
+        rawMissedCases.forEach((r: any) => {
+            if (r.caseId && mine.has(String(r.caseId))) out.add(String(r.caseId));
+        });
+        return out;
+    }, [rawMissedCases, cases]);
+    const missedCases = useMemo(
+        () =>
+            rawMissedCases.filter((r: any) => !(r.caseId && carriedBackIds.has(String(r.caseId)))),
+        [rawMissedCases, carriedBackIds]
+    );
+
     // NEW: Past Allocation = real past cases + the ones I left pending
     // (read-only history rows, newest first).
     const pastRows = useMemo(() => [...pastCases, ...missedCases], [pastCases, missedCases]);
@@ -1349,16 +1369,24 @@ export default function Profile({ onLogout }: ProfileProps) {
         const waiting = myCounts
             .filter((m) => allocDay(m.allocatedAt, m.workDate) !== today)
             .reduce((sum, m) => sum + m.remaining, 0);
-        const submitted = pastCases.filter(isSubmitted).length;
-        const pending = pastCases.length - submitted + missedCases.length;
+        // Cases that were carried forward earlier and are now done / back
+        // with me are left out of the Past Received + Completed numbers.
+        const countable = pastCases.filter((c) => !carriedBackIds.has(String(c.id)));
+        const submitted = countable.filter(isSubmitted).length;
+        // Count units (no case number) that were carried forward and are
+        // still unresolved are PENDING work, so they belong in the total.
+        // Then "Completed" stays below "Received" and the bar is < 100%.
+        const missedCountUnits = missedCounts.reduce((sum, m) => sum + (m.quantity || 0), 0);
+        const pending =
+            countable.length - submitted + missedCases.length + missedCountUnits + waiting;
         return {
-            total: pastCases.length + missedCases.length + waiting,
-            withNo: pastCases.length + missedCases.length,
+            total: countable.length + missedCases.length + missedCountUnits + waiting,
+            withNo: countable.length + missedCases.length,
             waiting,
             submitted,
             pending,
         };
-    }, [pastCases, missedCases, myCounts]);
+    }, [pastCases, missedCases, missedCounts, myCounts, carriedBackIds]);
 
     // Numbers for the 5 cards at the top, for the period picked in the
     // Daily / Monthly dropdown:
