@@ -691,6 +691,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         {}
     );
     const [resolvingId, setResolvingId] = useState<string | null>(null);
+    const [savingQueries, setSavingQueries] = useState(false);
     const [queryError, setQueryError] = useState<string | null>(null);
     const [queryNotice, setQueryNotice] = useState<string | null>(null);
 
@@ -2652,6 +2653,58 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
+    // Save = complete every open query that has a "Complete as" option picked,
+    // in one go, then close the modal. (The per-row Complete button still works.)
+    const handleSaveQueries = async () => {
+        const picked = openQueries.filter((c) => !!resolveTypeById[c.id]);
+        if (picked.length === 0) {
+            setQueryError("Select how at least one query was completed first.");
+            return;
+        }
+        setQueryError(null);
+        setQueryNotice(null);
+        setSavingQueries(true);
+        const failed: string[] = [];
+        let done = 0;
+        for (const c of picked) {
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/${c.id}/${isViewingOther ? "complete-query" : "resolve-query"}`,
+                    {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ resolutionType: resolveTypeById[c.id] }),
+                    }
+                );
+                const json = await safeJson(res);
+                // 409 alreadyCompleted = someone else already did it, treat as done
+                if ((res.ok && json.success) || (res.status === 409 && json.alreadyCompleted)) {
+                    done += 1;
+                } else {
+                    failed.push(c.caseNumber);
+                }
+            } catch {
+                failed.push(c.caseNumber);
+            }
+        }
+        await loadAll();
+        setSavingQueries(false);
+        if (failed.length > 0) {
+            // keep the modal open so the failed ones can be retried
+            setResolveTypeById((prev) => {
+                const next: typeof prev = {};
+                picked.forEach((c) => {
+                    if (failed.includes(c.caseNumber) && prev[c.id]) next[c.id] = prev[c.id];
+                });
+                return next;
+            });
+            setQueryError(`Could not save: ${failed.join(", ")}. Please try again.`);
+            return;
+        }
+        showToast(`${done} quer${done === 1 ? "y" : "ies"} saved.`);
+        closeQueryModal();
+    };
+
     const handleSaveProfile = async () => {
         if (isViewingOther) return;
         setSavingProfile(true);
@@ -4458,7 +4511,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                     ? `Time: ${formatMinutes(rowAmp)}`
                                                                                     : ""}
                                                                                 {rowAmp > 0 &&
-                                                                                c.allocatedAt
+                                                                                c.allocatedAt &&
+                                                                                allocAgeLabel(c)
                                                                                     ? " · "
                                                                                     : ""}
                                                                                 {c.allocatedAt
@@ -4479,10 +4533,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                         <div>
                                                                             <span
                                                                                 style={
-                                                                                    styles.statusPending
+                                                                                    styles.statusMissed
                                                                                 }
                                                                             >
-                                                                                Pending
+                                                                                Missed
                                                                             </span>
                                                                             <div
                                                                                 style={
@@ -5048,14 +5102,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <div style={styles.bulkTableWrap}>
                                     <table style={{ ...styles.bulkTable, minWidth: 880 }}>
                                         <colgroup>
+                                            <col style={{ width: "5%" }} />
+                                            <col style={{ width: "17%" }} />
+                                            <col style={{ width: "15%" }} />
+                                            <col style={{ width: "17%" }} />
                                             <col style={{ width: "18%" }} />
-                                            <col style={{ width: "16%" }} />
-                                            <col style={{ width: "18%" }} />
-                                            <col style={{ width: "20%" }} />
                                             <col style={{ width: "28%" }} />
                                         </colgroup>
                                         <thead>
                                             <tr>
+                                                <th style={styles.th}>#</th>
                                                 <th style={styles.th}>Client *</th>
                                                 <th style={styles.th}>Sub-client</th>
                                                 <th style={styles.th}>Case No.</th>
@@ -5067,7 +5123,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             {bulkVisibleCases.length === 0 && (
                                                 <tr>
                                                     <td
-                                                        colSpan={5}
+                                                        colSpan={6}
                                                         style={{
                                                             ...styles.td,
                                                             textAlign: "center",
@@ -5079,13 +5135,14 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                     </td>
                                                 </tr>
                                             )}
-                                            {bulkVisibleCases.map((c) => {
+                                            {bulkVisibleCases.map((c, idx) => {
                                                 const type = bulkTypeById[c.id] ?? "PENDING";
                                                 const queryMissing =
                                                     needsReason(type) &&
                                                     !(bulkQueryById[c.id] || "").trim();
                                                 return (
                                                     <tr key={c.id} style={styles.tr}>
+                                                        <td style={styles.td}>{idx + 1}</td>
                                                         <td
                                                             style={{
                                                                 ...styles.td,
@@ -5471,11 +5528,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 <div style={styles.bulkModalFooter}>
                                     <button
                                         type="button"
-                                        className="pf-btn pf-btn-outline"
-                                        style={styles.bulkCancelBtn}
-                                        onClick={closeQueryModal}
+                                        className="pf-btn pf-btn-solid"
+                                        style={{
+                                            ...styles.submitBtn,
+                                            flex: 1,
+                                            opacity: savingQueries ? 0.6 : 1,
+                                            cursor: savingQueries ? "not-allowed" : "pointer",
+                                        }}
+                                        onClick={handleSaveQueries}
+                                        disabled={savingQueries}
                                     >
-                                        Close
+                                        {savingQueries ? "Saving…" : "Save"}
                                     </button>
                                 </div>
                             </div>
@@ -8047,8 +8110,16 @@ function MobileRow({
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
                 <span style={styles.mobileProduct}>{c.caseNumber}</span>
-                <span style={submitted ? styles.statusDone : styles.statusPending}>
-                    {submitted ? "Submitted" : "Pending"}
+                <span
+                    style={
+                        c.missed
+                            ? styles.statusMissed
+                            : submitted
+                              ? styles.statusDone
+                              : styles.statusPending
+                    }
+                >
+                    {c.missed ? "Missed" : submitted ? "Submitted" : "Pending"}
                 </span>
             </div>
             <div style={styles.mobileMetaRow}>
@@ -8728,6 +8799,15 @@ function getStyles(
             fontWeight: fontWeight.semibold,
             color: BRAND.amber,
             background: withAlpha(BRAND.amber, 0.12),
+            padding: "3px 10px",
+            borderRadius: radius.pill,
+        },
+        statusMissed: {
+            display: "inline-block",
+            fontSize: fontSize.xs,
+            fontWeight: fontWeight.semibold,
+            color: BRAND.red,
+            background: withAlpha(BRAND.red, 0.1),
             padding: "3px 10px",
             borderRadius: radius.pill,
         },
