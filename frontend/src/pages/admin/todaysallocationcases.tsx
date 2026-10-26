@@ -63,6 +63,7 @@
 //     their name in the dropdowns.
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
@@ -370,7 +371,12 @@ export default function TodaysAllocationCases({
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-    const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">("");
+    // the Dashboard KPI cards open this page with the status already picked
+    const location = useLocation();
+    const [statusFilter, setStatusFilter] = useState<"" | "PENDING" | "ALLOCATED">(() => {
+        const v = (location.state as { allocationStatus?: string } | null)?.allocationStatus;
+        return v === "PENDING" || v === "ALLOCATED" ? v : "";
+    });
     const [page, setPage] = useState(1);
     // like Case Register — "Counts" and "Cases" are separate views,
     // only the selected one shows.

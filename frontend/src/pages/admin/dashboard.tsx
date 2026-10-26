@@ -194,6 +194,7 @@ function KpiCard({
     icon,
     tip,
     isMobile,
+    onClick,
 }: {
     index: number;
     label: string;
@@ -201,19 +202,43 @@ function KpiCard({
     icon: string;
     tip?: string;
     isMobile: boolean;
+    // NEW: the whole card is clickable (opens the page behind the number)
+    onClick?: () => void;
 }) {
     const tone = KPI_TONES[index % KPI_TONES.length];
+    const [hover, setHover] = useState(false);
     return (
         <div
             title={tip}
+            role={onClick ? "button" : undefined}
+            tabIndex={onClick ? 0 : undefined}
+            onClick={onClick}
+            onKeyDown={
+                onClick
+                    ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onClick();
+                          }
+                      }
+                    : undefined
+            }
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
             style={{
+                cursor: onClick ? "pointer" : "default",
+                transform: onClick && hover ? "translateY(-2px)" : "none",
+                transition: "transform .15s ease, box-shadow .15s ease",
                 position: "relative",
                 overflow: "hidden",
                 background: tone.bg,
                 border: "1px solid rgba(255,255,255,.9)",
                 borderRadius: 20,
                 padding: isMobile ? "12px 12px 14px" : "14px 16px 16px",
-                boxShadow: "0 8px 24px rgba(31,41,90,.07)",
+                boxShadow:
+                    onClick && hover
+                        ? "0 12px 28px rgba(31,41,90,.14)"
+                        : "0 8px 24px rgba(31,41,90,.07)",
                 textAlign: "left",
                 fontFamily: fontFamily.base,
             }}
@@ -692,6 +717,361 @@ function ComparePanel({
     );
 }
 
+// ------------------------------------------------------------
+// NEW: KPI breakdown popup. Clicking a dashboard card opens this on the
+// dashboard itself: the same number as the card, split SERVICE-WISE and
+// into "with case number" / "without case number" (count-only) work.
+// Uses the same queries as the card numbers, so the totals always match.
+// ------------------------------------------------------------
+type KpiKind = "employees" | "total" | "allocated" | "remaining" | "completed";
+type BreakRow = { name: string; withCase: number; withoutCase: number };
+
+const KPI_TITLES: Record<KpiKind, string> = {
+    employees: "Total Employees",
+    total: "Today's Total Cases",
+    allocated: "Today's Allocated",
+    remaining: "Today's Remaining",
+    completed: "Today's Completed",
+};
+
+function KpiBreakdownModal({
+    kind,
+    employees,
+    onClose,
+    onOpenPage,
+    isMobile,
+}: {
+    kind: KpiKind;
+    employees: { team?: string | null }[];
+    onClose: () => void;
+    onOpenPage: () => void;
+    isMobile: boolean;
+}) {
+    const [rows, setRows] = useState<BreakRow[]>([]);
+    const [loading, setLoading] = useState(kind !== "employees");
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    useEffect(() => {
+        if (kind === "employees") {
+            const by: Record<string, number> = {};
+            employees.forEach((e) => {
+                const t = (e.team || "").trim() || "No team";
+                by[t] = (by[t] || 0) + 1;
+            });
+            setRows(
+                Object.entries(by)
+                    .map(([name, n]) => ({ name, withCase: n, withoutCase: 0 }))
+                    .sort((a, b) => b.withCase - a.withCase)
+            );
+            setLoading(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            setFailed(false);
+            try {
+                const today = todayStr();
+                const monthStart = `${today.slice(0, 8)}01`;
+                const { start, end } = dayBoundsISO(today, today);
+                const startMs = Date.parse(start);
+                const endMs = Date.parse(end);
+
+                const pRes = await authFetch(`${API_BASE}/api/products`);
+                const pJson = await pRes.json();
+                if (!pRes.ok) throw new Error("products");
+                const products: { id: string; product_name: string }[] = pJson.data || [];
+
+                const total = async (extra: Record<string, string>) => {
+                    const q = new URLSearchParams({ page: "1", pageSize: "1", ...extra });
+                    const r = await authFetch(`${API_BASE}/api/service-cases?${q.toString()}`);
+                    const j = await r.json();
+                    if (!r.ok || !j.success) throw new Error("cases");
+                    return (j.pagination?.total ?? 0) as number;
+                };
+
+                const needPending = kind === "total" || kind === "remaining";
+                const needAlloc = kind === "total" || kind === "allocated";
+                const needDone = kind === "completed";
+
+                // count-only work (all services in one call)
+                let countRows: any[] = [];
+                if (needPending || needAlloc) {
+                    const cr = await authFetch(
+                        `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
+                            workDate: today,
+                        }).toString()}`
+                    );
+                    const cj = await cr.json();
+                    if (!cr.ok || !cj.success) throw new Error("counts");
+                    countRows = (cj.data || []).filter(
+                        (c: any) => !c.workDate || c.workDate >= monthStart
+                    );
+                }
+
+                const out = await Promise.all(
+                    products.map(async (pr) => {
+                        const pid = String(pr.id);
+                        const [pend, alloc, done] = await Promise.all([
+                            needPending
+                                ? total({
+                                      workDate: today,
+                                      includeBacklog: "true",
+                                      allocationStatus: "PENDING",
+                                      productId: pid,
+                                  })
+                                : 0,
+                            needAlloc
+                                ? total({
+                                      allocationStatus: "ALLOCATED",
+                                      allocatedFrom: start,
+                                      allocatedTo: end,
+                                      productId: pid,
+                                  })
+                                : 0,
+                            needDone
+                                ? total({
+                                      submissionStatus: "SUBMITTED",
+                                      submittedFrom: start,
+                                      submittedTo: end,
+                                      productId: pid,
+                                  })
+                                : 0,
+                        ]);
+                        let cPend = 0;
+                        let cAlloc = 0;
+                        countRows
+                            .filter((c) => String(c.productId) === pid)
+                            .forEach((c) => {
+                                cPend += Math.max(0, Number(c.unallocated) || 0);
+                                (c.allocations || []).forEach((a: any) => {
+                                    const t = a.allocatedAt ? Date.parse(a.allocatedAt) : NaN;
+                                    if (Number.isNaN(t) || t < startMs || t > endMs) return;
+                                    cAlloc += Math.max(
+                                        0,
+                                        (Number(a.quantity) || 0) -
+                                            (Number(a.fulfilledQuantity) || 0)
+                                    );
+                                });
+                            });
+                        const withCase =
+                            kind === "total"
+                                ? pend + alloc
+                                : kind === "remaining"
+                                  ? pend
+                                  : kind === "allocated"
+                                    ? alloc
+                                    : done;
+                        const withoutCase =
+                            kind === "total"
+                                ? cPend + cAlloc
+                                : kind === "remaining"
+                                  ? cPend
+                                  : kind === "allocated"
+                                    ? cAlloc
+                                    : 0;
+                        return { name: pr.product_name || "Service", withCase, withoutCase };
+                    })
+                );
+                if (cancelled) return;
+                setRows(
+                    out
+                        .filter((r) => r.withCase + r.withoutCase > 0)
+                        .sort((a, b) => b.withCase + b.withoutCase - (a.withCase + a.withoutCase))
+                );
+            } catch (err) {
+                console.error("KPI breakdown failed:", err);
+                if (!cancelled) {
+                    setRows([]);
+                    setFailed(true);
+                }
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [kind]);
+
+    const sumWith = rows.reduce((s, r) => s + r.withCase, 0);
+    const sumWithout = rows.reduce((s, r) => s + r.withoutCase, 0);
+    const showSplit = kind !== "employees" && kind !== "completed";
+    const unit = kind === "employees" ? "employees" : "cases";
+    const cell: CSSProperties = { padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap" };
+    const nameCell: CSSProperties = { padding: "8px 10px", textAlign: "left" };
+
+    return (
+        <div
+            onClick={onClose}
+            style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(20,24,58,.45)",
+                zIndex: 1000,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: isMobile ? 12 : 24,
+            }}
+        >
+            <div
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-label={KPI_TITLES[kind]}
+                style={{
+                    background: "#fff",
+                    borderRadius: 18,
+                    width: "100%",
+                    maxWidth: 560,
+                    maxHeight: "86vh",
+                    display: "flex",
+                    flexDirection: "column",
+                    boxShadow: "0 24px 60px rgba(20,24,58,.3)",
+                    fontFamily: fontFamily.base,
+                    color: "#14183a",
+                }}
+            >
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "16px 20px 8px",
+                    }}
+                >
+                    <div style={{ fontSize: 16, fontWeight: 600 }}>{KPI_TITLES[kind]}</div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Close"
+                        style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            fontSize: 18,
+                            color: "#27305c",
+                        }}
+                    >
+                        <i className="ti ti-x" />
+                    </button>
+                </div>
+                <div style={{ padding: "0 20px 8px", fontSize: 13, color: "#5b6086" }}>
+                    {loading
+                        ? "Loading…"
+                        : failed
+                          ? "Could not load the breakdown. Please try again."
+                          : `${sumWith + sumWithout} ${unit} · ${
+                                kind === "employees" ? "team-wise" : "service-wise"
+                            }`}
+                </div>
+                <div style={{ overflowY: "auto", padding: "0 12px 8px" }}>
+                    {!loading && !failed && rows.length === 0 && (
+                        <div
+                            style={{
+                                padding: 20,
+                                textAlign: "center",
+                                color: "#5b6086",
+                                fontSize: 13,
+                            }}
+                        >
+                            Nothing to show.
+                        </div>
+                    )}
+                    {!loading && rows.length > 0 && (
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                            <thead>
+                                <tr style={{ color: "#5b6086", fontSize: 12 }}>
+                                    <th style={{ ...nameCell, fontWeight: 500 }}>
+                                        {kind === "employees" ? "Team" : "Service"}
+                                    </th>
+                                    {showSplit ? (
+                                        <>
+                                            <th style={{ ...cell, fontWeight: 500 }}>
+                                                With case no.
+                                            </th>
+                                            <th style={{ ...cell, fontWeight: 500 }}>
+                                                Without case no.
+                                            </th>
+                                            <th style={{ ...cell, fontWeight: 500 }}>Total</th>
+                                        </>
+                                    ) : (
+                                        <th style={{ ...cell, fontWeight: 500 }}>
+                                            {kind === "employees" ? "Employees" : "Cases"}
+                                        </th>
+                                    )}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.name} style={{ borderTop: "1px solid #EDEFF8" }}>
+                                        <td style={nameCell}>{r.name}</td>
+                                        {showSplit ? (
+                                            <>
+                                                <td style={cell}>{r.withCase}</td>
+                                                <td style={cell}>{r.withoutCase}</td>
+                                                <td style={{ ...cell, fontWeight: 600 }}>
+                                                    {r.withCase + r.withoutCase}
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <td style={{ ...cell, fontWeight: 600 }}>
+                                                {r.withCase}
+                                            </td>
+                                        )}
+                                    </tr>
+                                ))}
+                                <tr style={{ borderTop: "2px solid #EDEFF8", fontWeight: 700 }}>
+                                    <td style={nameCell}>Total</td>
+                                    {showSplit ? (
+                                        <>
+                                            <td style={cell}>{sumWith}</td>
+                                            <td style={cell}>{sumWithout}</td>
+                                            <td style={cell}>{sumWith + sumWithout}</td>
+                                        </>
+                                    ) : (
+                                        <td style={cell}>{sumWith}</td>
+                                    )}
+                                </tr>
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+                <div
+                    style={{
+                        padding: "10px 20px 16px",
+                        display: "flex",
+                        justifyContent: "flex-end",
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={onOpenPage}
+                        style={{
+                            border: "1px solid #EDEFF8",
+                            background: "#fff",
+                            borderRadius: 999,
+                            padding: "7px 14px",
+                            fontSize: 12,
+                            cursor: "pointer",
+                            color: "#27305c",
+                        }}
+                    >
+                        Open full page
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function Dashboard({ user }: DashboardProps) {
     const isMobile = useIsMobile();
     const navigate = useNavigate();
@@ -724,6 +1104,9 @@ export default function Dashboard({ user }: DashboardProps) {
     );
 
     const [employeeCount, setEmployeeCount] = useState<number | null>(null);
+    const [employeeList, setEmployeeList] = useState<{ team?: string | null }[]>([]);
+    // which KPI card's breakdown popup is open (null = none)
+    const [openKpi, setOpenKpi] = useState<KpiKind | null>(null);
     const [batches, setBatches] = useState<DailyWorkBatch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -749,13 +1132,14 @@ export default function Dashboard({ user }: DashboardProps) {
     // allocationStatus=ALLOCATED) just read back `pagination.total` for an
     // exact org-wide count across every service, same trick used on the
     // Today's Allocation page (but without a productId filter there).
-    const [caseTotalCount, setCaseTotalCount] = useState(0);
-    const [caseAllocatedCount, setCaseAllocatedCount] = useState(0);
+    // null = the number could not be loaded (shown as "—", never as a fake 0)
+    const [caseTotalCount, setCaseTotalCount] = useState<number | null>(0);
+    const [caseAllocatedCount, setCaseAllocatedCount] = useState<number | null>(0);
     // Today's completed = cases already submitted (submission_status =
     // SUBMITTED) by the assigned employee for today's work date.
-    const [caseCompletedCount, setCaseCompletedCount] = useState(0);
+    const [caseCompletedCount, setCaseCompletedCount] = useState<number | null>(0);
     const [caseCountsLoading, setCaseCountsLoading] = useState(true);
-    const [caseRemainingCount, setCaseRemainingCount] = useState(0);
+    const [caseRemainingCount, setCaseRemainingCount] = useState<number | null>(0);
 
     const fetchCaseCounts = async (silent = false) => {
         if (!silent) setCaseCountsLoading(true);
@@ -766,16 +1150,19 @@ export default function Dashboard({ user }: DashboardProps) {
                 return authFetch(`${API_BASE}/api/service-cases?${p.toString()}`);
             };
 
+            // Same numbers as the Today's Allocation page, so both always agree:
             // Remaining = every still-unallocated case in the pool
-            //   (today's + carried-over backlog; rollover returns old
-            //   unfinished cases to PENDING, so work_date <= today).
-            // Allocated = cases whose allocation happened TODAY
-            //   (allocated_at), whatever their work_date is.
+            //   (today's + carried-over backlog of this month) + count-only
+            //   work not yet given to anyone.
+            // Allocated = cases whose allocation happened TODAY (allocated_at)
+            //   + count-only quantity allocated today.
             // Completed = cases submitted TODAY (submitted_at).
             // Total     = Remaining + Allocated today.
-            const [remRes, allocRes, compRes] = await Promise.all([
+            const today = todayStr();
+            const monthStart = `${today.slice(0, 8)}01`;
+            const [remRes, allocRes, compRes, countRes] = await Promise.all([
                 mk({
-                    workDate: todayStr(),
+                    workDate: today,
                     includeBacklog: "true",
                     allocationStatus: "PENDING",
                 }),
@@ -789,27 +1176,63 @@ export default function Dashboard({ user }: DashboardProps) {
                     submittedFrom: start,
                     submittedTo: end,
                 }),
+                authFetch(
+                    `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
+                        workDate: today,
+                    }).toString()}`
+                ),
             ]);
-            const [remJson, allocJson, compJson] = await Promise.all([
+            const [remJson, allocJson, compJson, countJson] = await Promise.all([
                 remRes.json(),
                 allocRes.json(),
                 compRes.json(),
+                countRes.json(),
             ]);
-            const num = (res: Response, json: any) =>
-                res.ok && json.success ? (json.pagination?.total ?? 0) : 0;
-            const remaining = num(remRes, remJson);
-            const allocated = num(allocRes, allocJson);
+            const okOf = (res: Response, json: any) => res.ok && json?.success;
+            const num = (res: Response, json: any) => json.pagination?.total ?? 0;
+
+            // count-only work (entries without case numbers)
+            let countsRemaining = 0;
+            let countsAllocatedToday = 0;
+            const countsOk = okOf(countRes, countJson);
+            if (countsOk) {
+                const startMs = Date.parse(start);
+                const endMs = Date.parse(end);
+                (countJson.data || [])
+                    .filter((c: any) => !c.workDate || c.workDate >= monthStart)
+                    .forEach((c: any) => {
+                        countsRemaining += Math.max(0, Number(c.unallocated) || 0);
+                        (c.allocations || []).forEach((a: any) => {
+                            const t = a.allocatedAt ? Date.parse(a.allocatedAt) : NaN;
+                            if (Number.isNaN(t) || t < startMs || t > endMs) return;
+                            // units already turned into real cases are counted
+                            // as cases above - only the rest is count-only work
+                            countsAllocatedToday += Math.max(
+                                0,
+                                (Number(a.quantity) || 0) - (Number(a.fulfilledQuantity) || 0)
+                            );
+                        });
+                    });
+            }
+
+            const remOk = okOf(remRes, remJson) && countsOk;
+            const allocOk = okOf(allocRes, allocJson) && countsOk;
+            const remaining = remOk ? num(remRes, remJson) + countsRemaining : null;
+            const allocated = allocOk ? num(allocRes, allocJson) + countsAllocatedToday : null;
             setCaseRemainingCount(remaining);
             setCaseAllocatedCount(allocated);
-            setCaseCompletedCount(num(compRes, compJson));
-            setCaseTotalCount(remaining + allocated);
+            setCaseCompletedCount(okOf(compRes, compJson) ? num(compRes, compJson) : null);
+            setCaseTotalCount(
+                remaining !== null && allocated !== null ? remaining + allocated : null
+            );
         } catch (err) {
             console.error("Failed to fetch today's case counts:", err);
             if (!silent) {
-                setCaseTotalCount(0);
-                setCaseAllocatedCount(0);
-                setCaseRemainingCount(0);
-                setCaseCompletedCount(0);
+                // could not load -> show "—", not a made-up 0
+                setCaseTotalCount(null);
+                setCaseAllocatedCount(null);
+                setCaseRemainingCount(null);
+                setCaseCompletedCount(null);
             }
         } finally {
             if (!silent) setCaseCountsLoading(false);
@@ -824,6 +1247,7 @@ export default function Dashboard({ user }: DashboardProps) {
             // employees endpoint returns a plain array, not { data: [...] }
             const list = Array.isArray(json) ? json : json.data || [];
             setEmployeeCount(list.length);
+            setEmployeeList(list);
         } catch (err) {
             console.error("Failed to fetch employee count:", err);
         }
@@ -989,34 +1413,45 @@ export default function Dashboard({ user }: DashboardProps) {
         {
             label: "Total Employees",
             value: employeeCount === null ? "—" : employeeCount,
+            kind: "employees" as KpiKind,
+            page: () => navigate("/employees"),
             icon: "ti ti-users",
             gradient: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
             tip: "Total employees in your organization",
         },
         {
             label: "Today's Total Cases",
-            value: caseTotalCount,
+            value: caseTotalCount ?? "—",
+            kind: "total" as KpiKind,
+            page: () => navigate("/todays-allocation"),
             icon: "ti ti-package",
             gradient: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.green})`,
             tip: "Total service cases for today (including any still-pending backlog)",
         },
         {
             label: "Today's Allocated",
-            value: caseAllocatedCount,
+            value: caseAllocatedCount ?? "—",
+            kind: "allocated" as KpiKind,
+            page: () =>
+                navigate("/todays-allocation", { state: { allocationStatus: "ALLOCATED" } }),
             icon: "ti ti-circle-check",
             gradient: `linear-gradient(135deg, ${BRAND.green}, ${BRAND.lightBlue})`,
             tip: "Cases already allocated to an employee today",
         },
         {
             label: "Today's Remaining",
-            value: caseRemainingCount,
+            value: caseRemainingCount ?? "—",
+            kind: "remaining" as KpiKind,
+            page: () => navigate("/todays-allocation", { state: { allocationStatus: "PENDING" } }),
             icon: "ti ti-hourglass",
             gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
             tip: "Cases still waiting to be allocated today",
         },
         {
             label: "Today's Completed",
-            value: caseCompletedCount,
+            value: caseCompletedCount ?? "—",
+            kind: "completed" as KpiKind,
+            page: () => navigate("/production-reports"),
             icon: "ti ti-checks",
             gradient: `linear-gradient(135deg, ${BRAND.green}, #15803D)`,
             tip: "Cases completed & submitted by employees today",
@@ -1130,6 +1565,7 @@ export default function Dashboard({ user }: DashboardProps) {
                                     icon={kpi.icon}
                                     tip={kpi.tip}
                                     isMobile={isMobile}
+                                    onClick={() => setOpenKpi(kpi.kind)}
                                     value={
                                         kpi.label !== "Total Employees" && caseCountsLoading
                                             ? "…"
@@ -1138,6 +1574,20 @@ export default function Dashboard({ user }: DashboardProps) {
                                 />
                             ))}
                         </div>
+
+                        {openKpi && (
+                            <KpiBreakdownModal
+                                kind={openKpi}
+                                employees={employeeList}
+                                isMobile={isMobile}
+                                onClose={() => setOpenKpi(null)}
+                                onOpenPage={() => {
+                                    const k = kpis.find((x) => x.kind === openKpi);
+                                    setOpenKpi(null);
+                                    k?.page();
+                                }}
+                            />
+                        )}
 
                         {/* Production trend — month-vs-month or year-vs-year, picked
                             by the user, from ALL logged Daily Work (not just today),
