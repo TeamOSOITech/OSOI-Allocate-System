@@ -57,7 +57,11 @@ const supabase = require("../../config/supabaseClient");
 const { sendPushToUsers } = require("../../utils/webpush");
 // MODIFIED: fair rotation (extra case goes to whoever got the least work
 // in the last 30 days) — now used by the case-number Smart Allocation too.
-const { getRecentLoad, orderByLeastLoad } = require("./fairness");
+const {
+  getRecentLoad,
+  orderByLeastLoad,
+  capacityUnitsFromMinutes,
+} = require("./fairness");
 // count-only work (no case number) is rolled over at day end like cases
 const { rolloverPendingCounts } = require("./caseRollover");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
@@ -2407,12 +2411,39 @@ async function autoAllocateServiceCases(req, res) {
     );
     const ordered = orderByLeastLoad(employeeIds, load);
 
+    // NEW (10h DAILY LIMIT): the page sends how many minutes each employee
+    // still has free today (remainingMinutes) and the service's time per case
+    // (ampMinutes). Once an employee has reached the daily limit they receive
+    // no more cases; if nobody has room left the rest stay PENDING.
+    // Without those fields (older page) the split is exactly as before.
+    const capacityUnits = capacityUnitsFromMinutes(
+      req.body.remainingMinutes,
+      req.body.ampMinutes,
+    );
+    const roomOf = (id) =>
+      capacityUnits[id] === undefined ? Infinity : capacityUnits[id];
+
     // NOTE: preview only — no DB write here.
-    const updates = pendingCases.map((c, idx) => ({
-      id: c.id,
-      caseNumber: c.case_number,
-      employeeId: ordered[idx % ordered.length],
-    }));
+    const updates = [];
+    let notAllocated = 0;
+    let ptr = 0;
+    for (const c of pendingCases) {
+      let picked = null;
+      for (let t = 0; t < ordered.length; t++) {
+        const emp = ordered[(ptr + t) % ordered.length];
+        if (roomOf(emp) > 0) {
+          picked = emp;
+          ptr = (ptr + t + 1) % ordered.length;
+          break;
+        }
+      }
+      if (!picked) {
+        notAllocated += 1;
+        continue;
+      }
+      if (capacityUnits[picked] !== undefined) capacityUnits[picked] -= 1;
+      updates.push({ id: c.id, caseNumber: c.case_number, employeeId: picked });
+    }
 
     const employeeMap = await getEmployeeNameMap(
       employeeIds,
@@ -2432,7 +2463,14 @@ async function autoAllocateServiceCases(req, res) {
 
     res.json({
       success: true,
-      message: `${updates.length} case(s) distributed across ${employeeIds.length} employee(s) — review below and press Allocate to confirm.`,
+      message:
+        updates.length === 0
+          ? "Every employee has already reached the daily 10 hour limit — no case could be allocated."
+          : `${updates.length} case(s) distributed across ${employeeIds.length} employee(s)${
+              notAllocated > 0
+                ? ` — ${notAllocated} case(s) left pending because everyone reached the daily 10 hour limit`
+                : ""
+            } — review below and press Allocate to confirm.`,
       data: {
         // Full case -> employee map so the frontend can seed each row's
         // dropdown without a second lookup.
@@ -2442,6 +2480,7 @@ async function autoAllocateServiceCases(req, res) {
           employeeId: u.employeeId,
         })),
         allocatedCount: updates.length,
+        notAllocatedCount: notAllocated,
         perEmployee,
       },
     });

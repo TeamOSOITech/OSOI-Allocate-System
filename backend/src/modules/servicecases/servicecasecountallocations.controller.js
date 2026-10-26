@@ -8,7 +8,12 @@
 
 const supabase = require("../../config/supabaseClient");
 const { fetchAll } = require("../../utils/fetchAll");
-const { getRecentLoad, distributeFairly } = require("./fairness");
+const {
+  getRecentLoad,
+  distributeFairly,
+  distributeWithCapacity,
+  capacityUnitsFromMinutes,
+} = require("./fairness");
 const {
   getProduct,
   assertVerticalHeadCanUseProduct,
@@ -163,11 +168,36 @@ async function autoPreviewCountAllocations(req, res) {
       load[id] = (load[id] || 0) + (Number(extra[id]) || 0);
     });
 
+    // NEW (10h DAILY LIMIT): remainingMinutes = minutes each employee still has
+    // free today (after the case-number preview), ampMinutes = time per unit of
+    // this service. Anyone who has reached the daily limit gets nothing more;
+    // units nobody has room for stay unallocated. Without these fields (older
+    // page) the split is exactly as before.
+    const hasCapacity =
+      req.body.remainingMinutes &&
+      typeof req.body.remainingMinutes === "object";
+    const capacityUnits = hasCapacity
+      ? capacityUnitsFromMinutes(req.body.remainingMinutes, req.body.ampMinutes)
+      : {};
+
     const assignments = [];
     const perEmployeeMap = {};
     let allocatedCount = 0;
+    let notAllocatedCount = 0;
     rows.forEach((c) => {
-      const split = distributeFairly(c.unallocated, employeeIds, load);
+      let split;
+      if (hasCapacity) {
+        const r = distributeWithCapacity(
+          c.unallocated,
+          employeeIds,
+          load,
+          capacityUnits,
+        );
+        split = r.result;
+        notAllocatedCount += r.leftover;
+      } else {
+        split = distributeFairly(c.unallocated, employeeIds, load);
+      }
       employeeIds.forEach((eid) => {
         const add = split[eid] || 0;
         if (add <= 0) return;
@@ -185,9 +215,14 @@ async function autoPreviewCountAllocations(req, res) {
 
     res.json({
       success: true,
-      message: `${allocatedCount} count case(s) distributed — review and press Allocate to confirm.`,
+      message: `${allocatedCount} count case(s) distributed${
+        notAllocatedCount > 0
+          ? ` — ${notAllocatedCount} left pending because everyone reached the daily 10 hour limit`
+          : ""
+      } — review and press Allocate to confirm.`,
       data: {
         allocatedCount,
+        notAllocatedCount,
         assignments,
         perEmployee: Object.entries(perEmployeeMap).map(
           ([employeeId, quantity]) => ({ employeeId, quantity }),

@@ -101,9 +101,67 @@ function distributeFairly(n, employeeIds, load) {
   return result;
 }
 
+// NEW (10h DAILY LIMIT): same even split as distributeFairly, but an employee
+// stops receiving work once their day reaches the daily limit.
+//   capacityUnits[empId] = how many more units (cases) this employee can take
+//                          today before reaching the limit. Missing / Infinity
+//                          = no limit for that employee. It is DECREASED here,
+//                          so one object can be shared across several count
+//                          rows of the same service.
+// Returns { result, leftover } - leftover = units nobody had room for (they
+// stay pending). Extra units still go to whoever has the least recent load.
+function distributeWithCapacity(n, employeeIds, load, capacityUnits) {
+  const result = {};
+  employeeIds.forEach((id) => (result[id] = 0));
+  if (n <= 0 || employeeIds.length === 0)
+    return { result, leftover: Math.max(0, n) };
+
+  const room = (id) =>
+    capacityUnits[id] === undefined ? Infinity : capacityUnits[id];
+
+  let left = n;
+  while (left > 0) {
+    const open = employeeIds.filter((id) => room(id) > 0);
+    if (open.length === 0) break;
+    // fewest given in this call first, then least recent load
+    const order = [...open].sort(
+      (a, b) =>
+        result[a] - result[b] ||
+        (load[a] || 0) - (load[b] || 0) ||
+        String(a).localeCompare(String(b)),
+    );
+    const giveRound = Math.min(left, order.length);
+    for (let i = 0; i < giveRound; i++) {
+      const id = order[i];
+      result[id] += 1;
+      load[id] = (load[id] || 0) + 1;
+      if (capacityUnits[id] !== undefined) capacityUnits[id] -= 1;
+      left -= 1;
+    }
+  }
+  return { result, leftover: left };
+}
+
+// NEW (10h DAILY LIMIT): turns "minutes still free today" into "units still
+// allowed". An employee who has REACHED the limit (remaining <= 0) gets 0.
+// STRICT: floor - nobody is ever given a unit that would take them above the limit. ampMinutes <= 0 = no limit possible.
+function capacityUnitsFromMinutes(remainingMinutes, ampMinutes) {
+  const out = {};
+  const amp = Number(ampMinutes) || 0;
+  Object.entries(remainingMinutes || {}).forEach(([id, rem]) => {
+    const r = Number(rem);
+    if (Number.isNaN(r)) return;
+    if (r <= 0) out[id] = 0;
+    else if (amp > 0) out[id] = Math.floor(r / amp);
+  });
+  return out;
+}
+
 module.exports = {
   HISTORY_DAYS,
   getRecentLoad,
   orderByLeastLoad,
   distributeFairly,
+  distributeWithCapacity,
+  capacityUnitsFromMinutes,
 };
