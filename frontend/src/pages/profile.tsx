@@ -6017,9 +6017,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 }}
                                             >
                                                 <label style={styles.smallLabel}>
-                                                    <strong>{mc.productName || "Service"}</strong> ·{" "}
-                                                    {formatDisplayDate(mc.workDate)} —{" "}
-                                                    {mc.remaining} left
+                                                    <strong>{mc.productName || "Service"}</strong>
                                                 </label>
                                                 {rows.length > 1 && (
                                                     <button
