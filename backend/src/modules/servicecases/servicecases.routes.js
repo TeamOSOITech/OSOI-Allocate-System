@@ -5,6 +5,8 @@ const router = express.Router();
 const multer = require("multer");
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
+const supabase = require("../../config/supabaseClient");
+const { getOwnTeam } = require("../../utils/teamScope");
 const {
   getAutoPrefix,
   updateServiceCaseNumber,
@@ -81,9 +83,55 @@ const upload = multer({
   },
 });
 
+// Viewing ANOTHER employee's data (?employeeId=<someone else>) needs
+// allocation permission (manager / lead roles). An employee's own id,
+// or no employeeId at all, stays open to them.
+// Vertical Head holds the TEAM-scope allocation permission, so on top of
+// that they may only look at people in their OWN team (same rule as
+// their Employees list); every org-wide role is unrestricted.
+const viewOtherEmployee = (req, res, next) => {
+  const raw = req.query.employeeId;
+  if (!raw || String(raw) === String(req.user.userId)) return next();
+
+  allocPerm(req, res, async () => {
+    if (req.user.role !== "VERTICAL_HEAD") return next();
+    try {
+      // an array / object employeeId can never be a single valid target
+      if (typeof raw !== "string") {
+        return res
+          .status(403)
+          .json({ success: false, message: "Access denied" });
+      }
+      const [ownTeam, targetRes] = await Promise.all([
+        getOwnTeam(req),
+        supabase
+          .from("user_master")
+          .select('"Worked In Teams"')
+          .eq("Auth User Id", raw)
+          .eq("organization_id", req.user.organizationId)
+          .maybeSingle(),
+      ]);
+      if (targetRes.error) throw targetRes.error;
+      const targetTeam = String(targetRes.data?.["Worked In Teams"] || "")
+        .trim()
+        .toLowerCase();
+      if (!ownTeam || !targetTeam || ownTeam !== targetTeam) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view employees in your own team.",
+        });
+      }
+      next();
+    } catch (err) {
+      console.error("viewOtherEmployee check failed:", err);
+      res.status(500).json({ success: false, message: "Access check failed" });
+    }
+  });
+};
+
 router.use(authenticate);
 
-router.get("/", listServiceCases);
+router.get("/", viewOtherEmployee, listServiceCases);
 router.get("/upload/template", downloadUploadTemplate);
 router.get("/auto-prefix", getAutoPrefix);
 router.get("/clear-log", allocPerm, listAllocationClearLog);
@@ -118,15 +166,9 @@ router.post("/count-allocations/clear", allocPerm, clearCountAllocations);
 // handlers, so these can only ever touch the caller's own allocations.
 // Viewing ANOTHER employee's counts (?employeeId=) needs allocation
 // permission; the employee's own counts stay open to them.
-const viewOtherCounts = (req, res, next) => {
-  const t = req.query.employeeId;
-  if (t && String(t) !== String(req.user.userId))
-    return allocPerm(req, res, next);
-  next();
-};
-router.get("/my-counts", viewOtherCounts, listMyCounts);
+router.get("/my-counts", viewOtherEmployee, listMyCounts);
 // Count units (no case number) left pending at day end — read-only history.
-router.get("/my-missed-counts", viewOtherCounts, listMyMissedCounts);
+router.get("/my-missed-counts", viewOtherEmployee, listMyMissedCounts);
 // NEW (ROLLOVER): cases left pending at day end (read-only history).
 router.get("/my-missed", listMyMissedCases);
 // NEW: managers — open queries of their team + which are over 48h.

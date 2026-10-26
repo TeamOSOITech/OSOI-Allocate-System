@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../../config/supabaseClient");
 const { authenticate } = require("../../middlewares/auth");
+const { requireAnyPermission } = require("../../middlewares/rbac");
 const { cached, delByPrefix } = require("../../utils/cache");
 
 // Dropdown options don't change often (someone hits "+" on Add User maybe
@@ -174,56 +175,70 @@ router.get("/", async (req, res) => {
 // Adds a new option, scoped to the caller's org. If it already exists for
 // this org (case-sensitive unique constraint), that's treated as success —
 // the frontend just wants "this value now exists and is selectable".
-router.post("/", async (req, res) => {
-  try {
-    const orgId = req.user.organizationId;
-    const { field, value } = req.body || {};
+// SECURITY: adding a dropdown value (department / designation / team /
+// reporting manager) is an admin action — it was open to ANY logged-in
+// user, so a Team Member could pollute every other user's dropdowns.
+// Same permissions as the screens that actually offer the "+" control
+// (Add User / Employees edit).
+router.post(
+  "/",
+  requireAnyPermission("users.onboard", "employees.manage"),
+  async (req, res) => {
+    try {
+      const orgId = req.user.organizationId;
+      const { field, value } = req.body || {};
 
-    const table = OPTION_TABLES[(field || "").toString().toLowerCase()];
-    if (!table) {
-      return res
-        .status(400)
-        .json({ message: `Unknown option field "${field}"` });
-    }
-
-    const trimmed = (value || "").toString().trim();
-    if (!trimmed) {
-      return res.status(400).json({ message: "Value is required" });
-    }
-
-    const { data, error } = await supabase
-      .from(table)
-      .insert({ name: trimmed, organization_id: orgId })
-      .select()
-      .single();
-
-    if (error) {
-      // 23505 = unique_violation -> this org already has this value.
-      // Not an error from the frontend's point of view — return it as-is.
-      if (error.code === "23505") {
-        const { data: existing } = await supabase
-          .from(table)
-          .select("id,name")
-          .eq("organization_id", orgId)
-          .eq("name", trimmed)
-          .maybeSingle();
+      const table = OPTION_TABLES[(field || "").toString().toLowerCase()];
+      if (!table) {
         return res
-          .status(200)
-          .json({ id: existing?.id, name: trimmed, alreadyExisted: true });
+          .status(400)
+          .json({ message: `Unknown option field "${field}"` });
       }
-      throw error;
+
+      const trimmed = (value || "").toString().trim();
+      if (!trimmed) {
+        return res.status(400).json({ message: "Value is required" });
+      }
+      if (trimmed.length > 100) {
+        return res
+          .status(400)
+          .json({ message: "Value must be 100 characters or fewer" });
+      }
+
+      const { data, error } = await supabase
+        .from(table)
+        .insert({ name: trimmed, organization_id: orgId })
+        .select()
+        .single();
+
+      if (error) {
+        // 23505 = unique_violation -> this org already has this value.
+        // Not an error from the frontend's point of view — return it as-is.
+        if (error.code === "23505") {
+          const { data: existing } = await supabase
+            .from(table)
+            .select("id,name")
+            .eq("organization_id", orgId)
+            .eq("name", trimmed)
+            .maybeSingle();
+          return res
+            .status(200)
+            .json({ id: existing?.id, name: trimmed, alreadyExisted: true });
+        }
+        throw error;
+      }
+
+      // New option now exists in the DB — drop the cached GET / payload for
+      // this org so the next fetch picks it up immediately instead of
+      // waiting out the TTL.
+      await delByPrefix(optionsCacheKey(orgId));
+
+      res.status(201).json({ id: data.id, name: data.name });
+    } catch (err) {
+      console.error(err);
+      sendError(res, err, 500, "Failed to add option");
     }
-
-    // New option now exists in the DB — drop the cached GET / payload for
-    // this org so the next fetch picks it up immediately instead of
-    // waiting out the TTL.
-    await delByPrefix(optionsCacheKey(orgId));
-
-    res.status(201).json({ id: data.id, name: data.name });
-  } catch (err) {
-    console.error(err);
-    sendError(res, err, 500, "Failed to add option");
-  }
-});
+  },
+);
 
 module.exports = router;

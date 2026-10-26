@@ -76,6 +76,18 @@ function invalidateAuthCache(token) {
   if (token) authCache.delete(cacheKey(token));
 }
 
+// Call whenever a user's role / organization / account changes (role edit,
+// delete, password reset) so the change takes effect on their very next
+// request instead of after the cache TTL. Matches by user id, since the
+// caller of an admin action doesn't have the target user's token.
+function invalidateAuthCacheForUser(userId) {
+  if (!userId) return;
+  const id = String(userId);
+  for (const [k, v] of authCache) {
+    if (String(v.user?.userId) === id) authCache.delete(k);
+  }
+}
+
 // The original (uncached) verification. Returns { user } on success, or
 // { status, message } for a failure — failures are never cached.
 async function verifyToken(token) {
@@ -209,4 +221,8 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-module.exports = { authenticate, invalidateAuthCache };
+module.exports = {
+  authenticate,
+  invalidateAuthCache,
+  invalidateAuthCacheForUser,
+};

@@ -69,6 +69,7 @@ const { rolloverPendingCounts } = require("./caseRollover");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const { isIsoDate } = require("../../utils/orgGuards");
+const { hasPermission } = require("../../config/permissions");
 const { getTeamScope } = require("../../utils/teamScope");
 // NEW: Excel dropdown validation for the bulk-upload template (same helpers
 // the Client / Subclient templates use).
@@ -610,6 +611,20 @@ async function listServiceCases(req, res) {
       }
     }
 
+    // SECURITY: a caller WITHOUT allocation permission (Team Member) may
+    // only list (a) their own cases (mine=true) or (b) the unallocated
+    // pool they pick work from (allocationStatus=PENDING — the Self
+    // Allocation page and the Profile page's self-allocate panel).
+    // Anything else would hand them every colleague's cases, so it is
+    // narrowed to their own cases instead of being rejected outright.
+    const canSeeAllCases =
+      hasPermission(req.user.role, "tasks.allocate.team") ||
+      hasPermission(req.user.role, "tasks.allocate.org");
+    const forceOwnScope =
+      !canSeeAllCases &&
+      req.query.mine !== "true" &&
+      req.query.allocationStatus !== "PENDING";
+
     // Applies every filter (productId, date range, client/subclient,
     // the search box's OR clause, etc.) to a freshly-created query
     // builder. Supabase-js query builders aren't cloneable, so this
@@ -695,7 +710,7 @@ async function listServiceCases(req, res) {
       // table on the Profile page. Scoped server-side to whoever is
       // authenticated (never trusts a client-supplied employee id),
       // same pattern as /api/allocations/self.
-      if (req.query.mine === "true") {
+      if (req.query.mine === "true" || forceOwnScope) {
         filtered = filtered.eq("assigned_employee_id", req.user.userId);
       }
       if (req.query.submissionStatus) {

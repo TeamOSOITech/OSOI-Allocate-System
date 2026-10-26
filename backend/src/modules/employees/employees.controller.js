@@ -11,6 +11,7 @@ const {
 } = require("../../config/permissions");
 const employeesService = require("./employees.service");
 const supabase = require("../../config/supabaseClient");
+const { invalidateAuthCacheForUser } = require("../../middlewares/auth");
 
 // CHANGED: which roles may change another user's role at all, and which
 // roles each of them may ASSIGN. Mirrors ASSIGNABLE_ROLES in employees.tsx.
@@ -189,6 +190,8 @@ async function updateEmployee(req, res) {
         console.error("Could not sync profiles name:", syncError);
       }
     }
+    // a role / team change must apply on their next request, not in 60s
+    invalidateAuthCacheForUser(id);
     res.json(updated);
   } catch (error) {
     console.error("Failed to update employee:", error);
@@ -222,6 +225,8 @@ async function deleteEmployee(req, res) {
 
   try {
     const outcome = await employeesService.deleteEmployeeRow(id, orgId);
+    // a removed account must stop working immediately
+    invalidateAuthCacheForUser(id);
     res.json({ success: true, ...(outcome || {}) });
   } catch (error) {
     console.error("Failed to delete employee:", error);

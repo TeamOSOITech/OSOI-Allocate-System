@@ -2,7 +2,10 @@ const { sendError } = require("../../utils/response");
 const router = require("express").Router();
 const multer = require("multer");
 const supabase = require("../../config/supabaseClient");
-const { authenticate } = require("../../middlewares/auth");
+const {
+  authenticate,
+  invalidateAuthCacheForUser,
+} = require("../../middlewares/auth");
 const { authorize } = require("../../middlewares/rbac");
 
 // SETUP REQUIRED (one-time, same as the "avatars" bucket in
@@ -573,6 +576,7 @@ router.patch(
         .update({ Role: role })
         .eq("Auth User Id", target["Auth User Id"]);
       if (uErr) throw uErr;
+      invalidateAuthCacheForUser(target["Auth User Id"]);
 
       res.json({
         success: true,

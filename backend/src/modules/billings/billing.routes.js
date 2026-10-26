@@ -2,6 +2,25 @@ const express = require("express");
 const router = express.Router();
 const { authenticate } = require("../../middlewares/auth");
 const { requireAnyPermission } = require("../../middlewares/rbac");
+const rateLimit = require("express-rate-limit");
+
+// SECURITY: the pre-signup checkout endpoints are public (no account or
+// session exists yet), so the only thing standing between them and abuse
+// (spamming Razorpay order creation, brute-forcing payment verification)
+// was the global per-minute API limiter. This adds a much tighter
+// per-IP cap for just these three. Tune with CHECKOUT_RATE_LIMIT_MAX
+// (requests per 15 minutes per IP, default 20).
+const checkoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.CHECKOUT_RATE_LIMIT_MAX) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => "ip:" + req.ip,
+  message: {
+    success: false,
+    message: "Too many checkout attempts. Please try again in a few minutes.",
+  },
+});
 
 const {
   getPlansHandler,
@@ -17,11 +36,11 @@ const {
 } = require("./billing.controller");
 
 router.get("/plans", getPlansHandler);
-router.post("/create-order", createOrderHandler);
+router.post("/create-order", checkoutLimiter, createOrderHandler);
 // Dummy/demo payment path — no real Razorpay keys configured, see
 // mockCheckoutHandler for details. Frontend's checkout modal calls this.
-router.post("/mock-checkout", mockCheckoutHandler);
-router.post("/verify-payment", verifyPaymentHandler);
+router.post("/mock-checkout", checkoutLimiter, mockCheckoutHandler);
+router.post("/verify-payment", checkoutLimiter, verifyPaymentHandler);
 router.get("/signup-status", getSignupStatusHandler);
 
 // ---- In-app upgrade (already logged in, changing your OWN org's plan) ----
