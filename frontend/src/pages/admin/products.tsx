@@ -3,6 +3,7 @@ import { authFetch } from "../../utils/authFetch";
 import type { CSSProperties } from "react";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import MyPendingApprovals from "../../components/mypendingapprovals";
+import { useOrgSettings } from "../../context/orgsettings";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -255,6 +256,9 @@ const Products = () => {
         (currentUser?.role || "").toUpperCase()
     );
     const myId = currentUser?.id || "";
+    // Settings -> Work rules -> "Require case numbers". ON: each service has its
+    // own Case Number Yes/No option. OFF: option hidden, every service = no case number.
+    const { caseNumberRequired } = useOrgSettings();
 
     const isMobile = useIsMobile();
 
@@ -486,7 +490,9 @@ const Products = () => {
             const res = await authFetch(ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(addForm),
+                body: JSON.stringify(
+                    caseNumberRequired ? addForm : { ...addForm, has_case_number: false }
+                ),
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
@@ -551,7 +557,11 @@ const Products = () => {
             const res = await authFetch(`${ENDPOINT}/${editTarget.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editForm),
+                body: JSON.stringify(
+                    caseNumberRequired
+                        ? editForm
+                        : (({ has_case_number: _omit, ...rest }) => rest)(editForm)
+                ),
             });
             const json = await res.json();
             if (!res.ok || json.success === false) {
@@ -909,22 +919,24 @@ const Products = () => {
             {/* NEW: Case Number — will this service have a case number or
                 not? Shown on both Add and Edit (this fieldset is shared).
                 Defaults to Yes. */}
-            <div style={{ gridColumn: "1 / -1" }}>
-                <label style={styles.formLabel}>Case Number</label>
-                <select
-                    style={styles.formInput}
-                    value={formState.has_case_number ? "yes" : "no"}
-                    onChange={(e) =>
-                        setFormState((prev) => ({
-                            ...prev,
-                            has_case_number: e.target.value === "yes",
-                        }))
-                    }
-                >
-                    <option value="yes">Yes — this service has a case number</option>
-                    <option value="no">No — this service has no case number</option>
-                </select>
-            </div>
+            {caseNumberRequired && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={styles.formLabel}>Case Number</label>
+                    <select
+                        style={styles.formInput}
+                        value={formState.has_case_number ? "yes" : "no"}
+                        onChange={(e) =>
+                            setFormState((prev) => ({
+                                ...prev,
+                                has_case_number: e.target.value === "yes",
+                            }))
+                        }
+                    >
+                        <option value="yes">Yes — this service has a case number</option>
+                        <option value="no">No — this service has no case number</option>
+                    </select>
+                </div>
+            )}
 
             {/* NEW: Teams — collapsed "Select Team" dropdown, multi-select via
                 checkboxes in the expanded panel (same pattern as the Products
@@ -1692,12 +1704,14 @@ const Products = () => {
                                 </span>
                             </div>
 
-                            <div style={styles.detailsRow}>
-                                <span style={styles.detailsLabel}>Case Number</span>
-                                <span style={styles.detailsValue}>
-                                    {viewDetails.has_case_number === false ? "No" : "Yes"}
-                                </span>
-                            </div>
+                            {caseNumberRequired && (
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Case Number</span>
+                                    <span style={styles.detailsValue}>
+                                        {viewDetails.has_case_number === false ? "No" : "Yes"}
+                                    </span>
+                                </div>
+                            )}
 
                             <div style={styles.detailsRow}>
                                 <span style={styles.detailsLabel}>Status</span>

@@ -954,11 +954,18 @@ export default function TodaysAllocationCases({
     };
 
     // NEW (8h WARNING): employees whose live time (incl. unsaved picks)
-    // is above 8 hours, highest first.
+    // is above 10 hours, highest first.
+    // FIX: only people THIS allocation pushes over the limit count. Someone who
+    // is already above 10h from earlier work (their saved load) and is not being
+    // given anything more right now must NOT block allocating to other people.
     const overLimitEmployees = useMemo(
         () =>
             employees
-                .filter((e) => (employeeLoad[e.id]?.mins || 0) > MAX_ALLOC_MINUTES)
+                .filter((e) => {
+                    const live = employeeLoad[e.id]?.mins || 0;
+                    const saved = savedLoad[e.id]?.mins || 0;
+                    return live > MAX_ALLOC_MINUTES && live > saved;
+                })
                 .map((e) => ({
                     id: e.id,
                     name: e.name,
@@ -966,7 +973,7 @@ export default function TodaysAllocationCases({
                     total: employeeLoad[e.id].cases + employeeLoad[e.id].counts,
                 }))
                 .sort((a, b) => b.mins - a.mins),
-        [employees, employeeLoad]
+        [employees, employeeLoad, savedLoad]
     );
 
     // summary strip numbers — everything still to allocate, split into
@@ -1325,7 +1332,7 @@ export default function TodaysAllocationCases({
             showToast(
                 `Over the 10 hour daily limit: ${overLimitEmployees
                     .map((e) => e.name)
-                    .join(", ")}. Reduce their work first.`
+                    .join(", ")} would go above it with this allocation. Give them less work.`
             );
             return;
         }
