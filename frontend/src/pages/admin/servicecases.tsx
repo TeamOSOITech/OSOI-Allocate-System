@@ -1340,7 +1340,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                 <div style={styles.headerRow}>
                     <div style={styles.headerLeft}>
                         <div style={styles.headerTextWrap}>
-                            <h2 style={styles.pageTitle}>Daily Work</h2>
+                            <h2 style={styles.pageTitle}>Daily Cases</h2>
                             <p style={styles.headerSubtext}>
                                 Type or bulk-upload case numbers when you have them, or log just a
                                 count when case numbers aren't available yet.

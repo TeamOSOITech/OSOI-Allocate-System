@@ -102,7 +102,7 @@ const menuItems: MenuItem[] = [
         roles: [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"],
     },
     {
-        label: "Daily Work",
+        label: "Daily Cases",
         icon: "ti ti-clipboard-plus",
         mode: "WHITE",
         path: "/daily-work",
@@ -207,7 +207,7 @@ const pathToLabel: Record<string, string> = {
     "/dashboard": "Dashboard",
     "/report": "Home",
     "/services": "Services",
-    "/daily-work": "Daily Work",
+    "/daily-work": "Daily Cases",
     "/production-reports": "Production Reports",
     //"/todays-allocation": "Today's Allocation",
     "/clients": "Clients Preview",

@@ -315,7 +315,7 @@ type RowState = { status: RowStatus; qty: number };
 function getBackTarget(state: unknown): { path: string; label: string } | null {
     const from = (state as { from?: unknown } | null)?.from;
     if (typeof from !== "string" || !from.startsWith("/") || from.startsWith("//")) return null;
-    const labels: Record<string, string> = { "/daily-work": "Back to Daily Work" };
+    const labels: Record<string, string> = { "/daily-work": "Back to Daily Cases" };
     return { path: from, label: labels[from] || "Back" };
 }
 const MAIN_TAB_CSS = `

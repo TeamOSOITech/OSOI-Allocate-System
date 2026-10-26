@@ -433,7 +433,7 @@ export default function DailyWork() {
                     onClick={() => setMainTab("daily")}
                 >
                     <i className="ti ti-clipboard-plus" style={{ fontSize: fontSize.md }} />
-                    Daily Work
+                    Daily Cases
                 </button>
                 <button
                     type="button"
@@ -468,7 +468,7 @@ export default function DailyWork() {
                         <div style={isMobile ? styles.headerRowMobile : styles.headerRow}>
                             <div style={styles.headerLeft}>
                                 <div>
-                                    <h1 style={styles.pageTitle}>Daily Work</h1>
+                                    <h1 style={styles.pageTitle}>Daily Cases</h1>
                                     <p style={styles.headerSubtext}>
                                         Log today's total quantity received per service — this is
                                         the pool that Smart Auto Allocation and Manual Allocation
