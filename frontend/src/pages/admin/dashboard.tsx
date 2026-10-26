@@ -66,6 +66,43 @@ function todayStr() {
     return `${y}-${m}-${day}`;
 }
 
+// Units of a count row that employees are holding RIGHT NOW and that were
+// allocated TODAY. A backlog count (older work date) handed to someone today
+// is today's work for that person, so it must show up in today's numbers.
+function heldTodayUnits(c: any, today: string) {
+    return (c.allocations || []).reduce((sum: number, a: any) => {
+        const q = Math.max(0, (Number(a.quantity) || 0) - (Number(a.fulfilledQuantity) || 0));
+        if (q <= 0 || !a.allocatedAt) return sum;
+        const d = new Date(a.allocatedAt);
+        if (isNaN(d.getTime())) return sum;
+        const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+            d.getDate()
+        ).padStart(2, "0")}`;
+        return ds === today ? sum + q : sum;
+    }, 0);
+}
+
+// Count-only units that belong in TODAY's total / allocated.
+//   - count dated today: all its pending units; allocated = units held by staff
+//   - older (backlog) count: only the units staff were handed today
+function todayCountUnits(c: any, today: string) {
+    if (c.workDate === today) {
+        const fulfilledSum = (c.allocations || []).reduce(
+            (sum: number, a: any) => sum + (Number(a.fulfilledQuantity) || 0),
+            0
+        );
+        return {
+            total: Number(c.pendingCount) || 0,
+            allocated: Math.max(0, (Number(c.allocatedTotal) || 0) - fulfilledSum),
+        };
+    }
+    if (c.workDate < today) {
+        const held = heldTodayUnits(c, today);
+        return { total: held, allocated: held };
+    }
+    return { total: 0, allocated: 0 };
+}
+
 // Local-day [start, end] as ISO timestamps for "YYYY-MM-DD" bounds —
 // used to filter by allocated_at / submitted_at (the real event time).
 function dayBoundsISO(fromDate: string, toDate: string): { start: string; end: string } {
@@ -808,7 +845,7 @@ function KpiBreakdownModal({
                     );
                     const cj = await cr.json();
                     if (!cr.ok || !cj.success) throw new Error("counts");
-                    countRows = (cj.data || []).filter((c: any) => c.workDate === today);
+                    countRows = cj.data || [];
                 }
 
                 const day = { workDateFrom: today, workDateTo: today };
@@ -829,16 +866,9 @@ function KpiBreakdownModal({
                         countRows
                             .filter((c) => String(c.productId) === pid)
                             .forEach((c) => {
-                                const fulfilledSum = (c.allocations || []).reduce(
-                                    (sum: number, a: any) =>
-                                        sum + (Number(a.fulfilledQuantity) || 0),
-                                    0
-                                );
-                                cTot += Number(c.pendingCount) || 0;
-                                cAlloc += Math.max(
-                                    0,
-                                    (Number(c.allocatedTotal) || 0) - fulfilledSum
-                                );
+                                const u = todayCountUnits(c, today);
+                                cTot += u.total;
+                                cAlloc += u.allocated;
                             });
                         const withCase =
                             kind === "total"
@@ -1160,19 +1190,11 @@ export default function Dashboard({ user }: DashboardProps) {
             let countsAllocated = 0;
             const countsOk = okOf(countRes, countJson);
             if (countsOk) {
-                (countJson.data || [])
-                    .filter((c: any) => c.workDate === today)
-                    .forEach((c: any) => {
-                        const fulfilledSum = (c.allocations || []).reduce(
-                            (sum: number, a: any) => sum + (Number(a.fulfilledQuantity) || 0),
-                            0
-                        );
-                        countsTotal += Number(c.pendingCount) || 0;
-                        countsAllocated += Math.max(
-                            0,
-                            (Number(c.allocatedTotal) || 0) - fulfilledSum
-                        );
-                    });
+                (countJson.data || []).forEach((c: any) => {
+                    const u = todayCountUnits(c, today);
+                    countsTotal += u.total;
+                    countsAllocated += u.allocated;
+                });
             }
 
             const totOk = okOf(totRes, totJson) && countsOk;

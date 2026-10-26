@@ -177,7 +177,12 @@ type CountRow = {
     fulfilledCount: number;
     pendingCount: number;
     allocatedTotal: number;
-    allocations: { employeeName: string | null; quantity: number; fulfilledQuantity: number }[];
+    allocations: {
+        employeeName: string | null;
+        quantity: number;
+        fulfilledQuantity: number;
+        allocatedAt?: string | null;
+    }[];
 };
 
 // submitted_at is a full timestamp (UTC). Returns the viewer's LOCAL calendar
@@ -217,6 +222,22 @@ function todayStr() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
         d.getDate()
     ).padStart(2, "0")}`;
+}
+
+// Units of a count row that employees are holding RIGHT NOW and that were
+// allocated TODAY. A backlog count (older work date) handed to someone today
+// is today's work for that person, so it must show up in today's numbers.
+function heldTodayUnits(c: any, today: string) {
+    return (c.allocations || []).reduce((sum: number, a: any) => {
+        const q = Math.max(0, (Number(a.quantity) || 0) - (Number(a.fulfilledQuantity) || 0));
+        if (q <= 0 || !a.allocatedAt) return sum;
+        const d = new Date(a.allocatedAt);
+        if (isNaN(d.getTime())) return sum;
+        const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+            d.getDate()
+        ).padStart(2, "0")}`;
+        return ds === today ? sum + q : sum;
+    }, 0);
 }
 
 function firstOfMonthStr() {
@@ -592,9 +613,22 @@ export default function ProductionReport() {
             }
             const b = bucket(countGroupKey(c, effectiveView));
             const fulfilledSum = c.allocations.reduce((s, a) => s + a.fulfilledQuantity, 0);
-            b.total += c.pendingCount; // units that have no case number yet
+            // Daily view: units of an OLDER count that staff were handed TODAY
+            // belong to today's card (same as the employee's own page and the
+            // dashboard), not to the count's old work-date card.
+            const heldToday =
+                effectiveView === "daily" && toDate === today && c.workDate < today
+                    ? heldTodayUnits(c, today)
+                    : 0;
+            b.total += c.pendingCount - heldToday; // units that have no case number yet
             if (c.workDate === today) b.today += c.pendingCount;
-            b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum);
+            b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum - heldToday);
+            if (heldToday > 0) {
+                const t = bucket(today);
+                t.total += heldToday;
+                t.today += heldToday;
+                t.allocated += heldToday;
+            }
         });
 
         return Array.from(map.entries())
@@ -612,7 +646,7 @@ export default function ProductionReport() {
                 }
                 return b.total - a.total;
             });
-    }, [cardCases, cardCounts, effectiveView, ampOf]);
+    }, [cardCases, cardCounts, effectiveView, ampOf, toDate]);
 
     // NEW: time PER EMPLOYEE = cases assigned to them x service AMP
     //      (+ count quantities still allocated to them x AMP).
