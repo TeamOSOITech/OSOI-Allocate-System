@@ -1101,6 +1101,48 @@ export default function Profile({ onLogout }: ProfileProps) {
         }
     };
 
+    // ---------------------------------------------------------------
+    // NEW: today's attendance (Present / Half Day / Leave) shown under the
+    // "Active" pill. Same source as Today's Allocation > Employees:
+    // GET /api/attendance?date=today (it already merges leave periods in).
+    // No saved row for the day = default Present, same as that page.
+    // ---------------------------------------------------------------
+    const [todayAtt, setTodayAtt] = useState<"PRESENT" | "HALF_DAY" | "LEAVE" | null>(null);
+    const attEmployeeId: string | null = employee?.id || viewingId || myId;
+    useEffect(() => {
+        if (!attEmployeeId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/attendance?date=${todayStr()}`, {
+                    cache: "no-store",
+                });
+                const json = await safeJson(res);
+                if (cancelled) return;
+                if (!res.ok || !json.success) {
+                    setTodayAtt(null);
+                    return;
+                }
+                const row = (json.data || []).find(
+                    (a: any) => String(a.employeeId) === String(attEmployeeId)
+                );
+                const st = row?.status;
+                setTodayAtt(
+                    st === "LEAVE" || st === "ABSENT"
+                        ? "LEAVE"
+                        : st === "HALF_DAY"
+                          ? "HALF_DAY"
+                          : "PRESENT"
+                );
+            } catch {
+                if (!cancelled) setTodayAtt(null);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [attEmployeeId]);
+
     // Quietly re-reads just the cases (no full-page loading flash).
     const lastCasesRefreshRef = useRef(0);
     const refreshCases = async () => {
@@ -2981,10 +3023,43 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                         <div style={styles.nameBlock}>
                             <span style={styles.name}>{loading ? "Loading..." : name}</span>
-                            <span style={styles.activePill}>
-                                <span style={styles.activeDot} />
-                                Active
-                            </span>
+                            {todayAtt && (
+                                <span
+                                    style={{
+                                        ...styles.activePill,
+                                        color:
+                                            todayAtt === "PRESENT"
+                                                ? "#10936B"
+                                                : todayAtt === "HALF_DAY"
+                                                  ? "#B45309"
+                                                  : "#4B5563",
+                                        background:
+                                            todayAtt === "PRESENT"
+                                                ? "#DDF7EE"
+                                                : todayAtt === "HALF_DAY"
+                                                  ? "#FEF3C7"
+                                                  : "#F3F4F6",
+                                    }}
+                                    title="Today's attendance"
+                                >
+                                    <span
+                                        style={{
+                                            ...styles.activeDot,
+                                            background:
+                                                todayAtt === "PRESENT"
+                                                    ? "#19C48F"
+                                                    : todayAtt === "HALF_DAY"
+                                                      ? STATUS_AMBER
+                                                      : "#9CA3AF",
+                                        }}
+                                    />
+                                    {todayAtt === "PRESENT"
+                                        ? "Present"
+                                        : todayAtt === "HALF_DAY"
+                                          ? "Half Day"
+                                          : "Leave"}
+                                </span>
+                            )}
                             {uploadingPhoto && (
                                 <div style={styles.smallMuted}>Uploading photo…</div>
                             )}
