@@ -70,10 +70,6 @@ const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const { isIsoDate } = require("../../utils/orgGuards");
 const { getTeamScope } = require("../../utils/teamScope");
-const {
-  isCaseNumberRequired,
-  withEffectiveCaseNumber,
-} = require("../../utils/orgCaseNumber");
 // NEW: Excel dropdown validation for the bulk-upload template (same helpers
 // the Client / Subclient templates use).
 const {
@@ -384,11 +380,7 @@ async function getProduct(productId, organizationId) {
     .eq("organization_id", organizationId)
     .maybeSingle();
   if (error) throw error;
-  // Org "Require case numbers" OFF -> every service counts as no case number
-  return withEffectiveCaseNumber(
-    data,
-    await isCaseNumberRequired(organizationId),
-  );
+  return data;
 }
 
 // NEW: Vertical Head can create cases (Log Cases — Manual Entry, Auto
@@ -639,9 +631,24 @@ async function listServiceCases(req, res) {
       // they keep the exact-date behaviour.
       if (req.query.workDate) {
         if (req.query.includeBacklog === "true") {
-          filtered = filtered.or(
-            `work_date.eq.${req.query.workDate},and(work_date.lt.${req.query.workDate},allocation_status.eq.PENDING)`,
-          );
+          const orParts = [
+            `work_date.eq.${req.query.workDate}`,
+            `and(work_date.lt.${req.query.workDate},allocation_status.eq.PENDING)`,
+          ];
+          // NEW: alsoAllocatedOn=YYYY-MM-DD (Today's Allocation time card only)
+          // also returns cases logged on an EARLIER date but ALLOCATED on that
+          // (India-time) day, so every employee's time for the day is complete.
+          const ao = String(req.query.alsoAllocatedOn || "");
+          if (/^\d{4}-\d{2}-\d{2}$/.test(ao)) {
+            const start = new Date(`${ao}T00:00:00+05:30`);
+            if (!isNaN(start.getTime())) {
+              const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+              orParts.push(
+                `and(work_date.lt.${req.query.workDate},allocated_at.gte.${start.toISOString()},allocated_at.lt.${end.toISOString()})`,
+              );
+            }
+          }
+          filtered = filtered.or(orParts.join(","));
         } else {
           filtered = filtered.eq("work_date", req.query.workDate);
         }
@@ -1385,12 +1392,8 @@ async function uploadCustomServiceCases(req, res) {
       .select("*")
       .eq("organization_id", orgId);
     if (prodErr) throw prodErr;
-    const caseNoRequired = await isCaseNumberRequired(orgId);
     const productById = new Map(
-      withEffectiveCaseNumber(orgProducts || [], caseNoRequired).map((p) => [
-        String(p.id),
-        p,
-      ]),
+      (orgProducts || []).map((p) => [String(p.id), p]),
     );
     const productByName = new Map(
       (orgProducts || []).map((p) => [
