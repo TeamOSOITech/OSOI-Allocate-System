@@ -557,6 +557,9 @@ export default function TodaysAllocationCases({
                 params.set("pageSize", "100");
                 params.set("workDate", workDate);
                 params.set("includeBacklog", "true");
+                // FIX: also load cases allocated on this day that were logged on an EARLIER
+                // work date (otherwise their time is missing from the per-employee card)
+                params.set("alsoAllocatedOn", workDate);
                 params.set("allocationStatus", "ALLOCATED");
                 if (monthStart) params.set("workDateFrom", monthStart);
                 const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
@@ -615,6 +618,9 @@ export default function TodaysAllocationCases({
                 params.set("productId", productId);
                 params.set("workDate", workDate);
                 params.set("includeBacklog", "true");
+                // FIX: also load cases allocated on this day that were logged on an EARLIER
+                // work date (otherwise their time is missing from the per-employee card)
+                params.set("alsoAllocatedOn", workDate);
                 if (monthStart) params.set("workDateFrom", monthStart);
                 const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
                 const json = await res.json();
