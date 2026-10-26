@@ -249,6 +249,11 @@ const Products = () => {
     const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
         (currentUser?.role || "").toUpperCase()
     );
+    // Vertical Head / Team Member only ever get their own team's services from
+    // the API, so the My Services / Organisation dropdown is hidden for them.
+    const hideScopeDropdown = ["VERTICAL_HEAD", "TEAM_MEMBER"].includes(
+        (currentUser?.role || "").toUpperCase()
+    );
     const myId = currentUser?.id || "";
 
     const isMobile = useIsMobile();
@@ -1268,20 +1273,22 @@ const Products = () => {
                             search bar — moved to a dropdown right next to
                             the search box instead, matching the
                             Employees page's scope selector. */}
-                        <select
-                            style={styles.filterSelect}
-                            value={scope}
-                            onChange={(e) => changeScope(e.target.value as "team" | "org")}
-                            aria-label="Scope"
-                            title={
-                                scope === "team" && !myTeam
-                                    ? "Your account has no team set, so this currently shows everyone."
-                                    : undefined
-                            }
-                        >
-                            <option value="team">My Services</option>
-                            <option value="org">Organisation</option>
-                        </select>
+                        {!hideScopeDropdown && (
+                            <select
+                                style={styles.filterSelect}
+                                value={scope}
+                                onChange={(e) => changeScope(e.target.value as "team" | "org")}
+                                aria-label="Scope"
+                                title={
+                                    scope === "team" && !myTeam
+                                        ? "Your account has no team set, so this currently shows everyone."
+                                        : undefined
+                                }
+                            >
+                                <option value="team">My Services</option>
+                                <option value="org">Organisation</option>
+                            </select>
+                        )}
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every row/card
                             all the time. Tapping it again exits select mode and clears
@@ -1389,8 +1396,8 @@ const Products = () => {
                                 <p style={styles.emptyText}>
                                     {scope === "team" && !myTeamLoading
                                         ? myTeam
-                                            ? `No services are aligned to your team (${myTeam}) yet. Switch to Organisation to see all services.`
-                                            : "You don't have a team set on your profile. Switch to Organisation to see all services."
+                                            ? `No services are aligned to your team (${myTeam}) yet.${hideScopeDropdown ? "" : " Switch to Organisation to see all services."}`
+                                            : `You don't have a team set on your profile.${hideScopeDropdown ? "" : " Switch to Organisation to see all services."}`
                                         : "No services match your filters."}
                                 </p>
                             </div>
