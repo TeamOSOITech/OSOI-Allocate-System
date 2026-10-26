@@ -891,9 +891,14 @@ export default function Profile({ onLogout }: ProfileProps) {
     // All counts allocated to me — every date, and also the ones whose case
     // numbers are all added already (remaining = 0), so Past Allocation can
     // show them as done.
-    const loadMyCounts = async () => {
+    // targetId = another employee (manager viewing their Profile); null = me.
+    const loadMyCounts = async (targetId: string | null = null) => {
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/my-counts?includeAll=true`);
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/my-counts?includeAll=true${
+                    targetId ? `&employeeId=${encodeURIComponent(targetId)}` : ""
+                }`
+            );
             const json = await safeJson(res);
             if (res.ok && json.success) setMyCounts(json.data?.mine || []);
         } catch (err) {
@@ -903,9 +908,13 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     // Count units that were left without case numbers when their day ended
     // (already back in the pool) — shown read-only under Past Allocation.
-    const loadMissedCounts = async () => {
+    const loadMissedCounts = async (targetId: string | null = null) => {
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/my-missed-counts`);
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/my-missed-counts${
+                    targetId ? `?employeeId=${encodeURIComponent(targetId)}` : ""
+                }`
+            );
             const json = await safeJson(res);
             if (res.ok && json.success) {
                 setMissedCounts(
@@ -1087,14 +1096,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                 }
             }
             loadMissed(targetId);
-            // Counts endpoint is always "me" — skip it when viewing someone else.
-            if (!targetId) {
-                loadMyCounts();
-                loadMissedCounts();
-            } else {
+            // FIX: counts are loaded for whoever is being viewed (me, or the
+            // employee a manager opened) - before, another employee's counts
+            // were skipped, so their Allocated Hours missed all count work.
+            if (targetId) {
                 setMyCounts([]);
                 setMissedCounts([]);
             }
+            loadMyCounts(targetId);
+            loadMissedCounts(targetId);
         } catch (err: any) {
             setError(err?.message || "Could not load your profile");
         } finally {
@@ -3942,7 +3952,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 }}
                             >
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                    {!isViewingOther && (
+                                    {
                                         <>
                                             <button
                                                 type="button"
@@ -3969,7 +3979,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 Cases ({filteredRows.length})
                                             </button>
                                         </>
-                                    )}
+                                    }
                                 </div>
                                 <div
                                     style={{
@@ -4008,17 +4018,19 @@ export default function Profile({ onLogout }: ProfileProps) {
                             </div>
 
                             {/* ---- Counts view (table: case # / client / sub-client / service / date / status) ---- */}
-                            {!isViewingOther && allocView === "counts" && (
+                            {allocView === "counts" && (
                                 <div className="pf-card-hover" style={styles.cntCard}>
                                     <div style={styles.cntTop}>
                                         <div>
                                             <div style={styles.countsCardTitle}>
-                                                Counts (no case number yet) — add case numbers
+                                                {isViewingOther
+                                                    ? "Counts (no case number yet)"
+                                                    : "Counts (no case number yet) — add case numbers"}
                                             </div>
                                             <div style={styles.smallMuted}>
-                                                These were allocated to you as a count. Add the real
-                                                case number(s), pick the client for each and a
-                                                status.
+                                                {isViewingOther
+                                                    ? "These were allocated to this employee as a count and are still waiting for case numbers (view only)."
+                                                    : "These were allocated to you as a count. Add the real case number(s), pick the client for each and a status."}
                                             </div>
                                         </div>
                                         <div
@@ -4288,7 +4300,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                             Returned
                                                                                             to pool
                                                                                         </span>
-                                                                                    ) : !done ? (
+                                                                                    ) : !done &&
+                                                                                      !isViewingOther ? (
                                                                                         <button
                                                                                             type="button"
                                                                                             className="pf-btn pf-btn-solid"
@@ -4335,7 +4348,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 </div>
                             )}
 
-                            {(isViewingOther || allocView === "cases") && (
+                            {allocView === "cases" && (
                                 <>
                                     <div style={styles.allocSummaryRow}>
                                         <span style={styles.allocSummaryChip}>

@@ -891,17 +891,24 @@ export default function TodaysAllocationCases({
                 const a = c.allocations.find((x) => x.employeeId === empId);
                 // saved quantity counts only if it was allocated on this day
                 // (an old server that sends no allocatedAt at all -> keep counting it)
-                const savedToday =
-                    a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate)
-                        ? a.quantity || 0
-                        : 0;
+                const allocToday =
+                    !!a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate);
+                const savedToday = allocToday ? a?.quantity || 0 : 0;
+                // FIX (double count): units the employee already gave a case
+                // number to are REAL cases now (they are in the case list above),
+                // but the allocation's quantity still includes them. Take them
+                // out here so the same unit is not counted as a case AND a count
+                // (this made Today's Allocation show more time than the Profile).
+                const fulfilledToday = allocToday
+                    ? Math.min(a?.fulfilledQuantity || 0, a?.quantity || 0)
+                    : 0;
                 if (draft !== undefined) {
                     // FIX: the typed / Smart total includes work saved on an EARLIER
                     // day. That old part is not today's time, so take it out.
                     const carried = (a?.quantity || 0) - savedToday;
-                    q = Math.max(0, draft - carried);
+                    q = Math.max(0, draft - carried - fulfilledToday);
                 } else {
-                    q = savedToday;
+                    q = Math.max(0, savedToday - fulfilledToday);
                 }
                 if (q > 0) add(empId, 0, q, q * ampOf(c.productId));
             });
