@@ -98,11 +98,18 @@ function useIsMobile() {
     return isMobile;
 }
 
+// Business day = India time, the same zone the server's day-end rollover
+// uses. (Browser-local dates gave a different "today" on laptops set to
+// another time zone.)
+const APP_TIMEZONE = "Asia/Kolkata";
+const ymdInAppTz = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
 function todayStr() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate()
-    ).padStart(2, "0")}`;
+    return ymdInAppTz.format(new Date());
 }
 
 // submitted_at is a full timestamp (UTC). This gives the viewer's LOCAL
@@ -111,9 +118,7 @@ function localDateStr(iso: string | null) {
     if (!iso) return null;
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate()
-    ).padStart(2, "0")}`;
+    return ymdInAppTz.format(d);
 }
 
 // NEW: the day (local, YYYY-MM-DD) this work was ALLOCATED to the employee.
@@ -724,6 +729,14 @@ export default function Profile({ onLogout }: ProfileProps) {
     const [addCnClientsLoading, setAddCnClientsLoading] = useState(false);
     const [addCnSubmitting, setAddCnSubmitting] = useState(false);
     const [addCnError, setAddCnError] = useState<string | null>(null);
+    // "Bulk" add-case-numbers popup: EVERY service that still has counts to
+    // add shows up at once; rows are kept per count id.
+    const [bulkCnOpen, setBulkCnOpen] = useState(false);
+    const [bulkCnRows, setBulkCnRows] = useState<Record<string, AddCnRow[]>>({});
+    const [bulkCnClients, setBulkCnClients] = useState<Record<string, ClientOption[]>>({});
+    const [bulkCnLoading, setBulkCnLoading] = useState(false);
+    const [bulkCnSubmitting, setBulkCnSubmitting] = useState(false);
+    const [bulkCnError, setBulkCnError] = useState<string | null>(null);
     // client / subclient lists + saving state for the table's client column.
     const [clients, setClients] = useState<ClientOption[]>([]);
     const [subclients, setSubclients] = useState<SubclientOption[]>([]);
@@ -1454,6 +1467,119 @@ export default function Profile({ onLogout }: ProfileProps) {
         );
     }, [queryView, openQueries, resolvedQueries, querySearch]);
 
+    // ---------------------------------------------------------------
+    // Client / Subclient on a case that is being submitted. Used by EVERY
+    // submit popup: if the case has no client / subclient yet, a dropdown is
+    // shown to add it, and a case without a client can not be submitted.
+    // Saved with PATCH /:id/client-fill right before the submit.
+    // ---------------------------------------------------------------
+    const [clientsByProduct, setClientsByProduct] = useState<Record<string, ClientOption[]>>({});
+    const [pickClient, setPickClient] = useState<Record<string, string>>({});
+    const [pickSub, setPickSub] = useState<Record<string, string>>({});
+
+    const loadClientsForProducts = async (productIds: string[]) => {
+        const need = [...new Set(productIds.filter(Boolean).map(String))].filter(
+            (pid) => !clientsByProduct[pid]
+        );
+        if (need.length === 0) return;
+        const entries = await Promise.all(
+            need.map(async (pid): Promise<[string, ClientOption[]] | null> => {
+                try {
+                    const res = await authFetch(
+                        `${API_BASE}/api/service-cases/product-clients/${pid}`
+                    );
+                    const json = await safeJson(res);
+                    if (!res.ok) return null;
+                    const list = Array.isArray(json) ? json : json?.data || [];
+                    return [pid, list.map((c: any) => ({ id: String(c.id), name: c.name }))];
+                } catch {
+                    return null;
+                }
+            })
+        );
+        const got = entries.filter(Boolean) as [string, ClientOption[]][];
+        if (got.length) setClientsByProduct((prev) => ({ ...prev, ...Object.fromEntries(got) }));
+    };
+
+    // (inline Client cell only) Own case -> employee add-only endpoint.
+    // Another employee's case (only SUPER_ADMIN / OPS_MANAGER can view others)
+    // -> manager endpoint. The submit popups send the client WITH the submit.
+    const clientFillUrl = (id: string) =>
+        isViewingOther
+            ? `${API_BASE}/api/service-cases/${id}/client`
+            : `${API_BASE}/api/service-cases/${id}/client-fill`;
+
+    useEffect(() => {
+        const ids = cases.filter((c) => !c.clientId).map((c) => String(c.productId));
+        if (ids.length) loadClientsForProducts(ids);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cases]);
+
+    const effClientId = (c: CaseRow) => (c.clientId ? String(c.clientId) : pickClient[c.id] || "");
+    const effSubId = (c: CaseRow) => (c.subclientId ? String(c.subclientId) : pickSub[c.id] || "");
+
+    const renderClientPick = (c: CaseRow, disabled: boolean, highlight: boolean) => {
+        if (c.clientId) return <span>{c.clientName || "—"}</span>;
+        const missing = highlight && !pickClient[c.id];
+        return (
+            <select
+                style={{
+                    ...styles.textInput,
+                    width: "100%",
+                    border: missing ? `1px solid ${STATUS_RED}` : styles.textInput.border,
+                }}
+                value={pickClient[c.id] || ""}
+                disabled={disabled}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    setPickClient((prev) => ({ ...prev, [c.id]: v }));
+                    setPickSub((prev) => ({ ...prev, [c.id]: "" }));
+                }}
+            >
+                <option value="">
+                    {(clientsByProduct[String(c.productId)] || []).length === 0
+                        ? "No clients mapped"
+                        : "Select client"}
+                </option>
+                {(clientsByProduct[String(c.productId)] || []).map((cl) => (
+                    <option key={cl.id} value={cl.id}>
+                        {cl.name}
+                    </option>
+                ))}
+            </select>
+        );
+    };
+
+    const renderSubclientPick = (c: CaseRow, disabled: boolean) => {
+        if (c.subclientId) return <span>{c.subclientName || "—"}</span>;
+        const clientId = effClientId(c);
+        const opts = subclients.filter((x) => x.clientId === clientId && x.status !== "Inactive");
+        return (
+            <select
+                style={{ ...styles.textInput, width: "100%" }}
+                value={pickSub[c.id] || ""}
+                disabled={disabled || !clientId}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    setPickSub((prev) => ({ ...prev, [c.id]: v }));
+                }}
+            >
+                <option value="">
+                    {!clientId
+                        ? "Pick client first"
+                        : opts.length === 0
+                          ? "No subclients"
+                          : "Select subclient"}
+                </option>
+                {opts.map((x) => (
+                    <option key={x.id} value={x.id}>
+                        {x.name}
+                    </option>
+                ))}
+            </select>
+        );
+    };
+
     const selected = cases.find((c) => c.id === selectedId) || null;
 
     useEffect(() => {
@@ -1461,6 +1587,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             setSubmitType("");
             setSubmitQueryText("");
             setSubmitError(null);
+            loadClientsForProducts([String(selected.productId)]);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedId]);
@@ -1481,7 +1608,10 @@ export default function Profile({ onLogout }: ProfileProps) {
     }, [selectedId, submitting]);
 
     const canSubmitSingle =
-        !!selected && !!submitType && (!needsReason(submitType) || submitQueryText.trim() !== "");
+        !!selected &&
+        !!effClientId(selected) &&
+        !!submitType &&
+        (!needsReason(submitType) || submitQueryText.trim() !== "");
 
     const handleSubmitWork = async () => {
         if (!selected || !canSubmitSingle) return;
@@ -1492,6 +1622,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    // saved by the server in the SAME update as the submit
+                    clientId: effClientId(selected) || undefined,
+                    subclientId: effSubId(selected) || undefined,
                     submissionType: submitType,
                     ...reasonFields(submitType, submitQueryText),
                     onBehalfOf: isViewingOther ? viewingId : undefined,
@@ -1516,6 +1649,8 @@ export default function Profile({ onLogout }: ProfileProps) {
     // ---- Row submit: pick the status in the table, press Submit at the end ----
     const canSubmitRow = (c: CaseRow) => {
         const t = rowTypeById[c.id] || "";
+        // no client on the case -> add it in the Client cell first
+        if (!c.clientId) return false;
         return !!t && (!needsReason(t) || (rowQueryById[c.id] || "").trim() !== "");
     };
 
@@ -1589,6 +1724,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         setBulkSearch("");
         setBulkError(null);
         setShowBulkModal(true);
+        loadClientsForProducts(pendingTodayCases.map((c) => String(c.productId)));
     };
 
     const closeBulkModal = () => {
@@ -1834,7 +1970,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         r.cn.trim() ||
                         (!caseNumberRequired && r.status !== "WIP" && r.status !== "PENDING")
                 )
-                .map(({ r, i }) => ({ ...r, cn: r.cn.trim() || `__AUTO__${i + 1}` })),
+                .map(({ r, i }) => ({ ...r, cn: r.cn.trim() || `__AUTO__${i + 1}`, _i: i })),
         [addCnRows, caseNumberRequired]
     );
 
@@ -1886,7 +2022,7 @@ export default function Profile({ onLogout }: ProfileProps) {
     const openAddCaseNumbers = (mc: MyCountRow) => {
         setAddCnCount(mc);
         // one row per case still to add (first 10 shown, "+ Add row" for more)
-        setAddCnRows(Array.from({ length: Math.min(mc.remaining, 10) }, () => blankAddCnRow(mc)));
+        setAddCnRows(Array.from({ length: mc.remaining }, () => blankAddCnRow(mc)));
         setAddCnError(null);
 
         // load the clients mapped to this service (active only)
@@ -1933,6 +2069,72 @@ export default function Profile({ onLogout }: ProfileProps) {
         setAddCnCount(null);
     };
 
+    // Sends case numbers in batches of 200 (the most the server takes per
+    // request): the first 200, then the next 200, and so on. Stops at the
+    // first batch that fails and says which rows were already saved.
+    const CN_CHUNK = 200;
+    const findDuplicateCn = (rows: { cn: string }[]) => {
+        const seen = new Set<string>();
+        for (const r of rows) {
+            if (r.cn.startsWith("__AUTO__")) continue;
+            const k = r.cn.toUpperCase();
+            if (seen.has(k)) return r.cn;
+            seen.add(k);
+        }
+        return null;
+    };
+    const postCaseNumberChunks = async (countId: string, rows: (AddCnRow & { _i: number })[]) => {
+        const savedIdx = new Set<number>();
+        let savedTotal = 0;
+        let message = "";
+        for (let k = 0; k < rows.length; k += CN_CHUNK) {
+            const chunk = rows.slice(k, k + CN_CHUNK);
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/my-counts/add-case-numbers`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            countId,
+                            caseNumbers: chunk.map((r) => r.cn),
+                            // per case: its own client / subclient + status.
+                            // WIP / Pending = just add (sent as "WIP"),
+                            // anything else = add + submit.
+                            statuses: Object.fromEntries(
+                                chunk.map((r) => [
+                                    r.cn.toUpperCase(),
+                                    {
+                                        submissionType: r.status === "PENDING" ? "WIP" : r.status,
+                                        ...reasonFields(r.status, r.query),
+                                        clientId: r.clientId,
+                                        subclientId: r.subclientId || undefined,
+                                    },
+                                ])
+                            ),
+                        }),
+                    }
+                );
+                const json = await safeJson(res);
+                if (!res.ok || !json.success) {
+                    throw new Error(json.message || "Failed to add case numbers");
+                }
+                chunk.forEach((r) => savedIdx.add(r._i));
+                savedTotal += chunk.length;
+                message = json.message || "";
+            } catch (err: any) {
+                return {
+                    savedIdx,
+                    savedTotal,
+                    message,
+                    error: (err?.message as string) || "Failed to add case numbers",
+                };
+            }
+        }
+        if (rows.length > CN_CHUNK) message = `${savedTotal} case numbers added.`;
+        return { savedIdx, savedTotal, message, error: null as string | null };
+    };
+
     const submitAddCaseNumbers = async () => {
         if (!addCnCount) return;
         if (addCnParsed.length === 0) {
@@ -1964,45 +2166,243 @@ export default function Profile({ onLogout }: ProfileProps) {
                 return;
             }
         }
+        const dup = findDuplicateCn(addCnParsed);
+        if (dup) {
+            setAddCnError(`Case number ${dup} is typed more than once.`);
+            return;
+        }
         setAddCnSubmitting(true);
         setAddCnError(null);
         try {
-            const res = await authFetch(
-                `${API_BASE}/api/service-cases/my-counts/add-case-numbers`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        countId: addCnCount.id,
-                        caseNumbers: addCnParsed.map((r) => r.cn),
-                        // per case: its own client / subclient + status.
-                        // WIP / Pending = just add (sent to the backend as "WIP"),
-                        // anything else = add + submit.
-                        statuses: Object.fromEntries(
-                            addCnParsed.map((r) => [
-                                r.cn.toUpperCase(),
-                                {
-                                    submissionType: r.status === "PENDING" ? "WIP" : r.status,
-                                    ...reasonFields(r.status, r.query),
-                                    clientId: r.clientId,
-                                    subclientId: r.subclientId || undefined,
-                                },
-                            ])
-                        ),
-                    }),
+            const out = await postCaseNumberChunks(addCnCount.id, addCnParsed);
+            if (out.error) {
+                if (out.savedTotal > 0) {
+                    // keep only the rows that are NOT saved yet
+                    setAddCnRows((prev) => prev.filter((_, idx) => !out.savedIdx.has(idx)));
+                    loadAll();
+                    throw new Error(`${out.savedTotal} added. Not saved: ${out.error}`);
                 }
-            );
-            const json = await safeJson(res);
-            if (!res.ok || !json.success) {
-                throw new Error(json.message || "Failed to add case numbers");
+                throw new Error(out.error);
             }
-            showToast(json.message || "Case numbers added.");
+            showToast(out.message || "Case numbers added.");
             setAddCnCount(null);
             loadAll();
         } catch (err: any) {
             setAddCnError(err?.message || "Failed to add case numbers");
         } finally {
             setAddCnSubmitting(false);
+        }
+    };
+
+    // ---------------------------------------------------------------
+    // BULK add case numbers: all services with counts left, in one popup.
+    // Reuses the same endpoint as the single popup, one call per count.
+    // ---------------------------------------------------------------
+    const bulkCnCounts = useMemo(
+        () =>
+            myCounts
+                .filter((m) => m.remaining > 0 && !m.missed)
+                .sort(
+                    (a, b) =>
+                        (a.productName || "").localeCompare(b.productName || "") ||
+                        (a.workDate || "").localeCompare(b.workDate || "")
+                ),
+        [myCounts]
+    );
+
+    // The top Submit button follows the TAB that is open:
+    //  - details open on the "Counts" tab  -> counts popup (all services at once)
+    //  - details open on the "Cases" tab   -> cases popup
+    //  - no details open (only the cards)  -> cases, or counts when there are
+    //    no pending cases but counts are waiting.
+    const detailsOpen = openCard !== null || activeTab === "past";
+    const submitUsesCounts =
+        !isViewingOther &&
+        (detailsOpen
+            ? allocView === "counts"
+            : stats.pendingCount === 0 && bulkCnCounts.length > 0);
+    const submitBtnCount = submitUsesCounts
+        ? bulkCnCounts.reduce((sum, m) => sum + m.remaining, 0)
+        : stats.pendingCount;
+
+    const parseBulkRows = (rows: AddCnRow[]) =>
+        rows
+            .map((r, i) => ({ r, i }))
+            .filter(
+                ({ r }) =>
+                    r.cn.trim() ||
+                    (!caseNumberRequired && r.status !== "WIP" && r.status !== "PENDING")
+            )
+            .map(({ r, i }) => ({ ...r, cn: r.cn.trim() || `__AUTO__${i + 1}`, _i: i }));
+
+    const bulkCnTotals = useMemo(() => {
+        let entered = 0;
+        let missingClient = false;
+        bulkCnCounts.forEach((mc) => {
+            const parsed = parseBulkRows(bulkCnRows[mc.id] || []);
+            entered += parsed.length;
+            if (parsed.some((r) => !r.clientId)) missingClient = true;
+        });
+        return { entered, missingClient };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [bulkCnCounts, bulkCnRows, caseNumberRequired]);
+
+    const setBulkCnRow = (countId: string, i: number, patch: Partial<AddCnRow>) =>
+        setBulkCnRows((prev) => ({
+            ...prev,
+            [countId]: (prev[countId] || []).map((r, idx) => (idx === i ? { ...r, ...patch } : r)),
+        }));
+
+    const applyBulkFirstClient = (countId: string) =>
+        setBulkCnRows((prev) => {
+            const rows = prev[countId] || [];
+            if (rows.length < 2) return prev;
+            return {
+                ...prev,
+                [countId]: rows.map((r) => ({
+                    ...r,
+                    clientId: rows[0].clientId,
+                    subclientId: rows[0].subclientId,
+                })),
+            };
+        });
+
+    const pasteBulkCnRows = (mc: MyCountRow, start: number, text: string) => {
+        const parts = text
+            .split(/[\n,\t]+/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        if (parts.length === 0) return;
+        setBulkCnRows((prev) => {
+            const rows = [...(prev[mc.id] || [])];
+            parts.forEach((p, j) => {
+                const idx = start + j;
+                if (idx >= rows.length) return;
+                rows[idx] = { ...rows[idx], cn: p };
+            });
+            return { ...prev, [mc.id]: rows };
+        });
+    };
+
+    const openBulkCaseNumbers = () => {
+        if (bulkCnCounts.length === 0) return;
+        const initial: Record<string, AddCnRow[]> = {};
+        bulkCnCounts.forEach((mc) => {
+            initial[mc.id] = Array.from({ length: mc.remaining }, () => blankAddCnRow(mc));
+        });
+        setBulkCnRows(initial);
+        setBulkCnError(null);
+        setBulkCnOpen(true);
+        setBulkCnLoading(true);
+        (async () => {
+            const productIds = [...new Set(bulkCnCounts.map((m) => String(m.productId)))];
+            const map: Record<string, ClientOption[]> = {};
+            await Promise.all(
+                productIds.map(async (pid) => {
+                    try {
+                        const res = await authFetch(
+                            `${API_BASE}/api/service-cases/product-clients/${pid}`
+                        );
+                        const json = await safeJson(res);
+                        const list = Array.isArray(json) ? json : json?.data || [];
+                        map[pid] = res.ok
+                            ? list.map((c: any) => ({ id: String(c.id), name: c.name }))
+                            : [];
+                    } catch {
+                        map[pid] = [];
+                    }
+                })
+            );
+            setBulkCnClients(map);
+            setBulkCnLoading(false);
+            // drop a pre-filled client that is not mapped to that service
+            setBulkCnRows((prev) => {
+                const next: Record<string, AddCnRow[]> = {};
+                bulkCnCounts.forEach((mc) => {
+                    const ok = new Set((map[String(mc.productId)] || []).map((c) => c.id));
+                    next[mc.id] = (prev[mc.id] || []).map((r) =>
+                        r.clientId && !ok.has(r.clientId)
+                            ? { ...r, clientId: "", subclientId: "" }
+                            : r
+                    );
+                });
+                return next;
+            });
+        })();
+    };
+
+    const closeBulkCaseNumbers = () => {
+        if (bulkCnSubmitting) return;
+        setBulkCnOpen(false);
+    };
+
+    const submitBulkCaseNumbers = async () => {
+        setBulkCnError(null);
+        // validate everything first, so nothing is half-saved by a typo
+        for (const mc of bulkCnCounts) {
+            const parsed = parseBulkRows(bulkCnRows[mc.id] || []);
+            if (parsed.length > mc.remaining) {
+                setBulkCnError(
+                    `${mc.productName || "Service"}: only ${mc.remaining} case(s) left, you typed ${parsed.length}.`
+                );
+                return;
+            }
+            const dupCn = findDuplicateCn(parsed);
+            if (dupCn) {
+                setBulkCnError(`${mc.productName || "Service"}: ${dupCn} is typed more than once.`);
+                return;
+            }
+            for (const r of parsed) {
+                const label = r.cn.startsWith("__AUTO__")
+                    ? `row ${r.cn.replace("__AUTO__", "")}`
+                    : r.cn;
+                if (!r.clientId) {
+                    setBulkCnError(`${mc.productName || "Service"}: select a client for ${label}.`);
+                    return;
+                }
+                if (needsReason(r.status) && !r.query.trim()) {
+                    setBulkCnError(
+                        `${mc.productName || "Service"}: enter the ${r.status === "OUT_OF_SCOPE" ? "reason" : "query text"} for ${label}.`
+                    );
+                    return;
+                }
+            }
+        }
+        const work = bulkCnCounts
+            .map((mc) => ({ mc, parsed: parseBulkRows(bulkCnRows[mc.id] || []) }))
+            .filter((w) => w.parsed.length > 0);
+        if (work.length === 0) {
+            setBulkCnError(
+                caseNumberRequired
+                    ? "Type at least one case number."
+                    : "Type a case number or set a status for at least one row."
+            );
+            return;
+        }
+        setBulkCnSubmitting(true);
+        const failed: string[] = [];
+        let saved = 0;
+        for (const { mc, parsed } of work) {
+            const out = await postCaseNumberChunks(mc.id, parsed);
+            saved += out.savedTotal;
+            if (out.error) {
+                failed.push(`${mc.productName || "Service"}: ${out.error}`);
+            }
+            // drop the rows that are saved, keep the rest so they can be fixed
+            setBulkCnRows((prev) => ({
+                ...prev,
+                [mc.id]: (prev[mc.id] || []).filter((_, idx) => !out.savedIdx.has(idx)),
+            }));
+        }
+        setBulkCnSubmitting(false);
+        loadAll();
+        if (failed.length === 0) {
+            setBulkCnOpen(false);
+            showToast(`${saved} case number${saved === 1 ? "" : "s"} added.`);
+        } else {
+            setBulkCnError(
+                `${saved} added. Not saved — ${failed.join(" | ")}. Fix those and press Save again.`
+            );
         }
     };
 
@@ -2016,12 +2416,11 @@ export default function Profile({ onLogout }: ProfileProps) {
         kind: "client" | "subclient",
         value: string
     ) => {
-        if (isViewingOther) return;
         if (!value) return; // nothing to add
         setClientCellError(null);
         setSavingClientCaseId(c.id);
         try {
-            const res = await authFetch(`${API_BASE}/api/service-cases/${c.id}/client-fill`, {
+            const res = await authFetch(clientFillUrl(c.id), {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(
@@ -2031,6 +2430,11 @@ export default function Profile({ onLogout }: ProfileProps) {
             const json = await safeJson(res);
             if (!res.ok || !json.success) {
                 throw new Error(json.message || "Failed to update client");
+            }
+            if (isViewingOther) {
+                // manager endpoint has a different response shape: just reload
+                loadAll();
+                return;
             }
             const d = json.data || {};
             setCases((prev) =>
@@ -2082,7 +2486,11 @@ export default function Profile({ onLogout }: ProfileProps) {
         [bulkRowsToSubmit, bulkTypeById, bulkQueryById]
     );
 
-    const bulkCanSubmit = bulkRowsToSubmit.length > 0 && !bulkHasIncompleteQuery;
+    // a case can not be submitted without a client (existing or just picked)
+    const bulkMissingClient = bulkRowsToSubmit.some((c) => !effClientId(c));
+
+    const bulkCanSubmit =
+        bulkRowsToSubmit.length > 0 && !bulkHasIncompleteQuery && !bulkMissingClient;
 
     const handleBulkSubmit = async () => {
         setBulkError(null);
@@ -2098,8 +2506,17 @@ export default function Profile({ onLogout }: ProfileProps) {
             }
         }
 
+        for (const c of bulkRowsToSubmit) {
+            if (!effClientId(c)) {
+                setBulkError(`Select a client for ${c.caseNumber} before submitting.`);
+                return;
+            }
+        }
+
         const items = bulkRowsToSubmit.map((c) => ({
             id: c.id,
+            clientId: effClientId(c) || undefined,
+            subclientId: effSubId(c) || undefined,
             submissionType: bulkTypeById[c.id],
             ...reasonFields(bulkTypeById[c.id], bulkQueryById[c.id] || ""),
         }));
@@ -2966,14 +3383,19 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         background: GRADIENT,
                                         color: "#fff",
                                         border: "none",
-                                        opacity: stats.pendingCount > 0 ? 1 : 0.5,
-                                        cursor: stats.pendingCount > 0 ? "pointer" : "not-allowed",
+                                        opacity: submitBtnCount > 0 ? 1 : 0.5,
+                                        cursor: submitBtnCount > 0 ? "pointer" : "not-allowed",
                                     }}
-                                    onClick={openBulkModal}
-                                    disabled={stats.pendingCount === 0}
+                                    onClick={submitUsesCounts ? openBulkCaseNumbers : openBulkModal}
+                                    disabled={submitBtnCount === 0}
+                                    title={
+                                        submitUsesCounts
+                                            ? "Add case numbers for all your counts"
+                                            : undefined
+                                    }
                                 >
-                                    <CheckIcon /> Bulk Submit
-                                    {stats.pendingCount > 0 ? ` (${stats.pendingCount})` : ""}
+                                    <CheckIcon /> Submit
+                                    {submitBtnCount > 0 ? ` (${submitBtnCount})` : ""}
                                 </button>
                                 <button
                                     type="button"
@@ -3471,13 +3893,21 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 status.
                                             </div>
                                         </div>
-                                        <span style={styles.countsBadge}>
-                                            {filteredCounts.reduce(
-                                                (sum, m) => sum + m.remaining,
-                                                0
-                                            )}{" "}
-                                            pending
-                                        </span>
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                gap: 8,
+                                                alignItems: "center",
+                                            }}
+                                        >
+                                            <span style={styles.countsBadge}>
+                                                {filteredCounts.reduce(
+                                                    (sum, m) => sum + m.remaining,
+                                                    0
+                                                )}{" "}
+                                                pending
+                                            </span>
+                                        </div>
                                     </div>
                                     {filteredCounts.length === 0 ? (
                                         <EmptyState
@@ -3820,7 +4250,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                         clientCell={
                                                             <ClientCell
                                                                 c={c}
-                                                                clients={clients}
+                                                                clients={
+                                                                    clientsByProduct[
+                                                                        String(c.productId)
+                                                                    ] || []
+                                                                }
                                                                 subclients={subclients}
                                                                 saving={savingClientCaseId === c.id}
                                                                 onChange={(kind, v) =>
@@ -3830,9 +4264,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                         v
                                                                     )
                                                                 }
-                                                                readOnly={
-                                                                    isViewingOther || !!c.missed
-                                                                }
+                                                                readOnly={!!c.missed}
                                                                 styles={styles}
                                                             />
                                                         }
@@ -4047,7 +4479,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                 }}
                                                                             >
                                                                                 <option value="">
-                                                                                    Pending
+                                                                                    WIP
                                                                                 </option>
                                                                                 {SUBMISSION_OPTIONS.map(
                                                                                     (o) => (
@@ -4229,6 +4661,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                 rowSubmittingId !==
                                                                                     null
                                                                             }
+                                                                            title={
+                                                                                !c.clientId
+                                                                                    ? "Select a client for this case first"
+                                                                                    : undefined
+                                                                            }
                                                                             onClick={() =>
                                                                                 handleRowSubmit(c)
                                                                             }
@@ -4311,6 +4748,34 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             : styles.submitGrid
                                                     }
                                                 >
+                                                    <div
+                                                        style={{
+                                                            ...styles.filterField,
+                                                            flex: 1,
+                                                            minWidth: 180,
+                                                        }}
+                                                    >
+                                                        <label style={styles.smallLabel}>
+                                                            Client *
+                                                        </label>
+                                                        {renderClientPick(
+                                                            selected,
+                                                            submitting,
+                                                            true
+                                                        )}
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            ...styles.filterField,
+                                                            flex: 1,
+                                                            minWidth: 180,
+                                                        }}
+                                                    >
+                                                        <label style={styles.smallLabel}>
+                                                            Subclient
+                                                        </label>
+                                                        {renderSubclientPick(selected, submitting)}
+                                                    </div>
                                                     <div style={styles.filterField}>
                                                         <label style={styles.smallLabel}>
                                                             Case No.
@@ -4416,7 +4881,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             "Out of Scope" need a short note (query
                                                             / reason); you can track and complete
                                                             your queries later from "All Query" up
-                                                            top. Use "Bulk Submit" to submit every
+                                                            top. Use "Submit" to submit every
                                                             pending case for today in one click.
                                                         </p>
                                                     </div>
@@ -4516,7 +4981,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         </colgroup>
                                         <thead>
                                             <tr>
-                                                <th style={styles.th}>Client</th>
+                                                <th style={styles.th}>Client *</th>
                                                 <th style={styles.th}>Sub-client</th>
                                                 <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Status</th>
@@ -4552,7 +5017,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.clientName || "—"}
+                                                            {renderClientPick(
+                                                                c,
+                                                                bulkSubmitting,
+                                                                type !== "PENDING"
+                                                            )}
                                                         </td>
                                                         <td
                                                             style={{
@@ -4560,7 +5029,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.subclientName || "—"}
+                                                            {renderSubclientPick(c, bulkSubmitting)}
                                                         </td>
                                                         <td
                                                             style={{
@@ -4685,7 +5154,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         disabled={bulkSubmitting || !bulkCanSubmit}
                                         title={
                                             !bulkCanSubmit
-                                                ? "Change at least one case's status away from WIP first"
+                                                ? bulkMissingClient
+                                                    ? "Select a client for every case you are submitting"
+                                                    : "Change at least one case's status away from WIP first"
                                                 : undefined
                                         }
                                     >
@@ -5359,6 +5830,461 @@ export default function Profile({ onLogout }: ProfileProps) {
                         </div>
                     )}
 
+                    {/* ---- BULK add case numbers: all services at once ---- */}
+                    {bulkCnOpen && (
+                        <div style={styles.bulkOverlay}>
+                            <div
+                                style={{
+                                    ...styles.bulkModal,
+                                    width: 1040,
+                                    maxHeight: "90vh",
+                                    overflowY: "auto",
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div style={styles.bulkModalHeader}>
+                                    <div>
+                                        <h3 style={styles.bulkModalTitle}>
+                                            Bulk — Add Case Numbers
+                                        </h3>
+                                        <p style={styles.bulkModalSubtitle}>
+                                            All your services with cases left to add. Fill the case
+                                            number, client, subclient and status for each — WIP /
+                                            Pending keeps it pending, any other status submits it.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        style={styles.closeBtn}
+                                        onClick={closeBulkCaseNumbers}
+                                        aria-label="Close"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                {bulkCnCounts.map((mc) => {
+                                    const rows = bulkCnRows[mc.id] || [];
+                                    const clientsForService =
+                                        bulkCnClients[String(mc.productId)] || [];
+                                    return (
+                                        <div key={mc.id} style={{ marginBottom: 14 }}>
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    justifyContent: "space-between",
+                                                    alignItems: "center",
+                                                    gap: 8,
+                                                    marginBottom: 4,
+                                                }}
+                                            >
+                                                <label style={styles.smallLabel}>
+                                                    <strong>{mc.productName || "Service"}</strong> ·{" "}
+                                                    {formatDisplayDate(mc.workDate)} —{" "}
+                                                    {mc.remaining} left
+                                                </label>
+                                                {rows.length > 1 && (
+                                                    <button
+                                                        type="button"
+                                                        className="pf-btn pf-btn-outline"
+                                                        style={styles.selfAllocAllBtn}
+                                                        disabled={bulkCnSubmitting}
+                                                        onClick={() => applyBulkFirstClient(mc.id)}
+                                                    >
+                                                        Apply row 1 client to all
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {rows.length === 0 ? (
+                                                <span style={styles.smallMuted}>Added ✓</span>
+                                            ) : (
+                                                <div
+                                                    style={{
+                                                        ...styles.bulkTableWrap,
+                                                        marginBottom: 6,
+                                                    }}
+                                                >
+                                                    <table
+                                                        style={{
+                                                            ...styles.bulkTable,
+                                                            minWidth: 880,
+                                                        }}
+                                                    >
+                                                        <colgroup>
+                                                            <col style={{ width: "5%" }} />
+                                                            <col style={{ width: "21%" }} />
+                                                            <col style={{ width: "19%" }} />
+                                                            <col style={{ width: "17%" }} />
+                                                            <col style={{ width: "17%" }} />
+                                                            <col style={{ width: "21%" }} />
+                                                        </colgroup>
+                                                        <thead>
+                                                            <tr>
+                                                                <th style={styles.th}>#</th>
+                                                                <th style={styles.th}>Client *</th>
+                                                                <th style={styles.th}>Subclient</th>
+                                                                <th style={styles.th}>Case No.</th>
+                                                                <th style={styles.th}>Status</th>
+                                                                <th style={styles.th}>
+                                                                    Query / Reason
+                                                                </th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {rows.map((r, i) => {
+                                                                const subOptions =
+                                                                    subclients.filter(
+                                                                        (x) =>
+                                                                            x.clientId ===
+                                                                                r.clientId &&
+                                                                            x.status !== "Inactive"
+                                                                    );
+                                                                const queryMissing =
+                                                                    needsReason(r.status) &&
+                                                                    !r.query.trim();
+                                                                return (
+                                                                    <tr key={i} style={styles.tr}>
+                                                                        <td style={styles.td}>
+                                                                            {i + 1}
+                                                                        </td>
+                                                                        <td style={styles.td}>
+                                                                            {mc.clientId ? (
+                                                                                <span>
+                                                                                    {mc.clientName ||
+                                                                                        "—"}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <select
+                                                                                    style={{
+                                                                                        ...styles.textInput,
+                                                                                        width: "100%",
+                                                                                    }}
+                                                                                    value={
+                                                                                        r.clientId
+                                                                                    }
+                                                                                    disabled={
+                                                                                        bulkCnSubmitting
+                                                                                    }
+                                                                                    onChange={(e) =>
+                                                                                        setBulkCnRow(
+                                                                                            mc.id,
+                                                                                            i,
+                                                                                            {
+                                                                                                clientId:
+                                                                                                    e
+                                                                                                        .target
+                                                                                                        .value,
+                                                                                                subclientId:
+                                                                                                    "",
+                                                                                            }
+                                                                                        )
+                                                                                    }
+                                                                                >
+                                                                                    <option value="">
+                                                                                        {bulkCnLoading
+                                                                                            ? "Loading clients…"
+                                                                                            : clientsForService.length ===
+                                                                                                0
+                                                                                              ? "No clients mapped to this service"
+                                                                                              : "Select client"}
+                                                                                    </option>
+                                                                                    {clientsForService.map(
+                                                                                        (cl) => (
+                                                                                            <option
+                                                                                                key={
+                                                                                                    cl.id
+                                                                                                }
+                                                                                                value={
+                                                                                                    cl.id
+                                                                                                }
+                                                                                            >
+                                                                                                {
+                                                                                                    cl.name
+                                                                                                }
+                                                                                            </option>
+                                                                                        )
+                                                                                    )}
+                                                                                </select>
+                                                                            )}
+                                                                        </td>
+                                                                        <td style={styles.td}>
+                                                                            {mc.subclientId ? (
+                                                                                <span>
+                                                                                    {mc.subclientName ||
+                                                                                        "—"}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <select
+                                                                                    style={{
+                                                                                        ...styles.textInput,
+                                                                                        width: "100%",
+                                                                                    }}
+                                                                                    value={
+                                                                                        r.subclientId
+                                                                                    }
+                                                                                    disabled={
+                                                                                        bulkCnSubmitting ||
+                                                                                        !r.clientId
+                                                                                    }
+                                                                                    onChange={(e) =>
+                                                                                        setBulkCnRow(
+                                                                                            mc.id,
+                                                                                            i,
+                                                                                            {
+                                                                                                subclientId:
+                                                                                                    e
+                                                                                                        .target
+                                                                                                        .value,
+                                                                                            }
+                                                                                        )
+                                                                                    }
+                                                                                >
+                                                                                    <option value="">
+                                                                                        {!r.clientId
+                                                                                            ? "Pick client first"
+                                                                                            : subOptions.length ===
+                                                                                                0
+                                                                                              ? "No subclients"
+                                                                                              : "Select subclient"}
+                                                                                    </option>
+                                                                                    {subOptions.map(
+                                                                                        (x) => (
+                                                                                            <option
+                                                                                                key={
+                                                                                                    x.id
+                                                                                                }
+                                                                                                value={
+                                                                                                    x.id
+                                                                                                }
+                                                                                            >
+                                                                                                {
+                                                                                                    x.name
+                                                                                                }
+                                                                                            </option>
+                                                                                        )
+                                                                                    )}
+                                                                                </select>
+                                                                            )}
+                                                                        </td>
+                                                                        <td style={styles.td}>
+                                                                            <input
+                                                                                style={{
+                                                                                    ...styles.textInput,
+                                                                                    width: "100%",
+                                                                                }}
+                                                                                value={r.cn}
+                                                                                maxLength={50}
+                                                                                disabled={
+                                                                                    bulkCnSubmitting
+                                                                                }
+                                                                                placeholder={
+                                                                                    caseNumberRequired
+                                                                                        ? "Case number"
+                                                                                        : "Case number (optional)"
+                                                                                }
+                                                                                onChange={(e) =>
+                                                                                    setBulkCnRow(
+                                                                                        mc.id,
+                                                                                        i,
+                                                                                        {
+                                                                                            cn: e
+                                                                                                .target
+                                                                                                .value,
+                                                                                        }
+                                                                                    )
+                                                                                }
+                                                                                onPaste={(e) => {
+                                                                                    const t =
+                                                                                        e.clipboardData.getData(
+                                                                                            "text"
+                                                                                        );
+                                                                                    if (
+                                                                                        /[\n,\t]/.test(
+                                                                                            t.trim()
+                                                                                        )
+                                                                                    ) {
+                                                                                        e.preventDefault();
+                                                                                        pasteBulkCnRows(
+                                                                                            mc,
+                                                                                            i,
+                                                                                            t
+                                                                                        );
+                                                                                    }
+                                                                                }}
+                                                                            />
+                                                                        </td>
+                                                                        <td style={styles.td}>
+                                                                            <select
+                                                                                style={{
+                                                                                    ...styles.textInput,
+                                                                                    width: "100%",
+                                                                                }}
+                                                                                value={r.status}
+                                                                                disabled={
+                                                                                    bulkCnSubmitting
+                                                                                }
+                                                                                onChange={(e) =>
+                                                                                    setBulkCnRow(
+                                                                                        mc.id,
+                                                                                        i,
+                                                                                        {
+                                                                                            status: e
+                                                                                                .target
+                                                                                                .value as
+                                                                                                | "WIP"
+                                                                                                | "PENDING"
+                                                                                                | SubmissionType,
+                                                                                            query: needsReason(
+                                                                                                e
+                                                                                                    .target
+                                                                                                    .value
+                                                                                            )
+                                                                                                ? r.query
+                                                                                                : "",
+                                                                                        }
+                                                                                    )
+                                                                                }
+                                                                            >
+                                                                                <option value="WIP">
+                                                                                    WIP
+                                                                                </option>
+                                                                                <option value="PENDING">
+                                                                                    Pending
+                                                                                </option>
+                                                                                {SUBMISSION_OPTIONS.map(
+                                                                                    (o) => (
+                                                                                        <option
+                                                                                            key={
+                                                                                                o.value
+                                                                                            }
+                                                                                            value={
+                                                                                                o.value
+                                                                                            }
+                                                                                        >
+                                                                                            {
+                                                                                                o.label
+                                                                                            }
+                                                                                        </option>
+                                                                                    )
+                                                                                )}
+                                                                            </select>
+                                                                        </td>
+                                                                        <td
+                                                                            style={{
+                                                                                ...styles.td,
+                                                                                whiteSpace:
+                                                                                    "normal",
+                                                                            }}
+                                                                        >
+                                                                            {needsReason(
+                                                                                r.status
+                                                                            ) ? (
+                                                                                <input
+                                                                                    style={{
+                                                                                        ...styles.textInput,
+                                                                                        width: "100%",
+                                                                                        border: queryMissing
+                                                                                            ? `1px solid ${STATUS_RED}`
+                                                                                            : styles
+                                                                                                  .textInput
+                                                                                                  .border,
+                                                                                    }}
+                                                                                    value={r.query}
+                                                                                    disabled={
+                                                                                        bulkCnSubmitting
+                                                                                    }
+                                                                                    placeholder={reasonPlaceholder(
+                                                                                        r.status
+                                                                                    )}
+                                                                                    onChange={(e) =>
+                                                                                        setBulkCnRow(
+                                                                                            mc.id,
+                                                                                            i,
+                                                                                            {
+                                                                                                query: e
+                                                                                                    .target
+                                                                                                    .value,
+                                                                                            }
+                                                                                        )
+                                                                                    }
+                                                                                />
+                                                                            ) : (
+                                                                                <span
+                                                                                    style={
+                                                                                        styles.smallMuted
+                                                                                    }
+                                                                                >
+                                                                                    —
+                                                                                </span>
+                                                                            )}
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+
+                                {bulkCnError && <p style={styles.rowError}>{bulkCnError}</p>}
+
+                                <div style={styles.bulkModalFooter}>
+                                    <span style={{ ...styles.smallMuted, marginRight: "auto" }}>
+                                        {bulkCnTotals.entered} entered
+                                    </span>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-outline"
+                                        style={styles.bulkCancelBtn}
+                                        onClick={closeBulkCaseNumbers}
+                                        disabled={bulkCnSubmitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="pf-btn pf-btn-solid"
+                                        style={{
+                                            ...styles.submitBtn,
+                                            width: "auto",
+                                            flex: 1,
+                                            opacity:
+                                                bulkCnSubmitting ||
+                                                bulkCnTotals.entered === 0 ||
+                                                bulkCnTotals.missingClient
+                                                    ? 0.6
+                                                    : 1,
+                                            cursor:
+                                                bulkCnSubmitting ||
+                                                bulkCnTotals.entered === 0 ||
+                                                bulkCnTotals.missingClient
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                        }}
+                                        onClick={submitBulkCaseNumbers}
+                                        disabled={
+                                            bulkCnSubmitting ||
+                                            bulkCnTotals.entered === 0 ||
+                                            bulkCnTotals.missingClient
+                                        }
+                                        title={
+                                            bulkCnTotals.missingClient
+                                                ? "Select a client for every case number you typed"
+                                                : undefined
+                                        }
+                                    >
+                                        {bulkCnSubmitting
+                                            ? "Saving…"
+                                            : `Save ${bulkCnTotals.entered}`}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* ---- Add Case Numbers modal — per-case client / subclient + status ---- */}
                     {addCnCount && (
                         <div style={styles.bulkOverlay}>
@@ -5374,10 +6300,10 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             {formatDisplayDate(addCnCount.workDate)} —{" "}
                                             <strong>{addCnCount.remaining}</strong> case
                                             {addCnCount.remaining === 1 ? "" : "s"} left to add.
-                                            Type the case number, pick its client (every case can
-                                            have a different one) and its status — WIP / Pending
-                                            keeps it pending, any other status submits it right
-                                            away.
+                                            Pick the client and subclient (every case can have a
+                                            different one), type the case number and its status —
+                                            WIP / Pending keeps it pending, any other status submits
+                                            it right away.
                                         </p>
                                     </div>
                                     <button
@@ -5391,7 +6317,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 </div>
 
                                 <label style={styles.smallLabel}>
-                                    Case numbers, client &amp; status
+                                    Client, case numbers &amp; status
                                 </label>
                                 <div
                                     style={{
@@ -5403,18 +6329,18 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     <table style={{ ...styles.bulkTable, minWidth: 880 }}>
                                         <colgroup>
                                             <col style={{ width: "5%" }} />
-                                            <col style={{ width: "17%" }} />
                                             <col style={{ width: "21%" }} />
                                             <col style={{ width: "19%" }} />
+                                            <col style={{ width: "17%" }} />
                                             <col style={{ width: "17%" }} />
                                             <col style={{ width: "21%" }} />
                                         </colgroup>
                                         <thead>
                                             <tr>
                                                 <th style={styles.th}>#</th>
-                                                <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Client *</th>
                                                 <th style={styles.th}>Subclient</th>
+                                                <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Status</th>
                                                 <th style={styles.th}>Query / Reason</th>
                                             </tr>
@@ -5434,6 +6360,89 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 return (
                                                     <tr key={i} style={styles.tr}>
                                                         <td style={styles.td}>{i + 1}</td>
+                                                        <td style={styles.td}>
+                                                            {addCnCount?.clientId ? (
+                                                                <span>
+                                                                    {addCnCount?.clientName || "—"}
+                                                                </span>
+                                                            ) : (
+                                                                <select
+                                                                    style={{
+                                                                        ...styles.textInput,
+                                                                        width: "100%",
+                                                                    }}
+                                                                    value={r.clientId}
+                                                                    disabled={addCnSubmitting}
+                                                                    onChange={(e) =>
+                                                                        setAddCnRow(i, {
+                                                                            clientId:
+                                                                                e.target.value,
+                                                                            subclientId: "",
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <option value="">
+                                                                        {addCnClientsLoading
+                                                                            ? "Loading clients…"
+                                                                            : addCnClients.length ===
+                                                                                0
+                                                                              ? "No clients mapped to this service"
+                                                                              : "Select client"}
+                                                                    </option>
+                                                                    {addCnClients.map((cl) => (
+                                                                        <option
+                                                                            key={cl.id}
+                                                                            value={cl.id}
+                                                                        >
+                                                                            {cl.name}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            {addCnCount?.subclientId ? (
+                                                                <span>
+                                                                    {addCnCount?.subclientName ||
+                                                                        "—"}
+                                                                </span>
+                                                            ) : (
+                                                                <select
+                                                                    style={{
+                                                                        ...styles.textInput,
+                                                                        width: "100%",
+                                                                    }}
+                                                                    value={r.subclientId}
+                                                                    disabled={
+                                                                        addCnSubmitting ||
+                                                                        !r.clientId
+                                                                    }
+                                                                    onChange={(e) =>
+                                                                        setAddCnRow(i, {
+                                                                            subclientId:
+                                                                                e.target.value,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <option value="">
+                                                                        {!r.clientId
+                                                                            ? "Pick client first"
+                                                                            : rowSubOptions.length ===
+                                                                                0
+                                                                              ? "No subclients"
+                                                                              : "Select subclient"}
+                                                                    </option>
+                                                                    {rowSubOptions.map((s) => (
+                                                                        <option
+                                                                            key={s.id}
+                                                                            value={s.id}
+                                                                        >
+                                                                            {s.name}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
+                                                        </td>
                                                         <td style={styles.td}>
                                                             <input
                                                                 style={{
@@ -5464,68 +6473,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     }
                                                                 }}
                                                             />
-                                                        </td>
-                                                        <td style={styles.td}>
-                                                            <select
-                                                                style={{
-                                                                    ...styles.textInput,
-                                                                    width: "100%",
-                                                                }}
-                                                                value={r.clientId}
-                                                                disabled={addCnSubmitting}
-                                                                onChange={(e) =>
-                                                                    setAddCnRow(i, {
-                                                                        clientId: e.target.value,
-                                                                        subclientId: "",
-                                                                    })
-                                                                }
-                                                            >
-                                                                <option value="">
-                                                                    {addCnClientsLoading
-                                                                        ? "Loading clients…"
-                                                                        : addCnClients.length === 0
-                                                                          ? "No clients mapped to this service"
-                                                                          : "Select client"}
-                                                                </option>
-                                                                {addCnClients.map((cl) => (
-                                                                    <option
-                                                                        key={cl.id}
-                                                                        value={cl.id}
-                                                                    >
-                                                                        {cl.name}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
-                                                        </td>
-                                                        <td style={styles.td}>
-                                                            <select
-                                                                style={{
-                                                                    ...styles.textInput,
-                                                                    width: "100%",
-                                                                }}
-                                                                value={r.subclientId}
-                                                                disabled={
-                                                                    addCnSubmitting || !r.clientId
-                                                                }
-                                                                onChange={(e) =>
-                                                                    setAddCnRow(i, {
-                                                                        subclientId: e.target.value,
-                                                                    })
-                                                                }
-                                                            >
-                                                                <option value="">
-                                                                    {!r.clientId
-                                                                        ? "Pick client first"
-                                                                        : rowSubOptions.length === 0
-                                                                          ? "No subclients"
-                                                                          : "Subclient (optional)"}
-                                                                </option>
-                                                                {rowSubOptions.map((s) => (
-                                                                    <option key={s.id} value={s.id}>
-                                                                        {s.name}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
                                                         </td>
                                                         <td style={styles.td}>
                                                             <select
@@ -6930,11 +7877,9 @@ function ClientCell({
 }) {
     const clientSet = !!c.clientId;
     const subclientSet = !!c.subclientId;
-    // Client / subclient can NOT be added from this table. They are chosen only
-    // at submit time (Add Case Numbers popup); after that editing is off.
-    // So the cell is always plain text ("-" when empty). Flip to false to
-    // bring the inline dropdowns back.
-    const LOCKED = true;
+    // Only a BLANK client / subclient can be filled (dropdown only). Once it
+    // is filled it is plain text and can not be edited here.
+    const LOCKED = false;
 
     const selectStyle: CSSProperties = {
         ...styles.textInput,
