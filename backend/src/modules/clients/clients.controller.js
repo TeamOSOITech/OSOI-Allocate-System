@@ -22,6 +22,7 @@ const clientsService = require("./clients.service");
 // That link lives in the client_products junction table, managed here via
 // productsService.syncClientProducts / getProductsForClient.
 const productsService = require("../products/products.service");
+const { getTeamScope } = require("../../utils/teamScope");
 
 // ---------- brand theme ----------
 const BRAND = {
@@ -245,7 +246,14 @@ async function attachPendingClientApprovals(formattedClients, organizationId) {
 async function listAllSubclients(req, res) {
   try {
     const orgId = req.user.organizationId;
-    const subclients = await clientsService.getAllSubclientsForOrg(orgId);
+    let subclients = await clientsService.getAllSubclientsForOrg(orgId);
+    // Vertical Head / Team Member: only subclients linked to their own team
+    const scope = await getTeamScope(req);
+    if (scope) {
+      subclients = (subclients || []).filter((s) =>
+        scope.subclientIds.has(String(s.id)),
+      );
+    }
     res.json(
       (subclients || []).map((s) => ({
         id: s.id,
@@ -265,10 +273,23 @@ async function listClients(req, res) {
   try {
     const orgId = req.user.organizationId;
 
-    const clients = await clientsService.getAllClients(orgId);
-    const subclients = await clientsService.getAllSubclientsForOrg(orgId);
-    const clientProductLinks =
+    let clients = await clientsService.getAllClients(orgId);
+    let subclients = await clientsService.getAllSubclientsForOrg(orgId);
+    let clientProductLinks =
       await clientsService.getClientProductLinksForOrg(orgId);
+
+    // Vertical Head / Team Member: only clients (and their services /
+    // subclients) linked to their own team. Other roles: unchanged.
+    const scope = await getTeamScope(req);
+    if (scope) {
+      clients = clients.filter((c) => scope.clientIds.has(String(c.id)));
+      subclients = subclients.filter((s) =>
+        scope.subclientIds.has(String(s.id)),
+      );
+      clientProductLinks = (clientProductLinks || []).filter((row) =>
+        scope.productIds.has(String(row.service_master?.id)),
+      );
+    }
 
     const formatted = clients.map((client) => {
       const products = (clientProductLinks || [])
@@ -691,8 +712,22 @@ async function getClientById(req, res) {
       return res.status(404).json({ message: "Client not found" });
     }
 
-    const subclients = await clientsService.getSubclientsForClient(id, orgId);
-    const products = await productsService.getProductsForClient(id, orgId);
+    let subclients = await clientsService.getSubclientsForClient(id, orgId);
+    let products = await productsService.getProductsForClient(id, orgId);
+
+    // Vertical Head / Team Member: own team's data only
+    const scope = await getTeamScope(req);
+    if (scope) {
+      if (!scope.clientIds.has(String(id))) {
+        return res.status(404).json({ message: "Client not found" });
+      }
+      subclients = (subclients || []).filter((s) =>
+        scope.subclientIds.has(String(s.id)),
+      );
+      products = (products || []).filter((p) =>
+        scope.productIds.has(String(p.id)),
+      );
+    }
 
     res.json({
       ...toClientResponse(client, subclients?.length || 0, products),

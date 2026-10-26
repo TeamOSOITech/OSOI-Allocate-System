@@ -78,8 +78,10 @@ async function attachPendingApprovals(products, organizationId) {
 // Team once from user_master; a service is "theirs" if their team name
 // appears (case-insensitively) in that service's `teams` list. Every
 // other role is unaffected — full catalog as before.
+// UPDATED: Team Member gets the same own-team scope as Vertical Head.
 async function scopeProductsForVerticalHead(products, req) {
-  if (req.user.role !== "VERTICAL_HEAD") return products;
+  if (!["VERTICAL_HEAD", "TEAM_MEMBER"].includes(req.user.role))
+    return products;
 
   const { data: self } = await supabase
     .from("user_master")

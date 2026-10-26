@@ -69,6 +69,7 @@ const { rolloverPendingCounts } = require("./caseRollover");
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const { isIsoDate } = require("../../utils/orgGuards");
+const { getTeamScope } = require("../../utils/teamScope");
 // NEW: Excel dropdown validation for the bulk-upload template (same helpers
 // the Client / Subclient templates use).
 const {
@@ -1105,22 +1106,18 @@ async function buildCaseTemplateLists(req) {
   let products = (prodRes.data || []).filter(
     (p) => clean(p.product_name) && p.status !== "Inactive",
   );
-  if (req.user.role === "VERTICAL_HEAD") {
-    const { data: self } = await supabase
-      .from("user_master")
-      .select('"Worked In Teams"')
-      .eq("Auth User Id", req.user.userId)
-      .eq("organization_id", orgId)
-      .maybeSingle();
-    const ownTeam = clean(self?.["Worked In Teams"]).toLowerCase();
-    products = products.filter((p) =>
-      (p.teams || []).map((t) => clean(t).toLowerCase()).includes(ownTeam),
-    );
+  // Vertical Head / Team Member: own team's services, clients, subclients only
+  const teamScope = await getTeamScope(req);
+  if (teamScope) {
+    products = products.filter((p) => teamScope.productIds.has(String(p.id)));
   }
   products.sort((a, b) => byName(clean(a.product_name), clean(b.product_name)));
 
   const activeClients = (clientRes.data || []).filter(
-    (c) => clean(c.name) && c.status !== "Inactive",
+    (c) =>
+      clean(c.name) &&
+      c.status !== "Inactive" &&
+      (!teamScope || teamScope.clientIds.has(String(c.id))),
   );
   const clientById = new Map(
     activeClients.map((c) => [String(c.id), clean(c.name)]),
@@ -1152,7 +1149,8 @@ async function buildCaseTemplateLists(req) {
               (s) =>
                 String(s.client_id) === cid &&
                 clean(s.name) &&
-                s.status !== "Inactive",
+                s.status !== "Inactive" &&
+                (!teamScope || teamScope.subclientIds.has(String(s.id))),
             )
             .map((s) => clean(s.name)),
         ),

@@ -20,6 +20,7 @@ const subclientsService = require("./subclients.service");
 // REVERSED MAPPING: a Subclient now picks which existing Products it uses,
 // linked via the subclient_products junction table.
 const productsService = require("../products/products.service");
+const { getTeamScope } = require("../../utils/teamScope");
 
 // ---------- brand theme (matches clients.controller.js) ----------
 const BRAND = {
@@ -144,11 +145,23 @@ async function listSubclients(req, res) {
   try {
     const orgId = req.user.organizationId;
 
-    const subclients = await subclientsService.getAllSubclients(orgId);
+    let subclients = await subclientsService.getAllSubclients(orgId);
+    // Vertical Head / Team Member: only subclients linked to their own team
+    const scope = await getTeamScope(req);
+    if (scope) {
+      subclients = subclients.filter((s) =>
+        scope.subclientIds.has(String(s.id)),
+      );
+    }
     const clients = await subclientsService.getClientNamesForOrg(orgId);
     const branches = await subclientsService.getBranchesForOrg(orgId);
-    const subclientProductLinks =
+    let subclientProductLinks =
       await subclientsService.getSubclientProductLinksForOrg(orgId);
+    if (scope) {
+      subclientProductLinks = (subclientProductLinks || []).filter((row) =>
+        scope.productIds.has(String(row.service_master?.id)),
+      );
+    }
 
     const formatted = subclients.map((subclient) => {
       const products = (subclientProductLinks || [])
@@ -591,6 +604,11 @@ async function getSubclientById(req, res) {
 
     const subclient = await subclientsService.getSubclientById(id, orgId);
     if (!subclient) {
+      return res.status(404).json({ message: "Subclient not found" });
+    }
+    // Vertical Head / Team Member: own team's subclients only
+    const scope = await getTeamScope(req);
+    if (scope && !scope.subclientIds.has(String(id))) {
       return res.status(404).json({ message: "Subclient not found" });
     }
 

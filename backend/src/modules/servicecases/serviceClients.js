@@ -17,6 +17,7 @@
 // controller requires THIS file, so it would create a circular import.
 
 const supabase = require("../../config/supabaseClient");
+const { getTeamScope } = require("../../utils/teamScope");
 
 // Ids (as strings) of every client of this organization mapped to a service.
 async function getMappedClientIds(productId, organizationId) {
@@ -63,6 +64,11 @@ async function assertClientMappedToProduct(
 async function listClientsForProduct(req, res) {
   try {
     const orgId = req.user.organizationId;
+    // Vertical Head / Team Member: only services of their own team
+    const scope = await getTeamScope(req);
+    if (scope && !scope.productIds.has(String(req.params.productId))) {
+      return res.json({ success: true, data: [] });
+    }
     const ids = await getMappedClientIds(req.params.productId, orgId);
     if (ids.length === 0) return res.json({ success: true, data: [] });
 
@@ -80,12 +86,10 @@ async function listClientsForProduct(req, res) {
     res.json({ success: true, data: data || [] });
   } catch (err) {
     console.error("listClientsForProduct error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
@@ -163,12 +167,10 @@ async function setProductClients(req, res) {
     });
   } catch (err) {
     console.error("setProductClients error:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Something went wrong on our end. Please try again.",
-      });
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
   }
 }
 
