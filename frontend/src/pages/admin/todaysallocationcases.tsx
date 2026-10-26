@@ -136,6 +136,8 @@ type LightCase = {
     assignedEmployeeId: string | null;
     // when it was allocated — used so the time card shows TODAY only
     allocatedAt: string | null;
+    // FIX: used when a case has no allocation timestamp (same fallback the Profile page uses)
+    workDate?: string | null;
 };
 // NEW (URGENT): a pending case that can be picked in the "Anything Urgent" popup
 type UrgentCase = {
@@ -187,14 +189,20 @@ function todayStr() {
 
 // local calendar day (YYYY-MM-DD) of a timestamp — used to tell whether an
 // allocation was made on the selected day.
+// FIX: business day = India time (same as the Profile page and the server's
+// rollover), NOT the browser's time zone - otherwise the same allocation
+// can fall on different days on the two pages.
+const ymdInAppTz = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
 function localDayOf(ts?: string | null) {
     if (!ts) return "";
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "";
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return ymdInAppTz.format(d);
 }
 
 // minutes -> "2h 30m"
@@ -562,6 +570,7 @@ export default function TodaysAllocationCases({
                         productId: String(r.productId),
                         assignedEmployeeId: r.assignedEmployeeId || null,
                         allocatedAt: r.allocatedAt || null,
+                        workDate: r.workDate || null,
                     });
                 });
                 const totalPages = json.pagination?.totalPages ?? 1;
@@ -617,6 +626,7 @@ export default function TodaysAllocationCases({
                         productId: String(r.productId),
                         assignedEmployeeId: r.assignedEmployeeId || null,
                         allocatedAt: r.allocatedAt || null,
+                        workDate: r.workDate || null,
                     })
                 );
                 const totalPages = json.pagination?.totalPages ?? 1;
@@ -876,7 +886,8 @@ export default function TodaysAllocationCases({
             const emp = isUnsaved ? pendingSelection[c.id] : c.assignedEmployeeId || "";
             if (!emp) return;
             // saved allocation from an earlier day -> not part of today's time
-            if (!isUnsaved && localDayOf(c.allocatedAt) !== workDate) return;
+            // no allocation timestamp -> fall back to the work date (same as Profile)
+            if (!isUnsaved && (localDayOf(c.allocatedAt) || c.workDate || "") !== workDate) return;
             add(emp, 1, 0, ampOf(c.productId));
         });
 
@@ -892,7 +903,9 @@ export default function TodaysAllocationCases({
                 // saved quantity counts only if it was allocated on this day
                 // (an old server that sends no allocatedAt at all -> keep counting it)
                 const allocToday =
-                    !!a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate);
+                    !!a &&
+                    (a.allocatedAt === undefined ||
+                        (localDayOf(a.allocatedAt) || c.workDate || "") === workDate);
                 const savedToday = allocToday ? a?.quantity || 0 : 0;
                 // FIX (double count): units the employee already gave a case
                 // number to are REAL cases now (they are in the case list above),
