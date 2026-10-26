@@ -70,6 +70,10 @@ const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const ExcelJS = require("exceljs");
 const { isIsoDate } = require("../../utils/orgGuards");
 const { getTeamScope } = require("../../utils/teamScope");
+const {
+  isCaseNumberRequired,
+  withEffectiveCaseNumber,
+} = require("../../utils/orgCaseNumber");
 // NEW: Excel dropdown validation for the bulk-upload template (same helpers
 // the Client / Subclient templates use).
 const {
@@ -380,7 +384,11 @@ async function getProduct(productId, organizationId) {
     .eq("organization_id", organizationId)
     .maybeSingle();
   if (error) throw error;
-  return data;
+  // Org "Require case numbers" OFF -> every service counts as no case number
+  return withEffectiveCaseNumber(
+    data,
+    await isCaseNumberRequired(organizationId),
+  );
 }
 
 // NEW: Vertical Head can create cases (Log Cases — Manual Entry, Auto
@@ -1377,8 +1385,12 @@ async function uploadCustomServiceCases(req, res) {
       .select("*")
       .eq("organization_id", orgId);
     if (prodErr) throw prodErr;
+    const caseNoRequired = await isCaseNumberRequired(orgId);
     const productById = new Map(
-      (orgProducts || []).map((p) => [String(p.id), p]),
+      withEffectiveCaseNumber(orgProducts || [], caseNoRequired).map((p) => [
+        String(p.id),
+        p,
+      ]),
     );
     const productByName = new Map(
       (orgProducts || []).map((p) => [

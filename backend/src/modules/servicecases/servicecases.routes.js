@@ -116,9 +116,17 @@ router.post("/count-allocations/clear", allocPerm, clearCountAllocations);
 // ---- NEW: employee's own counts (Profile page) ----
 // Any logged-in employee; "me" is always req.user.userId inside the
 // handlers, so these can only ever touch the caller's own allocations.
-router.get("/my-counts", listMyCounts);
+// Viewing ANOTHER employee's counts (?employeeId=) needs allocation
+// permission; the employee's own counts stay open to them.
+const viewOtherCounts = (req, res, next) => {
+  const t = req.query.employeeId;
+  if (t && String(t) !== String(req.user.userId))
+    return allocPerm(req, res, next);
+  next();
+};
+router.get("/my-counts", viewOtherCounts, listMyCounts);
 // Count units (no case number) left pending at day end — read-only history.
-router.get("/my-missed-counts", listMyMissedCounts);
+router.get("/my-missed-counts", viewOtherCounts, listMyMissedCounts);
 // NEW (ROLLOVER): cases left pending at day end (read-only history).
 router.get("/my-missed", listMyMissedCases);
 // NEW: managers — open queries of their team + which are over 48h.

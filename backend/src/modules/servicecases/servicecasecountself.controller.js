@@ -40,6 +40,11 @@ const { ensureRollover, startOfTodayISO } = require("./caseRollover");
 
 const orgIdOf = (req) => req.user.organizationId;
 const userIdOf = (req) => req.user.userId;
+// NEW: a manager opening another employee's Profile sends ?employeeId=<id>.
+// The route only lets that through for people with allocation permission
+// (see servicecases.routes.js); without it this is always the caller.
+const targetUserOf = (req) =>
+  req.query.employeeId ? String(req.query.employeeId) : userIdOf(req);
 
 // Max case numbers typed in one go (frontend caps lower; this is a safety net).
 const MAX_CASE_NUMBERS_AT_ONCE = 200;
@@ -201,7 +206,7 @@ async function loadOpenCountsWithAllocations(orgId, workDate) {
 async function listMyCounts(req, res) {
   try {
     const orgId = orgIdOf(req);
-    const me = userIdOf(req);
+    const me = targetUserOf(req);
     const workDate = validYmd(req.query.workDate) || todayInTz();
     const productId = req.query.productId ? String(req.query.productId) : null;
 
@@ -1032,7 +1037,7 @@ async function fillCaseClient(req, res) {
 async function listMyMissedCounts(req, res) {
   try {
     const orgId = orgIdOf(req);
-    const me = userIdOf(req);
+    const me = targetUserOf(req);
     await ensureRollover(orgId);
 
     const { data, error } = await supabase

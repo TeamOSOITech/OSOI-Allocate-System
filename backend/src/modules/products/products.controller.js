@@ -6,6 +6,10 @@ const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
 const productService = require("./products.service");
 const supabase = require("../../config/supabaseClient");
 const { getAllTeams } = require("../teams/teams.service");
+const {
+  isCaseNumberRequired,
+  withEffectiveCaseNumber,
+} = require("../../utils/orgCaseNumber");
 const ExcelJS = require("exceljs");
 const {
   applyColumnValidation,
@@ -121,7 +125,11 @@ const getAllProducts = async (req, res) => {
       : products;
 
     const scoped = await scopeProductsForVerticalHead(withPending, req);
-    return res.status(200).json({ success: true, data: scoped });
+    // Org "Require case numbers" OFF -> every service reads as no case number
+    const required = await isCaseNumberRequired(req.user.organizationId);
+    return res
+      .status(200)
+      .json({ success: true, data: withEffectiveCaseNumber(scoped, required) });
   } catch (error) {
     return sendError(res, error, 500);
   }
@@ -141,7 +149,13 @@ const getProductById = async (req, res) => {
         .json({ success: false, message: "Product not found" });
     }
 
-    return res.status(200).json({ success: true, data: product });
+    const required = await isCaseNumberRequired(req.user.organizationId);
+    return res
+      .status(200)
+      .json({
+        success: true,
+        data: withEffectiveCaseNumber(product, required),
+      });
   } catch (error) {
     return sendError(res, error, 500);
   }
