@@ -17,6 +17,7 @@ const { authenticate } = require("../../middlewares/auth");
 // route-level gate actually matches the permission matrix. Process Lead
 // still doesn't get to act immediately, though — see approvalGate below.
 const { requireAnyPermission } = require("../../middlewares/rbac");
+const { denyRoles } = require("../../middlewares/denyRoles");
 
 // APPROVAL: intercepts Process Lead's create/update/delete here and
 // files it as a pending approval instead of letting it reach the route
@@ -81,6 +82,7 @@ router.get("/all/subclients", clientsController.listAllSubclients);
 router.post(
   "/",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("CLIENT_CREATE"),
   clientsController.createClient,
 );
@@ -99,6 +101,7 @@ router.get("/bulk/template", clientsController.downloadTemplate);
 router.post(
   "/bulk/upload",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   upload.single("file"),
   bulkApprovalGate("CLIENT_BULK_CREATE", (file) =>
     clientsController.parseClientBulkRows(file.buffer),
@@ -114,6 +117,7 @@ router.get("/:id", clientsController.getClientById);
 router.put(
   "/:id",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("CLIENT_UPDATE", { includeParamsId: true }),
   clientsController.updateClient,
 );
@@ -126,6 +130,7 @@ router.put(
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("CLIENT_DELETE", {
     includeParamsId: true,
     resolveExtraPayload: async (req) => {

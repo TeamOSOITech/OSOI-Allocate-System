@@ -4,6 +4,7 @@ const router = express.Router();
 const productController = require("./products.controller");
 const productService = require("./products.service");
 const { authenticate } = require("../../middlewares/auth");
+const { denyRoles } = require("../../middlewares/denyRoles");
 const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
 const {
   approvalGate,
@@ -63,6 +64,7 @@ router.get("/:id", productController.getProductById);
 router.post(
   "/",
   requireAnyPermission("products.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SERVICE_CREATE"),
   productController.createProduct,
 );
@@ -74,6 +76,7 @@ router.post(
 router.post(
   "/bulk/upload",
   requireAnyPermission("products.manage"),
+  denyRoles("PROCESS_LEAD"),
   upload.single("file"),
   bulkApprovalGate("SERVICE_BULK_CREATE", (file) =>
     productController.parseProductBulkRows(file.path),
@@ -88,6 +91,7 @@ router.post(
 router.put(
   "/:id",
   requireAnyPermission("tasks.amend", "tasks.amend_time", "products.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SERVICE_UPDATE", { includeParamsId: true }),
   productController.updateProduct,
 );
@@ -101,6 +105,7 @@ router.put(
 router.delete(
   "/:id",
   requireAnyPermission("products.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SERVICE_DELETE", {
     includeParamsId: true,
     resolveExtraPayload: async (req) => {

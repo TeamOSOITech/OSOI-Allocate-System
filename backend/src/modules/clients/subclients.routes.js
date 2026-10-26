@@ -12,6 +12,7 @@ const { authenticate } = require("../../middlewares/auth");
 // do not. (Subclients share the same "clients.manage" permission as
 // Clients — there's no separate subclients-only code.)
 const { requireAnyPermission } = require("../../middlewares/rbac");
+const { denyRoles } = require("../../middlewares/denyRoles");
 const { approvalGate } = require("../../middlewares/approvalGate");
 
 const subclientsController = require("./subclients.controller");
@@ -55,6 +56,7 @@ router.get("/", subclientsController.listSubclients);
 router.post(
   "/",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SUBCLIENT_CREATE"),
   subclientsController.createSubclient,
 );
@@ -68,6 +70,7 @@ router.get("/bulk/template", subclientsController.downloadTemplate);
 router.post(
   "/bulk/upload",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   upload.single("file"),
   subclientsController.bulkUpload,
 );
@@ -85,6 +88,7 @@ router.get("/:id", subclientsController.getSubclientById);
 router.put(
   "/:id",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SUBCLIENT_UPDATE", { includeParamsId: true }),
   subclientsController.updateSubclient,
 );
@@ -96,6 +100,7 @@ router.put(
 router.delete(
   "/:id",
   requireAnyPermission("clients.manage"),
+  denyRoles("PROCESS_LEAD"),
   approvalGate("SUBCLIENT_DELETE", {
     includeParamsId: true,
     resolveExtraPayload: async (req) => {
