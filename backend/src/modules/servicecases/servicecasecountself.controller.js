@@ -623,42 +623,62 @@ async function addCaseNumbersToCount(req, res) {
       });
     }
 
-    // ---- client / subclient: keep what the count has, fill what's missing ----
-    let clientId = strId(count.client_id);
-    let subclientId = strId(count.subclient_id);
+    // ---- client / subclient PER CASE ----
+    // Every case needs a client. Order: what the count already has, then the
+    // client chosen for THAT case (statuses[caseNo].clientId), then a single
+    // request-level clientId. Each distinct client / subclient is validated
+    // once (exists in this org, mapped to the service, subclient belongs to
+    // the client). Nothing is created unless every case has a valid client.
+    const countClientId = strId(count.client_id);
+    const countSubclientId = strId(count.subclient_id);
     const bodyClientId = strId(req.body?.clientId);
     const bodySubclientId = strId(req.body?.subclientId);
-
-    if (!clientId && bodyClientId) {
-      if (!(await clientExists(bodyClientId, orgId))) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Client not found" });
-      }
-      // NEW: the client must be mapped to this count's service.
-      const mapCheck = await assertClientMappedToProduct(
-        bodyClientId,
-        count.product_id,
-        orgId,
-      );
-      if (!mapCheck.ok) {
-        return res
-          .status(400)
-          .json({ success: false, message: mapCheck.message });
-      }
-      clientId = bodyClientId;
-    }
-    if (!subclientId && bodySubclientId) {
+    const clientChecked = new Set();
+    const subChecked = new Set();
+    const clientPick = {}; // CASE NO (upper) -> { clientId, subclientId }
+    for (const cn of candidates) {
+      const st = statuses[cn.toUpperCase()] || {};
+      const clientId = countClientId || strId(st.clientId) || bodyClientId;
       if (!clientId) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Pick a client first." });
+        return res.status(400).json({
+          success: false,
+          message: `Select a client for ${cn} before adding it.`,
+        });
       }
-      const check = await validateSubclient(bodySubclientId, orgId, clientId);
-      if (!check.ok) {
-        return res.status(404).json({ success: false, message: check.message });
+      if (!countClientId && !clientChecked.has(clientId)) {
+        if (!(await clientExists(clientId, orgId))) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Client not found" });
+        }
+        // the client must be mapped to this count's service
+        const mapCheck = await assertClientMappedToProduct(
+          clientId,
+          count.product_id,
+          orgId,
+        );
+        if (!mapCheck.ok) {
+          return res
+            .status(400)
+            .json({ success: false, message: mapCheck.message });
+        }
+        clientChecked.add(clientId);
       }
-      subclientId = bodySubclientId;
+      const subclientId =
+        countSubclientId || strId(st.subclientId) || bodySubclientId || null;
+      if (subclientId && !countSubclientId) {
+        const pair = `${clientId}:${subclientId}`;
+        if (!subChecked.has(pair)) {
+          const check = await validateSubclient(subclientId, orgId, clientId);
+          if (!check.ok) {
+            return res
+              .status(404)
+              .json({ success: false, message: check.message });
+          }
+          subChecked.add(pair);
+        }
+      }
+      clientPick[cn.toUpperCase()] = { clientId, subclientId };
     }
 
     // ---- duplicates already under the SAME service ----
@@ -683,7 +703,39 @@ async function addCaseNumbersToCount(req, res) {
 
     let createdCount = 0;
     let submittedNow = 0;
+    // Slots reserved in ONE atomic database step (see reserve_count_slots in
+    // sql/atomic_count_slots.sql). Two tabs / devices saving at the same
+    // moment can then never create more cases than were allocated.
+    let reservedSlots = 0;
     if (toInsert.length > 0) {
+      const { data: reservedOk, error: reserveErr } = await supabase.rpc(
+        "reserve_count_slots",
+        {
+          p_org: String(orgId),
+          p_count: String(countId),
+          p_employee: String(me),
+          p_n: toInsert.length,
+        },
+      );
+      if (reserveErr) {
+        // function not created yet -> keep the old behaviour (counters are
+        // bumped after the insert, below) and say so in the log
+        if (reserveErr.code === "PGRST202" || reserveErr.code === "42883") {
+          console.warn(
+            "reserve_count_slots() is missing — run sql/atomic_count_slots.sql in Supabase. Using the non-atomic fallback.",
+          );
+        } else {
+          throw reserveErr;
+        }
+      } else if (!reservedOk) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "No cases from this count are waiting on you (it may have just been saved from another tab or device). Refresh and check.",
+        });
+      } else {
+        reservedSlots = toInsert.length;
+      }
       const { data: maxRow, error: maxError } = await supabase
         .from("service_cases")
         .select("sequence_number")
@@ -701,8 +753,9 @@ async function addCaseNumbersToCount(req, res) {
         const row = {
           organization_id: orgId,
           product_id: count.product_id,
-          client_id: clientId,
-          subclient_id: subclientId,
+          client_id: clientPick[caseNumber.toUpperCase()]?.clientId || null,
+          subclient_id:
+            clientPick[caseNumber.toUpperCase()]?.subclientId || null,
           // keeps the date the work was logged for (backlog counts stay backlog)
           work_date: count.work_date,
           sequence_number: startSeq + i,
@@ -730,6 +783,16 @@ async function addCaseNumbersToCount(req, res) {
         .from("service_cases")
         .insert(rows);
       if (insErr) {
+        // give the reserved slots back — nothing was created
+        if (reservedSlots > 0) {
+          const { error: relErr } = await supabase.rpc("release_count_slots", {
+            p_org: String(orgId),
+            p_count: String(countId),
+            p_employee: String(me),
+            p_n: reservedSlots,
+          });
+          if (relErr) console.error("release_count_slots failed:", relErr);
+        }
         if (insErr.code === "23505") {
           return res.status(409).json({
             success: false,
@@ -744,26 +807,32 @@ async function addCaseNumbersToCount(req, res) {
         results.push({ caseNumber: cn, status: "created" }),
       );
 
-      // bump the counters. The cases themselves are already saved, so a
-      // failure here is logged rather than reported as a failed request.
-      const { error: b1 } = await supabase
-        .from("service_case_counts")
-        .update({
-          fulfilled_count: (count.fulfilled_count || 0) + createdCount,
-        })
-        .eq("id", countId)
-        .eq("organization_id", orgId);
-      if (b1) console.error("addCaseNumbersToCount: fulfilled_count bump:", b1);
-      const { error: b2 } = await supabase
-        .from("service_case_count_allocations")
-        .update({
-          fulfilled_quantity: (myAlloc.fulfilled_quantity || 0) + createdCount,
-        })
-        .eq("organization_id", orgId)
-        .eq("count_id", countId)
-        .eq("employee_id", me);
-      if (b2)
-        console.error("addCaseNumbersToCount: fulfilled_quantity bump:", b2);
+      // (fallback only — with reserve_count_slots the counters are already
+      // updated atomically.)
+      if (reservedSlots === 0) {
+        // bump the counters. The cases themselves are already saved, so a
+        // failure here is logged rather than reported as a failed request.
+        const { error: b1 } = await supabase
+          .from("service_case_counts")
+          .update({
+            fulfilled_count: (count.fulfilled_count || 0) + createdCount,
+          })
+          .eq("id", countId)
+          .eq("organization_id", orgId);
+        if (b1)
+          console.error("addCaseNumbersToCount: fulfilled_count bump:", b1);
+        const { error: b2 } = await supabase
+          .from("service_case_count_allocations")
+          .update({
+            fulfilled_quantity:
+              (myAlloc.fulfilled_quantity || 0) + createdCount,
+          })
+          .eq("organization_id", orgId)
+          .eq("count_id", countId)
+          .eq("employee_id", me);
+        if (b2)
+          console.error("addCaseNumbersToCount: fulfilled_quantity bump:", b2);
+      }
     }
 
     const skipped = results.filter((r) => r.status === "skipped");

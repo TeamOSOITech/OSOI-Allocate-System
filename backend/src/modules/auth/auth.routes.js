@@ -17,9 +17,12 @@ const {
 // attacker could try unlimited passwords per second against any known
 // email (credential stuffing / brute force), or spam the
 // forgot-password email sender. Both are now capped per IP.
+// Only FAILED logins count (skipSuccessfulRequests): an office where many
+// people share one public IP and all log in at 9:00 must not lock itself out.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per IP per window
+  max: 20, // 20 FAILED attempts per IP per window
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -53,9 +56,15 @@ const registerOrgLimiter = rateLimit({
 
 // Per-ACCOUNT limit, on top of the per-IP one above — otherwise an attacker
 // rotating IPs can guess passwords against one email indefinitely.
+//
+// Counts failed logins only, and the cap is deliberately higher than the
+// per-IP one: a single attacker (one IP) is stopped by the per-IP limit
+// above long before this, so he can no longer lock the real user out of
+// their own account. Reaching this one takes failures from several IPs.
 const loginAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 50,
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) =>

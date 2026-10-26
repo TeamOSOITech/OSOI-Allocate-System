@@ -3419,6 +3419,56 @@ function getActingEmployeeId(req) {
 }
 
 // ------------------------------------------------------------
+// SUBMIT needs a client. A case can not be submitted without one — either
+// it already has a client, or the request carries clientId (validated:
+// exists in this org + mapped to the case's service). subclientId is
+// optional but, when given, must belong to the client. The client fields
+// are written in the SAME update as the submit, so a failed submit can
+// never leave a half-filled client behind.
+// Add-only: a client / subclient already on the case is never replaced here.
+// ------------------------------------------------------------
+async function prepareClientForSubmit(existing, input, organizationId) {
+  const fields = {};
+  let clientId = existing.client_id ? String(existing.client_id) : "";
+
+  if (!clientId) {
+    const wanted = (input?.clientId || "").toString().trim();
+    if (!wanted) {
+      return {
+        ok: false,
+        message: `Select a client for ${existing.case_number} before submitting.`,
+      };
+    }
+    const { data: client, error: clientError } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", wanted)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (clientError) throw clientError;
+    if (!client) return { ok: false, message: "Client not found" };
+    const mapCheck = await assertClientMappedToProduct(
+      wanted,
+      existing.product_id,
+      organizationId,
+    );
+    if (!mapCheck.ok) return { ok: false, message: mapCheck.message };
+    fields.client_id = wanted;
+    clientId = wanted;
+  }
+
+  if (!existing.subclient_id) {
+    const sub = (input?.subclientId || "").toString().trim();
+    if (sub) {
+      const subCheck = await validateSubclient(sub, organizationId, clientId);
+      if (!subCheck.ok) return { ok: false, message: subCheck.message };
+      fields.subclient_id = sub;
+    }
+  }
+  return { ok: true, fields };
+}
+
+// ------------------------------------------------------------
 // PATCH /api/service-cases/:id/submit
 // body: { submissionType, queryText?, onBehalfOf? }
 // ------------------------------------------------------------
@@ -3460,9 +3510,39 @@ async function submitServiceCase(req, res) {
       return res.status(403).json({ success: false, message: acting.message });
     }
 
+    // The case must exist for this employee, and needs a client.
+    const { data: existing, error: existingError } = await supabase
+      .from("service_cases")
+      .select("id, case_number, product_id, client_id, subclient_id")
+      .eq("id", id)
+      .eq("organization_id", req.user.organizationId)
+      .eq("assigned_employee_id", acting.employeeId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message:
+          acting.employeeId === req.user.userId
+            ? "Case not found or not assigned to you."
+            : "Case not found or not assigned to this employee.",
+      });
+    }
+    const clientPrep = await prepareClientForSubmit(
+      existing,
+      req.body,
+      req.user.organizationId,
+    );
+    if (!clientPrep.ok) {
+      return res
+        .status(400)
+        .json({ success: false, message: clientPrep.message });
+    }
+
     const { data, error } = await supabase
       .from("service_cases")
       .update({
+        ...clientPrep.fields,
         submission_status: "SUBMITTED",
         submission_type: submissionType,
         query_text: submissionType === "QUERY" ? queryText : null,
@@ -3872,6 +3952,8 @@ async function bulkSubmitServiceCases(req, res) {
         submissionType: (it.submissionType || "").toString().trim(),
         queryText: (it.queryText || "").toString().trim(),
         reasonText: (it.reasonText || "").toString().trim(),
+        clientId: (it.clientId || "").toString().trim(),
+        subclientId: (it.subclientId || "").toString().trim(),
       }))
       .filter((it) => it.id);
 
@@ -3916,6 +3998,37 @@ async function bulkSubmitServiceCases(req, res) {
       return res.status(403).json({ success: false, message: acting.message });
     }
 
+    // Check EVERY case (client present / valid) before touching any of
+    // them, so one missing client can not leave the batch half-submitted.
+    const existingById = {};
+    for (const idChunk of chunkArray(
+      cleaned.map((it) => it.id),
+      100,
+    )) {
+      const { data: rows, error: rowsError } = await supabase
+        .from("service_cases")
+        .select("id, case_number, product_id, client_id, subclient_id")
+        .in("id", idChunk)
+        .eq("organization_id", req.user.organizationId)
+        .eq("assigned_employee_id", acting.employeeId);
+      if (rowsError) throw rowsError;
+      (rows || []).forEach((r) => (existingById[String(r.id)] = r));
+    }
+    const clientFieldsById = {};
+    for (const it of cleaned) {
+      const existing = existingById[it.id];
+      if (!existing) continue; // not this employee's case: skipped below
+      const prep = await prepareClientForSubmit(
+        existing,
+        it,
+        req.user.organizationId,
+      );
+      if (!prep.ok) {
+        return res.status(400).json({ success: false, message: prep.message });
+      }
+      clientFieldsById[it.id] = prep.fields;
+    }
+
     const now = new Date().toISOString();
     let submittedCount = 0;
     // One update per case since each can have a different outcome —
@@ -3926,6 +4039,7 @@ async function bulkSubmitServiceCases(req, res) {
         const { data, error } = await supabase
           .from("service_cases")
           .update({
+            ...(clientFieldsById[it.id] || {}),
             submission_status: "SUBMITTED",
             submission_type: it.submissionType,
             query_text: it.submissionType === "QUERY" ? it.queryText : null,
