@@ -2150,6 +2150,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             countId,
+                            onBehalfOf: isViewingOther ? viewingId : undefined,
                             caseNumbers: chunk.map((r) => r.cn),
                             // per case: its own client / subclient + status.
                             // WIP / Pending = just add (sent as "WIP"),
@@ -2269,11 +2270,9 @@ export default function Profile({ onLogout }: ProfileProps) {
     //  - no details open (only the cards)  -> cases, or counts when there are
     //    no pending cases but counts are waiting.
     const detailsOpen = openCard !== null || activeTab === "past";
-    const submitUsesCounts =
-        !isViewingOther &&
-        (detailsOpen
-            ? allocView === "counts"
-            : stats.pendingCount === 0 && bulkCnCounts.length > 0);
+    const submitUsesCounts = detailsOpen
+        ? allocView === "counts"
+        : stats.pendingCount === 0 && bulkCnCounts.length > 0;
     const submitBtnCount = submitUsesCounts
         ? bulkCnCounts.reduce((sum, m) => sum + m.remaining, 0)
         : stats.pendingCount;
@@ -4029,7 +4028,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             </div>
                                             <div style={styles.smallMuted}>
                                                 {isViewingOther
-                                                    ? "These were allocated to this employee as a count and are still waiting for case numbers (view only)."
+                                                    ? "These were allocated to this employee as a count and are still waiting for case numbers. You can add them on this employee's behalf."
                                                     : "These were allocated to you as a count. Add the real case number(s), pick the client for each and a status."}
                                             </div>
                                         </div>
@@ -4300,8 +4299,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                             Returned
                                                                                             to pool
                                                                                         </span>
-                                                                                    ) : !done &&
-                                                                                      !isViewingOther ? (
+                                                                                    ) : !done ? (
                                                                                         <button
                                                                                             type="button"
                                                                                             className="pf-btn pf-btn-solid"

@@ -778,10 +778,6 @@ function KpiBreakdownModal({
             setFailed(false);
             try {
                 const today = todayStr();
-                const monthStart = `${today.slice(0, 8)}01`;
-                const { start, end } = dayBoundsISO(today, today);
-                const startMs = Date.parse(start);
-                const endMs = Date.parse(end);
 
                 const pRes = await authFetch(`${API_BASE}/api/products`);
                 const pJson = await pRes.json();
@@ -796,13 +792,15 @@ function KpiBreakdownModal({
                     return (j.pagination?.total ?? 0) as number;
                 };
 
-                const needPending = kind === "total" || kind === "remaining";
-                const needAlloc = kind === "total" || kind === "allocated";
+                // Same definition as the KPI cards + Production Report (today's
+                // work date): total / allocated / submitted, remaining = total - allocated.
+                const needTotal = kind === "total" || kind === "remaining";
+                const needAlloc = kind === "total" || kind === "remaining" || kind === "allocated";
                 const needDone = kind === "completed";
 
                 // count-only work (all services in one call)
                 let countRows: any[] = [];
-                if (needPending || needAlloc) {
+                if (needTotal || needAlloc) {
                     const cr = await authFetch(
                         `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
                             workDate: today,
@@ -810,69 +808,51 @@ function KpiBreakdownModal({
                     );
                     const cj = await cr.json();
                     if (!cr.ok || !cj.success) throw new Error("counts");
-                    countRows = (cj.data || []).filter(
-                        (c: any) => !c.workDate || c.workDate >= monthStart
-                    );
+                    countRows = (cj.data || []).filter((c: any) => c.workDate === today);
                 }
 
+                const day = { workDateFrom: today, workDateTo: today };
                 const out = await Promise.all(
                     products.map(async (pr) => {
                         const pid = String(pr.id);
-                        const [pend, alloc, done] = await Promise.all([
-                            needPending
-                                ? total({
-                                      workDate: today,
-                                      includeBacklog: "true",
-                                      allocationStatus: "PENDING",
-                                      productId: pid,
-                                  })
-                                : 0,
+                        const [tot, alloc, done] = await Promise.all([
+                            needTotal ? total({ ...day, productId: pid }) : 0,
                             needAlloc
-                                ? total({
-                                      allocationStatus: "ALLOCATED",
-                                      allocatedFrom: start,
-                                      allocatedTo: end,
-                                      productId: pid,
-                                  })
+                                ? total({ ...day, allocationStatus: "ALLOCATED", productId: pid })
                                 : 0,
                             needDone
-                                ? total({
-                                      submissionStatus: "SUBMITTED",
-                                      submittedFrom: start,
-                                      submittedTo: end,
-                                      productId: pid,
-                                  })
+                                ? total({ ...day, submissionStatus: "SUBMITTED", productId: pid })
                                 : 0,
                         ]);
-                        let cPend = 0;
+                        let cTot = 0;
                         let cAlloc = 0;
                         countRows
                             .filter((c) => String(c.productId) === pid)
                             .forEach((c) => {
-                                cPend += Math.max(0, Number(c.unallocated) || 0);
-                                (c.allocations || []).forEach((a: any) => {
-                                    const t = a.allocatedAt ? Date.parse(a.allocatedAt) : NaN;
-                                    if (Number.isNaN(t) || t < startMs || t > endMs) return;
-                                    cAlloc += Math.max(
-                                        0,
-                                        (Number(a.quantity) || 0) -
-                                            (Number(a.fulfilledQuantity) || 0)
-                                    );
-                                });
+                                const fulfilledSum = (c.allocations || []).reduce(
+                                    (sum: number, a: any) =>
+                                        sum + (Number(a.fulfilledQuantity) || 0),
+                                    0
+                                );
+                                cTot += Number(c.pendingCount) || 0;
+                                cAlloc += Math.max(
+                                    0,
+                                    (Number(c.allocatedTotal) || 0) - fulfilledSum
+                                );
                             });
                         const withCase =
                             kind === "total"
-                                ? pend + alloc
+                                ? tot
                                 : kind === "remaining"
-                                  ? pend
+                                  ? Math.max(0, tot - alloc)
                                   : kind === "allocated"
                                     ? alloc
                                     : done;
                         const withoutCase =
                             kind === "total"
-                                ? cPend + cAlloc
+                                ? cTot
                                 : kind === "remaining"
-                                  ? cPend
+                                  ? Math.max(0, cTot - cAlloc)
                                   : kind === "allocated"
                                     ? cAlloc
                                     : 0;
@@ -1144,87 +1124,67 @@ export default function Dashboard({ user }: DashboardProps) {
     const fetchCaseCounts = async (silent = false) => {
         if (!silent) setCaseCountsLoading(true);
         try {
-            const { start, end } = dayBoundsISO(todayStr(), todayStr());
             const mk = (extra: Record<string, string>) => {
                 const p = new URLSearchParams({ page: "1", pageSize: "1", ...extra });
                 return authFetch(`${API_BASE}/api/service-cases?${p.toString()}`);
             };
 
-            // Same numbers as the Today's Allocation page, so both always agree:
-            // Remaining = every still-unallocated case in the pool
-            //   (today's + carried-over backlog of this month) + count-only
-            //   work not yet given to anyone.
-            // Allocated = cases whose allocation happened TODAY (allocated_at)
-            //   + count-only quantity allocated today.
-            // Completed = cases submitted TODAY (submitted_at).
-            // Total     = Remaining + Allocated today.
+            // Mirrors the Production Report's Daily-wise card for TODAY, so
+            // both pages always show the same numbers:
+            //   Total     = cases whose work date is today (+ count-only units)
+            //   Allocated = those cases that are ALLOCATED (+ count-only allocated)
+            //   Completed = those cases that are SUBMITTED
+            //   Remaining = Total - Allocated
             const today = todayStr();
-            const monthStart = `${today.slice(0, 8)}01`;
-            const [remRes, allocRes, compRes, countRes] = await Promise.all([
-                mk({
-                    workDate: today,
-                    includeBacklog: "true",
-                    allocationStatus: "PENDING",
-                }),
-                mk({
-                    allocationStatus: "ALLOCATED",
-                    allocatedFrom: start,
-                    allocatedTo: end,
-                }),
-                mk({
-                    submissionStatus: "SUBMITTED",
-                    submittedFrom: start,
-                    submittedTo: end,
-                }),
+            const [totRes, allocRes, compRes, countRes] = await Promise.all([
+                mk({ workDateFrom: today, workDateTo: today }),
+                mk({ workDateFrom: today, workDateTo: today, allocationStatus: "ALLOCATED" }),
+                mk({ workDateFrom: today, workDateTo: today, submissionStatus: "SUBMITTED" }),
                 authFetch(
                     `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
                         workDate: today,
                     }).toString()}`
                 ),
             ]);
-            const [remJson, allocJson, compJson, countJson] = await Promise.all([
-                remRes.json(),
+            const [totJson, allocJson, compJson, countJson] = await Promise.all([
+                totRes.json(),
                 allocRes.json(),
                 compRes.json(),
                 countRes.json(),
             ]);
             const okOf = (res: Response, json: any) => res.ok && json?.success;
-            const num = (res: Response, json: any) => json.pagination?.total ?? 0;
+            const num = (_res: Response, json: any) => json.pagination?.total ?? 0;
 
-            // count-only work (entries without case numbers)
-            let countsRemaining = 0;
-            let countsAllocatedToday = 0;
+            // count-only work (entries without case numbers) dated today
+            let countsTotal = 0;
+            let countsAllocated = 0;
             const countsOk = okOf(countRes, countJson);
             if (countsOk) {
-                const startMs = Date.parse(start);
-                const endMs = Date.parse(end);
                 (countJson.data || [])
-                    .filter((c: any) => !c.workDate || c.workDate >= monthStart)
+                    .filter((c: any) => c.workDate === today)
                     .forEach((c: any) => {
-                        countsRemaining += Math.max(0, Number(c.unallocated) || 0);
-                        (c.allocations || []).forEach((a: any) => {
-                            const t = a.allocatedAt ? Date.parse(a.allocatedAt) : NaN;
-                            if (Number.isNaN(t) || t < startMs || t > endMs) return;
-                            // units already turned into real cases are counted
-                            // as cases above - only the rest is count-only work
-                            countsAllocatedToday += Math.max(
-                                0,
-                                (Number(a.quantity) || 0) - (Number(a.fulfilledQuantity) || 0)
-                            );
-                        });
+                        const fulfilledSum = (c.allocations || []).reduce(
+                            (sum: number, a: any) => sum + (Number(a.fulfilledQuantity) || 0),
+                            0
+                        );
+                        countsTotal += Number(c.pendingCount) || 0;
+                        countsAllocated += Math.max(
+                            0,
+                            (Number(c.allocatedTotal) || 0) - fulfilledSum
+                        );
                     });
             }
 
-            const remOk = okOf(remRes, remJson) && countsOk;
+            const totOk = okOf(totRes, totJson) && countsOk;
             const allocOk = okOf(allocRes, allocJson) && countsOk;
-            const remaining = remOk ? num(remRes, remJson) + countsRemaining : null;
-            const allocated = allocOk ? num(allocRes, allocJson) + countsAllocatedToday : null;
-            setCaseRemainingCount(remaining);
+            const total = totOk ? num(totRes, totJson) + countsTotal : null;
+            const allocated = allocOk ? num(allocRes, allocJson) + countsAllocated : null;
+            setCaseTotalCount(total);
             setCaseAllocatedCount(allocated);
-            setCaseCompletedCount(okOf(compRes, compJson) ? num(compRes, compJson) : null);
-            setCaseTotalCount(
-                remaining !== null && allocated !== null ? remaining + allocated : null
+            setCaseRemainingCount(
+                total !== null && allocated !== null ? Math.max(0, total - allocated) : null
             );
+            setCaseCompletedCount(okOf(compRes, compJson) ? num(compRes, compJson) : null);
         } catch (err) {
             console.error("Failed to fetch today's case counts:", err);
             if (!silent) {
