@@ -2,6 +2,13 @@
 //
 // "Cases" tab on the Today's Allocation page (see manualallocation.tsx).
 //
+// NEW (10h DAILY LIMIT): an employee whose work for the selected day has
+// reached MAX_ALLOC_MINUTES (10 hours) is taken OFF the lists for Smart
+// Allocation AND manual allocation (case dropdowns, count boxes, Urgent
+// popup), and Smart Allocation stops giving them work mid-run. The limit is
+// per day (the time card starts again from 0 every day). Self allocation
+// (selfallocation.tsx / Profile page) has NO limit - it never reads this.
+//
 // Handles BOTH kinds of work:
 //  A) Cases WITH case numbers (service_cases) — per-row dropdown + Smart Allocation
 //  B) COUNT-ONLY entries (service_case_counts) — shown as "N cases pending" rows,
@@ -68,6 +75,9 @@ const ALLOC_MESSAGE = "Your work has been allocated. Please login to check.";
 // NEW (8h WARNING): an employee getting more than this many minutes of work
 // triggers the warning popup when Allocate is pressed.
 const MAX_WORK_MINUTES = 8 * 60;
+// NEW (10h DAILY LIMIT): once an employee's work for the day reaches this many
+// minutes they are removed from the Smart / manual allocation lists.
+const MAX_ALLOC_MINUTES = 10 * 60;
 
 function useIsMobile() {
     const [isMobile, setIsMobile] = useState(
@@ -266,6 +276,10 @@ export default function TodaysAllocationCases({
     const [cases, setCases] = useState<ServiceCase[]>([]);
     // every case of this service for the month (all pages) — light rows
     const [allCases, setAllCases] = useState<LightCase[]>([]);
+    // 10h DAILY LIMIT: the day's work is ONE total across ALL services, so the
+    // allocated work of the OTHER services is loaded too (only used for load).
+    const [otherCases, setOtherCases] = useState<LightCase[]>([]);
+    const [otherCounts, setOtherCounts] = useState<CountRow[]>([]);
     // count-only rows (backlog included) + the unsaved per-employee quantities
     const [countRows, setCountRows] = useState<CountRow[]>([]);
     const [countsLoading, setCountsLoading] = useState(true);
@@ -415,8 +429,6 @@ export default function TodaysAllocationCases({
         text: string;
     } | null>(null);
     // NEW (8h WARNING): popup state
-    const [overloadOpen, setOverloadOpen] = useState(false);
-    const [showOverloadList, setShowOverloadList] = useState(false);
     // NEW (URGENT): "Anything Urgent" popup state
     const [urgentOpen, setUrgentOpen] = useState(false);
     const [urgentCases, setUrgentCases] = useState<UrgentCase[]>([]);
@@ -517,7 +529,64 @@ export default function TodaysAllocationCases({
     // loads EVERY case of this service for the month (all pages, light
     // fields only) so each employee's time is correct even for cases that
     // are not on the page currently on screen.
+    const fetchOtherLoad = useCallback(async () => {
+        if (!productId || !workDate) {
+            setOtherCases([]);
+            setOtherCounts([]);
+            return;
+        }
+        try {
+            const out: LightCase[] = [];
+            for (let p = 1; p <= 30; p++) {
+                const params = new URLSearchParams();
+                params.set("page", String(p));
+                params.set("pageSize", "100");
+                params.set("workDate", workDate);
+                params.set("includeBacklog", "true");
+                params.set("allocationStatus", "ALLOCATED");
+                if (monthStart) params.set("workDateFrom", monthStart);
+                const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
+                const json = await res.json();
+                if (!res.ok || !json.success) break;
+                const rows: any[] = json.data || [];
+                rows.forEach((r) => {
+                    if (String(r.productId) === String(productId)) return;
+                    out.push({
+                        id: r.id,
+                        productId: String(r.productId),
+                        assignedEmployeeId: r.assignedEmployeeId || null,
+                        allocatedAt: r.allocatedAt || null,
+                    });
+                });
+                const totalPages = json.pagination?.totalPages ?? 1;
+                if (p >= totalPages || rows.length === 0) break;
+            }
+            setOtherCases(out);
+        } catch {
+            setOtherCases([]);
+        }
+        try {
+            const params = new URLSearchParams();
+            params.set("workDate", workDate);
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/count-allocations?${params.toString()}`
+            );
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error("count load failed");
+            setOtherCounts(
+                (json.data || []).filter(
+                    (c: CountRow) =>
+                        String(c.productId) !== String(productId) &&
+                        (!monthStart || c.workDate >= monthStart)
+                )
+            );
+        } catch {
+            setOtherCounts([]);
+        }
+    }, [productId, workDate, monthStart]);
+
     const fetchAllCases = useCallback(async () => {
+        void fetchOtherLoad();
         if (!productId || !workDate) {
             setAllCases([]);
             return;
@@ -551,7 +620,7 @@ export default function TodaysAllocationCases({
         } catch {
             setAllCases([]);
         }
-    }, [productId, workDate, monthStart]);
+    }, [productId, workDate, monthStart, fetchOtherLoad]);
 
     // how many case-number cases are still PENDING — this month up to the
     // selected date, and on the selected date alone. Only the totals are
@@ -707,7 +776,12 @@ export default function TodaysAllocationCases({
             .filter((a) => !eligible.some((e) => e.id === a.employeeId))
             .map((a) => employees.find((e) => e.id === a.employeeId))
             .filter(Boolean) as Employee[];
-        return [...extra, ...eligible];
+        // NEW (10h DAILY LIMIT): hide anyone who reached the daily limit - unless
+        // they already have a quantity on THIS row (so it never disappears).
+        const hasQty = (id: string) => savedQty(c, id) > 0 || (countDraft[c.id]?.[id] ?? 0) > 0;
+        return [...extra, ...eligible].filter(
+            (e) => !hitDailyLimit(e.id, ampOf(c.productId)) || hasQty(e.id)
+        );
     };
     const draftTotal = (c: CountRow) => {
         const ids = new Set<string>([
@@ -777,7 +851,10 @@ export default function TodaysAllocationCases({
     //      on the Production Report page. Uses the unsaved dropdown picks
     //      (pendingSelection) and unsaved count boxes (countDraft), so it
     //      changes as the manager allocates / runs Smart Allocation.
-    const employeeLoad = useMemo(() => {
+    // CHANGED (10h DAILY LIMIT): the maths now lives in computeLoad() so it can run
+    // twice - with the unsaved picks (employeeLoad, what the cards / dropdowns
+    // show) and without them (savedLoad, what Smart Allocation starts from).
+    const computeLoad = (includeUnsaved: boolean) => {
         const map: Record<string, { cases: number; counts: number; mins: number }> = {};
         const add = (empId: string, cases: number, counts: number, mins: number) => {
             if (!empId) return;
@@ -788,8 +865,8 @@ export default function TodaysAllocationCases({
             map[empId] = cur;
         };
 
-        allCases.forEach((c) => {
-            const isUnsaved = c.id in pendingSelection;
+        [...allCases, ...otherCases].forEach((c) => {
+            const isUnsaved = includeUnsaved && c.id in pendingSelection;
             const emp = isUnsaved ? pendingSelection[c.id] : c.assignedEmployeeId || "";
             if (!emp) return;
             // saved allocation from an earlier day -> not part of today's time
@@ -797,31 +874,73 @@ export default function TodaysAllocationCases({
             add(emp, 1, 0, ampOf(c.productId));
         });
 
-        countRows.forEach((c) => {
+        [...countRows, ...otherCounts].forEach((c) => {
             const ids = new Set<string>([
                 ...c.allocations.map((a) => a.employeeId),
-                ...Object.keys(countDraft[c.id] || {}),
+                ...(includeUnsaved ? Object.keys(countDraft[c.id] || {}) : []),
             ]);
             ids.forEach((empId) => {
-                const draft = countDraft[c.id]?.[empId];
+                const draft = includeUnsaved ? countDraft[c.id]?.[empId] : undefined;
                 let q: number;
+                const a = c.allocations.find((x) => x.employeeId === empId);
+                // saved quantity counts only if it was allocated on this day
+                // (an old server that sends no allocatedAt at all -> keep counting it)
+                const savedToday =
+                    a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate)
+                        ? a.quantity || 0
+                        : 0;
                 if (draft !== undefined) {
-                    q = draft;
+                    // FIX: the typed / Smart total includes work saved on an EARLIER
+                    // day. That old part is not today's time, so take it out.
+                    const carried = (a?.quantity || 0) - savedToday;
+                    q = Math.max(0, draft - carried);
                 } else {
-                    const a = c.allocations.find((x) => x.employeeId === empId);
-                    // saved quantity counts only if it was allocated on this day
-                    // (an old server that sends no allocatedAt at all -> keep counting it)
-                    q =
-                        a && (a.allocatedAt === undefined || localDayOf(a.allocatedAt) === workDate)
-                            ? a.quantity || 0
-                            : 0;
+                    q = savedToday;
                 }
                 if (q > 0) add(empId, 0, q, q * ampOf(c.productId));
             });
         });
         return map;
+    };
+
+    const employeeLoad = useMemo(
+        () => computeLoad(true),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [allCases, pendingSelection, countRows, countDraft, ampOf, workDate]);
+        [
+            allCases,
+            otherCases,
+            pendingSelection,
+            countRows,
+            otherCounts,
+            countDraft,
+            ampOf,
+            workDate,
+        ]
+    );
+    // saved work only (no unsaved dropdown picks / quantity boxes)
+    const savedLoad = useMemo(
+        () => computeLoad(false),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [allCases, otherCases, countRows, otherCounts, ampOf, workDate]
+    );
+
+    // NEW (10h DAILY LIMIT): has this employee already reached the daily limit
+    // (live - includes the unsaved picks on screen)?
+    // STRICT: also true when ONE more unit of this service (amp minutes) would
+    // take them above 10h - so nobody can ever be allocated past 10 hours.
+    const hitDailyLimit = (empId: string | null | undefined, amp = 0) => {
+        if (!empId) return false;
+        const m = employeeLoad[empId]?.mins || 0;
+        return amp > 0 ? m + amp > MAX_ALLOC_MINUTES : m >= MAX_ALLOC_MINUTES;
+    };
+    // most units of a service this employee can still be given today
+    // (currentQty = what they already have typed on that row)
+    const maxQtyFor = (empId: string, productId: string, currentQty: number) => {
+        const amp = ampOf(productId);
+        if (amp <= 0) return Number.MAX_SAFE_INTEGER;
+        const free = MAX_ALLOC_MINUTES - (employeeLoad[empId]?.mins || 0);
+        return currentQty + Math.max(0, Math.floor(free / amp));
+    };
 
     const loadLabel = (empId: string) => {
         const l = employeeLoad[empId];
@@ -830,10 +949,10 @@ export default function TodaysAllocationCases({
 
     // NEW (8h WARNING): employees whose live time (incl. unsaved picks)
     // is above 8 hours, highest first.
-    const overloadedEmployees = useMemo(
+    const overLimitEmployees = useMemo(
         () =>
             employees
-                .filter((e) => (employeeLoad[e.id]?.mins || 0) > MAX_WORK_MINUTES)
+                .filter((e) => (employeeLoad[e.id]?.mins || 0) > MAX_ALLOC_MINUTES)
                 .map((e) => ({
                     id: e.id,
                     name: e.name,
@@ -1072,7 +1191,10 @@ export default function TodaysAllocationCases({
         if (!c) return;
         setUrgentSelected((prev) => [...prev, id]);
         setUrgentEmp((prev) => {
-            const eligible = getUrgentEmployees(c.productId);
+            // NEW (10h DAILY LIMIT): never pre-fill someone who reached the limit
+            const eligible = getUrgentEmployees(c.productId).filter(
+                (e) => !hitDailyLimit(e.id, ampOf(c.productId))
+            );
             if (eligible.length === 0) return prev;
             const loadOf = (empId: string) =>
                 (employeeLoad[empId]?.mins || 0) +
@@ -1119,6 +1241,24 @@ export default function TodaysAllocationCases({
         if (urgentSelected.length === 0 || urgentSaving) return;
         if (urgentSelected.some((id) => !urgentEmp[id])) {
             setUrgentError("Please pick an employee for every selected case.");
+            return;
+        }
+        // 10h DAILY LIMIT: the picked cases together must not push anyone above 10h
+        const extraMins: Record<string, number> = {};
+        urgentSelected.forEach((id) => {
+            const c = urgentCases.find((x) => x.id === id);
+            const emp = urgentEmp[id];
+            if (c && emp) extraMins[emp] = (extraMins[emp] || 0) + ampOf(c.productId);
+        });
+        const tooMany = Object.keys(extraMins).filter(
+            (emp) => (employeeLoad[emp]?.mins || 0) + extraMins[emp] > MAX_ALLOC_MINUTES
+        );
+        if (tooMany.length > 0) {
+            setUrgentError(
+                `${tooMany
+                    .map((id) => employees.find((e) => e.id === id)?.name || "Employee")
+                    .join(", ")} would go above the 10 hour daily limit.`
+            );
             return;
         }
         setUrgentError("");
@@ -1173,9 +1313,14 @@ export default function TodaysAllocationCases({
     // above 8 hours the warning popup opens; otherwise it allocates directly.
     const handleAllocateClick = () => {
         if (totalChanged === 0) return;
-        if (overloadedEmployees.length > 0) {
-            setShowOverloadList(false);
-            setOverloadOpen(true);
+        // 10h DAILY LIMIT: nobody may be saved above 10 hours (the old 8h
+        // warning popup is gone).
+        if (overLimitEmployees.length > 0) {
+            showToast(
+                `Over the 10 hour daily limit: ${overLimitEmployees
+                    .map((e) => e.name)
+                    .join(", ")}. Reduce their work first.`
+            );
             return;
         }
         handleAllocateAll();
@@ -1305,12 +1450,28 @@ export default function TodaysAllocationCases({
                     .filter((a: any) => a.status === "ABSENT" || a.status === "LEAVE")
                     .map((a: any) => a.employeeId)
             );
+            // NEW (10h DAILY LIMIT): Smart Allocation starts from what is SAVED for
+            // today (its own earlier preview is replaced, not added on top).
+            // Anyone who already reached the daily limit is left out, and the rest
+            // only get work until they reach it (see remainingMinutes below).
+            const amp = ampOf(productId);
+            const remainingMinutes: Record<string, number> = {};
             const presentIds = eligibleEmployees
                 .filter((e) => !unavailableIds.has(e.id))
-                .map((e) => e.id);
+                .filter((e) => {
+                    const rem = MAX_ALLOC_MINUTES - (savedLoad[e.id]?.mins || 0);
+                    return amp > 0 ? rem >= amp : rem > 0;
+                })
+                .map((e) => {
+                    remainingMinutes[e.id] = MAX_ALLOC_MINUTES - (savedLoad[e.id]?.mins || 0);
+                    return e.id;
+                })
+                .filter(Boolean);
 
             if (presentIds.length === 0) {
-                showToast("No employees available to allocate to.");
+                showToast(
+                    "No employees available to allocate to (absent / on leave, or already at the 10 hour daily limit)."
+                );
                 return;
             }
 
@@ -1326,13 +1487,25 @@ export default function TodaysAllocationCases({
                 const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ productId, workDate, employeeIds: presentIds }),
+                    body: JSON.stringify({
+                        productId,
+                        workDate,
+                        employeeIds: presentIds,
+                        // NEW (10h DAILY LIMIT)
+                        remainingMinutes,
+                        ampMinutes: amp,
+                    }),
                 });
                 const json = await res.json();
                 if (res.ok && json.success) {
                     setAutoResult(json.data);
                     (json.data?.perEmployee || []).forEach((p: any) => {
                         extraLoad[p.employeeId] = p.caseCount || 0;
+                        // NEW (10h DAILY LIMIT): what the cases just used up of the
+                        // day is not available to the count-only preview any more
+                        remainingMinutes[p.employeeId] =
+                            (remainingMinutes[p.employeeId] ?? MAX_ALLOC_MINUTES) -
+                            (p.caseCount || 0) * amp;
                     });
                     const assignments: { caseId: string; employeeId: string }[] =
                         json.data?.assignments || [];
@@ -1364,6 +1537,9 @@ export default function TodaysAllocationCases({
                         workDate,
                         employeeIds: presentIds,
                         extraLoad,
+                        // NEW (10h DAILY LIMIT)
+                        remainingMinutes,
+                        ampMinutes: amp,
                     }),
                 }
             );
@@ -1797,7 +1973,22 @@ export default function TodaysAllocationCases({
                                 const total = l.cases + l.counts;
                                 return (
                                     <div key={emp.id} style={styles.timeItem}>
-                                        <div style={styles.timeEmpName}>{emp.name}</div>
+                                        <div style={styles.timeEmpName}>
+                                            {emp.name}
+                                            {hitDailyLimit(emp.id, ampOf(productId)) && (
+                                                <span
+                                                    title="Reached the 10 hour daily limit - not available for Smart / manual allocation"
+                                                    style={{
+                                                        marginLeft: 6,
+                                                        fontSize: 10,
+                                                        fontWeight: 600,
+                                                        color: BRAND.red,
+                                                    }}
+                                                >
+                                                    10h limit
+                                                </span>
+                                            )}
+                                        </div>
                                         <div
                                             style={{
                                                 ...styles.timeValue,
@@ -2067,13 +2258,21 @@ export default function TodaysAllocationCases({
                                                                                             const v =
                                                                                                 Math.max(
                                                                                                     done,
-                                                                                                    Math.floor(
-                                                                                                        Number(
-                                                                                                            e
-                                                                                                                .target
-                                                                                                                .value
-                                                                                                        ) ||
-                                                                                                            0
+                                                                                                    Math.min(
+                                                                                                        Math.floor(
+                                                                                                            Number(
+                                                                                                                e
+                                                                                                                    .target
+                                                                                                                    .value
+                                                                                                            ) ||
+                                                                                                                0
+                                                                                                        ),
+                                                                                                        // 10h daily limit
+                                                                                                        maxQtyFor(
+                                                                                                            emp.id,
+                                                                                                            c.productId,
+                                                                                                            qty
+                                                                                                        )
                                                                                                     )
                                                                                                 );
                                                                                             setCountDraft(
@@ -2235,12 +2434,26 @@ export default function TodaysAllocationCases({
                                                                       : []),
                                                                   ...rowEligible,
                                                               ];
-                                                        return list.map((emp) => (
-                                                            <option key={emp.id} value={emp.id}>
-                                                                {emp.name}
-                                                                {loadLabel(emp.id)}
-                                                            </option>
-                                                        ));
+                                                        // NEW (10h DAILY LIMIT): anyone who reached
+                                                        // the daily limit is taken off the list -
+                                                        // except the person this row is currently set to.
+                                                        const rowValue =
+                                                            pendingSelection[c.id] ??
+                                                            (c.assignedEmployeeId || "");
+                                                        return list
+                                                            .filter(
+                                                                (emp) =>
+                                                                    !hitDailyLimit(
+                                                                        emp.id,
+                                                                        ampOf(c.productId)
+                                                                    ) || emp.id === rowValue
+                                                            )
+                                                            .map((emp) => (
+                                                                <option key={emp.id} value={emp.id}>
+                                                                    {emp.name}
+                                                                    {loadLabel(emp.id)}
+                                                                </option>
+                                                            ));
                                                     })()}
                                                 </select>
                                             </span>
@@ -2312,108 +2525,6 @@ export default function TodaysAllocationCases({
                                 onClick={handleClearAllocations}
                             >
                                 Clear
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* NEW (8h WARNING): shown when Allocate is pressed and someone has > 8 hours */}
-            {overloadOpen && (
-                <div style={styles.overlay}>
-                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.modalHeader}>
-                            <h2 style={styles.modalTitle}>Heavy workload warning</h2>
-                            <button
-                                type="button"
-                                style={styles.modalCloseBtn}
-                                onClick={() => setOverloadOpen(false)}
-                                aria-label="Close"
-                            >
-                                <i className="ti ti-x" style={{ fontSize: fontSize.md }} />
-                            </button>
-                        </div>
-                        <div style={styles.modalDivider} />
-                        <p style={styles.modalBody}>
-                            <i
-                                className="ti ti-alert-triangle"
-                                style={{
-                                    fontSize: 40,
-                                    color: BRAND.amber,
-                                    display: "block",
-                                    marginBottom: 8,
-                                }}
-                            />
-                            <strong>{overloadedEmployees.length}</strong> employee
-                            {overloadedEmployees.length === 1 ? "" : "s"} got more than 8 hours of
-                            work.
-                            <br />
-                            <button
-                                type="button"
-                                style={styles.refreshLink}
-                                onClick={() => setShowOverloadList((v) => !v)}
-                            >
-                                {showOverloadList
-                                    ? "Hide employees"
-                                    : "See all employees who got more than 8 hours"}
-                            </button>
-                        </p>
-
-                        {showOverloadList && (
-                            <div
-                                style={{
-                                    padding: "0 22px 12px",
-                                    maxHeight: 220,
-                                    overflowY: "auto",
-                                }}
-                            >
-                                {overloadedEmployees.map((e) => (
-                                    <div
-                                        key={e.id}
-                                        style={{
-                                            display: "flex",
-                                            justifyContent: "space-between",
-                                            padding: "8px 0",
-                                            borderTop: "1px solid #f1f1f1",
-                                            fontSize: fontSize.sm,
-                                        }}
-                                    >
-                                        <span>{e.name}</span>
-                                        <span
-                                            style={{
-                                                color: BRAND.red,
-                                                fontWeight: fontWeight.semibold,
-                                            }}
-                                        >
-                                            {formatMinutes(e.mins)} · {e.total} case
-                                            {e.total === 1 ? "" : "s"}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        <div style={styles.modalActions}>
-                            <button
-                                type="button"
-                                style={styles.modalCancelBtn}
-                                onClick={() => setOverloadOpen(false)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                style={{
-                                    ...styles.modalClearBtn,
-                                    background: GRADIENT,
-                                    boxShadow: "none",
-                                }}
-                                onClick={() => {
-                                    setOverloadOpen(false);
-                                    handleAllocateAll();
-                                }}
-                            >
-                                Yes, Continue
                             </button>
                         </div>
                     </div>
@@ -2543,7 +2654,13 @@ export default function TodaysAllocationCases({
                                         if (!c) return null;
                                         // FIX (URGENT EMPLOYEES): everyone mapped to this
                                         // case's service — team members + external members.
-                                        const options = getUrgentEmployees(c.productId);
+                                        // NEW (10h DAILY LIMIT): anyone at the daily limit is
+                                        // off the list (the already-picked person stays).
+                                        const options = getUrgentEmployees(c.productId).filter(
+                                            (e) =>
+                                                !hitDailyLimit(e.id, ampOf(c.productId)) ||
+                                                e.id === urgentEmp[id]
+                                        );
                                         return (
                                             <div key={id} style={styles.urgentRow}>
                                                 <div style={{ flex: 1, minWidth: 140 }}>
