@@ -247,9 +247,12 @@ const Products = () => {
     } catch {
         currentUser = null;
     }
-    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
+    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER"].includes(
         (currentUser?.role || "").toUpperCase()
     );
+    // Process Lead has NO add/edit/delete on services, clients, subclients
+    // (only Add User, via approval) — backend also blocks with 403.
+    const canEditDelete = canManage && (currentUser?.role || "").toUpperCase() !== "PROCESS_LEAD";
     // Vertical Head / Team Member only ever get their own team's services from
     // the API, so the My Services / Organisation dropdown is hidden for them.
     const hideScopeDropdown = ["VERTICAL_HEAD", "TEAM_MEMBER"].includes(
@@ -1305,7 +1308,7 @@ const Products = () => {
                             once this is switched on, instead of sitting on every row/card
                             all the time. Tapping it again exits select mode and clears
                             whatever was checked. */}
-                        {canManage && filteredProducts.length > 0 && (
+                        {canEditDelete && filteredProducts.length > 0 && (
                             <button
                                 type="button"
                                 onClick={toggleSelectMode}
@@ -1357,9 +1360,9 @@ const Products = () => {
                     {/* NEW: bulk-select bar — a single "Select All" checkbox plus a
                         "Delete Selected (N)" button that appears once at least one
                         service is checked, so deleting many services doesn't mean
-                        clicking the trash icon one row/card at a time. canManage-gated
+                        clicking the trash icon one row/card at a time. canEditDelete-gated
                         same as every other delete affordance on this page. */}
-                    {canManage && isSelectMode && filteredProducts.length > 0 && (
+                    {canEditDelete && isSelectMode && filteredProducts.length > 0 && (
                         <div style={styles.bulkSelectBar}>
                             <label style={styles.bulkSelectAllLabel}>
                                 <input
@@ -1417,12 +1420,13 @@ const Products = () => {
                             <div style={styles.tableWrap}>
                                 <table className="pr-table" style={styles.table}>
                                     <colgroup>
-                                        {canManage && isSelectMode && (
+                                        {canEditDelete && isSelectMode && (
                                             <col style={{ width: "36px" }} />
                                         )}
                                         <col
                                             style={{
-                                                width: canManage && isSelectMode ? "38%" : "40%",
+                                                width:
+                                                    canEditDelete && isSelectMode ? "38%" : "40%",
                                             }}
                                         />
                                         <col style={{ width: "30%" }} />
@@ -1430,7 +1434,7 @@ const Products = () => {
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            {canManage && isSelectMode && (
+                                            {canEditDelete && isSelectMode && (
                                                 <th style={{ ...styles.th, textAlign: "center" }}>
                                                     <input
                                                         type="checkbox"
@@ -1459,7 +1463,7 @@ const Products = () => {
                                                         boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                     }}
                                                 >
-                                                    {canManage && isSelectMode && (
+                                                    {canEditDelete && isSelectMode && (
                                                         <td
                                                             style={{
                                                                 ...styles.td,
@@ -1529,49 +1533,55 @@ const Products = () => {
                                                                 were always rendered regardless of role,
                                                                 so Team Member / Vertical Head (view-only)
                                                                 could see and click them and get a 403.
-                                                                Gated behind canManage now. Also hidden
+                                                                Gated behind canEditDelete now. Also hidden
                                                                 for still-pending-create placeholder rows
                                                                 (see isPendingCreate) — there's no real
                                                                 record yet to edit/delete. */}
-                                                            {canManage && !isPendingCreate(p) && (
-                                                                <button
-                                                                    type="button"
-                                                                    className="pr-icon-btn"
-                                                                    style={styles.iconBtn}
-                                                                    aria-label="Edit"
-                                                                    title="Edit service"
-                                                                    onClick={() => openEditModal(p)}
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-pencil"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
-                                                            )}
-                                                            {canManage && !isPendingCreate(p) && (
-                                                                <button
-                                                                    type="button"
-                                                                    className="pr-icon-btn-danger"
-                                                                    style={styles.iconBtnDanger}
-                                                                    aria-label="Delete"
-                                                                    title="Delete service"
-                                                                    onClick={() =>
-                                                                        openDeleteConfirm(
-                                                                            p.id,
-                                                                            p.product_name
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <i
-                                                                        className="ti ti-trash"
-                                                                        style={{
-                                                                            fontSize: fontSize.base,
-                                                                        }}
-                                                                    />
-                                                                </button>
-                                                            )}
+                                                            {canEditDelete &&
+                                                                !isPendingCreate(p) && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="pr-icon-btn"
+                                                                        style={styles.iconBtn}
+                                                                        aria-label="Edit"
+                                                                        title="Edit service"
+                                                                        onClick={() =>
+                                                                            openEditModal(p)
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-pencil"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
+                                                            {canEditDelete &&
+                                                                !isPendingCreate(p) && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="pr-icon-btn-danger"
+                                                                        style={styles.iconBtnDanger}
+                                                                        aria-label="Delete"
+                                                                        title="Delete service"
+                                                                        onClick={() =>
+                                                                            openDeleteConfirm(
+                                                                                p.id,
+                                                                                p.product_name
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <i
+                                                                            className="ti ti-trash"
+                                                                            style={{
+                                                                                fontSize:
+                                                                                    fontSize.base,
+                                                                            }}
+                                                                        />
+                                                                    </button>
+                                                                )}
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1598,7 +1608,7 @@ const Products = () => {
                                             {/* NEW: top-right select checkbox for bulk delete —
                                                 same placement as the Clients page card. Only
                                                 shown once "Select" mode is switched on. */}
-                                            {canManage && isSelectMode && (
+                                            {canEditDelete && isSelectMode && (
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedIds.has(p.id)}
@@ -1730,7 +1740,7 @@ const Products = () => {
                             </div>
 
                             <div style={styles.detailsModalFooter}>
-                                {canManage && isPendingCreate(viewDetails) && (
+                                {canEditDelete && isPendingCreate(viewDetails) && (
                                     <p style={styles.pendingNote}>
                                         This service is still awaiting approval to be created — it
                                         can't be edited or deleted until then.
@@ -1741,10 +1751,10 @@ const Products = () => {
                                     regardless of role, so Team Member / Vertical
                                     Head (view-only) could click them and only find
                                     out via a backend "Access denied" on submit.
-                                    Gated behind canManage, matching the list-row
+                                    Gated behind canEditDelete, matching the list-row
                                     icons above. Also hidden for still-pending-
                                     create placeholder rows — see isPendingCreate. */}
-                                {canManage && !isPendingCreate(viewDetails) && (
+                                {canEditDelete && !isPendingCreate(viewDetails) && (
                                     <button
                                         type="button"
                                         style={{
@@ -1765,7 +1775,7 @@ const Products = () => {
                                         Edit
                                     </button>
                                 )}
-                                {canManage && !isPendingCreate(viewDetails) && (
+                                {canEditDelete && !isPendingCreate(viewDetails) && (
                                     <button
                                         type="button"
                                         style={{

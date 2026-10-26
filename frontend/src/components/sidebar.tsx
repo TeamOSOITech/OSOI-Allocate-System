@@ -163,7 +163,7 @@ const menuItems: MenuItem[] = [
         label: "Approvals",
         icon: "ti ti-checkbox",
         path: "/approvals",
-        roles: ["OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"],
+        roles: ["PROCESS_LEAD", "OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"],
     },
     {
         label: "Allocate Work",

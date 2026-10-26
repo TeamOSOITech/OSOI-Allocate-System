@@ -671,6 +671,7 @@ access Phase 1 — this is their "Daily Assigned Work" page. */}
                                 element={
                                     <PrivateRoute
                                         requiredRole={[
+                                            "PROCESS_LEAD",
                                             "OPS_MANAGER",
                                             "AUDIT_MANAGER",
                                             "SUPER_ADMIN",

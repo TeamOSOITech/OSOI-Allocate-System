@@ -235,6 +235,16 @@ const GLOBAL_CSS = `
 `;
 
 export default function Approvals() {
+    // Process Lead can open this page to track their OWN requests, but
+    // can never decide anything (backend would 403) — so for them it is
+    // read-only: no Approve/Reject, no bulk select, no PL-only filter.
+    let isReadOnly = false;
+    try {
+        const u = JSON.parse(localStorage.getItem("user") || "null");
+        isReadOnly = (u?.role || "").toUpperCase() === "PROCESS_LEAD";
+    } catch {
+        isReadOnly = false;
+    }
     const isMobile = useIsMobile();
 
     const [tab, setTab] = useState<"pending" | "history">("pending");
@@ -757,22 +767,27 @@ export default function Approvals() {
                         </div>
                         {tab === "pending" ? (
                             <>
-                                <button
-                                    type="button"
-                                    style={{
-                                        ...styles.plFilterBtn,
-                                        ...(processLeadOnly ? styles.plFilterBtnActive : {}),
-                                    }}
-                                    onClick={() => setProcessLeadOnly((v) => !v)}
-                                    aria-pressed={processLeadOnly}
-                                >
-                                    <i className="ti ti-filter" style={{ fontSize: fontSize.md }} />
-                                    Process Lead requests
-                                </button>
+                                {!isReadOnly && (
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.plFilterBtn,
+                                            ...(processLeadOnly ? styles.plFilterBtnActive : {}),
+                                        }}
+                                        onClick={() => setProcessLeadOnly((v) => !v)}
+                                        aria-pressed={processLeadOnly}
+                                    >
+                                        <i
+                                            className="ti ti-filter"
+                                            style={{ fontSize: fontSize.md }}
+                                        />
+                                        Process Lead requests
+                                    </button>
+                                )}
                                 {/* "Select" toggle — checkboxes for bulk approve/reject only
                                     show once this is switched on, same pattern as bulk-delete
                                     on Products/Clients. */}
-                                {filteredRequests.length > 0 && (
+                                {!isReadOnly && filteredRequests.length > 0 && (
                                     <button
                                         type="button"
                                         style={{
@@ -1000,40 +1015,44 @@ export default function Approvals() {
                                                         <i className="ti ti-clock" />
                                                         {formatDateTime(r.created_at)}
                                                     </span>
-                                                    <div style={styles.actionsRow}>
-                                                        <button
-                                                            type="button"
-                                                            className="ap-reject-btn"
-                                                            style={{
-                                                                ...styles.rejectBtn,
-                                                                opacity: isDeciding ? 0.6 : 1,
-                                                                cursor: isDeciding
-                                                                    ? "not-allowed"
-                                                                    : "pointer",
-                                                            }}
-                                                            disabled={isDeciding}
-                                                            onClick={() => openRejectModal(r)}
-                                                        >
-                                                            <i className="ti ti-trash" />
-                                                            Reject
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className="ap-approve-btn"
-                                                            style={{
-                                                                ...styles.approveBtn,
-                                                                opacity: isDeciding ? 0.6 : 1,
-                                                                cursor: isDeciding
-                                                                    ? "not-allowed"
-                                                                    : "pointer",
-                                                            }}
-                                                            disabled={isDeciding}
-                                                            onClick={() => openApproveModal(r)}
-                                                        >
-                                                            <i className="ti ti-circle-check" />
-                                                            {isDeciding ? "Working…" : "Approve"}
-                                                        </button>
-                                                    </div>
+                                                    {!isReadOnly && (
+                                                        <div style={styles.actionsRow}>
+                                                            <button
+                                                                type="button"
+                                                                className="ap-reject-btn"
+                                                                style={{
+                                                                    ...styles.rejectBtn,
+                                                                    opacity: isDeciding ? 0.6 : 1,
+                                                                    cursor: isDeciding
+                                                                        ? "not-allowed"
+                                                                        : "pointer",
+                                                                }}
+                                                                disabled={isDeciding}
+                                                                onClick={() => openRejectModal(r)}
+                                                            >
+                                                                <i className="ti ti-trash" />
+                                                                Reject
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="ap-approve-btn"
+                                                                style={{
+                                                                    ...styles.approveBtn,
+                                                                    opacity: isDeciding ? 0.6 : 1,
+                                                                    cursor: isDeciding
+                                                                        ? "not-allowed"
+                                                                        : "pointer",
+                                                                }}
+                                                                disabled={isDeciding}
+                                                                onClick={() => openApproveModal(r)}
+                                                            >
+                                                                <i className="ti ti-circle-check" />
+                                                                {isDeciding
+                                                                    ? "Working…"
+                                                                    : "Approve"}
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         );

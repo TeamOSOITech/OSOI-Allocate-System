@@ -351,9 +351,12 @@ export default function Clients() {
     } catch {
         currentUser = null;
     }
-    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
+    const canManage = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER"].includes(
         (currentUser?.role || "").toUpperCase()
     );
+    // Process Lead has NO add/edit/delete on services, clients, subclients
+    // (only Add User, via approval) — backend also blocks with 403.
+    const canEditDelete = canManage && (currentUser?.role || "").toUpperCase() !== "PROCESS_LEAD";
 
     const [activeTab, setActiveTab] = useState<TabKey>("client");
     const [search, setSearch] = useState("");
@@ -1737,7 +1740,7 @@ export default function Clients() {
                         </select>
 
                         {/* "Select" toggle — bulk-delete checkboxes only show once on. */}
-                        {canManage && currentPageRows.length > 0 && (
+                        {canEditDelete && currentPageRows.length > 0 && (
                             <button
                                 type="button"
                                 onClick={toggleSelectMode}
@@ -1788,7 +1791,7 @@ export default function Clients() {
                     </div>
 
                     {/* Bulk-select bar */}
-                    {canManage && isSelectMode && currentPageRows.length > 0 && (
+                    {canEditDelete && isSelectMode && currentPageRows.length > 0 && (
                         <div style={styles.bulkSelectBar}>
                             <label style={styles.bulkSelectAllLabel}>
                                 <input
@@ -1845,7 +1848,7 @@ export default function Clients() {
                             <div style={styles.tableWrap}>
                                 <table className="cl-table" style={styles.table}>
                                     <colgroup>
-                                        {canManage && isSelectMode && (
+                                        {canEditDelete && isSelectMode && (
                                             <col style={{ width: "36px" }} />
                                         )}
                                         <col style={{ width: "15%" }} />
@@ -1859,7 +1862,7 @@ export default function Clients() {
                                     </colgroup>
                                     <thead>
                                         <tr>
-                                            {canManage && isSelectMode && (
+                                            {canEditDelete && isSelectMode && (
                                                 <th style={{ ...styles.th, textAlign: "center" }}>
                                                     <input
                                                         type="checkbox"
@@ -1904,7 +1907,7 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
-                                                        {canManage && isSelectMode && (
+                                                        {canEditDelete && isSelectMode && (
                                                             <td
                                                                 style={{
                                                                     ...styles.td,
@@ -2032,7 +2035,7 @@ export default function Clients() {
                                                                 </button>
                                                                 {/* Edit/Delete hidden for roles that can't
                                                                     manage, and for still-pending-create rows. */}
-                                                                {canManage &&
+                                                                {canEditDelete &&
                                                                     !isPendingCreateClient(
                                                                         client
                                                                     ) && (
@@ -2058,7 +2061,7 @@ export default function Clients() {
                                                                             />
                                                                         </button>
                                                                     )}
-                                                                {canManage &&
+                                                                {canEditDelete &&
                                                                     !isPendingCreateClient(
                                                                         client
                                                                     ) && (
@@ -2105,7 +2108,7 @@ export default function Clients() {
                                                             boxShadow: `inset 3px 0 0 0 ${avatar.solid}`,
                                                         }}
                                                     >
-                                                        {canManage && isSelectMode && (
+                                                        {canEditDelete && isSelectMode && (
                                                             <td
                                                                 style={{
                                                                     ...styles.td,
@@ -2216,7 +2219,7 @@ export default function Clients() {
                                                                 >
                                                                     View
                                                                 </button>
-                                                                {canManage && (
+                                                                {canEditDelete && (
                                                                     <button
                                                                         type="button"
                                                                         className="cl-icon-btn"
@@ -2239,7 +2242,7 @@ export default function Clients() {
                                                                         />
                                                                     </button>
                                                                 )}
-                                                                {canManage && (
+                                                                {canEditDelete && (
                                                                     <button
                                                                         type="button"
                                                                         className="cl-icon-btn-danger"
@@ -2287,7 +2290,7 @@ export default function Clients() {
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
-                                                {canManage && isSelectMode && (
+                                                {canEditDelete && isSelectMode && (
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedIds.has(client.id)}
@@ -2310,7 +2313,9 @@ export default function Clients() {
                                                             ...styles.pendingBadgeCorner,
                                                             // leave room for the checkbox in select mode
                                                             right:
-                                                                canManage && isSelectMode ? 38 : 10,
+                                                                canEditDelete && isSelectMode
+                                                                    ? 38
+                                                                    : 10,
                                                         }}
                                                     >
                                                         Awaiting approval
@@ -2420,7 +2425,7 @@ export default function Clients() {
                                                     borderTop: `3px solid ${avatar.solid}`,
                                                 }}
                                             >
-                                                {canManage && isSelectMode && (
+                                                {canEditDelete && isSelectMode && (
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedIds.has(sub.id)}
@@ -2686,7 +2691,7 @@ export default function Clients() {
                             <div style={styles.detailsModalFooter}>
                                 {/* Edit/Delete only for roles that can manage, and not
                                     for a still-pending-create client placeholder. */}
-                                {canManage &&
+                                {canEditDelete &&
                                     viewDetails.type === "client" &&
                                     isPendingCreateClient(viewDetails.data) && (
                                         <p style={styles.pendingNote}>
@@ -2694,7 +2699,7 @@ export default function Clients() {
                                             it can't be edited or deleted until then.
                                         </p>
                                     )}
-                                {canManage &&
+                                {canEditDelete &&
                                     !(
                                         viewDetails.type === "client" &&
                                         isPendingCreateClient(viewDetails.data)
@@ -2719,7 +2724,7 @@ export default function Clients() {
                                             Edit
                                         </button>
                                     )}
-                                {canManage &&
+                                {canEditDelete &&
                                     !(
                                         viewDetails.type === "client" &&
                                         isPendingCreateClient(viewDetails.data)
