@@ -716,6 +716,23 @@ async function listServiceCases(req, res) {
       if (req.query.submissionStatus) {
         filtered = filtered.eq("submission_status", req.query.submissionStatus);
       }
+      // Dashboard KPI cards: "allocated TODAY" / "submitted TODAY" are
+      // timestamp windows (ISO strings from the client), NOT work_date.
+      // Without these the filters were silently ignored and the cards
+      // showed all-time ALLOCATED / SUBMITTED totals.
+      const isoTs = (v) => {
+        if (!v) return null;
+        const d = new Date(String(v));
+        return isNaN(d.getTime()) ? null : d.toISOString();
+      };
+      const allocFrom = isoTs(req.query.allocatedFrom);
+      const allocTo = isoTs(req.query.allocatedTo);
+      const subFrom = isoTs(req.query.submittedFrom);
+      const subTo = isoTs(req.query.submittedTo);
+      if (allocFrom) filtered = filtered.gte("allocated_at", allocFrom);
+      if (allocTo) filtered = filtered.lte("allocated_at", allocTo);
+      if (subFrom) filtered = filtered.gte("submitted_at", subFrom);
+      if (subTo) filtered = filtered.lte("submitted_at", subTo);
       // Quality Scores (QC) page filter. qc_status only ever holds the
       // plain values 'PENDING' / 'PASSED' / 'FAILED'.
       if (req.query.qcStatus === "PENDING") {
@@ -4723,6 +4740,7 @@ async function listMyMissedCases(req, res) {
 }
 
 module.exports = {
+  getActingEmployeeId,
   getAutoPrefix,
   updateServiceCaseNumber,
   listServiceCases,

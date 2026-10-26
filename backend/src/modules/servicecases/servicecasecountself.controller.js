@@ -29,6 +29,7 @@ const { todayInTz } = require("../../utils/dates");
 const supabase = require("../../config/supabaseClient");
 const { fetchAll } = require("../../utils/fetchAll");
 const {
+  getActingEmployeeId,
   getProductNameMap,
   getClientNameMap,
   getSubclientNameMap,
@@ -440,7 +441,13 @@ async function selfAllocateCounts(req, res) {
 async function addCaseNumbersToCount(req, res) {
   try {
     const orgId = orgIdOf(req);
-    const me = userIdOf(req);
+    // Super Admin / Ops Manager may add + submit on behalf of an employee
+    // (body.onBehalfOf); anyone else always acts as themselves.
+    const acting = getActingEmployeeId(req);
+    if (!acting.ok) {
+      return res.status(403).json({ success: false, message: acting.message });
+    }
+    const me = acting.employeeId;
     const countId = (req.body?.countId || "").toString();
     const rawCaseNumbers = Array.isArray(req.body?.caseNumbers)
       ? req.body.caseNumbers
