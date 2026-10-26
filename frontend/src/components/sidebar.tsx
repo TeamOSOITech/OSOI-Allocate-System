@@ -139,9 +139,20 @@ const menuItems: MenuItem[] = [
         roles: ["AUDIT_MANAGER"],
     },
     // TEMPORARILY HIDDEN from the sidebar (routes still work): Billing,
-    // Approvals, QC & Audit. Un-comment this block to show them again.
+    // QC & Audit. Un-comment this block to show them again.
     /*
     { label: "Billing", icon: "ti ti-receipt", path: "/billing", roles: SUPER_ADMIN_ONLY },
+    {
+        // Renamed from "Quality Scores" — this page now has a QC Queue
+        // / Audit Queue toggle (see pages/admin/qc.tsx), not just marks.
+        // REMOVED: the separate "Audit" sidebar entry (/qc-audit) — that
+        // page no longer exists, Audit lives here now too.
+        label: "QC & Audit",
+        icon: "ti ti-star",
+        path: "/quality-scores",
+        roles: SUPER_ADMIN_ONLY,
+    },
+    */
     // Approvals — decision-makers only. Process Lead no longer sees this
     // link: they submit requests via their normal actions (e.g. Add
     // Service) and get told inline that it's pending — they don't need
@@ -154,17 +165,6 @@ const menuItems: MenuItem[] = [
         path: "/approvals",
         roles: ["OPS_MANAGER", "AUDIT_MANAGER", "SUPER_ADMIN"],
     },
-    {
-        // Renamed from "Quality Scores" — this page now has a QC Queue
-        // / Audit Queue toggle (see pages/admin/qc.tsx), not just marks.
-        // REMOVED: the separate "Audit" sidebar entry (/qc-audit) — that
-        // page no longer exists, Audit lives here now too.
-        label: "QC & Audit",
-        icon: "ti ti-star",
-        path: "/quality-scores",
-        roles: SUPER_ADMIN_ONLY,
-    },
-    */
     {
         label: "Allocate Work",
         icon: "ti ti-user-check",
