@@ -58,7 +58,7 @@ type Team = { id: string; name: string };
 // and on the backend), so unlike Department/Team this list is NOT fetched
 // dynamically.
 const ROLE_OPTIONS: { value: string; label: string }[] = [
-    { value: "SUPER_ADMIN", label: "Super Admin" },
+    { value: "SUPER_ADMIN", label: "Global Admin" },
     { value: "OPS_MANAGER", label: "Ops Manager" },
     { value: "AUDIT_MANAGER", label: "Audit Manager" },
     { value: "PROCESS_LEAD", label: "Process Lead" },

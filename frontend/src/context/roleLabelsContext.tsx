@@ -20,7 +20,7 @@ const API_BASE = import.meta.env.VITE_API_URL;
 // immediately on first render, before the API call resolves (and if it
 // ever fails) — matches the backend's DEFAULT_ROLE_LABELS exactly.
 export const DEFAULT_ROLE_LABELS: Record<string, string> = {
-    SUPER_ADMIN: "Super Admin",
+    SUPER_ADMIN: "Global Admin",
     OPS_MANAGER: "Ops Manager",
     AUDIT_MANAGER: "Audit Manager",
     PROCESS_LEAD: "Process Lead",

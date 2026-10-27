@@ -3143,7 +3143,7 @@ const Landing = () => {
                 <div className="lp2-stats">
                     {[
                         ["1 click", "Smart Allocation across everyone marked present"],
-                        ["6 roles", "From Super Admin to Team Member, each with its own access"],
+                        ["6 roles", "From Global Admin to Team Member, each with its own access"],
                         ["Free demo", "Book a walkthrough on data that looks like yours"],
                         ["0 installs", "Runs in any browser, on any device"],
                     ].map(([n, l]) => (

@@ -26,7 +26,7 @@ type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode" | "tenant";
 
 // Roles the platform owner can give a tenant's login (same codes as the backend).
 const TENANT_ROLE_OPTIONS: { value: string; label: string }[] = [
-    { value: "SUPER_ADMIN", label: "Super Admin" },
+    { value: "SUPER_ADMIN", label: "Global Admin" },
     { value: "OPS_MANAGER", label: "Ops Manager" },
     { value: "AUDIT_MANAGER", label: "Audit Manager" },
     { value: "PROCESS_LEAD", label: "Process Lead" },
@@ -529,7 +529,7 @@ export default function SettingsModal({
                                 <h4 style={s.h2}>Organization logo</h4>
                                 <p style={s.sub}>
                                     Shown in the header for everyone in your organization. Only
-                                    Super Admin can change it.
+                                    Global Admin can change it.
                                 </p>
                                 <div style={s.card}>
                                     <div
@@ -1013,7 +1013,7 @@ export default function SettingsModal({
                             <>
                                 <h4 style={s.h2}>Case numbers</h4>
                                 <p style={s.sub}>
-                                    Applies to everyone in your organization. Only Super Admin and
+                                    Applies to everyone in your organization. Only Global Admin and
                                     managers can change this.
                                 </p>
                                 <div style={s.card}>

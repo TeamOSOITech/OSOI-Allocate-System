@@ -130,8 +130,7 @@ export default function Subscription() {
     // by clients.tsx/employees.tsx/products.tsx (AuthContext isn't wired
     // into App.jsx yet — see authcontext.tsx's header comment).
     const currentUser = getCurrentUser();
-    const canManagePlan =
-        currentUser?.role === "SUPER_ADMIN" || currentUser?.role === "OPS_MANAGER";
+    const canManagePlan = currentUser?.role === "SUPER_ADMIN";
 
     // ---------- dummy-card checkout modal ----------
     const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
@@ -267,8 +266,8 @@ export default function Subscription() {
                         swapped for a disabled "View only" pill below). */}
                     {!canManagePlan && (
                         <p style={styles.viewOnlyNotice}>
-                            <i className="ti ti-eye" /> View only — ask your Super Admin or Ops
-                            Manager to change the plan.
+                            <i className="ti ti-eye" /> View only — ask your Global Admin to change
+                            the plan.
                         </p>
                     )}
                 </div>
