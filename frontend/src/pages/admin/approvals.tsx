@@ -851,6 +851,18 @@ export default function Approvals() {
                             </label>
                             {selectedIds.size > 0 && (
                                 <div style={{ display: "flex", gap: 8 }}>
+                                    {/* All Clear — unchecks every selected request (stays in select mode). */}
+                                    <button
+                                        type="button"
+                                        style={styles.selectModeBtn}
+                                        onClick={() => setSelectedIds(new Set())}
+                                    >
+                                        <i
+                                            className="ti ti-circle-x"
+                                            style={{ fontSize: fontSize.base }}
+                                        />
+                                        All Clear
+                                    </button>
                                     <button
                                         type="button"
                                         style={styles.bulkRejectBtn}
