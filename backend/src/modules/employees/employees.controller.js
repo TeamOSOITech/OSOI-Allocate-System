@@ -154,6 +154,9 @@ async function updateEmployee(req, res) {
     updatePayload["Reporting Manager"] = body.reportingManager;
   if (body.joiningDate !== undefined)
     updatePayload["Date of Joining"] = body.joiningDate;
+  // Date of Exit is edited here only (not on Add User). Empty -> null.
+  if (body.exitDate !== undefined)
+    updatePayload["Date of Exit"] = body.exitDate || null;
   if (body.dateOfBirth !== undefined)
     updatePayload["Date of Birth"] = body.dateOfBirth;
   if (body.employeeCode !== undefined)

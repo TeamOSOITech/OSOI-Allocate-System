@@ -22,6 +22,7 @@ function mapRow(row) {
     department: row["Department"] ?? null,
     reportingManager: row["Reporting Manager"] ?? null,
     joiningDate: row["Date of Joining"] ?? null,
+    exitDate: row["Date of Exit"] ?? null,
     dateOfBirth: row["Date of Birth"] ?? null,
     // FIX: frontend (employees.tsx) sends/reads this field as "team", not
     // "workedInTeams" — that name mismatch is why Team silently failed to
