@@ -329,7 +329,6 @@ export default function AddUser() {
         dob: "",
         doj: "",
         // NEW: optional last working day (not in REQUIRED_FIELDS).
-        doe: "",
         reportingManager: "",
         Teams: "",
         password: "",
@@ -965,11 +964,6 @@ export default function AddUser() {
 
         if (isUnder18(formData.dob)) {
             setError(DOB_AGE_ERROR);
-            return;
-        }
-
-        if (formData.doe && formData.doj && formData.doe < formData.doj) {
-            setError("Date of Exit can't be before Date of Joining.");
             return;
         }
 
@@ -1614,18 +1608,6 @@ export default function AddUser() {
                                             value={formData.doj}
                                             onChange={(e) =>
                                                 setFormData({ ...formData, doj: e.target.value })
-                                            }
-                                        />
-                                    </div>
-                                    <div>
-                                        <label style={labelStyle("doe")}>Date of Exit</label>
-                                        <input
-                                            type="date"
-                                            style={styles.input}
-                                            value={formData.doe}
-                                            min={formData.doj || undefined}
-                                            onChange={(e) =>
-                                                setFormData({ ...formData, doe: e.target.value })
                                             }
                                         />
                                     </div>

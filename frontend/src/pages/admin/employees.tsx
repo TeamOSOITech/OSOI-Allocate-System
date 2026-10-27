@@ -39,6 +39,8 @@ type Employee = {
     status: EntityStatus;
     reportingManager: string | null;
     joiningDate: string; // ISO date
+    // Date of Exit - set only while editing an employee (not on Add User).
+    exitDate?: string | null;
     // Not returned by the API yet (no praises table/route on the backend).
     // Left optional so the UI degrades gracefully — re-enable the
     // recognition chip/section once GET /api/employees/:id/praises exists.
@@ -547,6 +549,19 @@ export default function Employees() {
                 setSaving(false);
                 return;
             }
+
+            // Date of Exit can't be before Date of Joining; an emptied field
+            // is sent as null so the exit date is cleared.
+            if (
+                payload.exitDate &&
+                payload.joiningDate &&
+                String(payload.exitDate).slice(0, 10) < String(payload.joiningDate).slice(0, 10)
+            ) {
+                alert("Date of Exit can't be before Joining Date.");
+                setSaving(false);
+                return;
+            }
+            payload.exitDate = payload.exitDate || null;
 
             const res = await authFetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
@@ -1849,6 +1864,31 @@ export default function Employees() {
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {formatDate(drawerData.joiningDate)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Date of Exit</span>
+                                    {isEditingDrawer ? (
+                                        <input
+                                            type="date"
+                                            className="emp-drawer-input"
+                                            style={styles.detailsInput}
+                                            value={toDateInputValue(drawerData.exitDate)}
+                                            min={
+                                                toDateInputValue(drawerData.joiningDate) ||
+                                                undefined
+                                            }
+                                            onChange={(e) =>
+                                                updateEditField("exitDate", e.target.value)
+                                            }
+                                        />
+                                    ) : (
+                                        <span style={styles.detailsValue}>
+                                            {drawerData.exitDate
+                                                ? formatDate(drawerData.exitDate)
+                                                : "—"}
                                         </span>
                                     )}
                                 </div>
