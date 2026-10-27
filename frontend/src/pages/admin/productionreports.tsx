@@ -146,6 +146,9 @@ type ServiceCaseRow = {
     // reason typed when the status was "Out of Scope"
     outOfScopeReason?: string | null;
     submittedAt: string | null;
+    // when it was allocated (backend already sends this) — used to put an OLD
+    // case that was handed out today on TODAY's Daily-wise card
+    allocatedAt?: string | null;
     // NEW: who actually pressed Submit (the employee, or a manager on their
     // behalf). Backend must send these.
     submittedById?: string | number | null;
@@ -258,13 +261,31 @@ const VIEW_OPTIONS: { id: "client" | "employee" | "daily"; label: string; icon: 
     { id: "daily", label: "Daily-wise", icon: "ti-calendar-stats" },
 ];
 
+// "YYYY-MM-DD" (local) of an ISO timestamp, "" if invalid
+function localYmd(iso: string) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+// FIX: a case keeps its original work_date even when it is allocated /
+// submitted days later (backlog). For the Daily-wise view such a case belongs
+// to the day it was actually handed out. (Same idea as heldTodayUnits() for
+// count-only units.)
+function caseDay(c: ServiceCaseRow) {
+    const t = todayStr();
+    if (c.workDate < t && c.allocatedAt && localYmd(c.allocatedAt) === t) return t;
+    return c.workDate;
+}
+
 // Which card a case belongs to, for the current view.
 function caseGroupKey(c: ServiceCaseRow, view: ViewMode) {
     switch (view) {
         case "employee":
             return (c.assignedEmployeeName || "").trim() || UNALLOCATED;
         case "daily":
-            return c.workDate;
+            return caseDay(c);
         case "work":
             return (c.productName || "").trim() || NO_SERVICE;
         default:
@@ -532,6 +553,57 @@ export default function ProductionReport() {
                 results.forEach((r) => all.push(...(r.data || [])));
             }
 
+            // NEW: OLDER (backlog) cases that were allocated / given a case
+            // number TODAY keep their old work_date, so the date-range query
+            // above never returns them. Pull them in separately when the
+            // range includes today (deduped by id).
+            const todayYmd = todayStr();
+            if (fromDate <= todayYmd && toDate >= todayYmd) {
+                try {
+                    const [ty, tm, td] = todayYmd.split("-").map(Number);
+                    const prev = new Date(ty, tm - 1, td - 1);
+                    const prevYmd = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(
+                        2,
+                        "0"
+                    )}-${String(prev.getDate()).padStart(2, "0")}`;
+                    const seen = new Set(all.map((r) => r.id));
+                    let bp = 1;
+                    let bTotalPages = 1;
+                    do {
+                        const params = new URLSearchParams();
+                        params.set("page", String(bp));
+                        params.set("pageSize", String(PAGE));
+                        params.set("workDateTo", prevYmd);
+                        params.set(
+                            "allocatedFrom",
+                            new Date(ty, tm - 1, td, 0, 0, 0, 0).toISOString()
+                        );
+                        params.set(
+                            "allocatedTo",
+                            new Date(ty, tm - 1, td, 23, 59, 59, 999).toISOString()
+                        );
+                        if (productId) params.set("productId", productId);
+                        if (employeeId) params.set("employeeId", employeeId);
+                        if (clientId) params.set("clientId", clientId);
+                        const bRes = await authFetch(
+                            `${API_BASE}/api/service-cases?${params.toString()}`
+                        );
+                        const bJson = await bRes.json();
+                        if (!bRes.ok || !bJson.success) break;
+                        (bJson.data || []).forEach((r: ServiceCaseRow) => {
+                            if (!seen.has(r.id)) {
+                                seen.add(r.id);
+                                all.push(r);
+                            }
+                        });
+                        bTotalPages = Math.min(bJson.pagination?.totalPages ?? 1, MAX_PAGES);
+                        bp++;
+                    } while (bp <= bTotalPages);
+                } catch {
+                    /* optional: report still works without the backlog cases */
+                }
+            }
+
             const counts = await countsPromise;
             if (isStale()) return;
             setCardCases(all);
@@ -585,7 +657,7 @@ export default function ProductionReport() {
         cardCases.forEach((c) => {
             const b = bucket(caseGroupKey(c, effectiveView));
             b.total += 1;
-            if (c.workDate === today) b.today += 1;
+            if (caseDay(c) === today) b.today += 1;
             if (c.allocationStatus === "ALLOCATED") b.allocated += 1;
             if (c.submissionStatus === "SUBMITTED") b.submitted += 1;
             if (c.assignedEmployeeName) b.mins += ampOf(c.productId);

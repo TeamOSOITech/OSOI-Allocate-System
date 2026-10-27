@@ -66,6 +66,15 @@ function todayStr() {
     return `${y}-${m}-${day}`;
 }
 
+// "YYYY-MM-DD" of the day before the given "YYYY-MM-DD" (local, no tz shift)
+function prevDayStr(ymd: string) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const p = new Date(y, m - 1, d - 1);
+    return `${p.getFullYear()}-${String(p.getMonth() + 1).padStart(2, "0")}-${String(
+        p.getDate()
+    ).padStart(2, "0")}`;
+}
+
 // Units of a count row that employees are holding RIGHT NOW and that were
 // allocated TODAY. A backlog count (older work date) handed to someone today
 // is today's work for that person, so it must show up in today's numbers.
@@ -849,17 +858,32 @@ function KpiBreakdownModal({
                 }
 
                 const day = { workDateFrom: today, workDateTo: today };
+                // same rule as the KPI cards: older cases allocated today count
+                // as today's work; Completed = submitted today
+                const { start: dStart, end: dEnd } = dayBoundsISO(today, today);
+                const backlog = {
+                    workDateTo: prevDayStr(today),
+                    allocatedFrom: dStart,
+                    allocatedTo: dEnd,
+                    allocationStatus: "ALLOCATED",
+                };
                 const out = await Promise.all(
                     products.map(async (pr) => {
                         const pid = String(pr.id);
-                        const [tot, alloc, done] = await Promise.all([
+                        const [tot, alloc, done, back] = await Promise.all([
                             needTotal ? total({ ...day, productId: pid }) : 0,
                             needAlloc
                                 ? total({ ...day, allocationStatus: "ALLOCATED", productId: pid })
                                 : 0,
                             needDone
-                                ? total({ ...day, submissionStatus: "SUBMITTED", productId: pid })
+                                ? total({
+                                      submissionStatus: "SUBMITTED",
+                                      submittedFrom: dStart,
+                                      submittedTo: dEnd,
+                                      productId: pid,
+                                  })
                                 : 0,
+                            needTotal || needAlloc ? total({ ...backlog, productId: pid }) : 0,
                         ]);
                         let cTot = 0;
                         let cAlloc = 0;
@@ -872,11 +896,11 @@ function KpiBreakdownModal({
                             });
                         const withCase =
                             kind === "total"
-                                ? tot
+                                ? tot + back
                                 : kind === "remaining"
                                   ? Math.max(0, tot - alloc)
                                   : kind === "allocated"
-                                    ? alloc
+                                    ? alloc + back
                                     : done;
                         const withoutCase =
                             kind === "total"
@@ -1166,18 +1190,34 @@ export default function Dashboard({ user }: DashboardProps) {
             //   Completed = those cases that are SUBMITTED
             //   Remaining = Total - Allocated
             const today = todayStr();
-            const [totRes, allocRes, compRes, countRes] = await Promise.all([
+            // FIX: a case keeps its ORIGINAL work_date even when it is handed
+            // out / given a case number / submitted days later (backlog counts
+            // "stay backlog"). Counting only work_date = today made such a case
+            // vanish from Total + Allocated the moment a case number was added,
+            // and never show in Completed. So:
+            //   Total / Allocated also include OLDER cases allocated TODAY
+            //   Completed = every case SUBMITTED today (by submitted_at)
+            const { start: dayStart, end: dayEnd } = dayBoundsISO(today, today);
+            const backlog = {
+                workDateTo: prevDayStr(today),
+                allocatedFrom: dayStart,
+                allocatedTo: dayEnd,
+                allocationStatus: "ALLOCATED",
+            };
+            const [totRes, backRes, allocRes, compRes, countRes] = await Promise.all([
                 mk({ workDateFrom: today, workDateTo: today }),
+                mk(backlog),
                 mk({ workDateFrom: today, workDateTo: today, allocationStatus: "ALLOCATED" }),
-                mk({ workDateFrom: today, workDateTo: today, submissionStatus: "SUBMITTED" }),
+                mk({ submissionStatus: "SUBMITTED", submittedFrom: dayStart, submittedTo: dayEnd }),
                 authFetch(
                     `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
                         workDate: today,
                     }).toString()}`
                 ),
             ]);
-            const [totJson, allocJson, compJson, countJson] = await Promise.all([
+            const [totJson, backJson, allocJson, compJson, countJson] = await Promise.all([
                 totRes.json(),
+                backRes.json(),
                 allocRes.json(),
                 compRes.json(),
                 countRes.json(),
@@ -1197,10 +1237,12 @@ export default function Dashboard({ user }: DashboardProps) {
                 });
             }
 
-            const totOk = okOf(totRes, totJson) && countsOk;
-            const allocOk = okOf(allocRes, allocJson) && countsOk;
-            const total = totOk ? num(totRes, totJson) + countsTotal : null;
-            const allocated = allocOk ? num(allocRes, allocJson) + countsAllocated : null;
+            const backOk = okOf(backRes, backJson);
+            const backN = backOk ? num(backRes, backJson) : 0;
+            const totOk = okOf(totRes, totJson) && backOk && countsOk;
+            const allocOk = okOf(allocRes, allocJson) && backOk && countsOk;
+            const total = totOk ? num(totRes, totJson) + backN + countsTotal : null;
+            const allocated = allocOk ? num(allocRes, allocJson) + backN + countsAllocated : null;
             setCaseTotalCount(total);
             setCaseAllocatedCount(allocated);
             setCaseRemainingCount(

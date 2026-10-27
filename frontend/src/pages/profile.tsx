@@ -4416,20 +4416,22 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         ) : (
                                             <table style={styles.table}>
                                                 <colgroup>
-                                                    <col style={{ width: "5%" }} />
-                                                    <col style={{ width: "12%" }} />
-                                                    <col style={{ width: "12%" }} />
-                                                    <col style={{ width: "11%" }} />
-                                                    <col style={{ width: "17%" }} />
-                                                    <col style={{ width: "22%" }} />
-                                                    <col style={{ width: "11%" }} />
+                                                    <col style={{ width: "4%" }} />
                                                     <col style={{ width: "10%" }} />
+                                                    <col style={{ width: "11%" }} />
+                                                    <col style={{ width: "15%" }} />
+                                                    <col style={{ width: "9%" }} />
+                                                    <col style={{ width: "15%" }} />
+                                                    <col style={{ width: "20%" }} />
+                                                    <col style={{ width: "8%" }} />
+                                                    <col style={{ width: "8%" }} />
                                                 </colgroup>
                                                 <thead>
                                                     <tr>
                                                         <th style={styles.th}>#</th>
                                                         <th style={styles.th}>Case No.</th>
                                                         <th style={styles.th}>Service</th>
+                                                        <th style={styles.th}>Client</th>
                                                         <th style={styles.th}>Date</th>
                                                         <th style={styles.th}>
                                                             {showAllocatedAt
@@ -4489,6 +4491,31 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 </td>
                                                                 <td style={styles.td}>
                                                                     {c.productName || "-"}
+                                                                </td>
+                                                                {/* NEW: Client column (same dropdown/text cell the mobile list already uses) */}
+                                                                <td style={styles.td}>
+                                                                    <ClientCell
+                                                                        c={c}
+                                                                        clients={
+                                                                            clientsByProduct[
+                                                                                String(c.productId)
+                                                                            ] || []
+                                                                        }
+                                                                        subclients={subclients}
+                                                                        saving={
+                                                                            savingClientCaseId ===
+                                                                            c.id
+                                                                        }
+                                                                        onChange={(kind, v) =>
+                                                                            handleCaseClientChange(
+                                                                                c,
+                                                                                kind,
+                                                                                v
+                                                                            )
+                                                                        }
+                                                                        readOnly={!!c.missed}
+                                                                        styles={styles}
+                                                                    />
                                                                 </td>
                                                                 <td style={styles.td}>
                                                                     {formatDisplayDate(c.workDate)}
