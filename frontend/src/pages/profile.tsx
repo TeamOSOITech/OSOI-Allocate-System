@@ -6890,6 +6890,15 @@ export default function Profile({ onLogout }: ProfileProps) {
                 }
             />
 
+            {/* NEW: reportees (+ me) who did not submit yesterday - first login of the day */}
+            <MissedSubmissionPopup
+                userKey={myId}
+                enabled={!isBlueMode && !isViewingOther && !!myId}
+                onOpenProfile={
+                    canViewOthers ? (employeeId: string) => openEmployee(employeeId) : undefined
+                }
+            />
+
             {isAvatarPreviewOpen && photoUrl && (
                 <div style={styles.lightboxOverlay} onClick={() => setIsAvatarPreviewOpen(false)}>
                     <button
@@ -7657,6 +7666,362 @@ function TeamQueriesPopup({
                                                         >
                                                             Raised {tqFmtDateTime(q.submittedAt)}
                                                         </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Manager-only: reportees (+ me) who did not submit YESTERDAY            */
+/* ---------------------------------------------------------------------- */
+// Shown ONCE per user per calendar day - the first time they land on this
+// page that day (their first login). Closing it ("Later") still counts; a
+// small pill stays on screen so it can be reopened.
+type MissedItem = {
+    kind: "CASE" | "COUNT";
+    caseNumber: string | null;
+    quantity: number;
+    productName: string | null;
+    clientName: string | null;
+    subclientName: string | null;
+};
+type MissedMember = {
+    employeeId: string;
+    name: string;
+    isMe: boolean;
+    caseCount: number;
+    countUnits: number;
+    total: number;
+    items: MissedItem[];
+};
+type MissedData = {
+    isManager: boolean;
+    forDate: string | null;
+    totalPending: number;
+    members: MissedMember[];
+};
+
+const missedSeenKey = (userKey: string | null) => `pf_missed_popup:${userKey || "anon"}`;
+function missedAlreadyShownToday(userKey: string | null) {
+    try {
+        return window.localStorage.getItem(missedSeenKey(userKey)) === qrToday();
+    } catch {
+        return false;
+    }
+}
+function missedRecordShown(userKey: string | null) {
+    try {
+        window.localStorage.setItem(missedSeenKey(userKey), qrToday());
+    } catch {
+        /* storage blocked - skip */
+    }
+}
+
+function MissedSubmissionPopup({
+    enabled,
+    userKey,
+    onOpenProfile,
+}: {
+    enabled: boolean;
+    userKey: string | null;
+    onOpenProfile?: (employeeId: string) => void;
+}) {
+    const [data, setData] = useState<MissedData | null>(null);
+    const [showSummary, setShowSummary] = useState(false);
+    const [showDetails, setShowDetails] = useState(false);
+    const [openEmp, setOpenEmp] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!enabled) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`${API_BASE}/api/service-cases/team-missed-yesterday`);
+                const json = await res.json();
+                if (cancelled || !res.ok || !json.success) return;
+                const d: MissedData = json.data;
+                setData(d);
+                if (d.isManager && d.totalPending > 0 && !missedAlreadyShownToday(userKey)) {
+                    missedRecordShown(userKey);
+                    setShowSummary(true);
+                }
+            } catch (err) {
+                console.error("missed submissions load failed:", err);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [enabled, userKey]);
+
+    if (!enabled || !data || !data.isManager || data.totalPending === 0) return null;
+
+    const people = data.members.length;
+    const youIncluded = data.members.some((m) => m.isMe);
+    const yesterdayLabel = data.forDate
+        ? new Date(data.forDate).toLocaleDateString("en-IN", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+          })
+        : "yesterday";
+    const AMBER = "#F59E0B";
+
+    return (
+        <>
+            {/* reopen pill (sits above the team-queries pill) */}
+            {!showSummary && !showDetails && (
+                <button
+                    type="button"
+                    onClick={() => setShowDetails(true)}
+                    style={{
+                        position: "fixed",
+                        right: 18,
+                        bottom: 66,
+                        zIndex: 400,
+                        border: "none",
+                        borderRadius: 999,
+                        padding: "10px 16px",
+                        background: AMBER,
+                        color: "#fff",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: "0 8px 22px rgba(0,0,0,.22)",
+                    }}
+                >
+                    Not submitted yesterday · {data.totalPending}
+                </button>
+            )}
+
+            {/* summary popup */}
+            {showSummary && (
+                <div style={tqOverlay} onClick={() => setShowSummary(false)}>
+                    <div
+                        role="alertdialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 430,
+                            background: "#fff",
+                            borderTop: `4px solid ${AMBER}`,
+                            borderRadius: 16,
+                            padding: "20px 22px",
+                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 14,
+                        }}
+                    >
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: 15, color: "#17181C" }}>
+                                ⚠ Yesterday some people didn't submit their work
+                            </div>
+                            <div style={{ fontSize: 13, color: "#5B6479", marginTop: 4 }}>
+                                {data.totalPending} pending{" "}
+                                {data.totalPending === 1 ? "item" : "items"} from {people}{" "}
+                                {people === 1 ? "person" : "people"} on {yesterdayLabel}
+                                {youIncluded ? " (including yours)" : ""}.
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button
+                                type="button"
+                                style={tqBtn}
+                                onClick={() => setShowSummary(false)}
+                            >
+                                Later
+                            </button>
+                            <button
+                                type="button"
+                                style={tqBtnRed}
+                                onClick={() => {
+                                    setShowSummary(false);
+                                    setShowDetails(true);
+                                }}
+                            >
+                                View Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* details: who did not submit */}
+            {showDetails && (
+                <div style={tqOverlay} onClick={() => setShowDetails(false)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 760,
+                            maxHeight: "86vh",
+                            background: "#fff",
+                            borderRadius: 16,
+                            boxShadow: "0 24px 60px rgba(0,0,0,.28)",
+                            display: "flex",
+                            flexDirection: "column",
+                            overflow: "hidden",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "16px 20px",
+                                borderBottom: "1px solid #EEF0F6",
+                            }}
+                        >
+                            <div>
+                                <div style={{ fontWeight: 700, fontSize: 16, color: "#17181C" }}>
+                                    Not submitted · {yesterdayLabel}
+                                </div>
+                                <div style={{ fontSize: 12.5, color: "#5B6479" }}>
+                                    {data.totalPending} pending · {people}{" "}
+                                    {people === 1 ? "person" : "people"}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                style={tqBtn}
+                                onClick={() => setShowDetails(false)}
+                            >
+                                ✕ Close
+                            </button>
+                        </div>
+
+                        <div style={{ overflowY: "auto", padding: "12px 20px 20px" }}>
+                            {data.members.map((m) => {
+                                const isOpen = openEmp === m.employeeId;
+                                const parts = [
+                                    m.caseCount > 0
+                                        ? `${m.caseCount} ${m.caseCount === 1 ? "case" : "cases"}`
+                                        : "",
+                                    m.countUnits > 0
+                                        ? `${m.countUnits} ${m.countUnits === 1 ? "count" : "counts"}`
+                                        : "",
+                                ].filter(Boolean);
+                                return (
+                                    <div
+                                        key={m.employeeId}
+                                        style={{
+                                            border: "1px solid #EEF0F6",
+                                            borderRadius: 12,
+                                            marginTop: 10,
+                                            overflow: "hidden",
+                                        }}
+                                    >
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenEmp(isOpen ? null : m.employeeId)}
+                                            style={{
+                                                width: "100%",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 12,
+                                                padding: "12px 14px",
+                                                border: "none",
+                                                background: "#FAFBFF",
+                                                cursor: "pointer",
+                                                textAlign: "left",
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    flex: 1,
+                                                    fontWeight: 700,
+                                                    fontSize: 14,
+                                                    color: "#17181C",
+                                                }}
+                                            >
+                                                {m.name}
+                                                {m.isMe ? " (You)" : ""}
+                                            </span>
+                                            <span style={{ fontSize: 12.5, color: "#5B6479" }}>
+                                                {parts.join(" · ")} not submitted
+                                            </span>
+                                            <span style={{ color: "#8A92A6", fontSize: 12 }}>
+                                                {isOpen ? "▴" : "▾"}
+                                            </span>
+                                        </button>
+
+                                        {isOpen && (
+                                            <div style={{ padding: "4px 14px 12px" }}>
+                                                {!m.isMe && onOpenProfile && (
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            justifyContent: "flex-end",
+                                                            padding: "8px 0",
+                                                        }}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            style={tqBtnRed}
+                                                            onClick={() => {
+                                                                setShowDetails(false);
+                                                                setOpenEmp(null);
+                                                                onOpenProfile(m.employeeId);
+                                                            }}
+                                                        >
+                                                            Go to {m.name}'s profile →
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                {m.items.map((it, i) => (
+                                                    <div
+                                                        key={`${m.employeeId}-${i}`}
+                                                        style={{
+                                                            padding: "10px 0",
+                                                            borderTop: "1px solid #EEF0F6",
+                                                            display: "flex",
+                                                            gap: 8,
+                                                            alignItems: "center",
+                                                            flexWrap: "wrap",
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                fontWeight: 700,
+                                                                fontSize: 13,
+                                                            }}
+                                                        >
+                                                            {it.kind === "CASE"
+                                                                ? it.caseNumber || "-"
+                                                                : `${it.quantity} ${
+                                                                      it.quantity === 1
+                                                                          ? "count"
+                                                                          : "counts"
+                                                                  } (no case number)`}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                fontSize: 12.5,
+                                                                color: "#5B6479",
+                                                            }}
+                                                        >
+                                                            {[
+                                                                it.productName,
+                                                                it.clientName,
+                                                                it.subclientName,
+                                                            ]
+                                                                .filter(Boolean)
+                                                                .join(" · ") || "-"}
+                                                        </span>
                                                     </div>
                                                 ))}
                                             </div>
