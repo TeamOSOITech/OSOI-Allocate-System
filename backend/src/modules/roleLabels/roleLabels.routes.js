@@ -36,7 +36,7 @@ const { cached, delByPrefix } = require("../../utils/cache");
 // file's ASSIGNABLE_ROLES_BY_CREATOR is about WHO CAN ASSIGN a role, not
 // which roles exist; this is a smaller, more stable list to depend on.
 const DEFAULT_ROLE_LABELS = {
-  SUPER_ADMIN: "Super Admin",
+  SUPER_ADMIN: "Global Admin",
   OPS_MANAGER: "Ops Manager",
   AUDIT_MANAGER: "Audit Manager",
   PROCESS_LEAD: "Process Lead",
@@ -119,7 +119,7 @@ router.post("/", authorize("SUPER_ADMIN", "OPS_MANAGER"), async (req, res) => {
       return res.status(400).json({
         message:
           roleCode === "SUPER_ADMIN"
-            ? "Super Admin's role name can't be changed."
+            ? "Global Admin's role name can't be changed."
             : `Unknown role "${role}"`,
       });
     }

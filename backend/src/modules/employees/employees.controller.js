@@ -129,7 +129,7 @@ async function updateEmployee(req, res) {
     const allowed = ROLE_CHANGE_ASSIGNABLE[req.user.role];
     if (!allowed) {
       return res.status(403).json({
-        error: "Only a Super Admin or Ops Manager can change a user's role.",
+        error: "Only a Global Admin or Ops Manager can change a user's role.",
       });
     }
     if (!allowed.includes(body.role)) {
@@ -260,7 +260,7 @@ async function resetEmployeePassword(req, res) {
 
   if (!RESET_PASSWORD_ROLES.includes(req.user.role)) {
     return res.status(403).json({
-      error: "Only a Super Admin or Ops Manager can reset a password.",
+      error: "Only a Global Admin or Ops Manager can reset a password.",
     });
   }
 

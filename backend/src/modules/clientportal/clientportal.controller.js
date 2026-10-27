@@ -736,7 +736,7 @@ async function addPageShare(req, res) {
         return res.status(403).json({
           success: false,
           message:
-            "This email has no account yet. Only a Super Admin or Ops Manager can invite a new person.",
+            "This email has no account yet. Only a Global Admin or Ops Manager can invite a new person.",
         });
 
       const normalized = normalizeEmail(email);

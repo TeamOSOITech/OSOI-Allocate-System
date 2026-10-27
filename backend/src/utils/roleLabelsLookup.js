@@ -12,7 +12,7 @@
 const supabase = require("../config/supabaseClient");
 
 const DEFAULT_ROLE_LABELS = {
-  SUPER_ADMIN: "Super Admin",
+  SUPER_ADMIN: "Global Admin",
   OPS_MANAGER: "Ops Manager",
   AUDIT_MANAGER: "Audit Manager",
   PROCESS_LEAD: "Process Lead",
