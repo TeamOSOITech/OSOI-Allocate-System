@@ -741,22 +741,97 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
         let cancelled = false;
         (async () => {
             try {
+                // MIRRORS the Dashboard's "Today's Total / Remaining" cards so
+                // both pages always show the same numbers:
+                //   Total     = cases dated today
+                //             + OLDER (backlog) cases allocated TODAY
+                //             + count-only units for today
+                //   Allocated = the same, but only the ALLOCATED ones
+                //   Pending   = Total - Allocated
+                // (Before, only cases dated exactly today were counted, so a
+                // day made of backlog work showed 0 here but 132 on Dashboard.)
                 const today = todayStr();
-                const base = `${API_BASE}/api/service-cases?workDate=${today}&page=1&pageSize=1`;
-                const [allRes, pendRes] = await Promise.all([
-                    authFetch(base),
-                    authFetch(`${base}&allocationStatus=PENDING`),
+                const [py, pm, pd] = today.split("-").map(Number);
+                const prev = new Date(py, pm - 1, pd - 1);
+                const prevDay = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-${String(prev.getDate()).padStart(2, "0")}`;
+                const dayStart = new Date(py, pm - 1, pd, 0, 0, 0, 0).toISOString();
+                const dayEnd = new Date(py, pm - 1, pd, 23, 59, 59, 999).toISOString();
+
+                const mk = (extra: Record<string, string>) =>
+                    authFetch(
+                        `${API_BASE}/api/service-cases?${new URLSearchParams({
+                            page: "1",
+                            pageSize: "1",
+                            ...extra,
+                        }).toString()}`
+                    );
+                const [totRes, backRes, allocRes, countRes] = await Promise.all([
+                    mk({ workDateFrom: today, workDateTo: today }),
+                    mk({
+                        workDateTo: prevDay,
+                        allocatedFrom: dayStart,
+                        allocatedTo: dayEnd,
+                        allocationStatus: "ALLOCATED",
+                    }),
+                    mk({ workDateFrom: today, workDateTo: today, allocationStatus: "ALLOCATED" }),
+                    authFetch(
+                        `${API_BASE}/api/service-cases/count-allocations?${new URLSearchParams({
+                            workDate: today,
+                        }).toString()}`
+                    ),
                 ]);
-                const [allJson, pendJson] = await Promise.all([allRes.json(), pendRes.json()]);
-                if (!allRes.ok || !allJson.success) return;
-                const countToday = countEntries
-                    .filter((c) => String(c.workDate).slice(0, 10) === today)
-                    .reduce((sum, c) => sum + Math.max(0, c.quantity - (c.fulfilledCount || 0)), 0);
-                if (cancelled) return;
-                setTodayCaseTotal(Number(allJson.pagination?.total ?? 0) + countToday);
-                if (pendRes.ok && pendJson.success) {
-                    setTodayPendingTotal(Number(pendJson.pagination?.total ?? 0) + countToday);
+                const [totJson, backJson, allocJson, countJson] = await Promise.all([
+                    totRes.json(),
+                    backRes.json(),
+                    allocRes.json(),
+                    countRes.json(),
+                ]);
+                const ok = (r: Response, j: any) => r.ok && j?.success;
+                if (!ok(totRes, totJson) || !ok(backRes, backJson) || !ok(countRes, countJson)) {
+                    return;
                 }
+
+                // count-only units that belong in today's numbers
+                const ymdOf = (iso: string) => {
+                    const d = new Date(iso);
+                    if (isNaN(d.getTime())) return "";
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                };
+                let countsTotal = 0;
+                let countsAllocated = 0;
+                (countJson.data || []).forEach((c: any) => {
+                    const wd = String(c.workDate).slice(0, 10);
+                    if (wd === today) {
+                        const fulfilled = (c.allocations || []).reduce(
+                            (sum: number, a: any) => sum + (Number(a.fulfilledQuantity) || 0),
+                            0
+                        );
+                        countsTotal += Number(c.pendingCount) || 0;
+                        countsAllocated += Math.max(0, (Number(c.allocatedTotal) || 0) - fulfilled);
+                    } else if (wd < today) {
+                        // older count handed out today = today's work for that person
+                        const held = (c.allocations || []).reduce((sum: number, a: any) => {
+                            const q = Math.max(
+                                0,
+                                (Number(a.quantity) || 0) - (Number(a.fulfilledQuantity) || 0)
+                            );
+                            return q > 0 && a.allocatedAt && ymdOf(a.allocatedAt) === today
+                                ? sum + q
+                                : sum;
+                        }, 0);
+                        countsTotal += held;
+                        countsAllocated += held;
+                    }
+                });
+
+                const backN = Number(backJson.pagination?.total ?? 0);
+                const total = Number(totJson.pagination?.total ?? 0) + backN + countsTotal;
+                const allocated = ok(allocRes, allocJson)
+                    ? Number(allocJson.pagination?.total ?? 0) + backN + countsAllocated
+                    : null;
+                if (cancelled) return;
+                setTodayCaseTotal(total);
+                if (allocated !== null) setTodayPendingTotal(Math.max(0, total - allocated));
             } catch {
                 /* keep the previous values */
             }
