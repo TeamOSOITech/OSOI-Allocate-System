@@ -4807,6 +4807,191 @@ async function listMyMissedCases(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// NEW: GET /api/service-cases/team-missed-yesterday
+//
+// "Yesterday some people did not submit their work" — manager popup
+// shown on the first login of the next day (Profile page).
+//
+// WHO SEES WHAT
+//   The caller's DIRECT REPORTEES (user_master."Reporting Manager" = the
+//   caller's email) PLUS THE CALLER THEMSELVES. A user with no reportees
+//   gets isManager:false and an empty list (the popup then never shows).
+//
+// WHAT COUNTS AS "NOT SUBMITTED"
+//   Anything allocated to one of those people YESTERDAY (APP_TIMEZONE)
+//   that was still pending at day end. The day-end rollover
+//   (caseRollover.js) already writes exactly that to
+//   case_carryover_log (cases with a number) and
+//   case_count_carryover_log (count-only units), so this just reads
+//   those two logs for yesterday's allocations.
+// ------------------------------------------------------------
+async function listTeamMissedYesterday(req, res) {
+  try {
+    const { userId, organizationId } = req.user;
+    const {
+      ensureRollover: ensureRolloverFn,
+      startOfTodayISO,
+    } = require("./caseRollover");
+
+    const norm = (v) => (v || "").toString().trim().toLowerCase();
+
+    const { data: people, error: pErr } = await supabase
+      .from("user_master")
+      .select('"Auth User Id", "Email", "Reporting Manager"')
+      .eq("organization_id", organizationId);
+    if (pErr) throw pErr;
+
+    const me = (people || []).find((p) => p["Auth User Id"] === userId);
+    const myEmail = norm(me?.["Email"]);
+    const reportees = (people || []).filter(
+      (p) =>
+        p["Auth User Id"] !== userId &&
+        myEmail &&
+        norm(p["Reporting Manager"]) === myEmail,
+    );
+
+    const empty = {
+      isManager: reportees.length > 0,
+      forDate: null,
+      totalPending: 0,
+      members: [],
+    };
+    if (reportees.length === 0) {
+      return res.json({ success: true, data: empty });
+    }
+
+    const teamIds = [userId, ...reportees.map((p) => p["Auth User Id"])];
+
+    // make sure day-end leftovers are already in the logs
+    await ensureRolloverFn(organizationId);
+
+    // [start of yesterday, start of today) in APP_TIMEZONE
+    const todayStart = startOfTodayISO();
+    const yesterdayStart = startOfTodayISO(
+      new Date(new Date(todayStart).getTime() - 60 * 60 * 1000),
+    );
+
+    const [casesRes, countsRes] = await Promise.all([
+      supabase
+        .from("case_carryover_log")
+        .select(
+          "id, case_id, case_number, product_id, client_id, subclient_id, employee_id, allocated_at",
+        )
+        .eq("organization_id", String(organizationId))
+        .in("employee_id", teamIds.map(String))
+        .gte("allocated_at", yesterdayStart)
+        .lt("allocated_at", todayStart)
+        .limit(5000),
+      supabase
+        .from("case_count_carryover_log")
+        .select(
+          "id, count_id, product_id, client_id, subclient_id, employee_id, allocated_at, returned_quantity",
+        )
+        .eq("organization_id", String(organizationId))
+        .in("employee_id", teamIds.map(String))
+        .gte("allocated_at", yesterdayStart)
+        .lt("allocated_at", todayStart)
+        .limit(5000),
+    ]);
+    if (casesRes.error) throw casesRes.error;
+    if (countsRes.error) throw countsRes.error;
+
+    const caseRows = casesRes.data || [];
+    const countRows = countsRes.data || [];
+    if (caseRows.length === 0 && countRows.length === 0) {
+      return res.json({
+        success: true,
+        data: { ...empty, forDate: yesterdayStart },
+      });
+    }
+
+    const all = [...caseRows, ...countRows];
+    const [productMap, clientMap, subclientMap, empMap] = await Promise.all([
+      getProductNameMap(
+        all.map((r) => r.product_id),
+        organizationId,
+      ),
+      getClientNameMap(
+        all.map((r) => r.client_id),
+        organizationId,
+      ),
+      getSubclientNameMap(
+        all.map((r) => r.subclient_id),
+        organizationId,
+      ),
+      getEmployeeNameMap(teamIds, organizationId),
+    ]);
+
+    const byEmp = new Map();
+    const bucket = (employeeId) => {
+      const key = String(employeeId);
+      if (!byEmp.has(key)) {
+        byEmp.set(key, {
+          employeeId: key,
+          name: empMap[key] || "Unknown",
+          isMe: key === String(userId),
+          caseCount: 0,
+          countUnits: 0,
+          total: 0,
+          items: [],
+        });
+      }
+      return byEmp.get(key);
+    };
+
+    for (const r of caseRows) {
+      const m = bucket(r.employee_id);
+      m.caseCount += 1;
+      m.total += 1;
+      m.items.push({
+        kind: "CASE",
+        caseNumber: r.case_number || null,
+        quantity: 1,
+        productName: productMap[r.product_id] || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+      });
+    }
+    for (const r of countRows) {
+      const qty = Number(r.returned_quantity) || 0;
+      if (qty <= 0) continue;
+      const m = bucket(r.employee_id);
+      m.countUnits += qty;
+      m.total += qty;
+      m.items.push({
+        kind: "COUNT",
+        caseNumber: null,
+        quantity: qty,
+        productName: productMap[r.product_id] || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+      });
+    }
+
+    // me first, then the biggest backlog
+    const members = [...byEmp.values()].sort(
+      (a, b) => Number(b.isMe) - Number(a.isMe) || b.total - a.total,
+    );
+
+    res.json({
+      success: true,
+      data: {
+        isManager: true,
+        forDate: yesterdayStart,
+        totalPending: members.reduce((s, m) => s + m.total, 0),
+        members,
+      },
+    });
+  } catch (err) {
+    console.error("listTeamMissedYesterday error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
 module.exports = {
   getActingEmployeeId,
   getAutoPrefix,
@@ -4840,6 +5025,7 @@ module.exports = {
   listMyMissedCases,
   // NEW: manager team-queries popup + day-end rollover
   listTeamQueries,
+  listTeamMissedYesterday,
   rolloverAllOrgs,
   // MODIFIED: helpers exported for servicecasecountallocations.controller.js
   // (without these the count endpoints crashed with "undefined is not a function").
