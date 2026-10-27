@@ -868,6 +868,8 @@ async function listServiceCases(req, res) {
       queryText: r.query_text || "",
       outOfScopeReason: r.out_of_scope_reason || "",
       submittedAt: r.submitted_at || null,
+      // when a Query was marked completed (null if never a query / still open)
+      queryResolvedAt: r.query_resolved_at || null,
       // who actually submitted it (Production Report -> "Submitted By" /
       // "On behalf" chip). Null for rows submitted before this column existed.
       submittedById: r.submitted_by || null,
@@ -3461,6 +3463,7 @@ async function bulkUpdateServiceCaseProfiles(req, res) {
 //   query_text         text, nullable
 //   out_of_scope_reason text, nullable   (see add_out_of_scope.sql)
 //   submitted_at       timestamptz, nullable
+//   query_resolved_at  timestamptz, nullable   (see add_query_resolved_at.sql)
 // ------------------------------------------------------------
 
 // Every outcome an employee can report when submitting a case:
@@ -3704,7 +3707,12 @@ async function resolveQueryServiceCase(req, res) {
 
     const { data, error } = await supabase
       .from("service_cases")
-      .update({ submission_type: resolutionType })
+      // query_resolved_at = the moment the query was marked completed
+      // (shown as "Resolved On" in Profile -> All Queries).
+      .update({
+        submission_type: resolutionType,
+        query_resolved_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
       // Self-service — can only ever resolve your own query.
@@ -3752,6 +3760,7 @@ async function resolveQueryServiceCase(req, res) {
         submissionStatus: data.submission_status,
         submissionType: data.submission_type,
         queryText: data.query_text,
+        queryResolvedAt: data.query_resolved_at || null,
       },
     });
   } catch (err) {
@@ -3789,7 +3798,12 @@ async function completeQueryServiceCase(req, res) {
 
     const { data, error } = await supabase
       .from("service_cases")
-      .update({ submission_type: resolutionType })
+      // query_resolved_at = the moment the query was marked completed
+      // (shown as "Resolved On" in Profile -> All Queries).
+      .update({
+        submission_type: resolutionType,
+        query_resolved_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .eq("organization_id", req.user.organizationId)
       .eq("submission_status", "SUBMITTED")
@@ -3833,6 +3847,7 @@ async function completeQueryServiceCase(req, res) {
         submissionStatus: data.submission_status,
         submissionType: data.submission_type,
         queryText: data.query_text,
+        queryResolvedAt: data.query_resolved_at || null,
       },
     });
   } catch (err) {
