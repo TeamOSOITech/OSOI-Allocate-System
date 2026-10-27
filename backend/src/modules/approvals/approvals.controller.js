@@ -245,7 +245,11 @@ async function decideRequest(req, res) {
     }
 
     const rule = APPROVAL_RULES[request.type];
+    // Requester can withdraw (REJECT) their own pending request.
+    const isOwnWithdraw =
+      decision === "REJECT" && request.requested_by === req.user.userId;
     const isEligibleApprover =
+      isOwnWithdraw ||
       req.user.role === "SUPER_ADMIN" ||
       (rule.restrictToReportingManager
         ? request.target_user_id
