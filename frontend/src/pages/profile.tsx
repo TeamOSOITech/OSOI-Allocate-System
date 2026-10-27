@@ -275,6 +275,8 @@ type CaseRow = {
     submissionType: SubmissionType | null;
     queryText: string;
     submittedAt: string | null;
+    // when a Query was marked completed (null while it is still open)
+    queryResolvedAt?: string | null;
     clientId?: string | null;
     clientName?: string | null;
     subclientId?: string | null;
@@ -5375,19 +5377,21 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 />
 
                                 <div style={styles.bulkTableWrap}>
-                                    <table style={{ ...styles.bulkTable, minWidth: 820 }}>
+                                    <table style={{ ...styles.bulkTable, minWidth: 960 }}>
                                         <colgroup>
+                                            <col style={{ width: "12%" }} />
                                             <col style={{ width: "14%" }} />
-                                            <col style={{ width: "16%" }} />
-                                            <col style={{ width: "13%" }} />
-                                            <col style={{ width: "22%" }} />
-                                            <col style={{ width: "35%" }} />
+                                            <col style={{ width: "11%" }} />
+                                            <col style={{ width: "11%" }} />
+                                            <col style={{ width: "18%" }} />
+                                            <col style={{ width: "34%" }} />
                                         </colgroup>
                                         <thead>
                                             <tr>
                                                 <th style={styles.th}>Case No.</th>
                                                 <th style={styles.th}>Service</th>
-                                                <th style={styles.th}>Date</th>
+                                                <th style={styles.th}>Raised On</th>
+                                                <th style={styles.th}>Resolved On</th>
                                                 <th style={styles.th}>Query</th>
                                                 <th style={styles.th}>
                                                     {queryView === "OPEN"
@@ -5400,7 +5404,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                             {visibleQueries.length === 0 && (
                                                 <tr>
                                                     <td
-                                                        colSpan={5}
+                                                        colSpan={6}
                                                         style={{
                                                             ...styles.td,
                                                             textAlign: "center",
@@ -5438,7 +5442,25 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             {c.productName || "-"}
                                                         </td>
                                                         <td style={styles.td}>
-                                                            {formatDisplayDate(c.workDate)}
+                                                            {/* date the query was raised (falls back to the work date for old rows) */}
+                                                            {formatDisplayDate(
+                                                                localDateStr(c.submittedAt) ||
+                                                                    c.workDate
+                                                            )}
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            {/* date the query was marked completed */}
+                                                            {c.queryResolvedAt ? (
+                                                                formatDisplayDate(
+                                                                    localDateStr(c.queryResolvedAt)
+                                                                )
+                                                            ) : (
+                                                                <span style={styles.smallMuted}>
+                                                                    {queryView === "OPEN"
+                                                                        ? "Pending"
+                                                                        : "—"}
+                                                                </span>
+                                                            )}
                                                         </td>
                                                         <td
                                                             style={{
