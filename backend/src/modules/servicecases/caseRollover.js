@@ -366,8 +366,79 @@ function todayYmdInAppTz(now = new Date()) {
   }).format(now); // YYYY-MM-DD
 }
 
-// mode: "ALL" (leave) | "HALF" (half day). Returns number of cases returned.
+// Count-only work ("12 cases (count)" - units WITHOUT a case number) lives in
+// service_case_count_allocations. It must go back to the pool exactly like
+// numbered cases. Only the UNSUBMITTED units move: units the employee already
+// fulfilled (added case numbers for) stay with them.
+//   ALL  -> every open unit goes back (row deleted, or cut down to fulfilled)
+//   HALF -> half of the open units (rounded up, newest allocation first)
+async function releaseCountAllocationsForEmployee(
+  organizationId,
+  employeeId,
+  mode,
+) {
+  const { data: rows, error } = await supabase
+    .from("service_case_count_allocations")
+    .select("count_id, quantity, fulfilled_quantity, allocated_at")
+    .eq("organization_id", organizationId)
+    .eq("employee_id", employeeId);
+  if (error) throw error;
+
+  const open = (rows || [])
+    .filter((r) => (r.quantity || 0) - (r.fulfilled_quantity || 0) > 0)
+    .sort((a, b) =>
+      String(b.allocated_at).localeCompare(String(a.allocated_at)),
+    );
+  if (open.length === 0) return 0;
+
+  const totalOpen = open.reduce(
+    (s, r) => s + ((r.quantity || 0) - (r.fulfilled_quantity || 0)),
+    0,
+  );
+  let remaining = mode === "HALF" ? Math.ceil(totalOpen / 2) : totalOpen;
+  let returnedTotal = 0;
+
+  for (const r of open) {
+    if (remaining <= 0) break;
+    const fulfilled = r.fulfilled_quantity || 0;
+    const openQty = (r.quantity || 0) - fulfilled;
+    const take = Math.min(openQty, remaining);
+    const newQty = (r.quantity || 0) - take;
+
+    // Guarded on the exact values we read, so units added a split-second
+    // ago are not lost.
+    let q =
+      newQty <= 0
+        ? supabase.from("service_case_count_allocations").delete()
+        : supabase
+            .from("service_case_count_allocations")
+            .update({ quantity: newQty });
+    q = q
+      .eq("organization_id", organizationId)
+      .eq("count_id", r.count_id)
+      .eq("employee_id", employeeId)
+      .eq("quantity", r.quantity);
+    q =
+      r.fulfilled_quantity == null
+        ? q.is("fulfilled_quantity", null)
+        : q.eq("fulfilled_quantity", r.fulfilled_quantity);
+
+    const res = await q.select("count_id");
+    if (res.error) throw res.error;
+    if ((res.data || []).length > 0) {
+      returnedTotal += take;
+      remaining -= take;
+    }
+  }
+  return returnedTotal;
+}
+
+// mode: "ALL" (leave) | "HALF" (half day). Returns number of cases + count
+// units returned to the pool.
 async function releaseCasesForEmployee(organizationId, employeeId, mode) {
+  let total = 0;
+
+  // 1) cases WITH case numbers
   const { data: open, error } = await supabase
     .from("service_cases")
     .select("id")
@@ -379,28 +450,45 @@ async function releaseCasesForEmployee(organizationId, employeeId, mode) {
   if (error) throw error;
 
   const ids = (open || []).map((c) => c.id);
-  if (ids.length === 0) return 0;
+  if (ids.length > 0) {
+    const toReturn =
+      mode === "HALF" ? ids.slice(0, Math.ceil(ids.length / 2)) : ids;
 
-  const toReturn =
-    mode === "HALF" ? ids.slice(0, Math.ceil(ids.length / 2)) : ids;
+    // Same guards as the end-of-day sweep: a case submitted a split-second
+    // ago is NOT touched.
+    const { data: returned, error: updError } = await supabase
+      .from("service_cases")
+      .update({
+        assigned_employee_id: null,
+        allocation_status: "PENDING",
+        allocated_at: null,
+        allocated_by: null,
+      })
+      .in("id", toReturn)
+      .eq("assigned_employee_id", employeeId)
+      .eq("allocation_status", "ALLOCATED")
+      .or("submission_status.is.null,submission_status.eq.PENDING")
+      .select("id");
+    if (updError) throw updError;
+    total += (returned || []).length;
+  }
 
-  // Same guards as the end-of-day sweep: a case submitted a split-second ago
-  // is NOT touched.
-  const { data: returned, error: updError } = await supabase
-    .from("service_cases")
-    .update({
-      assigned_employee_id: null,
-      allocation_status: "PENDING",
-      allocated_at: null,
-      allocated_by: null,
-    })
-    .in("id", toReturn)
-    .eq("assigned_employee_id", employeeId)
-    .eq("allocation_status", "ALLOCATED")
-    .or("submission_status.is.null,submission_status.eq.PENDING")
-    .select("id");
-  if (updError) throw updError;
-  return (returned || []).length;
+  // 2) count-only work (no case number). A failure here must not undo (or
+  //    hide) the numbered cases that were already released above.
+  try {
+    total += await releaseCountAllocationsForEmployee(
+      organizationId,
+      employeeId,
+      mode,
+    );
+  } catch (err) {
+    console.error(
+      "releaseCasesForEmployee (counts) failed:",
+      err?.message || err,
+    );
+  }
+
+  return total;
 }
 
 async function rolloverAllOrgs() {
@@ -451,4 +539,5 @@ module.exports = {
   startOfTodayISO,
   todayYmdInAppTz,
   releaseCasesForEmployee,
+  releaseCountAllocationsForEmployee,
 };

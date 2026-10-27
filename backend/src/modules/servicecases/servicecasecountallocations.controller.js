@@ -23,6 +23,11 @@ const {
   getEmployeeNameMap,
 } = require("./servicecases.controller");
 
+const {
+  getUnavailableEmployeeIds,
+  filterAvailableEmployees,
+} = require("../../utils/availability");
+
 const orgIdOf = (req) => req.user.organizationId;
 const userIdOf = (req) => req.user.userId;
 
@@ -143,7 +148,7 @@ async function listCountAllocations(req, res) {
 async function autoPreviewCountAllocations(req, res) {
   try {
     const { productId, workDate } = req.body || {};
-    const employeeIds = Array.isArray(req.body?.employeeIds)
+    let employeeIds = Array.isArray(req.body?.employeeIds)
       ? [...new Set(req.body.employeeIds.filter(Boolean))]
       : [];
     if (!productId || !workDate || employeeIds.length === 0) {
@@ -159,6 +164,15 @@ async function autoPreviewCountAllocations(req, res) {
         .json({ success: false, message: blocked.message });
 
     const orgId = orgIdOf(req);
+
+    // NEW: drop anyone on leave / absent for this date.
+    employeeIds = await filterAvailableEmployees(orgId, workDate, employeeIds);
+    if (employeeIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Everyone selected is on leave - nobody to allocate to.",
+      });
+    }
     const rows = (await loadCounts(orgId, { productId, workDate })).filter(
       (c) => c.unallocated > 0,
     );
@@ -292,6 +306,10 @@ async function saveCountAllocations(req, res) {
       };
     });
 
+    const unavailableToday = await getUnavailableEmployeeIds(
+      orgId,
+      require("./caseRollover").todayYmdInAppTz(),
+    );
     for (const it of items) {
       const q = Number(it.quantity);
       if (!countMap[it.countId] || !Number.isInteger(q) || q < 0)
@@ -306,6 +324,14 @@ async function saveCountAllocations(req, res) {
         return res.status(400).json({
           success: false,
           message: `An employee has already submitted ${cur.fulfilled} of this count — can't allocate fewer.`,
+        });
+      // NEW: an employee on leave today can not receive MORE than they
+      // already have (keeping / reducing what they hold is still fine).
+      if (q > cur.quantity && unavailableToday.has(String(it.employeeId)))
+        return res.status(409).json({
+          success: false,
+          message:
+            "An employee on leave today can't be given more work - remove them and allocate again.",
         });
       state[it.countId][it.employeeId] = {
         quantity: q,

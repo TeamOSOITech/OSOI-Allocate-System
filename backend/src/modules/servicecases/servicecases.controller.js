@@ -64,6 +64,10 @@ const {
 } = require("./fairness");
 // count-only work (no case number) is rolled over at day end like cases
 const { rolloverPendingCounts } = require("./caseRollover");
+const {
+  getUnavailableEmployeeIds,
+  filterAvailableEmployees,
+} = require("../../utils/availability");
 // SECURITY FIX: replaced the `xlsx` (SheetJS) package — see
 // src/utils/parseSpreadsheet.js for why.
 const { parseSpreadsheetRows } = require("../../utils/parseSpreadsheet");
@@ -2211,6 +2215,19 @@ async function allocateServiceCase(req, res) {
           .status(404)
           .json({ success: false, message: "Employee not found" });
       }
+
+      // NEW: nobody on leave / absent today can be given a case.
+      const unavailable = await getUnavailableEmployeeIds(
+        req.user.organizationId,
+        require("./caseRollover").todayYmdInAppTz(),
+      );
+      if (unavailable.has(String(employeeId))) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This employee is on leave today - cases can't be allocated to them.",
+        });
+      }
     }
 
     // Fetch the current row BEFORE overwriting it — the only chance to
@@ -2408,7 +2425,7 @@ async function listAllocationClearLog(req, res) {
 async function autoAllocateServiceCases(req, res) {
   try {
     const { productId, workDate } = req.body;
-    const employeeIds = Array.isArray(req.body.employeeIds)
+    let employeeIds = Array.isArray(req.body.employeeIds)
       ? [...new Set(req.body.employeeIds.filter(Boolean))]
       : [];
 
@@ -2422,6 +2439,20 @@ async function autoAllocateServiceCases(req, res) {
       return res.status(400).json({
         success: false,
         message: "No employees found to allocate to.",
+      });
+    }
+
+    // NEW: drop anyone on leave / absent for this date (server-side, so a
+    // stale page can never allocate to them).
+    employeeIds = await filterAvailableEmployees(
+      req.user.organizationId,
+      workDate,
+      employeeIds,
+    );
+    if (employeeIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Everyone selected is on leave - nobody to allocate to.",
       });
     }
 
