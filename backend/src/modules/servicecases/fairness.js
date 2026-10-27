@@ -123,10 +123,14 @@ function distributeWithCapacity(n, employeeIds, load, capacityUnits) {
   while (left > 0) {
     const open = employeeIds.filter((id) => room(id) > 0);
     if (open.length === 0) break;
-    // fewest given in this call first, then least recent load
+    // fewest given in this call first, then the one with the most room left
+    // today (FIX: so the same first employees no longer fill up to the 10h
+    // limit while others stay low), then least recent load
+    const roomRank = (id) => Math.min(room(id), 1e9);
     const order = [...open].sort(
       (a, b) =>
         result[a] - result[b] ||
+        roomRank(b) - roomRank(a) ||
         (load[a] || 0) - (load[b] || 0) ||
         String(a).localeCompare(String(b)),
     );

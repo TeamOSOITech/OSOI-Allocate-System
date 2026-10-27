@@ -2471,17 +2471,37 @@ async function autoAllocateServiceCases(req, res) {
       capacityUnits[id] === undefined ? Infinity : capacityUnits[id];
 
     // NOTE: preview only — no DB write here.
+    //
+    // FIX (unfair split): this used to be a plain round-robin that ALWAYS
+    // started from ordered[0] (= least recent load of THIS service only, ties
+    // broken by employee id). Every service therefore handed its few cases to
+    // the same first employees, who hit the 10h limit while the rest of the
+    // team stayed at 3-7h. Now every case goes to whoever has the MOST free
+    // minutes left today (the page sends remainingMinutes = 10h - everything
+    // already saved for today across ALL services), so total hours level out.
+    // Ties -> fewest cases given in this call -> least recent load (the order
+    // of `ordered`). Without remainingMinutes it behaves like a round-robin.
+    const amp = Number(req.body.ampMinutes) || 0;
+    const remMin = req.body.remainingMinutes || {};
+    const free = {};
+    const given = {};
+    employeeIds.forEach((id) => {
+      const r = Number(remMin[id]);
+      free[id] = Number.isFinite(r) ? r : Infinity;
+      given[id] = 0;
+    });
     const updates = [];
     let notAllocated = 0;
-    let ptr = 0;
     for (const c of pendingCases) {
       let picked = null;
-      for (let t = 0; t < ordered.length; t++) {
-        const emp = ordered[(ptr + t) % ordered.length];
-        if (roomOf(emp) > 0) {
+      for (const emp of ordered) {
+        if (roomOf(emp) <= 0) continue;
+        if (
+          picked === null ||
+          free[emp] > free[picked] ||
+          (free[emp] === free[picked] && given[emp] < given[picked])
+        ) {
           picked = emp;
-          ptr = (ptr + t + 1) % ordered.length;
-          break;
         }
       }
       if (!picked) {
@@ -2489,6 +2509,8 @@ async function autoAllocateServiceCases(req, res) {
         continue;
       }
       if (capacityUnits[picked] !== undefined) capacityUnits[picked] -= 1;
+      given[picked] += 1;
+      free[picked] -= amp > 0 ? amp : 1;
       updates.push({ id: c.id, caseNumber: c.case_number, employeeId: picked });
     }
 
