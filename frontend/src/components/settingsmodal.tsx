@@ -627,7 +627,7 @@ export default function SettingsModal({
                             <>
                                 <h4 style={s.h2}>Plan & upgrade</h4>
                                 <p style={s.sub}>
-                                    See your organization's current plan and pricing. Only Super
+                                    See your organization's current plan and pricing. Only Global
                                     Admin and Ops Manager can change the plan; everyone else gets a
                                     view-only page.
                                 </p>

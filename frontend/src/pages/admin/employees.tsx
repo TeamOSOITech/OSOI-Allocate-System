@@ -39,8 +39,6 @@ type Employee = {
     status: EntityStatus;
     reportingManager: string | null;
     joiningDate: string; // ISO date
-    // Date of Exit - set only while editing an employee (not on Add User).
-    exitDate?: string | null;
     // Not returned by the API yet (no praises table/route on the backend).
     // Left optional so the UI degrades gracefully — re-enable the
     // recognition chip/section once GET /api/employees/:id/praises exists.
@@ -286,6 +284,8 @@ export default function Employees() {
         (role === "SUPER_ADMIN" || role === "OPS_MANAGER") && canEditEmployee(employee);
 
     const [search, setSearch] = useState("");
+    // A–Z / Z–A sort by name (toggled by the arrow button in the filter row).
+    const [sortAsc, setSortAsc] = useState(true);
     const [departmentFilter, setDepartmentFilter] = useState("All");
     // NEW: "My Team" vs "Organisation" scope. Defaults to My Team — the
     // page opens showing only people on the logged-in user's own team,
@@ -550,19 +550,6 @@ export default function Employees() {
                 return;
             }
 
-            // Date of Exit can't be before Date of Joining; an emptied field
-            // is sent as null so the exit date is cleared.
-            if (
-                payload.exitDate &&
-                payload.joiningDate &&
-                String(payload.exitDate).slice(0, 10) < String(payload.joiningDate).slice(0, 10)
-            ) {
-                alert("Date of Exit can't be before Joining Date.");
-                setSaving(false);
-                return;
-            }
-            payload.exitDate = payload.exitDate || null;
-
             const res = await authFetch(`${apiBase}/api/employees/${editForm.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -795,22 +782,30 @@ export default function Employees() {
     // field replacing it below).
     const filteredEmployees = useMemo(() => {
         const q = search.trim().toLowerCase();
-        return employees.filter((e) => {
-            const matchesSearch =
-                (e.name || "").toLowerCase().includes(q) ||
-                (e.team || "").toLowerCase().includes(q) ||
-                (e.department || "").toLowerCase().includes(q);
-            const matchesDepartment =
-                departmentFilter === "All" || e.department === departmentFilter;
-            // NEW: "My Team" scope — only apply the restriction when we
-            // actually know the logged-in user's own team (myTeam). If
-            // their record has no team set, there's nothing to narrow
-            // down to, so scope quietly behaves like "Organisation"
-            // instead of showing an empty page.
-            const matchesScope = scope === "org" || !myTeam || e.team === myTeam;
-            return matchesSearch && matchesDepartment && matchesScope;
-        });
-    }, [employees, search, departmentFilter, scope, myTeam]);
+        return employees
+            .filter((e) => {
+                const matchesSearch =
+                    (e.name || "").toLowerCase().includes(q) ||
+                    (e.team || "").toLowerCase().includes(q) ||
+                    (e.department || "").toLowerCase().includes(q);
+                const matchesDepartment =
+                    departmentFilter === "All" || e.department === departmentFilter;
+                // NEW: "My Team" scope — only apply the restriction when we
+                // actually know the logged-in user's own team (myTeam). If
+                // their record has no team set, there's nothing to narrow
+                // down to, so scope quietly behaves like "Organisation"
+                // instead of showing an empty page.
+                const matchesScope = scope === "org" || !myTeam || e.team === myTeam;
+                return matchesSearch && matchesDepartment && matchesScope;
+            })
+            .sort(
+                (a, b) =>
+                    (a.name || "").localeCompare(b.name || "", undefined, {
+                        sensitivity: "base",
+                        numeric: true,
+                    }) * (sortAsc ? 1 : -1)
+            );
+    }, [employees, search, departmentFilter, scope, myTeam, sortAsc]);
 
     // Ids eligible for bulk selection: currently visible (matches
     // search/department filters) AND this role is actually allowed to
@@ -934,6 +929,21 @@ export default function Employees() {
                                 </option>
                             ))}
                         </select>
+
+                        {/* Sort toggle: A–Z (up arrow) / Z–A (down arrow), by name. */}
+                        <button
+                            type="button"
+                            onClick={() => setSortAsc((v) => !v)}
+                            style={styles.selectModeBtn}
+                            title={sortAsc ? "A–Z (click for Z–A)" : "Z–A (click for A–Z)"}
+                            aria-label="Toggle sort order"
+                        >
+                            <i
+                                className={sortAsc ? "ti ti-arrow-up" : "ti ti-arrow-down"}
+                                style={{ fontSize: fontSize.md }}
+                            />
+                            {sortAsc ? "A–Z" : "Z–A"}
+                        </button>
 
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every
@@ -1864,31 +1874,6 @@ export default function Employees() {
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {formatDate(drawerData.joiningDate)}
-                                        </span>
-                                    )}
-                                </div>
-
-                                <div style={styles.detailsRow}>
-                                    <span style={styles.detailsLabel}>Date of Exit</span>
-                                    {isEditingDrawer ? (
-                                        <input
-                                            type="date"
-                                            className="emp-drawer-input"
-                                            style={styles.detailsInput}
-                                            value={toDateInputValue(drawerData.exitDate)}
-                                            min={
-                                                toDateInputValue(drawerData.joiningDate) ||
-                                                undefined
-                                            }
-                                            onChange={(e) =>
-                                                updateEditField("exitDate", e.target.value)
-                                            }
-                                        />
-                                    ) : (
-                                        <span style={styles.detailsValue}>
-                                            {drawerData.exitDate
-                                                ? formatDate(drawerData.exitDate)
-                                                : "—"}
                                         </span>
                                     )}
                                 </div>

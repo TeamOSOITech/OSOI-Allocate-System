@@ -270,6 +270,8 @@ const Products = () => {
     const [error, setError] = useState("");
 
     const [search, setSearch] = useState("");
+    // A–Z / Z–A sort by service name (toggled by the arrow button in the filter row).
+    const [sortAsc, setSortAsc] = useState(true);
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
     // NEW: "My Team" (default) narrows the list to services aligned to
@@ -452,8 +454,15 @@ const Products = () => {
                     return (p.teams || []).some(
                         (t) => (t || "").toString().trim().toLowerCase() === myTeamLower
                     );
-                }),
-        [products, search, scope, myTeamLower]
+                })
+                .sort(
+                    (a, b) =>
+                        (a.product_name || "").localeCompare(b.product_name || "", undefined, {
+                            sensitivity: "base",
+                            numeric: true,
+                        }) * (sortAsc ? 1 : -1)
+                ),
+        [products, search, scope, myTeamLower, sortAsc]
     );
 
     // Switching scope changes which services are even in the list, so
@@ -1304,6 +1313,21 @@ const Products = () => {
                                 <option value="org">Organisation</option>
                             </select>
                         )}
+                        {/* Sort toggle: A–Z (up arrow) / Z–A (down arrow), by name. */}
+                        <button
+                            type="button"
+                            onClick={() => setSortAsc((v) => !v)}
+                            style={styles.selectModeBtn}
+                            title={sortAsc ? "A–Z (click for Z–A)" : "Z–A (click for A–Z)"}
+                            aria-label="Toggle sort order"
+                        >
+                            <i
+                                className={sortAsc ? "ti ti-arrow-up" : "ti ti-arrow-down"}
+                                style={{ fontSize: fontSize.md }}
+                            />
+                            {sortAsc ? "A–Z" : "Z–A"}
+                        </button>
+
                         {/* NEW: "Select" toggle — checkboxes for bulk delete only show
                             once this is switched on, instead of sitting on every row/card
                             all the time. Tapping it again exits select mode and clears

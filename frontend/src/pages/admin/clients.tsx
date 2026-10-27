@@ -361,6 +361,8 @@ export default function Clients() {
     const [activeTab, setActiveTab] = useState<TabKey>("client");
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
+    // A–Z / Z–A sort by name (toggled by the arrow button in the filter row).
+    const [sortAsc, setSortAsc] = useState(true);
     const [countryFilter, setCountryFilter] = useState("All");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
@@ -516,20 +518,36 @@ export default function Clients() {
 
     const filteredClients = useMemo(
         () =>
-            clients.filter((c) => {
-                const matchesCountry = countryFilter === "All" || c.country === countryFilter;
-                return matchesCommonFilters(c.name, c.status) && matchesCountry;
-            }),
-        [clients, search, statusFilter, countryFilter]
+            clients
+                .filter((c) => {
+                    const matchesCountry = countryFilter === "All" || c.country === countryFilter;
+                    return matchesCommonFilters(c.name, c.status) && matchesCountry;
+                })
+                .sort(
+                    (a, b) =>
+                        (a.name || "").localeCompare(b.name || "", undefined, {
+                            sensitivity: "base",
+                            numeric: true,
+                        }) * (sortAsc ? 1 : -1)
+                ),
+        [clients, search, statusFilter, countryFilter, sortAsc]
     );
 
     const filteredSubclients = useMemo(
         () =>
-            subclients.filter((s) => {
-                const matchesCountry = countryFilter === "All" || s.country === countryFilter;
-                return matchesCommonFilters(s.name, s.status) && matchesCountry;
-            }),
-        [subclients, search, statusFilter, countryFilter]
+            subclients
+                .filter((s) => {
+                    const matchesCountry = countryFilter === "All" || s.country === countryFilter;
+                    return matchesCommonFilters(s.name, s.status) && matchesCountry;
+                })
+                .sort(
+                    (a, b) =>
+                        (a.name || "").localeCompare(b.name || "", undefined, {
+                            sensitivity: "base",
+                            numeric: true,
+                        }) * (sortAsc ? 1 : -1)
+                ),
+        [subclients, search, statusFilter, countryFilter, sortAsc]
     );
 
     const currentFilteredLength =
@@ -1738,6 +1756,21 @@ export default function Clients() {
                                 </option>
                             ))}
                         </select>
+
+                        {/* Sort toggle: A–Z (up arrow) / Z–A (down arrow), by name. */}
+                        <button
+                            type="button"
+                            onClick={() => setSortAsc((v) => !v)}
+                            style={styles.selectModeBtn}
+                            title={sortAsc ? "A–Z (click for Z–A)" : "Z–A (click for A–Z)"}
+                            aria-label="Toggle sort order"
+                        >
+                            <i
+                                className={sortAsc ? "ti ti-arrow-up" : "ti ti-arrow-down"}
+                                style={{ fontSize: fontSize.md }}
+                            />
+                            {sortAsc ? "A–Z" : "Z–A"}
+                        </button>
 
                         {/* "Select" toggle — bulk-delete checkboxes only show once on. */}
                         {canEditDelete && currentPageRows.length > 0 && (
