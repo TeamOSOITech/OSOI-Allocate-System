@@ -41,7 +41,10 @@ async function guardProduct(req, productId) {
 }
 
 // Count rows still open (fulfilled < quantity), with their allocations.
-async function loadCounts(orgId, { productId, workDate }) {
+async function loadCounts(
+  orgId,
+  { productId, workDate, workDateFrom = null, includeDone = false },
+) {
   // FIX: paged — see fetchAll.js (a plain .limit(1000) silently cut off rows).
   const { data, error } = await fetchAll(() => {
     let q = supabase
@@ -50,6 +53,7 @@ async function loadCounts(orgId, { productId, workDate }) {
       .eq("organization_id", orgId);
     if (productId) q = q.eq("product_id", productId);
     if (workDate) q = q.lte("work_date", workDate); // backlog included
+    if (workDateFrom) q = q.gte("work_date", workDateFrom);
     return q
       .order("work_date", { ascending: true })
       .order("created_at", { ascending: true })
@@ -57,8 +61,11 @@ async function loadCounts(orgId, { productId, workDate }) {
   });
   if (error) throw error;
 
+  // includeDone (Production Report only): also return counts whose units all
+  // got case numbers, so the report can show received / added / pending.
+  // Every other caller keeps getting open counts only.
   const open = (data || []).filter(
-    (c) => (c.fulfilled_count || 0) < c.quantity,
+    (c) => includeDone || (c.fulfilled_count || 0) < c.quantity,
   );
   const ids = open.map((c) => c.id);
 
@@ -133,6 +140,8 @@ async function listCountAllocations(req, res) {
     const data = await loadCounts(orgIdOf(req), {
       productId,
       workDate: req.query.workDate || null,
+      workDateFrom: req.query.workDateFrom || null,
+      includeDone: req.query.includeDone === "true",
     });
     res.json({ success: true, data });
   } catch (err) {

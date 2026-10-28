@@ -504,7 +504,9 @@ async function releaseCasesForEmployee(organizationId, employeeId, mode) {
   // 1) cases WITH case numbers
   const { data: open, error } = await supabase
     .from("service_cases")
-    .select("id")
+    .select(
+      "id, organization_id, case_number, product_id, client_id, subclient_id, work_date, assigned_employee_id, allocated_at",
+    )
     .eq("organization_id", organizationId)
     .eq("assigned_employee_id", employeeId)
     .eq("allocation_status", "ALLOCATED")
@@ -516,6 +518,43 @@ async function releaseCasesForEmployee(organizationId, employeeId, mode) {
   if (ids.length > 0) {
     const toReturn =
       mode === "HALF" ? ids.slice(0, Math.ceil(ids.length / 2)) : ids;
+
+    // History FIRST (same as the end-of-day sweep): the employee's Profile
+    // keeps showing these cases, read-only, on the day they were allocated
+    // ("received, not submitted"). Without this row a case released by
+    // leave / half-day just vanished from the employee's profile.
+    // Never blocks the release itself.
+    const toReturnSet = new Set(toReturn.map(String));
+    const logged = (open || []).filter(
+      (c) => toReturnSet.has(String(c.id)) && c.allocated_at,
+    );
+    if (logged.length > 0) {
+      const { error: logError } = await supabase
+        .from("case_carryover_log")
+        .upsert(
+          logged.map((c) => ({
+            organization_id: String(c.organization_id),
+            case_id: String(c.id),
+            case_number: c.case_number,
+            product_id: c.product_id != null ? String(c.product_id) : null,
+            client_id: c.client_id != null ? String(c.client_id) : null,
+            subclient_id:
+              c.subclient_id != null ? String(c.subclient_id) : null,
+            work_date: c.work_date || null,
+            employee_id: String(c.assigned_employee_id),
+            allocated_at: c.allocated_at,
+          })),
+          {
+            onConflict: "case_id,employee_id,allocated_at",
+            ignoreDuplicates: true,
+          },
+        );
+      if (logError)
+        console.error(
+          "releaseCasesForEmployee: history log failed:",
+          logError.message || logError,
+        );
+    }
 
     // Same guards as the end-of-day sweep: a case submitted a split-second
     // ago is NOT touched.
@@ -534,6 +573,18 @@ async function releaseCasesForEmployee(organizationId, employeeId, mode) {
       .select("id");
     if (updError) throw updError;
     total += (returned || []).length;
+
+    // A case submitted in the split-second gap was NOT released: drop its
+    // history row so the log stays truthful.
+    const returnedIds = new Set((returned || []).map((r) => String(r.id)));
+    for (const c of logged.filter((x) => !returnedIds.has(String(x.id)))) {
+      await supabase
+        .from("case_carryover_log")
+        .delete()
+        .eq("case_id", String(c.id))
+        .eq("employee_id", String(c.assigned_employee_id))
+        .eq("allocated_at", c.allocated_at);
+    }
   }
 
   // 2) count-only work (no case number). A failure here must not undo (or
