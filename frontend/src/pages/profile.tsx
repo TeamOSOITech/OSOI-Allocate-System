@@ -1343,7 +1343,20 @@ export default function Profile({ onLogout }: ProfileProps) {
 
     // NEW: Past Allocation = real past cases + the ones I left pending
     // (read-only history rows, newest first).
-    const pastRows = useMemo(() => [...pastCases, ...missedCases], [pastCases, missedCases]);
+    // FIX: newest allocation first, with the "left pending" history rows mixed
+    // in by their allocation time. Before, they were appended after every
+    // other case, so yesterday's rows sat at the very bottom of Past.
+    const pastRows = useMemo(() => {
+        const stamp = (c: CaseRow) => {
+            const t = Date.parse(c.allocatedAt || "");
+            if (!Number.isNaN(t)) return t;
+            const w = Date.parse(`${c.workDate || ""}T00:00:00`);
+            return Number.isNaN(w) ? 0 : w;
+        };
+        return [...pastCases, ...missedCases].sort(
+            (a, b) => stamp(b) - stamp(a) || (b.caseNumber || "").localeCompare(a.caseNumber || "")
+        );
+    }, [pastCases, missedCases]);
     const baseRows = activeTab === "today" ? todaysCases : pastRows;
 
     const filteredRows = useMemo(() => {
