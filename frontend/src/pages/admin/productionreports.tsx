@@ -239,7 +239,7 @@ function todayStr() {
 // When false, units without a case number stay on the card of the day they
 // were received (their work date), even if they were handed to staff on a later
 // day. Set to true to move such units to today's card in the Daily-wise view.
-const SHIFT_HELD_UNITS_TO_TODAY = false;
+const SHIFT_HELD_UNITS_TO_TODAY = true;
 
 // Units of a count row that employees are holding RIGHT NOW and that were
 // allocated TODAY. A backlog count (older work date) handed to someone today
@@ -255,6 +255,34 @@ function heldTodayUnits(c: any, today: string) {
         ).padStart(2, "0")}`;
         return ds === today ? sum + q : sum;
     }, 0);
+}
+
+// Daily-wise: count units of an OLDER count that staff were handed on a LATER
+// day (inside the selected range) belong to the day they were handed out —
+// same rule caseDay() uses for cases. Returns the units to move off the
+// count's own work-date card, grouped by allocation day.
+function shiftedCountUnits(c: any, from: string, to: string) {
+    const byDay = new Map<string, { recv: number; added: number; pending: number }>();
+    let recv = 0,
+        added = 0,
+        pending = 0;
+    (c.allocations || []).forEach((a: any) => {
+        const qty = Number(a.quantity) || 0;
+        const ful = Number(a.fulfilledQuantity) || 0;
+        const q = Math.max(0, qty - ful);
+        if (q <= 0 || !a.allocatedAt) return;
+        const d = localYmd(a.allocatedAt);
+        if (!d || d <= c.workDate || d < from || d > to) return;
+        const e = byDay.get(d) || { recv: 0, added: 0, pending: 0 };
+        e.recv += qty;
+        e.added += ful;
+        e.pending += q;
+        byDay.set(d, e);
+        recv += qty;
+        added += ful;
+        pending += q;
+    });
+    return { byDay, recv, added, pending };
 }
 
 function firstOfMonthStr() {
@@ -392,6 +420,10 @@ export default function ProductionReport() {
     // Raw count-only rows from the API; the client-name filter is applied in
     // the useMemo below so `clients` loading never re-triggers fetchCards.
     const [rawCardCounts, setRawCardCounts] = useState<CountRow[]>([]);
+    // Daily-wise only: count units (no case number) handed out on a day and
+    // returned to the pool at day end — the live allocation is gone, so they
+    // come from case_count_carryover_log.
+    const [dailyCountExtras, setDailyCountExtras] = useState<CountRow[]>([]);
     const fetchSeq = useRef(0); // guards against stale/overlapping fetches
     const [cardsLoading, setCardsLoading] = useState(true);
     const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -718,11 +750,60 @@ export default function ProductionReport() {
                 /* optional: Daily-wise still works without the extras */
             }
 
+            // Count units handed out in the range and returned to the pool
+            // (Past Allocation "Returned to pool") — Daily-wise only.
+            const countExtras: CountRow[] = [];
+            try {
+                const [fy, fm, fd] = fromDate.split("-").map(Number);
+                const [ey, em, ed] = toDate.split("-").map(Number);
+                const cp = new URLSearchParams();
+                cp.set("allocatedFrom", new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString());
+                cp.set("allocatedTo", new Date(ey, em - 1, ed, 23, 59, 59, 999).toISOString());
+                if (productId) cp.set("productId", productId);
+                if (employeeId) cp.set("employeeId", employeeId);
+                if (clientId) cp.set("clientId", clientId);
+                const ccRes = await authFetch(
+                    `${API_BASE}/api/service-cases/count-carryover-history?${cp.toString()}`
+                );
+                const ccJson = await ccRes.json();
+                if (ccRes.ok && ccJson.success) {
+                    (ccJson.data || []).forEach((r: any) => {
+                        const qty = Number(r.returnedQuantity) || 0;
+                        if (qty <= 0) return;
+                        countExtras.push({
+                            id: String(r.id),
+                            productId: r.productId != null ? String(r.productId) : "",
+                            productName: r.productName ?? null,
+                            clientName: r.clientName ?? null,
+                            subclientName: r.subclientName ?? null,
+                            // sits on the day it was handed out
+                            workDate: localYmd(r.allocatedAt) || r.workDate,
+                            quantity: qty,
+                            fulfilledCount: 0,
+                            pendingCount: qty,
+                            allocatedTotal: qty,
+                            allocations: [
+                                {
+                                    employeeId: r.employeeId != null ? String(r.employeeId) : null,
+                                    employeeName: r.employeeName ?? null,
+                                    quantity: qty,
+                                    fulfilledQuantity: 0,
+                                    allocatedAt: r.allocatedAt ?? null,
+                                },
+                            ],
+                        } as CountRow);
+                    });
+                }
+            } catch {
+                /* optional: Daily-wise still works without these */
+            }
+
             const counts = await countsPromise;
             if (isStale()) return;
             setCardCases(all);
             setDailyExtra(extras);
             setRawCardCounts(counts);
+            setDailyCountExtras(countExtras);
         } catch (err: any) {
             if (isStale()) return;
             console.error("Failed to load client cards:", err);
@@ -730,6 +811,7 @@ export default function ProductionReport() {
             setCardCases([]);
             setDailyExtra([]);
             setRawCardCounts([]);
+            setDailyCountExtras([]);
         } finally {
             if (!isStale()) setCardsLoading(false);
         }
@@ -780,6 +862,12 @@ export default function ProductionReport() {
         [effectiveView, cardCases, dailyExtra]
     );
 
+    // Daily-wise also counts the returned-to-pool units above.
+    const countsForView = useMemo(
+        () => (effectiveView === "daily" ? [...cardCounts, ...dailyCountExtras] : cardCounts),
+        [effectiveView, cardCounts, dailyCountExtras]
+    );
+
     const groupCards = useMemo(() => {
         const today = todayStr();
         type G = {
@@ -820,7 +908,7 @@ export default function ProductionReport() {
             if (c.assignedEmployeeName) b.mins += ampOf(c.productId);
         });
 
-        cardCounts.forEach((c) => {
+        countsForView.forEach((c) => {
             if (effectiveView === "employee") {
                 // units still allocated to a person (no case number yet)
                 c.allocations.forEach((a) => {
@@ -850,30 +938,28 @@ export default function ProductionReport() {
             }
             const b = bucket(countGroupKey(c, effectiveView));
             const fulfilledSum = c.allocations.reduce((s, a) => s + a.fulfilledQuantity, 0);
-            // Daily view: units of an OLDER count that staff were handed TODAY
-            // belong to today's card (same as the employee's own page and the
-            // dashboard), not to the count's old work-date card.
-            const heldToday =
-                SHIFT_HELD_UNITS_TO_TODAY &&
-                effectiveView === "daily" &&
-                toDate === today &&
-                c.workDate < today
-                    ? heldTodayUnits(c, today)
-                    : 0;
-            b.total += c.pendingCount - heldToday; // units that have no case number yet
-            b.withoutNo += c.pendingCount - heldToday;
-            b.recv += c.quantity - heldToday;
-            b.added += c.fulfilledCount;
-            if (c.workDate === today) b.today += c.pendingCount;
-            b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum - heldToday);
-            if (heldToday > 0) {
-                const t = bucket(today);
-                t.total += heldToday;
-                t.withoutNo += heldToday;
-                t.recv += heldToday;
-                t.today += heldToday;
-                t.allocated += heldToday;
-            }
+            // Daily view: units of an OLDER count that staff were handed on a
+            // later day belong to that day's card (same as cases), not to the
+            // count's old work-date card.
+            const sh =
+                SHIFT_HELD_UNITS_TO_TODAY && effectiveView === "daily"
+                    ? shiftedCountUnits(c, fromDate, toDate)
+                    : { byDay: new Map(), recv: 0, added: 0, pending: 0 };
+            b.total += c.pendingCount - sh.pending; // units that have no case number yet
+            b.withoutNo += c.pendingCount - sh.pending;
+            b.recv += c.quantity - sh.recv;
+            b.added += c.fulfilledCount - sh.added;
+            if (c.workDate === today) b.today += c.pendingCount - sh.pending;
+            b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum - sh.pending);
+            sh.byDay.forEach((e: any, day: string) => {
+                const t = bucket(day);
+                t.total += e.pending;
+                t.withoutNo += e.pending;
+                t.recv += e.recv;
+                t.added += e.added;
+                t.allocated += e.pending;
+                if (day === today) t.today += e.pending;
+            });
         });
 
         return Array.from(map.entries())
@@ -891,7 +977,7 @@ export default function ProductionReport() {
                 }
                 return b.total - a.total;
             });
-    }, [casesForView, cardCounts, effectiveView, ampOf, fromDate, toDate]);
+    }, [casesForView, countsForView, effectiveView, ampOf, fromDate, toDate]);
 
     // NEW: time PER EMPLOYEE = cases assigned to them x service AMP
     //      (+ count quantities still allocated to them x AMP).
@@ -1016,7 +1102,7 @@ export default function ProductionReport() {
             workDate: c.workDate,
         });
 
-        cardCounts.forEach((c) => {
+        countsForView.forEach((c) => {
             if (effectiveView === "employee") {
                 if (openGroup === UNALLOCATED) {
                     const un = countUnallocated(c);
@@ -1050,40 +1136,38 @@ export default function ProductionReport() {
                 return;
             }
             const fulfilledSum = c.allocations.reduce((x, a) => x + a.fulfilledQuantity, 0);
-            const heldToday =
-                SHIFT_HELD_UNITS_TO_TODAY &&
-                effectiveView === "daily" &&
-                toDate === today &&
-                c.workDate < today
-                    ? heldTodayUnits(c, today)
-                    : 0;
+            const sh =
+                SHIFT_HELD_UNITS_TO_TODAY && effectiveView === "daily"
+                    ? shiftedCountUnits(c, fromDate, toDate)
+                    : { byDay: new Map(), recv: 0, added: 0, pending: 0 };
             if (countGroupKey(c, effectiveView) === openGroup) {
-                const recv = c.quantity - heldToday;
-                const pending = c.pendingCount - heldToday;
+                const recv = c.quantity - sh.recv;
+                const pending = c.pendingCount - sh.pending;
                 const allocated = Math.min(
                     pending,
-                    Math.max(0, c.allocatedTotal - fulfilledSum - heldToday)
+                    Math.max(0, c.allocatedTotal - fulfilledSum - sh.pending)
                 );
                 if (recv > 0)
                     out.push({
                         id: `${c.id}-main`,
                         ...base(c),
                         recv,
-                        added: c.fulfilledCount,
+                        added: c.fulfilledCount - sh.added,
                         pending,
                         allocated,
                         unallocated: Math.max(0, pending - allocated),
                         holders: holdersOf(c),
                     });
             }
-            if (heldToday > 0 && openGroup === today)
+            const moved = sh.byDay.get(openGroup);
+            if (moved && moved.pending > 0)
                 out.push({
                     id: `${c.id}-held`,
                     ...base(c),
-                    recv: heldToday,
-                    added: 0,
-                    pending: heldToday,
-                    allocated: heldToday,
+                    recv: moved.recv,
+                    added: moved.added,
+                    pending: moved.pending,
+                    allocated: moved.pending,
                     unallocated: 0,
                     holders: holdersOf(c),
                 });
@@ -1104,7 +1188,16 @@ export default function ProductionReport() {
                     .includes(q);
             })
             .sort((a, b) => b.workDate.localeCompare(a.workDate));
-    }, [cardCounts, openGroup, effectiveView, toDate, statusFilter, submissionFilter, searchQuery]);
+    }, [
+        countsForView,
+        openGroup,
+        effectiveView,
+        fromDate,
+        toDate,
+        statusFilter,
+        submissionFilter,
+        searchQuery,
+    ]);
     const openCardStats = useMemo(
         () => groupCards.find((g) => g.key === openGroup) || null,
         [groupCards, openGroup]
