@@ -33,6 +33,7 @@ const {
   getProductNameMap,
   getClientNameMap,
   getSubclientNameMap,
+  getEmployeeNameMap,
 } = require("./servicecases.controller");
 // NEW: a client can only be used on a service it is mapped to.
 const { assertClientMappedToProduct } = require("./serviceClients");
@@ -1223,7 +1224,97 @@ async function listMyMissedCounts(req, res) {
   }
 }
 
+// ------------------------------------------------------------
+// GET /api/service-cases/count-carryover-history
+// query: allocatedFrom, allocatedTo (ISO), productId?, employeeId?, clientId?
+//
+// Production Report (Daily-wise): count units (no case number) that were
+// ALLOCATED to someone on a past day and returned to the pool at day end.
+// The rollover removed the live allocation, so case_count_carryover_log is
+// the only record. Read-only; org-wide report roles only.
+// ------------------------------------------------------------
+async function listCountCarryoverHistory(req, res) {
+  try {
+    const { role, organizationId } = req.user;
+    if (
+      !["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
+        role,
+      )
+    ) {
+      return res.json({ success: true, data: [] });
+    }
+    const from = new Date(String(req.query.allocatedFrom || ""));
+    const to = new Date(String(req.query.allocatedTo || ""));
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "allocatedFrom / allocatedTo are required",
+      });
+    }
+    let q = supabase
+      .from("case_count_carryover_log")
+      .select("*")
+      .eq("organization_id", String(organizationId))
+      .gte("allocated_at", from.toISOString())
+      .lte("allocated_at", to.toISOString())
+      .order("allocated_at", { ascending: false })
+      .limit(5000);
+    if (req.query.productId)
+      q = q.eq("product_id", String(req.query.productId));
+    if (req.query.employeeId)
+      q = q.eq("employee_id", String(req.query.employeeId));
+    if (req.query.clientId) q = q.eq("client_id", String(req.query.clientId));
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const rows = data || [];
+    const [productMap, clientMap, subclientMap, empMap] = await Promise.all([
+      getProductNameMap(
+        rows.map((r) => r.product_id),
+        organizationId,
+      ),
+      getClientNameMap(
+        rows.map((r) => r.client_id),
+        organizationId,
+      ),
+      getSubclientNameMap(
+        rows.map((r) => r.subclient_id),
+        organizationId,
+      ),
+      getEmployeeNameMap(
+        rows.map((r) => r.employee_id),
+        organizationId,
+      ),
+    ]);
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: `carry-count-${r.id}`,
+        countId: r.count_id,
+        productId: r.product_id,
+        productName: productMap[r.product_id] || null,
+        clientId: r.client_id || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        workDate: r.work_date,
+        employeeId: r.employee_id,
+        employeeName: empMap[r.employee_id] || null,
+        allocatedAt: r.allocated_at,
+        returnedAt: r.returned_at,
+        returnedQuantity: r.returned_quantity,
+      })),
+    });
+  } catch (err) {
+    console.error("listCountCarryoverHistory error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
 module.exports = {
+  listCountCarryoverHistory,
   listMyMissedCounts,
   listMyCounts,
   selfAllocateCounts,

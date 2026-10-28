@@ -58,6 +58,7 @@ const {
 const {
   listMyCounts,
   listMyMissedCounts,
+  listCountCarryoverHistory,
   selfAllocateCounts,
   addCaseNumbersToCount,
   fillCaseClient,
@@ -179,6 +180,7 @@ router.get("/my-missed", listMyMissedCases);
 router.get("/team-queries", listTeamQueries);
 router.get("/team-missed-yesterday", listTeamMissedYesterday);
 router.get("/carryover-history", listCarryoverHistory);
+router.get("/count-carryover-history", listCountCarryoverHistory);
 router.post("/my-counts/self-allocate", selfAllocateCounts);
 router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
 
