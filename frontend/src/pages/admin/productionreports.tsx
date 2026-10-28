@@ -273,19 +273,25 @@ function localYmd(iso: string) {
 // submitted days later (backlog). For the Daily-wise view such a case belongs
 // to the day it was actually handed out. (Same idea as heldTodayUnits() for
 // count-only units.)
-function caseDay(c: ServiceCaseRow) {
+function caseDay(c: ServiceCaseRow, from?: string, to?: string) {
     const t = todayStr();
     if (c.workDate < t && c.allocatedAt && localYmd(c.allocatedAt) === t) return t;
+    // Daily-wise only (range given): an older case handed out on a PAST day
+    // inside the selected range belongs to the day it was handed out.
+    if (from && to && c.allocatedAt) {
+        const a = localYmd(c.allocatedAt);
+        if (a && a > c.workDate && a >= from && a <= to) return a;
+    }
     return c.workDate;
 }
 
 // Which card a case belongs to, for the current view.
-function caseGroupKey(c: ServiceCaseRow, view: ViewMode) {
+function caseGroupKey(c: ServiceCaseRow, view: ViewMode, from?: string, to?: string) {
     switch (view) {
         case "employee":
             return (c.assignedEmployeeName || "").trim() || UNALLOCATED;
         case "daily":
-            return caseDay(c);
+            return caseDay(c, from, to);
         case "work":
             return (c.productName || "").trim() || NO_SERVICE;
         default:
@@ -365,6 +371,10 @@ export default function ProductionReport() {
 
     // ---- client-wise cards ----
     const [cardCases, setCardCases] = useState<ServiceCaseRow[]>([]);
+    // Daily-wise view only: (a) older cases allocated on a PAST day in the
+    // range, (b) cases allocated that day but NOT submitted - the day-end
+    // rollover cleared their assignee, so they come from case_carryover_log.
+    const [dailyExtra, setDailyExtra] = useState<ServiceCaseRow[]>([]);
     // Raw count-only rows from the API; the client-name filter is applied in
     // the useMemo below so `clients` loading never re-triggers fetchCards.
     const [rawCardCounts, setRawCardCounts] = useState<CountRow[]>([]);
@@ -604,15 +614,99 @@ export default function ProductionReport() {
                 }
             }
 
+            // ---- Daily-wise extras (do not touch the other views) ----
+            const extras: ServiceCaseRow[] = [];
+            try {
+                const [fy, fm, fd] = fromDate.split("-").map(Number);
+                const [ey, em, ed] = toDate.split("-").map(Number);
+                const fromIso = new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString();
+                const toIso = new Date(ey, em - 1, ed, 23, 59, 59, 999).toISOString();
+                const before = new Date(fy, fm - 1, fd - 1);
+                const beforeYmd = `${before.getFullYear()}-${String(before.getMonth() + 1).padStart(
+                    2,
+                    "0"
+                )}-${String(before.getDate()).padStart(2, "0")}`;
+                const seenIds = new Set(all.map((r) => r.id));
+
+                // (a) older cases allocated inside the range (workDate before it)
+                let bp = 1;
+                let bTotalPages = 1;
+                do {
+                    const params = new URLSearchParams();
+                    params.set("page", String(bp));
+                    params.set("pageSize", String(PAGE));
+                    params.set("workDateTo", beforeYmd);
+                    params.set("allocatedFrom", fromIso);
+                    params.set("allocatedTo", toIso);
+                    if (productId) params.set("productId", productId);
+                    if (employeeId) params.set("employeeId", employeeId);
+                    if (clientId) params.set("clientId", clientId);
+                    const bRes = await authFetch(
+                        `${API_BASE}/api/service-cases?${params.toString()}`
+                    );
+                    const bJson = await bRes.json();
+                    if (!bRes.ok || !bJson.success) break;
+                    (bJson.data || []).forEach((r: ServiceCaseRow) => {
+                        if (!seenIds.has(r.id)) {
+                            seenIds.add(r.id);
+                            extras.push(r);
+                        }
+                    });
+                    bTotalPages = Math.min(bJson.pagination?.totalPages ?? 1, MAX_PAGES);
+                    bp++;
+                } while (bp <= bTotalPages);
+
+                // (b) allocated in the range, not submitted, sent back to the pool
+                const cp = new URLSearchParams();
+                cp.set("allocatedFrom", fromIso);
+                cp.set("allocatedTo", toIso);
+                if (productId) cp.set("productId", productId);
+                if (employeeId) cp.set("employeeId", employeeId);
+                if (clientId) cp.set("clientId", clientId);
+                const cRes = await authFetch(
+                    `${API_BASE}/api/service-cases/carryover-history?${cp.toString()}`
+                );
+                const cJson = await cRes.json();
+                if (cRes.ok && cJson.success) {
+                    (cJson.data || []).forEach((r: any) => {
+                        extras.push({
+                            id: String(r.id),
+                            caseNumber: r.caseNumber || "-",
+                            productId: r.productId != null ? String(r.productId) : "",
+                            productName: r.productName ?? null,
+                            clientId: r.clientId != null ? String(r.clientId) : null,
+                            clientName: r.clientName ?? null,
+                            subclientName: r.subclientName ?? null,
+                            workDate: r.workDate || localYmd(r.allocatedAt),
+                            assignedEmployeeId: r.employeeId != null ? String(r.employeeId) : null,
+                            assignedEmployeeName: r.employeeName ?? null,
+                            allocatedByName: null,
+                            allocationStatus: "ALLOCATED",
+                            quantity: null,
+                            amount: null,
+                            submissionStatus: "PENDING",
+                            submissionType: null,
+                            queryText: null,
+                            submittedAt: null,
+                            allocatedAt: r.allocatedAt ?? null,
+                        });
+                    });
+                }
+            } catch {
+                /* optional: Daily-wise still works without the extras */
+            }
+
             const counts = await countsPromise;
             if (isStale()) return;
             setCardCases(all);
+            setDailyExtra(extras);
             setRawCardCounts(counts);
         } catch (err: any) {
             if (isStale()) return;
             console.error("Failed to load client cards:", err);
             setError(err?.message || "Failed to load production report.");
             setCardCases([]);
+            setDailyExtra([]);
             setRawCardCounts([]);
         } finally {
             if (!isStale()) setCardsLoading(false);
@@ -638,6 +732,12 @@ export default function ProductionReport() {
     //   total    = every case in the selected date range
     //   today    = ONLY cases whose date is today (never the total)
     //   mins     = time (cases allocated x service AMP) — used by employee view
+    // Daily-wise also counts the extras above; every other view is unchanged.
+    const casesForView = useMemo(
+        () => (effectiveView === "daily" ? [...cardCases, ...dailyExtra] : cardCases),
+        [effectiveView, cardCases, dailyExtra]
+    );
+
     const groupCards = useMemo(() => {
         const today = todayStr();
         type G = {
@@ -654,10 +754,10 @@ export default function ProductionReport() {
             return map.get(key)!;
         };
 
-        cardCases.forEach((c) => {
-            const b = bucket(caseGroupKey(c, effectiveView));
+        casesForView.forEach((c) => {
+            const b = bucket(caseGroupKey(c, effectiveView, fromDate, toDate));
             b.total += 1;
-            if (caseDay(c) === today) b.today += 1;
+            if (caseDay(c, fromDate, toDate) === today) b.today += 1;
             if (c.allocationStatus === "ALLOCATED") b.allocated += 1;
             if (c.submissionStatus === "SUBMITTED") b.submitted += 1;
             if (c.assignedEmployeeName) b.mins += ampOf(c.productId);
@@ -718,7 +818,7 @@ export default function ProductionReport() {
                 }
                 return b.total - a.total;
             });
-    }, [cardCases, cardCounts, effectiveView, ampOf, toDate]);
+    }, [casesForView, cardCounts, effectiveView, ampOf, fromDate, toDate]);
 
     // NEW: time PER EMPLOYEE = cases assigned to them x service AMP
     //      (+ count quantities still allocated to them x AMP).
@@ -798,8 +898,8 @@ export default function ProductionReport() {
     const tableRows = useMemo(() => {
         if (!openGroup) return [];
         const q = searchQuery.toLowerCase();
-        return cardCases
-            .filter((c) => caseGroupKey(c, effectiveView) === openGroup)
+        return casesForView
+            .filter((c) => caseGroupKey(c, effectiveView, fromDate, toDate) === openGroup)
             .filter((c) => !statusFilter || c.allocationStatus === statusFilter)
             .filter((c) => !submissionFilter || c.submissionStatus === submissionFilter)
             .filter(
@@ -813,7 +913,16 @@ export default function ProductionReport() {
                         .toLowerCase()
                         .includes(q)
             );
-    }, [cardCases, openGroup, effectiveView, statusFilter, submissionFilter, searchQuery]);
+    }, [
+        casesForView,
+        openGroup,
+        effectiveView,
+        statusFilter,
+        submissionFilter,
+        searchQuery,
+        fromDate,
+        toDate,
+    ]);
     const totalCount = tableRows.length;
     const rows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     const loading = cardsLoading;

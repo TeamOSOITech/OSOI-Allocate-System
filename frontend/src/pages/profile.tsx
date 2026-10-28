@@ -4230,6 +4230,19 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                             ? `(${days} day${days === 1 ? "" : "s"})`
                                                                                             : "(today)"}
                                                                                     </span>
+                                                                                    {/* when it was ALLOCATED (the date above is the work date) */}
+                                                                                    {mc.allocatedAt && (
+                                                                                        <span
+                                                                                            style={
+                                                                                                styles.smallMuted
+                                                                                            }
+                                                                                        >
+                                                                                            Allocated{" "}
+                                                                                            {formatDateTime(
+                                                                                                mc.allocatedAt
+                                                                                            )}
+                                                                                        </span>
+                                                                                    )}
                                                                                 </div>
                                                                                 <div>
                                                                                     <span
@@ -4528,7 +4541,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     }}
                                                                 >
                                                                     <div>
-                                                                        {showAllocatedAt
+                                                                        {showAllocatedAt || c.missed
                                                                             ? formatDateTime(
                                                                                   c.allocatedAt
                                                                               )
@@ -7691,6 +7704,8 @@ type MissedItem = {
     kind: "CASE" | "COUNT";
     caseNumber: string | null;
     quantity: number;
+    // when it was allocated to the person (ISO timestamp)
+    allocatedAt: string | null;
     productName: string | null;
     clientName: string | null;
     subclientName: string | null;
@@ -8021,6 +8036,16 @@ function MissedSubmissionPopup({
                                                             ]
                                                                 .filter(Boolean)
                                                                 .join(" · ") || "-"}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                marginLeft: "auto",
+                                                                fontSize: 12,
+                                                                color: "#8A92A6",
+                                                            }}
+                                                        >
+                                                            Allocated{" "}
+                                                            {tqFmtDateTime(it.allocatedAt)}
                                                         </span>
                                                     </div>
                                                 ))}
@@ -8556,7 +8581,7 @@ function MobileRow({
                     {c.allocatedAt && (
                         <span>
                             Allocated{" "}
-                            {showAllocatedAt
+                            {showAllocatedAt || c.missed
                                 ? formatDateTime(c.allocatedAt)
                                 : formatDisplayDate(allocDay(c.allocatedAt, c.workDate))}
                         </span>
