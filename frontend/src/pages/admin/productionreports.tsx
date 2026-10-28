@@ -1645,18 +1645,6 @@ export default function ProductionReport() {
                                                     />
                                                     <StatRow
                                                         label="Without case number"
-                                                        value={c.recv}
-                                                        color={BRAND.amber}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Added (case no. given)"
-                                                        value={c.added}
-                                                        color={BRAND.green}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Pending (no case no.)"
                                                         value={c.withoutNo}
                                                         color={BRAND.amber}
                                                         onClick={() => openCard(c.key, "without")}
@@ -1670,11 +1658,6 @@ export default function ProductionReport() {
                                                         label="Submitted"
                                                         value={c.submitted}
                                                         color={BRAND.green}
-                                                    />
-                                                    <StatRow
-                                                        label="Not Submitted"
-                                                        value={c.notSubmitted}
-                                                        color={BRAND.amber}
                                                     />
                                                     <StatRow
                                                         label="Time"
@@ -1705,18 +1688,6 @@ export default function ProductionReport() {
                                                     />
                                                     <StatRow
                                                         label="Without case number"
-                                                        value={c.recv}
-                                                        color={BRAND.amber}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Added (case no. given)"
-                                                        value={c.added}
-                                                        color={BRAND.green}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Pending (no case no.)"
                                                         value={c.withoutNo}
                                                         color={BRAND.amber}
                                                         onClick={() => openCard(c.key, "without")}
@@ -1726,22 +1697,10 @@ export default function ProductionReport() {
                                                         value={c.allocated}
                                                         color={BRAND.cyan}
                                                     />
-                                                    {/* "Pending" was total - allocated (= not handed out
-                                                        yet), which read as "not submitted". Split it. */}
-                                                    <StatRow
-                                                        label="Unallocated"
-                                                        value={c.pending}
-                                                        color={BRAND.amber}
-                                                    />
                                                     <StatRow
                                                         label="Submitted"
                                                         value={c.submitted}
                                                         color={BRAND.green}
-                                                    />
-                                                    <StatRow
-                                                        label="Not submitted"
-                                                        value={c.notSubmitted}
-                                                        color={BRAND.amber}
                                                     />
                                                 </>
                                             )}
@@ -1789,7 +1748,11 @@ export default function ProductionReport() {
                             {(
                                 [
                                     ["with", "With case number", openCardStats?.withNo ?? 0],
-                                    ["without", "Without case number", openCardStats?.recv ?? 0],
+                                    [
+                                        "without",
+                                        "Without case number",
+                                        openCardStats?.withoutNo ?? 0,
+                                    ],
                                 ] as const
                             ).map(([id, label, n]) => (
                                 <button

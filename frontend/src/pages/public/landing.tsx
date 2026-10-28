@@ -2007,21 +2007,6 @@ const Landing = () => {
                 .lp2-tag { font-size: 12.5px; font-weight: 600; color: var(--lp-blue); background: rgba(32,66,151,0.08); border: 1px solid rgba(32,66,151,0.16); padding: 5px 12px; border-radius: 999px; }
                 @media (max-width: 780px) { .lp2-steps { grid-template-columns: 1fr; } }
 
-                /* Pricing teaser */
-                .lp2-price-sec { background: var(--lp-bg); }
-                .lp2-price-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; text-align: left; }
-                .lp2-price-chip { background: #fff; border: 1px solid var(--lp-border); border-radius: 20px; padding: 22px; position: relative; }
-                .lp2-price-chip.hot { background: var(--lp-gradient); color: #fff; border-color: transparent; box-shadow: 0 24px 44px -16px rgba(32,66,151,0.6); }
-                .lp2-price-chip small { display: block; font-size: 13.5px; font-weight: 600; color: var(--lp-muted); margin-bottom: 8px; }
-                .lp2-price-chip.hot small { color: rgba(255,255,255,0.85); }
-                .lp2-price-chip b { font-family: 'Sora', sans-serif; font-size: 26px; font-weight: 800; color: var(--lp-text); display: block; line-height: 1.15; }
-                .lp2-price-chip.hot b { color: #fff; }
-                .lp2-price-chip span { display: block; margin-top: 8px; font-size: 13.5px; line-height: 1.5; color: var(--lp-muted); }
-                .lp2-price-chip.hot span { color: rgba(255,255,255,0.88); }
-                .lp2-badge { position: absolute; top: -11px; right: 16px; background: #FFB547; color: #3A2500; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
-                @media (max-width: 900px) { .lp2-price-row { grid-template-columns: repeat(2, 1fr); } }
-                @media (max-width: 480px) { .lp2-price-row { grid-template-columns: 1fr; } }
-
                 /* Bottom CTA */
                 .lp-cta-section { background: #fff; padding-top: clamp(32px, 5vw, 64px); }
                 .lp2-cta { position: relative; overflow: hidden; border-radius: 32px; padding: clamp(36px, 6vw, 72px); text-align: left; color: #B9C9E0; background: linear-gradient(150deg, var(--lp-ink) 0%, #16265A 60%, #0E4A66 100%); display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: center; }
@@ -2869,17 +2854,6 @@ const Landing = () => {
                     >
                         A Look Inside
                     </a>
-                    <a
-                        href="#pricing"
-                        className="lp-nav-link"
-                        onClick={(e) => {
-                            e.preventDefault();
-                            setMenuOpen(false);
-                            setPricingOpen(true);
-                        }}
-                    >
-                        Plans &amp; Pricing
-                    </a>
                 </nav>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <button className="lp-nav-signup-btn" onClick={() => setDemoOpen(true)}>
@@ -2932,16 +2906,6 @@ const Landing = () => {
                     }}
                 >
                     A Look Inside
-                </a>
-                <a
-                    href="#pricing"
-                    onClick={(e) => {
-                        e.preventDefault();
-                        setMenuOpen(false);
-                        setPricingOpen(true);
-                    }}
-                >
-                    Plans &amp; Pricing
                 </a>
                 <button
                     className="lp-nav-signup-btn"
@@ -3321,45 +3285,6 @@ const Landing = () => {
                                 </div>
                             </div>
                         ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ---------- Pricing teaser ---------- */}
-            <section className="lp-section lp2-price-sec">
-                <div className="lp2-wrap">
-                    <h2 className="lp-section-title">Start free. Upgrade when your team grows.</h2>
-                    <p className="lp-section-subtitle">
-                        Plans from ₹0 to custom pricing, with no setup fee to get started.
-                    </p>
-                    <div className="lp2-price-row">
-                        {PLANS.map((p) => (
-                            <div
-                                key={p.name}
-                                className={`lp2-price-chip ${p.highlighted ? "hot" : ""}`}
-                            >
-                                {p.highlighted && <span className="lp2-badge">{p.badge}</span>}
-                                <small>{p.name}</small>
-                                <b>{p.price}</b>
-                                <span>{p.period || p.desc}</span>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="lp-cta-actions" style={{ justifyContent: "center" }}>
-                        <button className="lp-cta-btn-primary" onClick={() => setPricingOpen(true)}>
-                            Compare plans <i className="ti ti-arrow-right" />
-                        </button>
-                        <button
-                            className="lp-cta-btn-secondary"
-                            style={{
-                                color: "var(--lp-blue)",
-                                borderColor: "#C9DCF7",
-                                background: "#fff",
-                            }}
-                            onClick={() => navigate("/login")}
-                        >
-                            Start free
-                        </button>
                     </div>
                 </div>
             </section>
