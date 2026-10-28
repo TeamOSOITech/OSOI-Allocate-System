@@ -366,6 +366,61 @@ function todayYmdInAppTz(now = new Date()) {
   }).format(now); // YYYY-MM-DD
 }
 
+// Writes (or adds to) the Past-Allocation history row for count units that
+// went back to the pool OUTSIDE the day-end sweep (leave / half-day).
+// One row per (count, employee, allocated_at): if the row is already there
+// (e.g. half-day earlier, rest swept later) the returned units are ADDED.
+// Never throws - the units are already back in the pool at this point.
+async function logCountReturn(
+  organizationId,
+  employeeId,
+  countId,
+  allocatedAt,
+  qty,
+) {
+  try {
+    if (!qty || qty <= 0 || !allocatedAt) return;
+    const { data: existing, error: exErr } = await supabase
+      .from("case_count_carryover_log")
+      .select("id, returned_quantity")
+      .eq("count_id", String(countId))
+      .eq("employee_id", String(employeeId))
+      .eq("allocated_at", allocatedAt)
+      .maybeSingle();
+    if (exErr) throw exErr;
+    if (existing) {
+      const { error } = await supabase
+        .from("case_count_carryover_log")
+        .update({
+          returned_quantity: (existing.returned_quantity || 0) + qty,
+          returned_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id);
+      if (error) throw error;
+      return;
+    }
+    const { data: c } = await supabase
+      .from("service_case_counts")
+      .select("product_id, client_id, subclient_id, work_date")
+      .eq("id", countId)
+      .maybeSingle();
+    const { error } = await supabase.from("case_count_carryover_log").insert({
+      organization_id: String(organizationId),
+      count_id: String(countId),
+      product_id: c?.product_id != null ? String(c.product_id) : null,
+      client_id: c?.client_id != null ? String(c.client_id) : null,
+      subclient_id: c?.subclient_id != null ? String(c.subclient_id) : null,
+      work_date: c?.work_date || null,
+      employee_id: String(employeeId),
+      allocated_at: allocatedAt,
+      returned_quantity: qty,
+    });
+    if (error) throw error;
+  } catch (err) {
+    console.error("logCountReturn failed:", err?.message || err);
+  }
+}
+
 // Count-only work ("12 cases (count)" - units WITHOUT a case number) lives in
 // service_case_count_allocations. It must go back to the pool exactly like
 // numbered cases. Only the UNSUBMITTED units move: units the employee already
@@ -428,6 +483,14 @@ async function releaseCountAllocationsForEmployee(
     if ((res.data || []).length > 0) {
       returnedTotal += take;
       remaining -= take;
+      // keep Past Allocation history for these units (leave / half-day)
+      await logCountReturn(
+        organizationId,
+        employeeId,
+        r.count_id,
+        r.allocated_at,
+        take,
+      );
     }
   }
   return returnedTotal;
@@ -512,22 +575,40 @@ async function rolloverAllOrgs() {
 }
 
 // Throttled, never throws — safe to `await` at the top of any request.
+// FIX: if a sweep is already RUNNING for this org, wait for it instead of
+// returning straight away. Before, the first page-load of the day started
+// the sweep and the other requests fired at the same time (my-counts,
+// my-missed-counts ...) read the tables mid-sweep, so counts could be
+// missing from both Today and Past until the next refresh.
 const lastRunByOrg = new Map();
+const inflightByOrg = new Map();
 async function ensureRollover(organizationId) {
   const key = organizationId || "*";
+  if (inflightByOrg.has(key)) {
+    await inflightByOrg.get(key);
+    return;
+  }
   const now = Date.now();
   if (now - (lastRunByOrg.get(key) || 0) < LAZY_THROTTLE_MS) return;
   lastRunByOrg.set(key, now);
+  const run = (async () => {
+    try {
+      await rolloverPendingCases(organizationId || null);
+    } catch (err) {
+      // Missing table / transient DB error must never break the request.
+      console.error("ensureRollover failed:", err?.message || err);
+    }
+    try {
+      await rolloverPendingCounts(organizationId || null);
+    } catch (err) {
+      console.error("ensureRollover (counts) failed:", err?.message || err);
+    }
+  })();
+  inflightByOrg.set(key, run);
   try {
-    await rolloverPendingCases(organizationId || null);
-  } catch (err) {
-    // Missing table / transient DB error must never break the request.
-    console.error("ensureRollover failed:", err?.message || err);
-  }
-  try {
-    await rolloverPendingCounts(organizationId || null);
-  } catch (err) {
-    console.error("ensureRollover (counts) failed:", err?.message || err);
+    await run;
+  } finally {
+    inflightByOrg.delete(key);
   }
 }
 

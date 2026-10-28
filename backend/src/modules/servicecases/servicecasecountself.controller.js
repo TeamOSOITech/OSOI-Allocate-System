@@ -215,6 +215,77 @@ async function listMyCounts(req, res) {
     // goes back to the pool before we answer
     await ensureRollover(orgId);
 
+    // FIX: Profile asks for includeAll=true ("every date, also the ones whose
+    // case numbers are all added already") but this endpoint ignored it, so
+    // an allocation that was fully added (remaining = 0) vanished from the
+    // employee's Past Allocation altogether. Honour it: return EVERY
+    // allocation the employee has, finished or not. `available` is not
+    // needed for that view.
+    if (String(req.query.includeAll) === "true") {
+      const { data: myAllocs, error: maErr } = await supabase
+        .from("service_case_count_allocations")
+        .select(
+          "count_id, employee_id, quantity, fulfilled_quantity, allocated_at",
+        )
+        .eq("organization_id", orgId)
+        .eq("employee_id", me)
+        .order("allocated_at", { ascending: false })
+        .limit(2000);
+      if (maErr) throw maErr;
+
+      const ids = [...new Set((myAllocs || []).map((a) => a.count_id))];
+      const countsById = {};
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data: cs, error: cErr } = await supabase
+          .from("service_case_counts")
+          .select("*")
+          .eq("organization_id", orgId)
+          .in("id", ids.slice(i, i + 150));
+        if (cErr) throw cErr;
+        (cs || []).forEach((c) => (countsById[c.id] = c));
+      }
+      const all = Object.values(countsById);
+      const [pMap, cMap, sMap] = await Promise.all([
+        getProductNameMap(
+          all.map((c) => c.product_id),
+          orgId,
+        ),
+        getClientNameMap(
+          all.map((c) => c.client_id),
+          orgId,
+        ),
+        getSubclientNameMap(
+          all.map((c) => c.subclient_id),
+          orgId,
+        ),
+      ]);
+      const mineAll = [];
+      (myAllocs || []).forEach((a) => {
+        const c = countsById[a.count_id];
+        if (!c) return;
+        const added = a.fulfilled_quantity || 0;
+        mineAll.push({
+          id: c.id,
+          productId: String(c.product_id),
+          productName: pMap[c.product_id] || null,
+          clientId: strId(c.client_id),
+          clientName: cMap[c.client_id] || null,
+          subclientId: strId(c.subclient_id),
+          subclientName: sMap[c.subclient_id] || null,
+          workDate: c.work_date,
+          quantity: c.quantity,
+          allocatedToMe: a.quantity,
+          addedByMe: added,
+          remaining: Math.max(0, a.quantity - added),
+          allocatedAt: a.allocated_at || null,
+        });
+      });
+      return res.json({
+        success: true,
+        data: { mine: mineAll, available: [] },
+      });
+    }
+
     const { open, allocs } = await loadOpenCountsWithAllocations(
       orgId,
       workDate,
@@ -1076,7 +1147,33 @@ async function listMyMissedCounts(req, res) {
         }
       });
     }
-    const rows = logRows.filter((r) => !doneCountIds.has(String(r.count_id)));
+    // CHANGED: history rows are NEVER hidden any more. A manager checking
+    // "who did not do yesterday's task" must still see it even if somebody
+    // else finished the count later. Those rows are only flagged
+    // (countDone) so the UI keeps them out of the pending totals.
+    const rows = logRows;
+
+    // FULL PICTURE per allocation: the sweep cuts the live allocation down to
+    // what was already added, so the ORIGINAL size is
+    //   returned (log) + added (live row with the SAME allocated_at).
+    // (a fully returned allocation has no live row left -> added = 0)
+    const addedBy = new Map(); // `${count_id}|${allocated_at ms}` -> added
+    const logCountIds = [...new Set(rows.map((r) => String(r.count_id)))];
+    for (let i = 0; i < logCountIds.length; i += 150) {
+      const { data: live, error: lErr } = await supabase
+        .from("service_case_count_allocations")
+        .select("count_id, fulfilled_quantity, allocated_at")
+        .eq("organization_id", String(orgId))
+        .eq("employee_id", String(me))
+        .in("count_id", logCountIds.slice(i, i + 150));
+      if (lErr) throw lErr;
+      (live || []).forEach((a) =>
+        addedBy.set(
+          `${a.count_id}|${new Date(a.allocated_at).getTime()}`,
+          a.fulfilled_quantity || 0,
+        ),
+      );
+    }
     const [productMap, clientMap, subclientMap] = await Promise.all([
       getProductNameMap(
         rows.map((r) => r.product_id),
@@ -1107,6 +1204,14 @@ async function listMyMissedCounts(req, res) {
         allocatedAt: r.allocated_at,
         returnedAt: r.returned_at,
         returnedQuantity: r.returned_quantity,
+        addedQuantity:
+          addedBy.get(`${r.count_id}|${new Date(r.allocated_at).getTime()}`) ||
+          0,
+        allocatedQuantity:
+          (r.returned_quantity || 0) +
+          (addedBy.get(`${r.count_id}|${new Date(r.allocated_at).getTime()}`) ||
+            0),
+        countDone: doneCountIds.has(String(r.count_id)),
       })),
     });
   } catch (err) {

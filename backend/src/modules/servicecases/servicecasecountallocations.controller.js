@@ -351,8 +351,23 @@ async function saveCountAllocations(req, res) {
     }
 
     const now = new Date().toISOString();
-    const upserts = items
-      .filter((i) => Number(i.quantity) > 0)
+    // FIX: only NEW or INCREASED allocations get a fresh allocated_at.
+    // Re-saving the page used to re-stamp every row it sent, so units that
+    // were handed out on an earlier day suddenly looked "allocated today"
+    // (they jumped from Past to Today and skipped the day-end return).
+    // Unchanged rows are left alone; a decrease keeps the original stamp.
+    // previous quantities come from `existing` (as read from the DB) -
+    // `state` above already holds the NEW values after validation.
+    const prevMap = new Map(
+      (existing || []).map((a) => [
+        `${a.count_id}|${a.employee_id}`,
+        a.quantity || 0,
+      ]),
+    );
+    const prevQty = (c, e) => prevMap.get(`${c}|${e}`) || 0;
+    const positive = items.filter((i) => Number(i.quantity) > 0);
+    const upserts = positive
+      .filter((i) => Number(i.quantity) > prevQty(i.countId, i.employeeId))
       .map((i) => ({
         organization_id: orgId,
         count_id: i.countId,
@@ -366,6 +381,19 @@ async function saveCountAllocations(req, res) {
         .from("service_case_count_allocations")
         .upsert(upserts, { onConflict: "count_id,employee_id" });
       if (uErr) throw uErr;
+    }
+    const decreases = positive.filter((i) => {
+      const before = prevQty(i.countId, i.employeeId);
+      return before > 0 && Number(i.quantity) < before;
+    });
+    for (const i of decreases) {
+      const { error: dErr } = await supabase
+        .from("service_case_count_allocations")
+        .update({ quantity: Number(i.quantity) })
+        .eq("organization_id", orgId)
+        .eq("count_id", i.countId)
+        .eq("employee_id", i.employeeId);
+      if (dErr) throw dErr;
     }
 
     const deletes = await Promise.all(
