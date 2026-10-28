@@ -401,6 +401,10 @@ type MyCountRow = {
     // NEW: read-only history row — these units were allocated to me on an
     // earlier day, never got their case numbers and went back to the pool.
     missed?: boolean;
+    // history row whose count was finished by someone else afterwards
+    countDone?: boolean;
+    // history rows: the count this row belongs to
+    countId?: string;
     returnedAt?: string | null;
 };
 type AvailableCountRow = {
@@ -929,12 +933,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                         subclientId: row.subclientId != null ? String(row.subclientId) : null,
                         subclientName: row.subclientName ?? null,
                         workDate: row.workDate,
-                        quantity: row.returnedQuantity ?? 0,
-                        allocatedToMe: row.returnedQuantity ?? 0,
-                        addedByMe: 0,
+                        // full picture: allocated = added + not completed
+                        quantity: row.allocatedQuantity ?? row.returnedQuantity ?? 0,
+                        allocatedToMe: row.allocatedQuantity ?? row.returnedQuantity ?? 0,
+                        addedByMe: row.addedQuantity ?? 0,
                         remaining: row.returnedQuantity ?? 0,
+                        countId: row.countId != null ? String(row.countId) : undefined,
                         allocatedAt: row.allocatedAt ?? null,
                         missed: true,
+                        // count was finished by someone later: keep the row
+                        // as history, but do not count it as pending
+                        countDone: !!row.countDone,
                         returnedAt: row.returnedAt ?? null,
                     }))
                 );
@@ -1356,28 +1365,47 @@ export default function Profile({ onLogout }: ProfileProps) {
     // counts for the active tab (Today / Past) — includes fully-added ones
     // (remaining = 0) so already-submitted counts still show in Past.
     // CHANGED: split by the day the count was allocated to me.
+    // A history row now carries the WHOLE allocation (allocated / added / not
+    // completed), so the live row of the same allocation is left out of Past
+    // to avoid showing it twice.
+    const myCountsPast = useMemo(() => {
+        const keys = new Set(
+            missedCounts.map((m) => `${m.countId}|${new Date(m.allocatedAt || 0).getTime()}`)
+        );
+        return myCounts.filter(
+            (m) => !keys.has(`${m.id}|${new Date(m.allocatedAt || 0).getTime()}`)
+        );
+    }, [myCounts, missedCounts]);
+
     const filteredCounts = useMemo(() => {
         const today = todayStr();
         const q = search.trim().toLowerCase();
         // returned-to-pool counts are history: Past tab only
-        const source = activeTab === "today" ? myCounts : [...myCounts, ...missedCounts];
-        return source
-            .filter((m) =>
-                activeTab === "today"
-                    ? allocDay(m.allocatedAt, m.workDate) === today
-                    : allocDay(m.allocatedAt, m.workDate) !== today
-            )
-            .filter((m) => !dateFilter || allocDay(m.allocatedAt, m.workDate) === dateFilter)
-            .filter((m) => productFilter === "all" || m.productName === productFilter)
-            .filter(
-                (m) =>
-                    !q ||
-                    `${m.productName || ""} ${m.clientName || ""} ${m.subclientName || ""}`
-                        .toLowerCase()
-                        .includes(q)
-            )
-            .sort((a, b) => (b.workDate || "").localeCompare(a.workDate || ""));
-    }, [myCounts, missedCounts, activeTab, dateFilter, productFilter, search]);
+        const source = activeTab === "today" ? myCounts : [...myCountsPast, ...missedCounts];
+        return (
+            source
+                .filter((m) =>
+                    activeTab === "today"
+                        ? allocDay(m.allocatedAt, m.workDate) === today
+                        : allocDay(m.allocatedAt, m.workDate) !== today
+                )
+                .filter((m) => !dateFilter || allocDay(m.allocatedAt, m.workDate) === dateFilter)
+                .filter((m) => productFilter === "all" || m.productName === productFilter)
+                .filter(
+                    (m) =>
+                        !q ||
+                        `${m.productName || ""} ${m.clientName || ""} ${m.subclientName || ""}`
+                            .toLowerCase()
+                            .includes(q)
+                )
+                // newest ALLOCATION first (yesterday's work on top), then work date
+                .sort(
+                    (a, b) =>
+                        String(b.allocatedAt || "").localeCompare(String(a.allocatedAt || "")) ||
+                        (b.workDate || "").localeCompare(a.workDate || "")
+                )
+        );
+    }, [myCounts, myCountsPast, missedCounts, activeTab, dateFilter, productFilter, search]);
 
     // only the counts that still need case numbers (returned-to-pool ones can't be added to).
     const countsToAdd = useMemo(
@@ -1436,8 +1464,13 @@ export default function Profile({ onLogout }: ProfileProps) {
         const today = todayStr();
         // Past count rows still pending: SAME rows the "Counts (N)" tab shows
         // (past, not today), so the card difference always equals that N.
-        const pastCountRows = [...myCounts, ...missedCounts].filter(
-            (m) => allocDay(m.allocatedAt, m.workDate) !== today
+        // FIX: my-counts now also returns fully-added allocations
+        // (remaining = 0) so they show as "done" in the Counts tab - they
+        // must NOT be counted as waiting here.
+        const pastCountRows = [...myCountsPast, ...missedCounts].filter(
+            (m) =>
+                allocDay(m.allocatedAt, m.workDate) !== today &&
+                ((m.missed && !m.countDone) || m.remaining > 0)
         ).length;
         const waiting = pastCountRows;
         // Cases that were carried forward earlier and are now done / back
@@ -1452,7 +1485,7 @@ export default function Profile({ onLogout }: ProfileProps) {
             submitted,
             pending,
         };
-    }, [pastCases, missedCases, missedCounts, myCounts, carriedBackIds]);
+    }, [pastCases, missedCases, missedCounts, myCountsPast, carriedBackIds]);
 
     // Numbers for the 5 cards at the top, for the period picked in the
     // Daily / Monthly dropdown:
@@ -4043,7 +4076,8 @@ export default function Profile({ onLogout }: ProfileProps) {
                                         >
                                             <span style={styles.countsBadge}>
                                                 {filteredCounts.reduce(
-                                                    (sum, m) => sum + m.remaining,
+                                                    (sum, m) =>
+                                                        sum + (m.countDone ? 0 : m.remaining),
                                                     0
                                                 )}{" "}
                                                 pending
@@ -4148,20 +4182,6 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                             !!mc.workDate &&
                                                                             mc.workDate <
                                                                                 todayStr();
-                                                                        const days = mc.workDate
-                                                                            ? Math.max(
-                                                                                  0,
-                                                                                  Math.round(
-                                                                                      (new Date(
-                                                                                          todayStr()
-                                                                                      ).getTime() -
-                                                                                          new Date(
-                                                                                              mc.workDate
-                                                                                          ).getTime()) /
-                                                                                          86400000
-                                                                                  )
-                                                                              )
-                                                                            : 0;
                                                                         return (
                                                                             <div
                                                                                 key={mc.id}
@@ -4218,31 +4238,13 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                             styles.cntDate
                                                                                         }
                                                                                     >
-                                                                                        {mc.workDate ||
-                                                                                            "—"}
+                                                                                        {mc.allocatedAt
+                                                                                            ? formatDateTime(
+                                                                                                  mc.allocatedAt
+                                                                                              )
+                                                                                            : mc.workDate ||
+                                                                                              "—"}
                                                                                     </span>
-                                                                                    <span
-                                                                                        style={
-                                                                                            styles.smallMuted
-                                                                                        }
-                                                                                    >
-                                                                                        {days > 0
-                                                                                            ? `(${days} day${days === 1 ? "" : "s"})`
-                                                                                            : "(today)"}
-                                                                                    </span>
-                                                                                    {/* when it was ALLOCATED (the date above is the work date) */}
-                                                                                    {mc.allocatedAt && (
-                                                                                        <span
-                                                                                            style={
-                                                                                                styles.smallMuted
-                                                                                            }
-                                                                                        >
-                                                                                            Allocated{" "}
-                                                                                            {formatDateTime(
-                                                                                                mc.allocatedAt
-                                                                                            )}
-                                                                                        </span>
-                                                                                    )}
                                                                                 </div>
                                                                                 <div>
                                                                                     <span
@@ -4313,6 +4315,9 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                         >
                                                                                             Returned
                                                                                             to pool
+                                                                                            {mc.allocatedToMe >
+                                                                                                0 &&
+                                                                                                ` · ${mc.addedByMe} / ${mc.allocatedToMe} added`}
                                                                                         </span>
                                                                                     ) : !done ? (
                                                                                         <button

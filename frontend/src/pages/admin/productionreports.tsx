@@ -1501,8 +1501,10 @@ export default function ProductionReport() {
                                                         value={c.allocated}
                                                         color={BRAND.cyan}
                                                     />
+                                                    {/* "Pending" was total - allocated (= not handed out
+                                                        yet), which read as "not submitted". Split it. */}
                                                     <StatRow
-                                                        label="Pending"
+                                                        label="Unallocated"
                                                         value={c.pending}
                                                         color={BRAND.amber}
                                                     />
@@ -1510,6 +1512,11 @@ export default function ProductionReport() {
                                                         label="Submitted"
                                                         value={c.submitted}
                                                         color={BRAND.green}
+                                                    />
+                                                    <StatRow
+                                                        label="Not submitted"
+                                                        value={c.notSubmitted}
+                                                        color={BRAND.amber}
                                                     />
                                                 </>
                                             )}
