@@ -236,6 +236,11 @@ function todayStr() {
     ).padStart(2, "0")}`;
 }
 
+// When false, units without a case number stay on the card of the day they
+// were received (their work date), even if they were handed to staff on a later
+// day. Set to true to move such units to today's card in the Daily-wise view.
+const SHIFT_HELD_UNITS_TO_TODAY = false;
+
 // Units of a count row that employees are holding RIGHT NOW and that were
 // allocated TODAY. A backlog count (older work date) handed to someone today
 // is today's work for that person, so it must show up in today's numbers.
@@ -849,7 +854,10 @@ export default function ProductionReport() {
             // belong to today's card (same as the employee's own page and the
             // dashboard), not to the count's old work-date card.
             const heldToday =
-                effectiveView === "daily" && toDate === today && c.workDate < today
+                SHIFT_HELD_UNITS_TO_TODAY &&
+                effectiveView === "daily" &&
+                toDate === today &&
+                c.workDate < today
                     ? heldTodayUnits(c, today)
                     : 0;
             b.total += c.pendingCount - heldToday; // units that have no case number yet
@@ -1043,7 +1051,10 @@ export default function ProductionReport() {
             }
             const fulfilledSum = c.allocations.reduce((x, a) => x + a.fulfilledQuantity, 0);
             const heldToday =
-                effectiveView === "daily" && toDate === today && c.workDate < today
+                SHIFT_HELD_UNITS_TO_TODAY &&
+                effectiveView === "daily" &&
+                toDate === today &&
+                c.workDate < today
                     ? heldTodayUnits(c, today)
                     : 0;
             if (countGroupKey(c, effectiveView) === openGroup) {
