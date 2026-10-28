@@ -150,12 +150,10 @@ const getProductById = async (req, res) => {
     }
 
     const required = await isCaseNumberRequired(req.user.organizationId);
-    return res
-      .status(200)
-      .json({
-        success: true,
-        data: withEffectiveCaseNumber(product, required),
-      });
+    return res.status(200).json({
+      success: true,
+      data: withEffectiveCaseNumber(product, required),
+    });
   } catch (error) {
     return sendError(res, error, 500);
   }
