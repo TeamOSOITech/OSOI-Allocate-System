@@ -41,6 +41,8 @@ const {
   listTeamQueries,
   // NEW: manager popup — reportees (+ me) who did not submit yesterday.
   listTeamMissedYesterday,
+  // NEW: Production Report — past allocations that were not submitted.
+  listCarryoverHistory,
 } = require("./servicecases.controller");
 
 // count-only allocation endpoints (Today's Allocation -> Counts)
@@ -176,6 +178,7 @@ router.get("/my-missed", listMyMissedCases);
 // NEW: managers — open queries of their team + which are over 48h.
 router.get("/team-queries", listTeamQueries);
 router.get("/team-missed-yesterday", listTeamMissedYesterday);
+router.get("/carryover-history", listCarryoverHistory);
 router.post("/my-counts/self-allocate", selfAllocateCounts);
 router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
 

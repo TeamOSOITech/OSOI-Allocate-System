@@ -4948,6 +4948,7 @@ async function listTeamMissedYesterday(req, res) {
         kind: "CASE",
         caseNumber: r.case_number || null,
         quantity: 1,
+        allocatedAt: r.allocated_at || null,
         productName: productMap[r.product_id] || null,
         clientName: clientMap[r.client_id] || null,
         subclientName: subclientMap[r.subclient_id] || null,
@@ -4963,10 +4964,20 @@ async function listTeamMissedYesterday(req, res) {
         kind: "COUNT",
         caseNumber: null,
         quantity: qty,
+        allocatedAt: r.allocated_at || null,
         productName: productMap[r.product_id] || null,
         clientName: clientMap[r.client_id] || null,
         subclientName: subclientMap[r.subclient_id] || null,
       });
+    }
+
+    // inside each person: most recently allocated first
+    for (const m of byEmp.values()) {
+      m.items.sort(
+        (x, y) =>
+          new Date(y.allocatedAt || 0).getTime() -
+          new Date(x.allocatedAt || 0).getTime(),
+      );
     }
 
     // me first, then the biggest backlog
@@ -4985,6 +4996,101 @@ async function listTeamMissedYesterday(req, res) {
     });
   } catch (err) {
     console.error("listTeamMissedYesterday error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// NEW: GET /api/service-cases/carryover-history
+// query: allocatedFrom, allocatedTo (ISO timestamps), productId?,
+//        employeeId?, clientId?
+//
+// Production Report (Daily-wise): cases that were ALLOCATED to someone on a
+// past day but were not submitted by day end. The day-end rollover sent them
+// back to the pool (assignee + allocated_at cleared on the case itself), so
+// the only record of "who had it that day" is case_carryover_log. Read-only;
+// org-wide report roles only (anyone else just gets an empty list).
+// ------------------------------------------------------------
+async function listCarryoverHistory(req, res) {
+  try {
+    const { role, organizationId } = req.user;
+    if (
+      !["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"].includes(
+        role,
+      )
+    ) {
+      return res.json({ success: true, data: [] });
+    }
+    const from = new Date(String(req.query.allocatedFrom || ""));
+    const to = new Date(String(req.query.allocatedTo || ""));
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "allocatedFrom / allocatedTo are required",
+        });
+    }
+
+    let q = supabase
+      .from("case_carryover_log")
+      .select("*")
+      .eq("organization_id", String(organizationId))
+      .gte("allocated_at", from.toISOString())
+      .lte("allocated_at", to.toISOString())
+      .order("allocated_at", { ascending: false })
+      .limit(5000);
+    if (req.query.productId)
+      q = q.eq("product_id", String(req.query.productId));
+    if (req.query.employeeId)
+      q = q.eq("employee_id", String(req.query.employeeId));
+    if (req.query.clientId) q = q.eq("client_id", String(req.query.clientId));
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const rows = data || [];
+    const [productMap, clientMap, subclientMap, empMap] = await Promise.all([
+      getProductNameMap(
+        rows.map((r) => r.product_id),
+        organizationId,
+      ),
+      getClientNameMap(
+        rows.map((r) => r.client_id),
+        organizationId,
+      ),
+      getSubclientNameMap(
+        rows.map((r) => r.subclient_id),
+        organizationId,
+      ),
+      getEmployeeNameMap(
+        rows.map((r) => r.employee_id),
+        organizationId,
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: `carry-${r.id}`,
+        caseId: r.case_id,
+        caseNumber: r.case_number,
+        productId: r.product_id,
+        productName: productMap[r.product_id] || null,
+        clientId: r.client_id || null,
+        clientName: clientMap[r.client_id] || null,
+        subclientName: subclientMap[r.subclient_id] || null,
+        workDate: r.work_date,
+        employeeId: r.employee_id,
+        employeeName: empMap[r.employee_id] || null,
+        allocatedAt: r.allocated_at,
+        returnedAt: r.returned_at,
+      })),
+    });
+  } catch (err) {
+    console.error("listCarryoverHistory error:", err);
     res.status(500).json({
       success: false,
       message: "Something went wrong on our end. Please try again.",
@@ -5026,6 +5132,7 @@ module.exports = {
   // NEW: manager team-queries popup + day-end rollover
   listTeamQueries,
   listTeamMissedYesterday,
+  listCarryoverHistory,
   rolloverAllOrgs,
   // MODIFIED: helpers exported for servicecasecountallocations.controller.js
   // (without these the count endpoints crashed with "undefined is not a function").
