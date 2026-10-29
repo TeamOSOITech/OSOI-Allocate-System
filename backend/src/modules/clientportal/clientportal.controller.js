@@ -586,12 +586,6 @@ const ISO_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const normRole = (r) =>
-  String(r || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "_");
-
 // The caller's own grant for a page, from ANY organization (a grant carries
 // the organization and client it was made for). Null if there is none.
 async function loadGrant(req, pageKey) {

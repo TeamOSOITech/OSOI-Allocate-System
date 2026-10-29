@@ -14,7 +14,14 @@ const loginHandler = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    // typeof check: a JSON body like {"email": {"$ne": 1}} must never reach
+    // the query layer as an object.
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      !email ||
+      !password
+    ) {
       return res.status(400).json({
         success: false,
         message: "Email and password are required.",
@@ -117,7 +124,7 @@ const forgotPasswordHandler = async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
+    if (typeof email !== "string" || !email.trim()) {
       return res.status(400).json({
         success: false,
         message: "Email is required.",

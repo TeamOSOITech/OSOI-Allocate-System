@@ -5,7 +5,7 @@ const productController = require("./products.controller");
 const productService = require("./products.service");
 const { authenticate } = require("../../middlewares/auth");
 const { denyRoles } = require("../../middlewares/denyRoles");
-const { authorize, requireAnyPermission } = require("../../middlewares/rbac");
+const { requireAnyPermission } = require("../../middlewares/rbac");
 const {
   approvalGate,
   bulkApprovalGate,

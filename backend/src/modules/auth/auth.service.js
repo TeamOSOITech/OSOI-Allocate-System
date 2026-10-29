@@ -161,7 +161,7 @@ const forgotPassword = async (email) => {
 
   const { data: rows, error } = await supabase
     .from("user_master")
-    .select('"Login Email", "Role"')
+    .select('"Login Email", "Email", "Role"')
     .ilike(
       "Email",
       String(email || "")
@@ -228,7 +228,9 @@ const forgotPassword = async (email) => {
 
         const mailStart = Date.now();
         await sendMail({
-          to: email, // send to the real/contact email, not the internal Login Email
+          // the stored contact email (never the raw request value), not the
+          // internal Login Email
+          to: row["Email"] || String(email).trim().toLowerCase(),
           subject: "Password reset request",
           html: buildResetLinkEmailHtml({
             heading: "Reset your password",
@@ -238,11 +240,11 @@ const forgotPassword = async (email) => {
           }),
         });
         console.log(
-          `[forgotPassword] sendMail for role ${row["Role"]} -> ${email} took ${Date.now() - mailStart}ms`,
+          `[forgotPassword] sendMail for role ${row["Role"]} took ${Date.now() - mailStart}ms`,
         );
 
         console.log(
-          `Reset email sent for role ${row["Role"]} -> ${email} (total ${Date.now() - startedAt}ms since request)`,
+          `Reset email sent for role ${row["Role"]} (total ${Date.now() - startedAt}ms since request)`,
         );
       } catch (err) {
         console.error(`RESET LINK/EMAIL FAILED for ${loginEmail}:`, err);

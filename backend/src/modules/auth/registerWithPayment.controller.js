@@ -39,15 +39,27 @@ const registerWithPaymentHandler = async (req, res) => {
   try {
     const { token, name, password } = req.body;
 
-    if (!token || !name || !password) {
+    if (
+      typeof token !== "string" ||
+      typeof name !== "string" ||
+      typeof password !== "string" ||
+      !token ||
+      !name.trim() ||
+      !password
+    ) {
       return res
         .status(400)
         .json({ success: false, message: "Missing required fields" });
     }
-    if (password.length < 8) {
+    if (name.length > 100) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Name is too long" });
+    }
+    if (password.length < 8 || password.length > 128) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 8 characters",
+        message: "Password must be between 8 and 128 characters",
       });
     }
 
@@ -90,6 +102,35 @@ const registerWithPaymentHandler = async (req, res) => {
       });
     }
 
+    // 2b. Claim the token ATOMICALLY. The `used` check above is only a
+    //     friendly early exit — two parallel requests could both pass it.
+    //     This UPDATE only succeeds for the one request that flips
+    //     used=false -> true, so a paid token can create exactly one tenant.
+    //     If anything fails below, releaseClaim() hands the token back so
+    //     the customer who paid can retry.
+    const { data: claimed, error: claimError } = await supabase
+      .from("payment_signups")
+      .update({ used: true })
+      .eq("signup_token", token)
+      .eq("used", false)
+      .select("signup_token")
+      .maybeSingle();
+
+    if (claimError) throw claimError;
+    if (!claimed) {
+      return res
+        .status(400)
+        .json({ success: false, message: "This signup link was already used" });
+    }
+    const releaseClaim = () =>
+      supabase
+        .from("payment_signups")
+        .update({ used: false })
+        .eq("signup_token", token)
+        .then(({ error }) => {
+          if (error) console.error("Could not release signup token:", error);
+        });
+
     // 3. Create the new organization (this signup = a brand new tenant)
     //
     // FIX: this used to also insert `slug` and status: "trialing" — but
@@ -106,7 +147,10 @@ const registerWithPaymentHandler = async (req, res) => {
       .select()
       .single();
 
-    if (orgError) throw orgError;
+    if (orgError) {
+      await releaseClaim();
+      throw orgError;
+    }
 
     // 4. Create the Supabase Auth user
     const { data: authData, error: authError } =
@@ -119,6 +163,7 @@ const registerWithPaymentHandler = async (req, res) => {
     if (authError) {
       // Roll back the org row so we don't leave an orphaned tenant behind
       await supabase.from("organizations").delete().eq("id", organization.id);
+      await releaseClaim();
       throw authError;
     }
 
@@ -138,6 +183,7 @@ const registerWithPaymentHandler = async (req, res) => {
     if (profileError) {
       await supabase.auth.admin.deleteUser(authData.user.id);
       await supabase.from("organizations").delete().eq("id", organization.id);
+      await releaseClaim();
       throw profileError;
     }
 
@@ -165,13 +211,7 @@ const registerWithPaymentHandler = async (req, res) => {
       );
     }
 
-    // 7. Mark the signup token as used (prevents replay)
-    await supabase
-      .from("payment_signups")
-      .update({ used: true })
-      .eq("signup_token", token);
-
-    // 8. Sign in immediately, same shape as normal /api/auth/login
+    // 7. Sign in immediately, same shape as normal /api/auth/login
     const { data: sessionData, error: sessionError } =
       await supabaseAuthClient.auth.signInWithPassword({
         email: signup.email,

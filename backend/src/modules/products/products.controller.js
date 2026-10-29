@@ -13,7 +13,6 @@ const {
 const ExcelJS = require("exceljs");
 const {
   applyColumnValidation,
-  addRangeListValidation,
   addInlineListValidation,
 } = require("../../utils/excelValidation");
 

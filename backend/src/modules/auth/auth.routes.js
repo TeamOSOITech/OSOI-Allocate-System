@@ -42,6 +42,25 @@ const forgotPasswordLimiter = rateLimit({
   },
 });
 
+// Per-ADDRESS cap on top of the per-IP one: an attacker rotating IPs could
+// otherwise still flood one victim's inbox with reset emails. Keyed on the
+// normalised email; responses stay identical so nothing is revealed.
+const forgotPasswordEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) =>
+    `reset:${String(req.body?.email || "")
+      .trim()
+      .toLowerCase()}`,
+  skip: (req) => !req.body?.email,
+  message: {
+    success: false,
+    message: "Too many password reset requests. Please try again later.",
+  },
+});
+
 // Prevents someone from spamming new tenant/org creation from one IP
 const registerOrgLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -102,7 +121,12 @@ const refreshLimiter = rateLimit({
 });
 router.post("/refresh", refreshLimiter, refreshHandler);
 
-router.post("/forgot-password", forgotPasswordLimiter, forgotPasswordHandler);
+router.post(
+  "/forgot-password",
+  forgotPasswordLimiter,
+  forgotPasswordEmailLimiter,
+  forgotPasswordHandler,
+);
 
 router.post(
   "/register-organization",

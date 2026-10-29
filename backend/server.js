@@ -1,35 +1,28 @@
 require("dotenv").config();
 
+const crypto = require("crypto");
 const express = require("express");
 const helmet = require("helmet");
 const compression = require("compression");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
 
-// SECURITY / BUG FIX: Render (like most hosts) sits behind a reverse
-// proxy — every incoming request's socket IP is the proxy's own IP, not
-// the real client's. Without this, express-rate-limit (see auth.routes.js)
-// treats every single user as coming from that ONE shared IP, so the
-// "10 login attempts per IP" limit was actually being shared across
-// EVERY user on the platform combined — a handful of unrelated login
-// attempts anywhere would lock everyone else out, including someone
-// logging in for the very first time.
-//
-// CONFIRMED IN PROD LOGS: requests here pass through TWO proxy hops
-// before reaching this process — Cloudflare, then Render's own internal
-// load balancer — producing an X-Forwarded-For chain shaped like:
-//   "<real client ip>, <cloudflare ip>, <render internal ip>"
-// Neither intermediate hop is a loopback address, so `"loopback"` never
-// matched and req.ip was falling back to the raw socket address (Render's
-// internal 10.x.x.x IP) — the exact same bug as having no setting at all.
-// `2` tells Express to trust the 2 nearest hops (Cloudflare + Render's
-// LB) and take the next address in the chain as the real client IP.
-app.set("trust proxy", 2);
-
-// Import Supabase Client
-const supabase = require("./src/config/supabaseClient");
+// Render sits behind two proxy hops (Cloudflare -> Render's load balancer), so
+// the X-Forwarded-For chain is "<client>, <cloudflare>, <render>". Trusting
+// exactly that many hops makes req.ip the REAL client address. Without it every
+// user shares one IP and the per-IP rate limits (see auth.routes.js) would lock
+// everybody out together; trusting too MANY hops would let a client spoof its
+// IP by sending its own X-Forwarded-For. Override with TRUST_PROXY_HOPS when
+// the deployment topology changes.
+const TRUST_PROXY_HOPS =
+  process.env.TRUST_PROXY_HOPS &&
+  Number.isInteger(Number(process.env.TRUST_PROXY_HOPS))
+    ? Number(process.env.TRUST_PROXY_HOPS)
+    : 2;
+app.set("trust proxy", TRUST_PROXY_HOPS);
 
 // ========================
 // 🔐 Security middleware
@@ -49,60 +42,50 @@ app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // ========================
-// 🚦 General API rate limit
+// 🚦 General API rate limits
 // ========================
-// Only the auth routes had a limiter before; every other /api route could be
-// hammered without limit. This is a generous per-USER cap (the access-token
-// cookie is the key, so a whole office behind ONE shared IP does not share a
-// single bucket); requests with no token fall back to the client IP.
-// Tune with API_RATE_LIMIT_MAX (requests per minute, default 600).
-const rateLimit = require("express-rate-limit");
-const crypto = require("crypto");
-app.use(
-  "/api",
+// Two layers on every /api route (the auth routes add stricter ones of their own):
+//   1. per USER  - keyed on a hash of the access token, so a whole office behind
+//      ONE shared IP does not share a single bucket. Requests with no token fall
+//      back to the client IP. API_RATE_LIMIT_MAX (per minute, default 600).
+//   2. per IP    - a ceiling in front of (1), because (1) alone can be dodged by
+//      sending a different junk token on every request (each gets a fresh bucket
+//      and costs a Supabase call). API_IP_RATE_LIMIT_MAX (per minute, default 1200).
+const apiLimiter = (max, keyGenerator) =>
   rateLimit({
     windowMs: 60 * 1000,
-    max: Number(process.env.API_RATE_LIMIT_MAX) || 600,
+    max,
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) =>
       req.method === "OPTIONS" || req.path.startsWith("/billing/webhook"),
-    keyGenerator: (req) => {
-      const t =
-        req.cookies?.accessToken ||
-        req.headers.authorization?.replace("Bearer ", "");
-      return t
-        ? "u:" +
-            crypto.createHash("sha256").update(t).digest("hex").slice(0, 32)
-        : "ip:" + req.ip;
-    },
+    keyGenerator,
     message: {
       success: false,
       message: "Too many requests. Please slow down and try again shortly.",
     },
-  }),
-);
+  });
 
-// Per-IP ceiling IN FRONT of the per-token limiter below. The token-keyed
-// limiter alone can be dodged by sending a different junk token on every
-// request (each gets a fresh bucket, and each invalid token costs a Supabase
-// getUser call). Generous so shared office IPs are not affected.
-// Tune with API_IP_RATE_LIMIT_MAX (requests per minute per IP, default 1200).
+const tokenKey = (req) => {
+  const token =
+    req.cookies?.accessToken ||
+    req.headers.authorization?.replace("Bearer ", "");
+  return token
+    ? "u:" +
+        crypto.createHash("sha256").update(token).digest("hex").slice(0, 32)
+    : "ip:" + req.ip;
+};
+
 app.use(
   "/api",
-  rateLimit({
-    windowMs: 60 * 1000,
-    max: Number(process.env.API_IP_RATE_LIMIT_MAX) || 1200,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) =>
-      req.method === "OPTIONS" || req.path.startsWith("/billing/webhook"),
-    keyGenerator: (req) => "ip:" + req.ip,
-    message: {
-      success: false,
-      message: "Too many requests. Please slow down and try again shortly.",
-    },
-  }),
+  apiLimiter(Number(process.env.API_RATE_LIMIT_MAX) || 600, tokenKey),
+);
+app.use(
+  "/api",
+  apiLimiter(
+    Number(process.env.API_IP_RATE_LIMIT_MAX) || 1200,
+    (req) => "ip:" + req.ip,
+  ),
 );
 
 // ========================
@@ -121,6 +104,12 @@ const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+if (process.env.NODE_ENV === "production" && !process.env.FRONTEND_URL) {
+  console.warn(
+    "FRONTEND_URL is not set - CORS only allows http://localhost:5173. Set it to your real frontend origin(s).",
+  );
+}
 
 app.use(
   cors({
@@ -324,15 +313,6 @@ app.use(
   "/api/blue",
   loadRoute("bluecollar", "./src/modules/bluecollar/bluecollar.routes"),
 );
-
-// ========================
-// ⚠️ REMOVED: /test-auth
-// ========================
-// This debug endpoint called supabase.auth.admin.listUsers() with NO
-// authentication at all — anyone who found the URL could dump every
-// user's id + email. It was leftover from development. If you need
-// this for debugging again, add `authenticate` + `authorize("SUPER_ADMIN")`
-// and never leave it reachable in a deployed environment.
 
 // ========================
 // ❤️ HEALTH CHECK
