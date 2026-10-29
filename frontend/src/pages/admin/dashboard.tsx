@@ -839,10 +839,11 @@ function KpiBreakdownModal({
                 };
 
                 // Same definition as the KPI cards + Production Report (today's
-                // work date): total / allocated / submitted, remaining = total - allocated.
+                // work date): total / allocated / submitted.
+                // Remaining = total - submitted (cases still waiting to be SUBMITTED).
                 const needTotal = kind === "total" || kind === "remaining";
-                const needAlloc = kind === "total" || kind === "remaining" || kind === "allocated";
-                const needDone = kind === "completed";
+                const needAlloc = kind === "total" || kind === "allocated";
+                const needDone = kind === "completed" || kind === "remaining";
 
                 // count-only work (all services in one call)
                 let countRows: any[] = [];
@@ -898,7 +899,7 @@ function KpiBreakdownModal({
                             kind === "total"
                                 ? tot + back
                                 : kind === "remaining"
-                                  ? Math.max(0, tot - alloc)
+                                  ? Math.max(0, tot + back - done)
                                   : kind === "allocated"
                                     ? alloc + back
                                     : done;
@@ -906,7 +907,7 @@ function KpiBreakdownModal({
                             kind === "total"
                                 ? cTot
                                 : kind === "remaining"
-                                  ? Math.max(0, cTot - cAlloc)
+                                  ? cTot
                                   : kind === "allocated"
                                     ? cAlloc
                                     : 0;
@@ -1188,7 +1189,7 @@ export default function Dashboard({ user }: DashboardProps) {
             //   Total     = cases whose work date is today (+ count-only units)
             //   Allocated = those cases that are ALLOCATED (+ count-only allocated)
             //   Completed = those cases that are SUBMITTED
-            //   Remaining = Total - Allocated
+            //   Remaining = Total - Completed (cases still waiting to be submitted)
             const today = todayStr();
             // FIX: a case keeps its ORIGINAL work_date even when it is handed
             // out / given a case number / submitted days later (backlog counts
@@ -1245,10 +1246,11 @@ export default function Dashboard({ user }: DashboardProps) {
             const allocated = allocOk ? num(allocRes, allocJson) + backN + countsAllocated : null;
             setCaseTotalCount(total);
             setCaseAllocatedCount(allocated);
+            const completed = okOf(compRes, compJson) ? num(compRes, compJson) : null;
             setCaseRemainingCount(
-                total !== null && allocated !== null ? Math.max(0, total - allocated) : null
+                total !== null && completed !== null ? Math.max(0, total - completed) : null
             );
-            setCaseCompletedCount(okOf(compRes, compJson) ? num(compRes, compJson) : null);
+            setCaseCompletedCount(completed);
         } catch (err) {
             console.error("Failed to fetch today's case counts:", err);
             if (!silent) {
@@ -1438,6 +1440,7 @@ export default function Dashboard({ user }: DashboardProps) {
             label: "Total Employees",
             value: employeeCount === null ? "—" : employeeCount,
             kind: "employees" as KpiKind,
+            tone: 0,
             page: () => navigate("/employees"),
             icon: "ti ti-users",
             gradient: `linear-gradient(135deg, ${BRAND.blue}, ${BRAND.lightBlue})`,
@@ -1447,6 +1450,7 @@ export default function Dashboard({ user }: DashboardProps) {
             label: "Today's Total Cases",
             value: caseTotalCount ?? "—",
             kind: "total" as KpiKind,
+            tone: 1,
             page: () => navigate("/todays-allocation"),
             icon: "ti ti-package",
             gradient: `linear-gradient(135deg, ${BRAND.lightBlue}, ${BRAND.green})`,
@@ -1456,6 +1460,7 @@ export default function Dashboard({ user }: DashboardProps) {
             label: "Today's Allocated",
             value: caseAllocatedCount ?? "—",
             kind: "allocated" as KpiKind,
+            tone: 2,
             page: () =>
                 navigate("/todays-allocation", { state: { allocationStatus: "ALLOCATED" } }),
             icon: "ti ti-circle-check",
@@ -1463,22 +1468,24 @@ export default function Dashboard({ user }: DashboardProps) {
             tip: "Cases already allocated to an employee today",
         },
         {
-            label: "Today's Remaining",
-            value: caseRemainingCount ?? "—",
-            kind: "remaining" as KpiKind,
-            page: () => navigate("/todays-allocation", { state: { allocationStatus: "PENDING" } }),
-            icon: "ti ti-hourglass",
-            gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
-            tip: "Cases still waiting to be allocated today",
-        },
-        {
             label: "Today's Completed",
             value: caseCompletedCount ?? "—",
             kind: "completed" as KpiKind,
+            tone: 4, // green
             page: () => navigate("/production-reports"),
             icon: "ti ti-checks",
             gradient: `linear-gradient(135deg, ${BRAND.green}, #15803D)`,
             tip: "Cases completed & submitted by employees today",
+        },
+        {
+            label: "Today's Remaining",
+            value: caseRemainingCount ?? "—",
+            kind: "remaining" as KpiKind,
+            tone: 3, // orange
+            page: () => navigate("/todays-allocation"),
+            icon: "ti ti-hourglass",
+            gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
+            tip: "Today's cases not yet submitted by employees",
         },
     ];
 
@@ -1581,10 +1588,10 @@ export default function Dashboard({ user }: DashboardProps) {
                             chart or comparison panel, so the very first thing a
                             user sees on the page is today's simple totals. */}
                         <div style={isMobile ? styles.kpiGridMobile : styles.kpiGrid}>
-                            {kpis.map((kpi, i) => (
+                            {kpis.map((kpi) => (
                                 <KpiCard
                                     key={kpi.label}
-                                    index={i}
+                                    index={kpi.tone}
                                     label={kpi.label}
                                     icon={kpi.icon}
                                     tip={kpi.tip}

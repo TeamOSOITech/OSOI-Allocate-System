@@ -1,5 +1,3 @@
-console.log("VOICE PARSER FILE LOADED");
-
 const FIELD_KEYWORDS: Record<string, string[]> = {
     firstName: ["full name", "naam", "नाम", "पूरा नाम", "name"],
     email: ["email", "ईमेल", "mail"],
@@ -206,8 +204,6 @@ function matchDropdownValue(spoken: string, options: string[]): string {
 export function parseVoiceCommand(command: string) {
     const rawText = command || "";
     const text = normalize(rawText);
-
-    console.log("Received Voice:", command);
 
     const wantsSubmit = EXPLICIT_SUBMIT_PHRASES.some((k) => text.includes(k));
 

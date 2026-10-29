@@ -6,7 +6,7 @@ import { ThemeProvider } from "./context/themecontext";
 import { RoleLabelsProvider } from "./context/roleLabelsContext";
 import { CollarModeProvider } from "./context/collarmode";
 import { authFetch } from "./utils/authFetch";
-import { getCurrentUser } from "./utils/auth";
+import { getCurrentUser, ADMIN_TIER_ROLES, ADMIN_AND_VERTICAL_HEAD_ROLES } from "./utils/auth";
 
 // FIX (loading time): every page below was imported eagerly, so a user
 // landing on /login downloaded the JS for every admin page too —
@@ -169,12 +169,8 @@ const PrivateRoute = ({ children, requiredRole = null }) => {
     return children;
 };
 
-// Role groups replacing the old flat ADMIN/MANAGER/EMPLOYEE checks —
-// see src/config/permissions.js on the backend for the canonical matrix.
-// "Admin-tier" = the 4 roles that had full ADMIN-equivalent access to
-// these pages before the migration to the 6-role system.
-const ADMIN_TIER_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
-const ADMIN_AND_VERTICAL_HEAD_ROLES = [...ADMIN_TIER_ROLES, "VERTICAL_HEAD"];
+// ADMIN_TIER_ROLES / ADMIN_AND_VERTICAL_HEAD_ROLES live in utils/auth.ts (one source of
+// truth; mirrors backend src/config/permissions.js).
 
 // <Navigate> that carries the current location.state over to the target.
 const RedirectKeepState = ({ to }) => {

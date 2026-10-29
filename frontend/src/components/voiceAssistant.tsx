@@ -27,8 +27,6 @@ const VoiceAssistant = ({ onFillForm, onRequestSubmit }: VoiceAssistantProps) =>
         lastProcessedRef.current = rawTranscript;
 
         const result = parseVoiceCommand(rawTranscript);
-        console.log("Transcript:", rawTranscript);
-        console.log("Parsed Result:", result);
 
         if (result.intent === "SUBMIT_FORM") {
             speak("Submitting the form.");
