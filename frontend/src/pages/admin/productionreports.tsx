@@ -324,6 +324,11 @@ function caseDay(c: ServiceCaseRow, from?: string, to?: string) {
         const a = localYmd(c.allocatedAt);
         if (a && a > c.workDate && a >= from && a <= to) return a;
     }
+    // Older case submitted inside the range -> the day it was submitted.
+    if (from && to && c.workDate < from && c.submittedAt) {
+        const sd = localYmd(c.submittedAt);
+        if (sd && sd >= from && sd <= to) return sd;
+    }
     return c.workDate;
 }
 
@@ -666,6 +671,51 @@ export default function ProductionReport() {
                 } catch {
                     /* optional: report still works without the backlog cases */
                 }
+            }
+
+            // Cases are counted as Submitted by SUBMISSION date (same as the
+            // dashboard). Older cases (work_date before the range) that were
+            // submitted INSIDE the range are not returned by the work_date
+            // query above, so pull them in here (deduped by id).
+            try {
+                const [sy, sm, sd] = fromDate.split("-").map(Number);
+                const [ey2, em2, ed2] = toDate.split("-").map(Number);
+                const subFromIso = new Date(sy, sm - 1, sd, 0, 0, 0, 0).toISOString();
+                const subToIso = new Date(ey2, em2 - 1, ed2, 23, 59, 59, 999).toISOString();
+                const dayBefore = new Date(sy, sm - 1, sd - 1);
+                const dayBeforeYmd = `${dayBefore.getFullYear()}-${String(
+                    dayBefore.getMonth() + 1
+                ).padStart(2, "0")}-${String(dayBefore.getDate()).padStart(2, "0")}`;
+                const seenSub = new Set(all.map((r) => r.id));
+                let sp = 1;
+                let sTotalPages = 1;
+                do {
+                    const params = new URLSearchParams();
+                    params.set("page", String(sp));
+                    params.set("pageSize", String(PAGE));
+                    params.set("submissionStatus", "SUBMITTED");
+                    params.set("submittedFrom", subFromIso);
+                    params.set("submittedTo", subToIso);
+                    params.set("workDateTo", dayBeforeYmd);
+                    if (productId) params.set("productId", productId);
+                    if (employeeId) params.set("employeeId", employeeId);
+                    if (clientId) params.set("clientId", clientId);
+                    const sRes = await authFetch(
+                        `${API_BASE}/api/service-cases?${params.toString()}`
+                    );
+                    const sJson = await sRes.json();
+                    if (!sRes.ok || !sJson.success) break;
+                    (sJson.data || []).forEach((r: ServiceCaseRow) => {
+                        if (!seenSub.has(r.id)) {
+                            seenSub.add(r.id);
+                            all.push(r);
+                        }
+                    });
+                    sTotalPages = Math.min(sJson.pagination?.totalPages ?? 1, MAX_PAGES);
+                    sp++;
+                } while (sp <= sTotalPages);
+            } catch {
+                /* optional: report still works without these */
             }
 
             // ---- Daily-wise extras (do not touch the other views) ----
@@ -1732,9 +1782,20 @@ export default function ProductionReport() {
                                                 )}
                                             </div>
                                             <div style={styles.totalBox}>
-                                                <div style={styles.totalNum}>{c.total}</div>
+                                                {/* Headline = Submitted, so the sum of all cards
+                                                    matches the dashboard's Completed count.
+                                                    (Employee-wise keeps the workload total.) */}
+                                                <div style={styles.totalNum}>
+                                                    {effectiveView === "employee"
+                                                        ? c.total
+                                                        : c.submitted}
+                                                </div>
                                                 <div style={styles.totalLbl}>
-                                                    {isDaily ? "Total" : totalLabel}
+                                                    {effectiveView === "employee"
+                                                        ? isDaily
+                                                            ? "Total"
+                                                            : totalLabel
+                                                        : "Submitted"}
                                                 </div>
                                             </div>
                                         </div>
