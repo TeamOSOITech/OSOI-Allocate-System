@@ -74,7 +74,7 @@ async function loadCounts(
     const { data: a, error: aErr } = await supabase
       .from("service_case_count_allocations")
       .select(
-        "count_id, employee_id, quantity, fulfilled_quantity, allocated_at",
+        "count_id, employee_id, quantity, fulfilled_quantity, allocated_at, allocated_by",
       )
       .eq("organization_id", orgId)
       .in("count_id", ids.slice(i, i + 150));
@@ -96,7 +96,7 @@ async function loadCounts(
       orgId,
     ),
     getEmployeeNameMap(
-      allocs.map((a) => a.employee_id),
+      allocs.flatMap((a) => [a.employee_id, a.allocated_by]).filter(Boolean),
       orgId,
     ),
   ]);
@@ -123,6 +123,7 @@ async function loadCounts(
         quantity: a.quantity,
         fulfilledQuantity: a.fulfilled_quantity || 0,
         allocatedAt: a.allocated_at || null,
+        allocatedByName: employeeMap[a.allocated_by] || null,
       })),
     };
   });
