@@ -194,6 +194,7 @@ type CountRow = {
         quantity: number;
         fulfilledQuantity: number;
         allocatedAt?: string | null;
+        allocatedByName?: string | null;
     }[];
 };
 
@@ -1134,7 +1135,7 @@ export default function ProductionReport() {
             pending: number;
             allocated: number; // pending units that are with someone
             unallocated: number; // pending units still in the pool
-            holders: { name: string; qty: number; added: number }[];
+            holders: { name: string; qty: number; added: number; by: string }[];
         };
         const out: R[] = [];
         const holdersOf = (c: CountRow, onlyName?: string) =>
@@ -1143,6 +1144,7 @@ export default function ProductionReport() {
                     name: (a.employeeName || "").trim(),
                     qty: a.quantity,
                     added: a.fulfilledQuantity,
+                    by: (a.allocatedByName || "").trim(),
                 }))
                 .filter((h) => h.name && h.qty > 0 && (!onlyName || h.name === onlyName));
         const base = (c: CountRow) => ({
@@ -1782,20 +1784,9 @@ export default function ProductionReport() {
                                                 )}
                                             </div>
                                             <div style={styles.totalBox}>
-                                                {/* Headline = Submitted, so the sum of all cards
-                                                    matches the dashboard's Completed count.
-                                                    (Employee-wise keeps the workload total.) */}
-                                                <div style={styles.totalNum}>
-                                                    {effectiveView === "employee"
-                                                        ? c.total
-                                                        : c.submitted}
-                                                </div>
+                                                <div style={styles.totalNum}>{c.total}</div>
                                                 <div style={styles.totalLbl}>
-                                                    {effectiveView === "employee"
-                                                        ? isDaily
-                                                            ? "Total"
-                                                            : totalLabel
-                                                        : "Submitted"}
+                                                    {isDaily ? "Total" : totalLabel}
                                                 </div>
                                             </div>
                                         </div>
@@ -1836,15 +1827,16 @@ export default function ProductionReport() {
                                                 </>
                                             ) : (
                                                 <>
-                                                    {/* Today's Receiving only makes sense when the
-                                                        card covers more than just today */}
-                                                    {effectiveView === "client" && (
-                                                        <StatRow
-                                                            label="Today's Receiving"
-                                                            value={c.today}
-                                                            color={BRAND.blue}
-                                                        />
-                                                    )}
+                                                    <StatRow
+                                                        label="Today's Receiving"
+                                                        value={c.today}
+                                                        color={BRAND.blue}
+                                                    />
+                                                    <StatRow
+                                                        label="Allocated"
+                                                        value={c.allocated}
+                                                        color={BRAND.cyan}
+                                                    />
                                                     <StatRow
                                                         label="With case number"
                                                         value={c.withNo}
@@ -1856,11 +1848,6 @@ export default function ProductionReport() {
                                                         value={c.withoutNo}
                                                         color={BRAND.amber}
                                                         onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Allocated"
-                                                        value={c.allocated}
-                                                        color={BRAND.cyan}
                                                     />
                                                     <StatRow
                                                         label="Submitted"
@@ -1957,6 +1944,7 @@ export default function ProductionReport() {
                                             <span>Added</span>
                                             <span>Pending</span>
                                             <span>Allocated To (added / given)</span>
+                                            <span>Allocated By</span>
                                         </div>
                                         {withoutRows.map((r, idx) => (
                                             <div
@@ -1990,9 +1978,18 @@ export default function ProductionReport() {
                                                               )
                                                               .join(", ")}
                                                 </span>
+                                                <span>
+                                                    {Array.from(
+                                                        new Set(
+                                                            r.holders
+                                                                .map((h) => h.by)
+                                                                .filter(Boolean)
+                                                        )
+                                                    ).join(", ") || "—"}
+                                                </span>
                                             </div>
                                         ))}
-                                        <div style={{ ...styles.totalsRow, minWidth: 900 }}>
+                                        <div style={{ ...styles.totalsRow, minWidth: 1200 }}>
                                             <span style={{ flex: 1 }}>
                                                 {withoutRows.length} count
                                                 {withoutRows.length !== 1 ? "s" : ""} ·{" "}
@@ -2921,8 +2918,8 @@ const styles: Record<string, CSSProperties> = {
     },
     // grid for the "Without case number" list
     withoutGrid: {
-        gridTemplateColumns: "1fr 1fr 1fr 110px 80px 90px 100px 1.6fr",
-        minWidth: 900,
+        gridTemplateColumns: "1fr 1fr 1fr 110px 80px 90px 100px 1.6fr 1fr",
+        minWidth: 1200,
     },
     countNotice: {
         padding: "10px 14px",
