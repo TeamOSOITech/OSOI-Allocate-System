@@ -156,9 +156,17 @@ function formatTimeTaken(value?: string | number | null, unit?: string | null) {
 // *-rgb counterparts for rgba() shadows), so this page follows whichever
 // theme color is selected, same as Clients/Add User.
 const GLOBAL_CSS = `
-.pr-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+/* Every row behaves like the first row used to: on hover the card lifts 2px but
+   its top 2px (the coloured border) is clipped, so the coloured top stays where
+   it is and only the rest of the card seems to move. clip-path leaves room at
+   the sides/bottom so the hover shadow is not cut off. */
+.pr-card {
+  clip-path: inset(0 -30px -30px -30px);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, clip-path .18s ease;
+}
 .pr-card:hover {
   transform: translateY(-2px);
+  clip-path: inset(2px -30px -30px -30px);
   box-shadow: 0 12px 28px rgba(var(--brand-blue-rgb),.12);
   border-color: #cfe0f5;
 }
