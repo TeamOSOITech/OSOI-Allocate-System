@@ -69,7 +69,6 @@ const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
 // Backend clamps pageSize to 100 (servicecases.controller.js), so batches
 // must be 100 or the "short batch -> stop" check ends after page 1.
-const EXPORT_PAGE_SIZE = 100;
 const MOBILE_BREAKPOINT = 768;
 const TABLET_BREAKPOINT = 1100;
 const NO_CLIENT = "No client";
@@ -384,6 +383,26 @@ function formatMinutes(mins: number) {
     return h === 0 ? `${m}m` : `${h}h ${m}m`;
 }
 
+// Same Status / Submission / Search rules the on-screen table uses, so the
+// table, the Excel export and the share all agree on "what the filters show".
+function caseMatchesFilters(
+    c: ServiceCaseRow,
+    statusFilter: string,
+    submissionFilter: string,
+    q: string
+) {
+    if (statusFilter && c.allocationStatus !== statusFilter) return false;
+    if (submissionFilter && c.submissionStatus !== submissionFilter) return false;
+    if (!q) return true;
+    return `${c.caseNumber} ${c.productName || ""} ${c.clientName || ""} ${
+        c.subclientName || ""
+    } ${c.workDate} ${c.assignedEmployeeName || ""} ${c.submittedByName || ""} ${
+        c.allocationStatus === "ALLOCATED" ? "allocated" : "pending"
+    }`
+        .toLowerCase()
+        .includes(q);
+}
+
 export default function ProductionReport() {
     const isMobile = useIsMobile();
     const cardCols = useCardColumns();
@@ -511,35 +530,6 @@ export default function ProductionReport() {
             return p?.time_unit === "hours" ? t * 60 : t;
         },
         [products]
-    );
-
-    const buildParams = useCallback(
-        (forExport: boolean, exportPage = 1) => {
-            const params = new URLSearchParams();
-            params.set("page", String(forExport ? exportPage : page));
-            params.set("pageSize", String(forExport ? EXPORT_PAGE_SIZE : PAGE_SIZE));
-            if (productId) params.set("productId", productId);
-            // the backend's date-range filter reads workDateFrom/workDateTo
-            if (fromDate) params.set("workDateFrom", fromDate);
-            if (toDate) params.set("workDateTo", toDate);
-            if (employeeId) params.set("employeeId", employeeId);
-            if (statusFilter) params.set("allocationStatus", statusFilter);
-            if (clientId) params.set("clientId", clientId);
-            if (searchQuery) params.set("search", searchQuery);
-            if (submissionFilter) params.set("submissionStatus", submissionFilter);
-            return params;
-        },
-        [
-            page,
-            productId,
-            fromDate,
-            toDate,
-            employeeId,
-            statusFilter,
-            clientId,
-            searchQuery,
-            submissionFilter,
-        ]
     );
 
     useEffect(() => {
@@ -1094,19 +1084,7 @@ export default function ProductionReport() {
         const q = searchQuery.toLowerCase();
         return casesForView
             .filter((c) => caseGroupKey(c, effectiveView, fromDate, toDate) === openGroup)
-            .filter((c) => !statusFilter || c.allocationStatus === statusFilter)
-            .filter((c) => !submissionFilter || c.submissionStatus === submissionFilter)
-            .filter(
-                (c) =>
-                    !q ||
-                    `${c.caseNumber} ${c.productName || ""} ${c.clientName || ""} ${
-                        c.subclientName || ""
-                    } ${c.workDate} ${c.assignedEmployeeName || ""} ${
-                        c.submittedByName || ""
-                    } ${c.allocationStatus === "ALLOCATED" ? "allocated" : "pending"}`
-                        .toLowerCase()
-                        .includes(q)
-            );
+            .filter((c) => caseMatchesFilters(c, statusFilter, submissionFilter, q));
     }, [
         casesForView,
         openGroup,
@@ -1135,7 +1113,7 @@ export default function ProductionReport() {
             pending: number;
             allocated: number; // pending units that are with someone
             unallocated: number; // pending units still in the pool
-            holders: { name: string; qty: number; added: number; by: string }[];
+            holders: { name: string; qty: number; added: number; by: string; at: string }[];
         };
         const out: R[] = [];
         const holdersOf = (c: CountRow, onlyName?: string) =>
@@ -1145,6 +1123,7 @@ export default function ProductionReport() {
                     qty: a.quantity,
                     added: a.fulfilledQuantity,
                     by: (a.allocatedByName || "").trim(),
+                    at: a.allocatedAt ? localYmd(a.allocatedAt) : "",
                 }))
                 .filter((h) => h.name && h.qty > 0 && (!onlyName || h.name === onlyName));
         const base = (c: CountRow) => ({
@@ -1258,41 +1237,91 @@ export default function ProductionReport() {
     const rows = tableRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     const loading = cardsLoading;
 
-    // Pull every matching row across all pages for export, not just what's
-    // currently on screen.
-    const fetchAllMatchingForExport = async (): Promise<ServiceCaseRow[]> => {
-        const all: ServiceCaseRow[] = [];
-        let exportPage = 1;
-        // hard safety cap so a runaway filter can't loop forever
-        for (let i = 0; i < 200; i++) {
-            const params = buildParams(true, exportPage);
-            const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
-            const json = await res.json();
-            if (!res.ok || !json.success) throw new Error(json?.message || "Export fetch failed");
-            const batch: ServiceCaseRow[] = json.data || [];
-            all.push(...batch);
-            if (batch.length < EXPORT_PAGE_SIZE) break;
-            exportPage++;
+    // ---- Export: EXACTLY what the current filters show --------------------
+    // Built from the same in-memory data as the cards / table (so backlog
+    // cases, carry-overs and count-only work are all included), then narrowed
+    // by Status / Submission / Search just like the on-screen table. It no
+    // longer depends on which card is open.
+    const handleExportExcel = () => {
+        if (cardsLoading) {
+            showToast("Report is still loading — try again in a moment.");
+            return;
         }
-        return all;
-    };
-
-    const handleExportExcel = async () => {
         setExporting(true);
         try {
-            const allRows = await fetchAllMatchingForExport();
-            if (allRows.length === 0) {
-                showToast("No matching cases to export.");
+            const q = searchQuery.toLowerCase();
+
+            // dedupe by id (a case can sit in both lists)
+            const seen = new Set<string>();
+            const caseRows = casesForView
+                .filter((c) => {
+                    if (seen.has(c.id)) return false;
+                    seen.add(c.id);
+                    return true;
+                })
+                .filter((c) => caseMatchesFilters(c, statusFilter, submissionFilter, q))
+                .sort(
+                    (a, b) =>
+                        b.workDate.localeCompare(a.workDate) ||
+                        String(a.caseNumber).localeCompare(String(b.caseNumber))
+                );
+
+            // count-only work (no case number yet), same Status / Submission /
+            // Search rules as the "Without case number" list
+            const countRows = countsForView
+                .map((c) => {
+                    const fulfilledSum = c.allocations.reduce((x, a) => x + a.fulfilledQuantity, 0);
+                    const allocated = Math.min(
+                        c.pendingCount,
+                        Math.max(0, c.allocatedTotal - fulfilledSum)
+                    );
+                    const holders = c.allocations.filter(
+                        (a) => (a.employeeName || "").trim() && a.quantity > 0
+                    );
+                    const latestAt =
+                        holders
+                            .map((a) => (a.allocatedAt ? localYmd(a.allocatedAt) : ""))
+                            .filter(Boolean)
+                            .sort()
+                            .pop() || "";
+                    return {
+                        c,
+                        holders,
+                        latestAt,
+                        allocated,
+                        unallocated: Math.max(0, c.pendingCount - allocated),
+                    };
+                })
+                .filter(({ c, holders, allocated, unallocated }) => {
+                    if (c.quantity <= 0) return false;
+                    if (statusFilter === "PENDING" && unallocated <= 0) return false;
+                    if (statusFilter === "ALLOCATED" && allocated <= 0) return false;
+                    if (submissionFilter === "SUBMITTED" && c.fulfilledCount <= 0) return false;
+                    if (submissionFilter === "PENDING" && c.pendingCount <= 0) return false;
+                    if (!q) return true;
+                    return `${c.productName || ""} ${c.clientName || ""} ${
+                        c.subclientName || ""
+                    } ${c.workDate} ${holders.map((h) => h.employeeName).join(" ")}`
+                        .toLowerCase()
+                        .includes(q);
+                })
+                .sort((a, b) => b.c.workDate.localeCompare(a.c.workDate));
+
+            if (caseRows.length === 0 && countRows.length === 0) {
+                showToast("Nothing to export for the current filters.");
                 return;
             }
 
-            const sheetData = allRows.map((r) => ({
+            const wb = XLSX.utils.book_new();
+
+            // Sheet 1 - cases WITH a case number
+            const sheetData = caseRows.map((r) => ({
                 "Case #": r.caseNumber,
                 Client: r.clientName || "",
                 Subclient: r.subclientName || "",
                 Service: r.productName || "",
-                Date: r.workDate,
-                "Allocated Date": r.allocatedAt ? localYmd(r.allocatedAt) : "",
+                "Case Date": r.workDate,
+                "Allocated On": r.allocatedAt ? localYmd(r.allocatedAt) : "",
                 Employee: r.assignedEmployeeName || "Unallocated",
                 "Allocated By": r.allocatedByName || "",
                 Status: r.allocationStatus === "ALLOCATED" ? "Allocated" : "Pending",
@@ -1303,31 +1332,120 @@ export default function ProductionReport() {
                 Time: ampOf(r.productId) > 0 ? formatMinutes(ampOf(r.productId)) : "",
                 Query: r.queryText || "",
             }));
-
             const ws = XLSX.utils.json_to_sheet(sheetData);
             ws["!cols"] = [
-                { wch: 14 }, // Case #
-                { wch: 22 }, // Client
-                { wch: 22 }, // Subclient
-                { wch: 16 }, // Service
-                { wch: 12 }, // Date
-                { wch: 14 }, // Allocated Date
-                { wch: 18 }, // Employee
-                { wch: 18 }, // Allocated By
-                { wch: 12 }, // Status
-                { wch: 20 }, // Submission
-                { wch: 18 }, // Submitted By
-                { wch: 10 }, // On Behalf
-                { wch: 14 }, // Submitted Date
-                { wch: 10 }, // Time
-                { wch: 28 }, // Query
+                { wch: 14 },
+                { wch: 22 },
+                { wch: 22 },
+                { wch: 16 },
+                { wch: 12 },
+                { wch: 14 },
+                { wch: 18 },
+                { wch: 18 },
+                { wch: 12 },
+                { wch: 20 },
+                { wch: 18 },
+                { wch: 10 },
+                { wch: 14 },
+                { wch: 10 },
+                { wch: 28 },
             ];
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Production Report");
+            XLSX.utils.book_append_sheet(wb, ws, "With case number");
 
-            const fname = `production-report_${fromDate}_to_${toDate}.xlsx`;
+            // Sheet 2 - counts WITHOUT a case number
+            if (countRows.length > 0) {
+                const countSheet = countRows.map(({ c, holders, latestAt }) => ({
+                    Service: c.productName || "",
+                    Client: c.clientName || "",
+                    Subclient: c.subclientName || "",
+                    "Case Received On": c.workDate,
+                    "Allocated On": latestAt,
+                    Received: c.quantity,
+                    Added: c.fulfilledCount,
+                    Pending: c.pendingCount,
+                    "Allocated To (added / given)": holders.length
+                        ? holders
+                              .map(
+                                  (h) =>
+                                      `${(h.employeeName || "").trim()} (${h.fulfilledQuantity}/${h.quantity})`
+                              )
+                              .join(", ")
+                        : "Unallocated",
+                    "Allocated By":
+                        Array.from(
+                            new Set(
+                                holders.map((h) => (h.allocatedByName || "").trim()).filter(Boolean)
+                            )
+                        ).join(", ") || "",
+                }));
+                const wc = XLSX.utils.json_to_sheet(countSheet);
+                wc["!cols"] = [
+                    { wch: 22 },
+                    { wch: 22 },
+                    { wch: 22 },
+                    { wch: 16 },
+                    { wch: 14 },
+                    { wch: 10 },
+                    { wch: 10 },
+                    { wch: 10 },
+                    { wch: 50 },
+                    { wch: 18 },
+                ];
+                XLSX.utils.book_append_sheet(wb, wc, "Without case number");
+            }
+
+            // Sheet 3 - which filters produced this file
+            const nameOf = (list: { id: string; name: string }[], id: string) =>
+                list.find((x) => String(x.id) === String(id))?.name || id;
+            const filterRows: { Filter: string; Value: string }[] = [
+                { Filter: "Date range", Value: `${fromDate} to ${toDate}` },
+            ];
+            if (productId)
+                filterRows.push({
+                    Filter: "Service",
+                    Value:
+                        products.find((p) => String(p.id) === String(productId))?.product_name ||
+                        productId,
+                });
+            if (clientId) filterRows.push({ Filter: "Client", Value: nameOf(clients, clientId) });
+            if (employeeId) {
+                filterRows.push({
+                    Filter: "Employee",
+                    Value:
+                        employees.find((x) => String(x.id) === String(employeeId))?.name ||
+                        employeeId,
+                });
+            }
+            if (statusFilter)
+                filterRows.push({
+                    Filter: "Allocation status",
+                    Value: statusFilter === "ALLOCATED" ? "Allocated" : "Pending",
+                });
+            if (submissionFilter)
+                filterRows.push({
+                    Filter: "Submission",
+                    Value: submissionFilter === "SUBMITTED" ? "Submitted" : "Not submitted",
+                });
+            if (searchQuery) filterRows.push({ Filter: "Search", Value: searchQuery });
+            filterRows.push({ Filter: "Cases exported", Value: String(caseRows.length) });
+            filterRows.push({
+                Filter: "Counts (no case #) exported",
+                Value: String(countRows.length),
+            });
+            const wf = XLSX.utils.json_to_sheet(filterRows);
+            wf["!cols"] = [{ wch: 28 }, { wch: 40 }];
+            XLSX.utils.book_append_sheet(wb, wf, "Filters applied");
+
+            const fname = `production-report_${fromDate}_to_${toDate}${
+                productId ? "_service" : ""
+            }${clientId ? "_client" : ""}${employeeId ? "_employee" : ""}${
+                statusFilter ? `_${statusFilter.toLowerCase()}` : ""
+            }${submissionFilter ? `_${submissionFilter.toLowerCase()}` : ""}.xlsx`;
             XLSX.writeFile(wb, fname);
-            showToast(`Exported ${allRows.length} case(s).`);
+            showToast(
+                `Exported ${caseRows.length} case(s)` +
+                    (countRows.length ? ` + ${countRows.length} count row(s).` : ".")
+            );
         } catch (err: any) {
             showToast(err?.message || "Export failed.");
         } finally {
@@ -1478,7 +1596,52 @@ export default function ProductionReport() {
                     <div
                         style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
                     >
-                        <ShareButton pageKey="production-reports" title="Production Report" />
+                        <ShareButton
+                            pageKey="production-reports"
+                            title="Production Report"
+                            defaultClientId={clientId || undefined}
+                            filters={{
+                                from: fromDate,
+                                to: toDate,
+                                productId,
+                                employeeId,
+                                status: statusFilter,
+                                submission: submissionFilter,
+                                search: searchQuery,
+                            }}
+                            filterSummary={[
+                                `Dates: ${fromDate} to ${toDate}`,
+                                ...(productId
+                                    ? [
+                                          `Service: ${
+                                              products.find(
+                                                  (p) => String(p.id) === String(productId)
+                                              )?.product_name || productId
+                                          }`,
+                                      ]
+                                    : []),
+                                ...(employeeId
+                                    ? [
+                                          `Employee: ${
+                                              employees.find(
+                                                  (e) => String(e.id) === String(employeeId)
+                                              )?.name || employeeId
+                                          }`,
+                                      ]
+                                    : []),
+                                ...(statusFilter
+                                    ? [
+                                          `Allocation: ${statusFilter === "ALLOCATED" ? "Allocated" : "Pending"}`,
+                                      ]
+                                    : []),
+                                ...(submissionFilter
+                                    ? [
+                                          `Submission: ${submissionFilter === "SUBMITTED" ? "Submitted" : "Not submitted"}`,
+                                      ]
+                                    : []),
+                                ...(searchQuery ? [`Search: ${searchQuery}`] : []),
+                            ]}
+                        />
                         <button
                             type="button"
                             style={{ ...styles.exportBtn, opacity: exporting ? 0.6 : 1 }}
@@ -1939,7 +2102,8 @@ export default function ProductionReport() {
                                             <span>Service</span>
                                             <span>Client</span>
                                             <span>Subclient</span>
-                                            <span>Date</span>
+                                            <span>Case Received On</span>
+                                            <span>Allocated On</span>
                                             <span>Received</span>
                                             <span>Added</span>
                                             <span>Pending</span>
@@ -1959,6 +2123,14 @@ export default function ProductionReport() {
                                                 <span>{r.clientName || "—"}</span>
                                                 <span>{r.subclientName || "—"}</span>
                                                 <span>{r.workDate}</span>
+                                                {/* day the count was handed out (Date above = day received) */}
+                                                <span style={{ whiteSpace: "nowrap" }}>
+                                                    {r.holders
+                                                        .map((h) => h.at)
+                                                        .filter(Boolean)
+                                                        .sort()
+                                                        .pop() || "—"}
+                                                </span>
                                                 <span style={{ fontWeight: fontWeight.semibold }}>
                                                     {r.recv}
                                                 </span>
@@ -1989,7 +2161,7 @@ export default function ProductionReport() {
                                                 </span>
                                             </div>
                                         ))}
-                                        <div style={{ ...styles.totalsRow, minWidth: 1200 }}>
+                                        <div style={{ ...styles.totalsRow, minWidth: 1340 }}>
                                             <span style={{ flex: 1 }}>
                                                 {withoutRows.length} count
                                                 {withoutRows.length !== 1 ? "s" : ""} ·{" "}
@@ -2918,8 +3090,8 @@ const styles: Record<string, CSSProperties> = {
     },
     // grid for the "Without case number" list
     withoutGrid: {
-        gridTemplateColumns: "1fr 1fr 1fr 110px 80px 90px 100px 1.6fr 1fr",
-        minWidth: 1200,
+        gridTemplateColumns: "1fr 1fr 1fr 130px 120px 80px 90px 100px 1.6fr 1fr",
+        minWidth: 1340,
     },
     countNotice: {
         padding: "10px 14px",

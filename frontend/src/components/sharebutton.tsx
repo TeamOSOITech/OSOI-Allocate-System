@@ -30,7 +30,17 @@ type Grantee = {
 
 type ClientOpt = { id: string; name: string };
 type Contact = { label: string; name: string | null; email: string };
-type Props = { pageKey: string; title: string };
+type Props = {
+    pageKey: string;
+    title: string;
+    // Filters currently applied on the page. They are saved with the share, so
+    // the person sees exactly the filtered data — nothing wider.
+    filters?: Record<string, unknown>;
+    // Human-readable lines for those filters, e.g. ["Dates: 2026-11-01 to 2026-11-04"]
+    filterSummary?: string[];
+    // Client to preselect (e.g. the page's Client filter).
+    defaultClientId?: string;
+};
 
 const selectStyle = {
     width: "100%",
@@ -43,7 +53,7 @@ const selectStyle = {
     background: "#fff",
 } as const;
 
-const ShareButton = ({ pageKey, title }: Props) => {
+const ShareButton = ({ pageKey, title, filters, filterSummary, defaultClientId }: Props) => {
     const role = getCurrentUser()?.role || "";
     const [open, setOpen] = useState(false);
     const [email, setEmail] = useState("");
@@ -69,6 +79,10 @@ const ShareButton = ({ pageKey, title }: Props) => {
             /* list just stays empty */
         }
     }, [pageKey]);
+
+    useEffect(() => {
+        if (open && defaultClientId) setClientId((cur) => cur || defaultClientId);
+    }, [open, defaultClientId]);
 
     useEffect(() => {
         if (!open) return;
@@ -147,7 +161,13 @@ const ShareButton = ({ pageKey, title }: Props) => {
             const res = await authFetch(`${API_BASE}/api/client-portal/page-shares`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pageKey, email: effectiveEmail, clientId, permission }),
+                body: JSON.stringify({
+                    pageKey,
+                    email: effectiveEmail,
+                    clientId,
+                    permission,
+                    filters,
+                }),
             });
             const json = await res.json().catch(() => ({}));
             if (!res.ok || json.success === false)
@@ -281,6 +301,31 @@ const ShareButton = ({ pageKey, title }: Props) => {
                             see a read-only version of this page on their Client Dashboard, limited
                             to their own client's data.
                         </p>
+
+                        {filterSummary && filterSummary.length > 0 && (
+                            <div
+                                style={{
+                                    background: "#F4F8FD",
+                                    border: "1px solid #E1E9F6",
+                                    borderRadius: radius.lg,
+                                    padding: "10px 12px",
+                                    marginBottom: 10,
+                                    fontSize: fontSize.sm,
+                                    color: "#374151",
+                                }}
+                            >
+                                <div style={{ fontWeight: fontWeight.semibold, marginBottom: 4 }}>
+                                    Shared with these filters
+                                </div>
+                                {filterSummary.map((line) => (
+                                    <div key={line}>{line}</div>
+                                ))}
+                                <div style={{ color: "#6b6280", marginTop: 4 }}>
+                                    The person only sees data matching these. Sharing again with
+                                    different filters updates their access.
+                                </div>
+                            </div>
+                        )}
 
                         <select
                             value={clientId}

@@ -5,7 +5,7 @@
 // Data comes from GET /api/client-portal/shared/production-reports and is
 // already limited server-side to the caller's own client.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
@@ -24,6 +24,8 @@ type Report = {
     from: string;
     to: string;
     truncated: boolean;
+    bounds?: { min: string | null; max: string | null };
+    filters?: { label: string; value: string }[];
     summary: { total: number; byStatus: Record<string, number> };
     byService: { service: string; total: number; completed: number }[];
     byDay: { date: string; total: number; completed: number }[];
@@ -143,22 +145,29 @@ const CardTitle = ({ icon, children }: { icon: string; children: string }) => (
 );
 
 const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
-    const now = new Date();
-    const [from, setFrom] = useState(iso(new Date(now.getFullYear(), now.getMonth(), 1)));
-    const [to, setTo] = useState(iso(now));
+    // empty until the first response: the server picks the shared date range
+    const [from, setFrom] = useState("");
+    const [to, setTo] = useState("");
+    const skipNextLoad = useRef(false);
     const [data, setData] = useState<Report | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [page, setPage] = useState(1);
 
     const load = useCallback(async () => {
+        if (skipNextLoad.current) {
+            skipNextLoad.current = false;
+            return;
+        }
         setLoading(true);
         setError("");
         try {
             const res = await authFetch(
-                `${API_BASE}/api/client-portal/shared/production-reports?from=${from}&to=${to}${
-                    shareId ? `&shareId=${encodeURIComponent(shareId)}` : ""
-                }`,
+                `${API_BASE}/api/client-portal/shared/production-reports?${new URLSearchParams({
+                    ...(from ? { from } : {}),
+                    ...(to ? { to } : {}),
+                    ...(shareId ? { shareId } : {}),
+                }).toString()}`,
                 { cache: "no-store" }
             );
             const json = await res.json().catch(() => ({}));
@@ -166,6 +175,12 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                 throw new Error(json.message || "Could not load the report.");
             setData(json.data);
             setPage(1);
+            // first load: adopt the range the server chose (no second fetch)
+            if (!from || !to) {
+                skipNextLoad.current = true;
+                setFrom(json.data.from);
+                setTo(json.data.to);
+            }
         } catch (e: any) {
             setError(e?.message || "Could not load the report.");
         } finally {
@@ -222,8 +237,9 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                     From{" "}
                     <input
                         type="date"
-                        value={from}
-                        max={to}
+                        value={from || data?.from || ""}
+                        min={data?.bounds?.min || undefined}
+                        max={to || data?.bounds?.max || undefined}
                         onChange={(e) => e.target.value && setFrom(e.target.value)}
                         style={dateInput}
                     />
@@ -232,12 +248,28 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                     To{" "}
                     <input
                         type="date"
-                        value={to}
-                        min={from}
+                        value={to || data?.to || ""}
+                        min={from || data?.bounds?.min || undefined}
+                        max={data?.bounds?.max || undefined}
                         onChange={(e) => e.target.value && setTo(e.target.value)}
                         style={dateInput}
                     />
                 </label>
+                {(data?.filters || []).map((f) => (
+                    <span
+                        key={`${f.label}:${f.value}`}
+                        style={{
+                            background: "#E4EEFB",
+                            color: "#3B6FD4",
+                            borderRadius: 999,
+                            padding: "4px 12px",
+                            fontSize: fontSize.sm,
+                            fontWeight: fontWeight.semibold,
+                        }}
+                    >
+                        {f.label}: {f.value}
+                    </span>
+                ))}
                 <span
                     style={{
                         background: "#EEF1F6",
