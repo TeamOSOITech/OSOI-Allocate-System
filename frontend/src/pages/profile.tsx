@@ -789,9 +789,11 @@ export default function Profile({ onLogout }: ProfileProps) {
     // viewingId is state so the UI re-renders.
     // ---------------------------------------------------------------
     const canViewOthers = VIEW_OTHERS_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
-    // NEW: "Allocated At" shows date + time + AMP time + age on the manager side;
-    // everyone else sees the date only.
-    const showAllocatedAt = TEAM_QUERY_ROLES.includes(String(cachedUser?.role || "").toUpperCase());
+    // "Allocated At" shows date + time + AMP time + age ONLY to managers /
+    // Process Leads; team members and Vertical Heads see the date only.
+    const showAllocatedAt = ALLOCATED_AT_TIME_ROLES.includes(
+        String(cachedUser?.role || "").toUpperCase()
+    );
     const viewingRef = useRef<string | null>(null);
     const [viewingId, setViewingId] = useState<string | null>(null);
     const isViewingOther = !!viewingId && viewingId !== myId;
@@ -4252,9 +4254,16 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                         }
                                                                                     >
                                                                                         {mc.allocatedAt
-                                                                                            ? formatDateTime(
-                                                                                                  mc.allocatedAt
-                                                                                              )
+                                                                                            ? showAllocatedAt
+                                                                                                ? formatDateTime(
+                                                                                                      mc.allocatedAt
+                                                                                                  )
+                                                                                                : formatDisplayDate(
+                                                                                                      allocDay(
+                                                                                                          mc.allocatedAt,
+                                                                                                          mc.workDate
+                                                                                                      )
+                                                                                                  )
                                                                                             : mc.workDate ||
                                                                                               "—"}
                                                                                     </span>
@@ -4559,7 +4568,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                     }}
                                                                 >
                                                                     <div>
-                                                                        {showAllocatedAt || c.missed
+                                                                        {showAllocatedAt
                                                                             ? formatDateTime(
                                                                                   c.allocatedAt
                                                                               )
@@ -7102,8 +7111,8 @@ function StatCard({
 // login.tsx sets this on every successful login; cleared once handled here.
 const LOGIN_FLAG = "pf_team_query_popup_pending";
 
-// Roles that have a team / org view (same rule the backend enforces).
-const TEAM_QUERY_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD", "VERTICAL_HEAD"];
+// Roles that may see the allocation TIME (not just the date).
+const ALLOCATED_AT_TIME_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "AUDIT_MANAGER", "PROCESS_LEAD"];
 
 // ---- reminder schedule -------------------------------------------------
 // The popup shows at most QR_MAX_PER_DAY times a day: once the first time
@@ -8599,7 +8608,7 @@ function MobileRow({
                     {c.allocatedAt && (
                         <span>
                             Allocated{" "}
-                            {showAllocatedAt || c.missed
+                            {showAllocatedAt
                                 ? formatDateTime(c.allocatedAt)
                                 : formatDisplayDate(allocDay(c.allocatedAt, c.workDate))}
                         </span>
