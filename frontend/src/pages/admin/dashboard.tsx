@@ -840,9 +840,11 @@ function KpiBreakdownModal({
 
                 // Same definition as the KPI cards + Production Report (today's
                 // work date): total / allocated / submitted.
-                // Remaining = total - submitted (cases still waiting to be SUBMITTED).
-                const needTotal = kind === "total" || kind === "remaining";
-                const needAlloc = kind === "total" || kind === "allocated";
+                // Remaining = allocated - submitted (cases handed to an employee
+                // that are still waiting to be SUBMITTED). Cases not allocated yet
+                // are NOT remaining work for the employees.
+                const needTotal = kind === "total";
+                const needAlloc = kind === "total" || kind === "allocated" || kind === "remaining";
                 const needDone = kind === "completed" || kind === "remaining";
 
                 // count-only work (all services in one call)
@@ -899,7 +901,7 @@ function KpiBreakdownModal({
                             kind === "total"
                                 ? tot + back
                                 : kind === "remaining"
-                                  ? Math.max(0, tot + back - done)
+                                  ? Math.max(0, alloc + back - done)
                                   : kind === "allocated"
                                     ? alloc + back
                                     : done;
@@ -907,7 +909,7 @@ function KpiBreakdownModal({
                             kind === "total"
                                 ? cTot
                                 : kind === "remaining"
-                                  ? cTot
+                                  ? cAlloc // count-only units still held (not yet fulfilled)
                                   : kind === "allocated"
                                     ? cAlloc
                                     : 0;
@@ -1189,7 +1191,7 @@ export default function Dashboard({ user }: DashboardProps) {
             //   Total     = cases whose work date is today (+ count-only units)
             //   Allocated = those cases that are ALLOCATED (+ count-only allocated)
             //   Completed = those cases that are SUBMITTED
-            //   Remaining = Total - Completed (cases still waiting to be submitted)
+            //   Remaining = Allocated - Completed (handed to an employee, not yet submitted)
             const today = todayStr();
             // FIX: a case keeps its ORIGINAL work_date even when it is handed
             // out / given a case number / submitted days later (backlog counts
@@ -1247,8 +1249,13 @@ export default function Dashboard({ user }: DashboardProps) {
             setCaseTotalCount(total);
             setCaseAllocatedCount(allocated);
             const completed = okOf(compRes, compJson) ? num(compRes, compJson) : null;
+            // Remaining = allocated cases (incl. older ones allocated today) minus
+            // the ones already submitted, plus count-only units still held by staff
+            // (todayCountUnits already excludes the units that were fulfilled).
             setCaseRemainingCount(
-                total !== null && completed !== null ? Math.max(0, total - completed) : null
+                allocOk && completed !== null
+                    ? Math.max(0, num(allocRes, allocJson) + backN - completed) + countsAllocated
+                    : null
             );
             setCaseCompletedCount(completed);
         } catch (err) {
@@ -1485,7 +1492,7 @@ export default function Dashboard({ user }: DashboardProps) {
             page: () => navigate("/todays-allocation"),
             icon: "ti ti-hourglass",
             gradient: `linear-gradient(135deg, ${BRAND.amber}, #EA580C)`,
-            tip: "Today's cases not yet submitted by employees",
+            tip: "Allocated cases not yet submitted by employees",
         },
     ];
 

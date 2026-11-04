@@ -11,8 +11,6 @@
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.110.2",
-        "axios": "^1.18.1",
-        "exceljs": "^4.4.0",
         "jspdf": "^4.2.1",
         "jspdf-autotable": "^5.0.8",
         "react": "^19.2.7",
@@ -20,7 +18,7 @@
         "react-router-dom": "^7.18.0",
         "react-speech-recognition": "^4.0.1",
         "recharts": "^3.9.1",
-        "xlsx": "^0.18.5",
+        "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
         "zustand": "^5.0.14"
     },
     "devDependencies": {

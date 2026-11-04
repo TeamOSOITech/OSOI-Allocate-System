@@ -2088,13 +2088,6 @@ export default function TodaysAllocationCases({
                         </div>
                         <div style={styles.tableScroll}>
                             <div style={styles.cgWrap}>
-                                <div style={styles.cgHead}>
-                                    <span>Client</span>
-                                    <span>Sub-client</span>
-                                    <span>Date</span>
-                                    <span>Status</span>
-                                    <span style={{ textAlign: "right" }}>Allocated</span>
-                                </div>
                                 {countsLoading ? (
                                     <div style={styles.emptyNote}>Loading counts…</div>
                                 ) : visibleCountRows.length === 0 ? (

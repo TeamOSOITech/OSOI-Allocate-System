@@ -39,6 +39,9 @@ type Employee = {
     status: EntityStatus;
     reportingManager: string | null;
     joiningDate: string; // ISO date
+    // Last working day (yyyy-mm-dd) or null. Once this date has passed the
+    // employee can no longer log in (enforced on the backend).
+    exitDate?: string | null;
     // Not returned by the API yet (no praises table/route on the backend).
     // Left optional so the UI degrades gracefully — re-enable the
     // recognition chip/section once GET /api/employees/:id/praises exists.
@@ -541,6 +544,34 @@ export default function Employees() {
             // isn't one this user may assign, the save is stopped with a
             // clear message instead of silently sending it.
             const payload: Record<string, any> = { ...editForm };
+
+            // Date of Exit: normalise to yyyy-mm-dd or null, must not be before
+            // the joining date, and warn before locking someone out.
+            const exitYmd = payload.exitDate ? String(payload.exitDate).slice(0, 10) : "";
+            const joinYmd = payload.joiningDate ? String(payload.joiningDate).slice(0, 10) : "";
+            if (exitYmd && joinYmd && exitYmd < joinYmd) {
+                alert("Date of Exit can't be before the Joining Date.");
+                setSaving(false);
+                return;
+            }
+            const todayYmd = new Intl.DateTimeFormat("en-CA", {
+                timeZone: "Asia/Kolkata",
+            }).format(new Date());
+            const prevExitYmd = selectedEmployee?.exitDate
+                ? String(selectedEmployee.exitDate).slice(0, 10)
+                : "";
+            if (exitYmd && exitYmd < todayYmd && exitYmd !== prevExitYmd) {
+                const ok = window.confirm(
+                    "This Date of Exit has already passed. " +
+                        "The employee will lose access to the app immediately. Continue?"
+                );
+                if (!ok) {
+                    setSaving(false);
+                    return;
+                }
+            }
+            payload.exitDate = exitYmd || null;
+
             const roleChanged = (payload.role || "") !== (selectedEmployee?.role || "");
             if (!canEditRoleFor(selectedEmployee)) {
                 delete payload.role;
@@ -1874,6 +1905,31 @@ export default function Employees() {
                                     ) : (
                                         <span style={styles.detailsValue}>
                                             {formatDate(drawerData.joiningDate)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                <div style={styles.detailsRow}>
+                                    <span style={styles.detailsLabel}>Date of Exit</span>
+                                    {isEditingDrawer ? (
+                                        <input
+                                            type="date"
+                                            className="emp-drawer-input"
+                                            style={styles.detailsInput}
+                                            value={toDateInputValue(drawerData.exitDate)}
+                                            min={
+                                                toDateInputValue(drawerData.joiningDate) ||
+                                                undefined
+                                            }
+                                            onChange={(e) =>
+                                                updateEditField("exitDate", e.target.value)
+                                            }
+                                        />
+                                    ) : (
+                                        <span style={styles.detailsValue}>
+                                            {drawerData.exitDate
+                                                ? formatDate(drawerData.exitDate)
+                                                : "—"}
                                         </span>
                                     )}
                                 </div>
