@@ -2765,7 +2765,8 @@ function buildAllocationEmailHtml({
 </html>`;
 }
 async function notifyAllocation(req, res) {
-  console.log("[notify] hit, body:", JSON.stringify(req.body));
+  // SECURITY: no longer logs the whole request body (employee ids, case data)
+  // to the server console / log aggregator.
   try {
     const employeeIds = Array.isArray(req.body.employeeIds)
       ? [
@@ -5027,12 +5028,10 @@ async function listCarryoverHistory(req, res) {
     const from = new Date(String(req.query.allocatedFrom || ""));
     const to = new Date(String(req.query.allocatedTo || ""));
     if (isNaN(from.getTime()) || isNaN(to.getTime())) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "allocatedFrom / allocatedTo are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "allocatedFrom / allocatedTo are required",
+      });
     }
 
     let q = supabase

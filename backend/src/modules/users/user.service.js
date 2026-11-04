@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 // user.service.js
 const { escapeLike } = require("../../utils/likeEscape");
 //
@@ -933,12 +934,14 @@ async function processBulkAddUserRequest(users, requester) {
   return results;
 }
 
+// SECURITY: uses crypto.randomInt (a cryptographically secure RNG) instead of
+// Math.random(), which is predictable and must never be used for passwords.
 function generateFallbackPassword() {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%";
   let pass = "";
-  for (let i = 0; i < 12; i++) {
-    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 16; i++) {
+    pass += chars.charAt(crypto.randomInt(chars.length));
   }
   return pass;
 }

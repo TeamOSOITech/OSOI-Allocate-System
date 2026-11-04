@@ -19,6 +19,7 @@ const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust
 // registerOrganization.controller.js already use this same helper;
 // this was the one remaining spot still doing it the broken way.
 const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
+const { isPastExitDate } = require("../../utils/exitDate");
 
 // FIX ("link expired" on click): Supabase's action_link is single-use and
 // gets consumed by mail scanners / click tracking before the person clicks.
@@ -105,6 +106,15 @@ const login = async (rawEmail, password) => {
   if (!authData || !matchedUser) {
     console.error("NO MATCHING ROLE ACCOUNT FOR PASSWORD");
     throw new Error("Invalid email or password");
+  }
+
+  // SECURITY: no login for an employee past their Date of Exit.
+  if (isPastExitDate(matchedUser["Date of Exit"])) {
+    const exitErr = new Error(
+      "This account is no longer active. Contact an administrator.",
+    );
+    exitErr.expose = true;
+    throw exitErr;
   }
 
   const rawRole = matchedUser["Role"];

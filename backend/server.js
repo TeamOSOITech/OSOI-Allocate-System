@@ -157,6 +157,10 @@ const { csrfProtection } = require("./src/middlewares/csrf");
 
 const CSRF_EXEMPT_PATHS = [
   "/api/billing/webhook",
+  // Public landing-page "Book a Demo" form — the visitor has no session yet,
+  // so there is no csrfToken to echo back. Protected by validation + a tight
+  // per-IP rate limit inside leads.routes.js instead.
+  "/api/leads/demo-request",
   // Pre-signup checkout flow — called from the public landing/checkout
   // page BEFORE an account or session exists, so there is no csrfToken
   // cookie yet to echo back (same reasoning as the auth routes below).
@@ -188,6 +192,8 @@ function loadRoute(name, path) {
 }
 
 app.use("/api/auth", loadRoute("auth", "./src/modules/auth/auth.routes"));
+// Public lead capture ("Book a Demo" on the landing page) — no login required.
+app.use("/api/leads", loadRoute("leads", "./src/modules/leads/leads.routes"));
 // Per-organization branding — GET is open to any logged-in role (the
 // header showing the logo isn't SUPER_ADMIN-only), PATCH is gated to
 // SUPER_ADMIN inside the route file itself.

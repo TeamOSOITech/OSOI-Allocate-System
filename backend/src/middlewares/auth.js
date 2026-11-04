@@ -5,6 +5,7 @@ const supabase = require("../config/supabaseClient");
 // `supabase` client used for .from(...) queries elsewhere — see the
 // comment in supabaseAuthClient.js.
 const supabaseAuthClient = require("../config/supabaseAuthClient");
+const { isPastExitDate } = require("../utils/exitDate");
 
 // ---------------------------------------------------------------------
 // PERF: short-lived in-memory cache of "token -> resolved user".
@@ -106,7 +107,7 @@ async function verifyToken(token) {
   // degrades gracefully instead of failing the request with a 500.
   const { data: profiles, error: profileError } = await supabase
     .from("user_master")
-    .select("Role, organization_id")
+    .select('Role, organization_id, "Date of Exit"')
     .eq("Auth User Id", data.user.id);
 
   if (profileError) {
@@ -139,6 +140,16 @@ async function verifyToken(token) {
   if (!profile?.organization_id) {
     console.error("AUTH: no organization_id found for user", data.user.id);
     return { status: 403, message: "No organization assigned to this account" };
+  }
+
+  // SECURITY: an employee past their Date of Exit is locked out, even with a
+  // still-valid token. Failures are never cached, so this takes effect on the
+  // next request after the token's cache entry (max AUTH_CACHE_TTL_MS) lapses.
+  if (isPastExitDate(profile["Date of Exit"])) {
+    return {
+      status: 403,
+      message: "This account is no longer active. Contact an administrator.",
+    };
   }
 
   // Roles are checked as SNAKE_CASE codes (TEAM_MEMBER, VERTICAL_HEAD,
