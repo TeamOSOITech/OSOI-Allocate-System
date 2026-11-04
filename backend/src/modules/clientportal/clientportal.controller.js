@@ -586,22 +586,57 @@ const ISO_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Filters staff had applied on the Production Report when they clicked Share.
+// They are stored on the grant and ALWAYS applied to what the client sees.
+// Only these keys, in these shapes, are ever kept — anything else is dropped.
+function cleanShareFilters(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  if (DATE_RE.test(String(raw.from || ""))) out.from = String(raw.from);
+  if (DATE_RE.test(String(raw.to || ""))) out.to = String(raw.to);
+  if (out.from && out.to && out.from > out.to) {
+    const t = out.from;
+    out.from = out.to;
+    out.to = t;
+  }
+  if (UUID_RE.test(String(raw.productId || "")))
+    out.productId = String(raw.productId);
+  if (UUID_RE.test(String(raw.employeeId || "")))
+    out.employeeId = String(raw.employeeId);
+  if (["PENDING", "ALLOCATED"].includes(raw.status)) out.status = raw.status;
+  if (["PENDING", "SUBMITTED"].includes(raw.submission))
+    out.submission = raw.submission;
+  const search = String(raw.search || "")
+    .replace(/[%,()*\\]/g, "")
+    .trim()
+    .slice(0, 100);
+  if (search) out.search = search;
+  return Object.keys(out).length ? out : null;
+}
+
 // The caller's own grant for a page, from ANY organization (a grant carries
 // the organization and client it was made for). Null if there is none.
 async function loadGrant(req, pageKey) {
   const shareId = String(req.query.shareId || "");
-  let q = supabase
-    .from("page_shares")
-    .select("id, organization_id, client_id, permission")
-    .eq("page_key", pageKey)
-    .eq("grantee_user_id", req.user.userId);
-  if (shareId) {
-    if (!UUID_RE.test(shareId)) return null;
-    q = q.eq("id", shareId);
+  const run = async (cols) => {
+    let q = supabase
+      .from("page_shares")
+      .select(cols)
+      .eq("page_key", pageKey)
+      .eq("grantee_user_id", req.user.userId);
+    if (shareId) {
+      if (!UUID_RE.test(shareId)) return { data: null, error: null };
+      q = q.eq("id", shareId);
+    }
+    return q.order("created_at", { ascending: false }).limit(1);
+  };
+  let { data, error } = await run(
+    "id, organization_id, client_id, permission, filters",
+  );
+  // `filters` column not created yet (migration pending) -> old behaviour
+  if (error && /filters/i.test(String(error.message || ""))) {
+    ({ data, error } = await run("id, organization_id, client_id, permission"));
   }
-  const { data, error } = await q
-    .order("created_at", { ascending: false })
-    .limit(1);
   if (error) throw error;
   return data?.[0] || null;
 }
@@ -773,6 +808,10 @@ async function addPageShare(req, res) {
         : `${PAGE_KEYS[pageKey].label} shared, but the invite email could not be sent. Send them this link manually: ${created.resetLink || "(link unavailable)"}`;
     }
 
+    // The filters staff had on screen travel with the share (null = none).
+    // Sharing again replaces the previous filters for that person.
+    const filters = cleanShareFilters(req.body?.filters);
+
     const { error: shErr } = await supabase.from("page_shares").upsert(
       {
         organization_id: orgId,
@@ -780,12 +819,21 @@ async function addPageShare(req, res) {
         grantee_user_id: granteeId,
         client_id: client.id,
         permission: "VIEW",
+        filters,
         shared_by: req.user.userId,
         seen_at: null, // shows up as a new notification for the grantee
       },
       { onConflict: "organization_id,page_key,grantee_user_id" },
     );
-    if (shErr) throw shErr;
+    if (shErr) {
+      if (/filters/i.test(String(shErr.message || "")))
+        return res.status(500).json({
+          success: false,
+          message:
+            "Sharing with filters needs a one-time database update (page_shares.filters). Ask the developer to run add_page_shares_filters.sql.",
+        });
+      throw shErr;
+    }
 
     res.json({ success: true, message });
   } catch (err) {
@@ -903,28 +951,105 @@ async function getSharedProductionReport(req, res) {
         message: "This share is not linked to a client.",
       });
 
-    const today = todayInTz();
-    const from = DATE_RE.test(String(req.query.from || ""))
-      ? String(req.query.from)
-      : `${today.slice(0, 8)}01`;
-    const to = DATE_RE.test(String(req.query.to || ""))
-      ? String(req.query.to)
-      : today;
+    // Filters staff applied when sharing — locked, the viewer can't remove them.
+    const gf = cleanShareFilters(grant.filters) || {};
 
-    const { data: rows, error } = await fetchAll(
-      () =>
+    const today = todayInTz();
+    const monthStart = `${today.slice(0, 8)}01`;
+    // The shared date range is the WIDEST window the viewer may look at; they
+    // can narrow inside it. With no shared range it is open-ended as before.
+    const minDate = gf.from || null;
+    const maxDate = gf.to || null;
+    let from = DATE_RE.test(String(req.query.from || ""))
+      ? String(req.query.from)
+      : minDate || monthStart;
+    let to = DATE_RE.test(String(req.query.to || ""))
+      ? String(req.query.to)
+      : maxDate || today;
+    if (minDate && from < minDate) from = minDate;
+    if (maxDate && to > maxDate) to = maxDate;
+
+    // service / subclient ids matched by the shared search text
+    let searchOr = null;
+    if (gf.search) {
+      const term = gf.search;
+      const like = `%${escapeLike(term)}%`;
+      const parts = [`case_number.ilike.${like.replace(/[,()]/g, "")}`];
+      const [{ data: ps }, { data: ss }] = await Promise.all([
         supabase
-          .from("service_cases")
-          .select(CASE_COLS)
+          .from("service_master")
+          .select("id")
+          .eq("organization_id", orgId)
+          .ilike("product_name", like),
+        supabase
+          .from("subclients")
+          .select("id")
           .eq("organization_id", orgId)
           .eq("client_id", clientId)
-          .gte("work_date", from)
-          .lte("work_date", to)
-          .order("work_date", { ascending: false })
-          .order("id"),
-      { maxRows: 5000 },
-    );
+          .ilike("name", like),
+      ]);
+      const pids = (ps || [])
+        .map((r) => r.id)
+        .filter((id) => UUID_RE.test(String(id)));
+      const sids = (ss || [])
+        .map((r) => r.id)
+        .filter((id) => UUID_RE.test(String(id)));
+      if (pids.length) parts.push(`product_id.in.(${pids.join(",")})`);
+      if (sids.length) parts.push(`subclient_id.in.(${sids.join(",")})`);
+      searchOr = parts.join(",");
+    }
+
+    const { data: rows, error } =
+      from > to
+        ? { data: [], error: null }
+        : await fetchAll(
+            () => {
+              let q = supabase
+                .from("service_cases")
+                .select(CASE_COLS)
+                .eq("organization_id", orgId)
+                .eq("client_id", clientId)
+                .gte("work_date", from)
+                .lte("work_date", to);
+              if (gf.productId) q = q.eq("product_id", gf.productId);
+              if (gf.employeeId)
+                q = q.eq("assigned_employee_id", gf.employeeId);
+              if (gf.status) q = q.eq("allocation_status", gf.status);
+              if (gf.submission) q = q.eq("submission_status", gf.submission);
+              if (searchOr) q = q.or(searchOr);
+              return q.order("work_date", { ascending: false }).order("id");
+            },
+            { maxRows: 5000 },
+          );
     if (error) throw error;
+
+    // Human-readable list of the locked filters (no employee names for clients).
+    const appliedFilters = [];
+    if (gf.productId) {
+      const { data: p } = await supabase
+        .from("service_master")
+        .select("product_name")
+        .eq("organization_id", orgId)
+        .eq("id", gf.productId)
+        .limit(1);
+      appliedFilters.push({
+        label: "Service",
+        value: p?.[0]?.product_name || "Selected service",
+      });
+    }
+    if (gf.employeeId)
+      appliedFilters.push({ label: "Team member", value: "Filtered" });
+    if (gf.status)
+      appliedFilters.push({
+        label: "Allocation",
+        value: gf.status === "ALLOCATED" ? "Allocated" : "Pending",
+      });
+    if (gf.submission)
+      appliedFilters.push({
+        label: "Submission",
+        value: gf.submission === "SUBMITTED" ? "Submitted" : "Not submitted",
+      });
+    if (gf.search) appliedFilters.push({ label: "Search", value: gf.search });
 
     const { productMap, subMap } = await nameMaps(rows, orgId);
     const cases = rows.map((r) => ({
@@ -961,6 +1086,8 @@ async function getSharedProductionReport(req, res) {
         client: { id: client.id, name: client.name },
         from,
         to,
+        bounds: { min: minDate, max: maxDate },
+        filters: appliedFilters,
         truncated: rows.length >= 5000,
         summary: { total: cases.length, byStatus },
         byService: Object.entries(byService)
