@@ -441,7 +441,12 @@ export default function ProductionReport() {
     // Daily-wise view only: (a) older cases allocated on a PAST day in the
     // range, (b) cases allocated that day but NOT submitted - the day-end
     // rollover cleared their assignee, so they come from case_carryover_log.
-    const [dailyExtra, setDailyExtra] = useState<ServiceCaseRow[]>([]);
+    // (a) older cases allocated in the range - deduped against cardCases below
+    const [dailyOlder, setDailyOlder] = useState<ServiceCaseRow[]>([]);
+    // (b) carry-over log rows
+    const [dailyCarry, setDailyCarry] = useState<ServiceCaseRow[]>([]);
+    const [extrasLoading, setExtrasLoading] = useState(false);
+    const extrasSeq = useRef(0);
     // Raw count-only rows from the API; the client-name filter is applied in
     // the useMemo below so `clients` loading never re-triggers fetchCards.
     const [rawCardCounts, setRawCardCounts] = useState<CountRow[]>([]);
@@ -555,21 +560,44 @@ export default function ProductionReport() {
     // ---- cards data: every case in the date range (service / employee /
     // client filters apply; Status / Submission / search do NOT, because the
     // cards ARE the Allocated / Pending / Submitted breakdown). ----
-    const fetchCards = useCallback(async () => {
-        const seq = ++fetchSeq.current;
-        const isStale = () => seq !== fetchSeq.current;
-        setCardsLoading(true);
-        setError("");
+    // ---- shared fetch helpers (everything below runs in PARALLEL) ----
+    const PAGE = 100;
+    const MAX_PAGES = 60;
+    const BATCH = 10;
+    const ymdOfDate = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+            d.getDate()
+        ).padStart(2, "0")}`;
+    const dayBeforeYmd = (ymd: string) => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return ymdOfDate(new Date(y, m - 1, d - 1));
+    };
+    const dayStartIso = (ymd: string) => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+    };
+    const dayEndIso = (ymd: string) => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+    };
+    // Optional pieces must never break the report.
+    const safeList = async <T,>(fn: () => Promise<T[]>): Promise<T[]> => {
         try {
-            const PAGE = 100;
-            const MAX_PAGES = 60;
-            const fetchPage = async (p: number) => {
-                const params = new URLSearchParams();
+            return await fn();
+        } catch {
+            return [];
+        }
+    };
+
+    // Every page of a /service-cases query: page 1 first (it tells us
+    // totalPages), then the remaining pages in parallel batches.
+    const fetchEveryPage = useCallback(
+        async (extra: Record<string, string>): Promise<ServiceCaseRow[]> => {
+            const getPage = async (p: number) => {
+                const params = new URLSearchParams(extra);
                 params.set("page", String(p));
-                params.set("pageSize", String(PAGE));
+                params.set("pageSize", String(employeeId ? 1000 : PAGE));
                 if (productId) params.set("productId", productId);
-                if (fromDate) params.set("workDateFrom", fromDate);
-                if (toDate) params.set("workDateTo", toDate);
                 if (employeeId) params.set("employeeId", employeeId);
                 if (clientId) params.set("clientId", clientId);
                 const res = await authFetch(`${API_BASE}/api/service-cases?${params.toString()}`);
@@ -578,285 +606,220 @@ export default function ProductionReport() {
                     throw new Error(json?.message || `HTTP ${res.status}`);
                 return json;
             };
-
-            // Count-only work runs IN PARALLEL with the case pages (it used to
-            // wait for every page first). Optional: failures just mean no counts.
-            // (an Employee filter is applied to these in the cardCounts memo)
-            const countsPromise: Promise<CountRow[]> = (async () => {
-                try {
-                    const p = new URLSearchParams();
-                    p.set("workDate", toDate);
-                    p.set("workDateFrom", fromDate);
-                    p.set("includeDone", "true");
-                    if (productId) p.set("productId", productId);
-                    const res = await authFetch(
-                        `${API_BASE}/api/service-cases/count-allocations?${p.toString()}`
-                    );
-                    const json = await res.json();
-                    return res.ok && json.success ? json.data || [] : [];
-                } catch {
-                    return [];
-                }
-            })();
-
-            // Page 1 tells us totalPages; the rest are fetched in parallel
-            // batches instead of one-after-another.
-            const first = await fetchPage(1);
-            const all: ServiceCaseRow[] = [...(first.data || [])];
+            const first = await getPage(1);
+            const out: ServiceCaseRow[] = [...(first.data || [])];
             const totalPages = Math.min(first.pagination?.totalPages ?? 1, MAX_PAGES);
-            const BATCH = 6;
             for (let start = 2; start <= totalPages; start += BATCH) {
-                if (isStale()) return;
-                const pages = [];
+                const pages: number[] = [];
                 for (let p = start; p < start + BATCH && p <= totalPages; p++) pages.push(p);
-                const results = await Promise.all(pages.map(fetchPage)); // order preserved
-                results.forEach((r) => all.push(...(r.data || [])));
+                const results = await Promise.all(pages.map(getPage)); // order preserved
+                results.forEach((r) => out.push(...(r.data || [])));
             }
+            return out;
+        },
+        [productId, employeeId, clientId]
+    );
 
-            // NEW: OLDER (backlog) cases that were allocated / given a case
-            // number TODAY keep their old work_date, so the date-range query
-            // above never returns them. Pull them in separately when the
-            // range includes today (deduped by id).
+    // ---- cards data: every case in the date range (service / employee /
+    // client filters apply; Status / Submission / search do NOT, because the
+    // cards ARE the Allocated / Pending / Submitted breakdown). ----
+    // All the independent requests (cases, backlog, submitted-in-range,
+    // counts) now run AT THE SAME TIME instead of one after another.
+    const fetchCards = useCallback(async () => {
+        const seq = ++fetchSeq.current;
+        const isStale = () => seq !== fetchSeq.current;
+        setCardsLoading(true);
+        setError("");
+        try {
             const todayYmd = todayStr();
-            if (fromDate <= todayYmd && toDate >= todayYmd) {
-                try {
-                    const [ty, tm, td] = todayYmd.split("-").map(Number);
-                    const prev = new Date(ty, tm - 1, td - 1);
-                    const prevYmd = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(
-                        2,
-                        "0"
-                    )}-${String(prev.getDate()).padStart(2, "0")}`;
-                    const seen = new Set(all.map((r) => r.id));
-                    let bp = 1;
-                    let bTotalPages = 1;
-                    do {
-                        const params = new URLSearchParams();
-                        params.set("page", String(bp));
-                        params.set("pageSize", String(PAGE));
-                        params.set("workDateTo", prevYmd);
-                        params.set(
-                            "allocatedFrom",
-                            new Date(ty, tm - 1, td, 0, 0, 0, 0).toISOString()
-                        );
-                        params.set(
-                            "allocatedTo",
-                            new Date(ty, tm - 1, td, 23, 59, 59, 999).toISOString()
-                        );
-                        if (productId) params.set("productId", productId);
-                        if (employeeId) params.set("employeeId", employeeId);
-                        if (clientId) params.set("clientId", clientId);
-                        const bRes = await authFetch(
-                            `${API_BASE}/api/service-cases?${params.toString()}`
-                        );
-                        const bJson = await bRes.json();
-                        if (!bRes.ok || !bJson.success) break;
-                        (bJson.data || []).forEach((r: ServiceCaseRow) => {
-                            if (!seen.has(r.id)) {
-                                seen.add(r.id);
-                                all.push(r);
-                            }
-                        });
-                        bTotalPages = Math.min(bJson.pagination?.totalPages ?? 1, MAX_PAGES);
-                        bp++;
-                    } while (bp <= bTotalPages);
-                } catch {
-                    /* optional: report still works without the backlog cases */
-                }
-            }
 
-            // Cases are counted as Submitted by SUBMISSION date (same as the
-            // dashboard). Older cases (work_date before the range) that were
-            // submitted INSIDE the range are not returned by the work_date
-            // query above, so pull them in here (deduped by id).
-            try {
-                const [sy, sm, sd] = fromDate.split("-").map(Number);
-                const [ey2, em2, ed2] = toDate.split("-").map(Number);
-                const subFromIso = new Date(sy, sm - 1, sd, 0, 0, 0, 0).toISOString();
-                const subToIso = new Date(ey2, em2 - 1, ed2, 23, 59, 59, 999).toISOString();
-                const dayBefore = new Date(sy, sm - 1, sd - 1);
-                const dayBeforeYmd = `${dayBefore.getFullYear()}-${String(
-                    dayBefore.getMonth() + 1
-                ).padStart(2, "0")}-${String(dayBefore.getDate()).padStart(2, "0")}`;
-                const seenSub = new Set(all.map((r) => r.id));
-                let sp = 1;
-                let sTotalPages = 1;
-                do {
-                    const params = new URLSearchParams();
-                    params.set("page", String(sp));
-                    params.set("pageSize", String(PAGE));
-                    params.set("submissionStatus", "SUBMITTED");
-                    params.set("submittedFrom", subFromIso);
-                    params.set("submittedTo", subToIso);
-                    params.set("workDateTo", dayBeforeYmd);
-                    if (productId) params.set("productId", productId);
-                    if (employeeId) params.set("employeeId", employeeId);
-                    if (clientId) params.set("clientId", clientId);
-                    const sRes = await authFetch(
-                        `${API_BASE}/api/service-cases?${params.toString()}`
-                    );
-                    const sJson = await sRes.json();
-                    if (!sRes.ok || !sJson.success) break;
-                    (sJson.data || []).forEach((r: ServiceCaseRow) => {
-                        if (!seenSub.has(r.id)) {
-                            seenSub.add(r.id);
-                            all.push(r);
-                        }
-                    });
-                    sTotalPages = Math.min(sJson.pagination?.totalPages ?? 1, MAX_PAGES);
-                    sp++;
-                } while (sp <= sTotalPages);
-            } catch {
-                /* optional: report still works without these */
-            }
-
-            // ---- Daily-wise extras (do not touch the other views) ----
-            const extras: ServiceCaseRow[] = [];
-            try {
-                const [fy, fm, fd] = fromDate.split("-").map(Number);
-                const [ey, em, ed] = toDate.split("-").map(Number);
-                const fromIso = new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString();
-                const toIso = new Date(ey, em - 1, ed, 23, 59, 59, 999).toISOString();
-                const before = new Date(fy, fm - 1, fd - 1);
-                const beforeYmd = `${before.getFullYear()}-${String(before.getMonth() + 1).padStart(
-                    2,
-                    "0"
-                )}-${String(before.getDate()).padStart(2, "0")}`;
-                const seenIds = new Set(all.map((r) => r.id));
-
-                // (a) older cases allocated inside the range (workDate before it)
-                let bp = 1;
-                let bTotalPages = 1;
-                do {
-                    const params = new URLSearchParams();
-                    params.set("page", String(bp));
-                    params.set("pageSize", String(PAGE));
-                    params.set("workDateTo", beforeYmd);
-                    params.set("allocatedFrom", fromIso);
-                    params.set("allocatedTo", toIso);
-                    if (productId) params.set("productId", productId);
-                    if (employeeId) params.set("employeeId", employeeId);
-                    if (clientId) params.set("clientId", clientId);
-                    const bRes = await authFetch(
-                        `${API_BASE}/api/service-cases?${params.toString()}`
-                    );
-                    const bJson = await bRes.json();
-                    if (!bRes.ok || !bJson.success) break;
-                    (bJson.data || []).forEach((r: ServiceCaseRow) => {
-                        if (!seenIds.has(r.id)) {
-                            seenIds.add(r.id);
-                            extras.push(r);
-                        }
-                    });
-                    bTotalPages = Math.min(bJson.pagination?.totalPages ?? 1, MAX_PAGES);
-                    bp++;
-                } while (bp <= bTotalPages);
-
-                // (b) allocated in the range, not submitted, sent back to the pool
-                const cp = new URLSearchParams();
-                cp.set("allocatedFrom", fromIso);
-                cp.set("allocatedTo", toIso);
-                if (productId) cp.set("productId", productId);
-                if (employeeId) cp.set("employeeId", employeeId);
-                if (clientId) cp.set("clientId", clientId);
-                const cRes = await authFetch(
-                    `${API_BASE}/api/service-cases/carryover-history?${cp.toString()}`
+            // Count-only work (an Employee filter is applied in the cardCounts memo)
+            const countsPromise: Promise<CountRow[]> = safeList(async () => {
+                const p = new URLSearchParams();
+                p.set("workDate", toDate);
+                p.set("workDateFrom", fromDate);
+                p.set("includeDone", "true");
+                if (productId) p.set("productId", productId);
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/count-allocations?${p.toString()}`
                 );
-                const cJson = await cRes.json();
-                if (cRes.ok && cJson.success) {
-                    (cJson.data || []).forEach((r: any) => {
-                        extras.push({
-                            id: String(r.id),
-                            caseNumber: r.caseNumber || "-",
-                            productId: r.productId != null ? String(r.productId) : "",
-                            productName: r.productName ?? null,
-                            clientId: r.clientId != null ? String(r.clientId) : null,
-                            clientName: r.clientName ?? null,
-                            subclientName: r.subclientName ?? null,
-                            workDate: r.workDate || localYmd(r.allocatedAt),
-                            assignedEmployeeId: r.employeeId != null ? String(r.employeeId) : null,
-                            assignedEmployeeName: r.employeeName ?? null,
-                            allocatedByName: null,
-                            allocationStatus: "ALLOCATED",
-                            quantity: null,
-                            amount: null,
-                            submissionStatus: "PENDING",
-                            submissionType: null,
-                            queryText: null,
-                            submittedAt: null,
-                            allocatedAt: r.allocatedAt ?? null,
-                        });
-                    });
-                }
-            } catch {
-                /* optional: Daily-wise still works without the extras */
-            }
+                const json = await res.json();
+                return res.ok && json.success ? json.data || [] : [];
+            });
 
-            // Count units handed out in the range and returned to the pool
-            // (Past Allocation "Returned to pool") — Daily-wise only.
-            const countExtras: CountRow[] = [];
-            try {
-                const [fy, fm, fd] = fromDate.split("-").map(Number);
-                const [ey, em, ed] = toDate.split("-").map(Number);
-                const cp = new URLSearchParams();
-                cp.set("allocatedFrom", new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString());
-                cp.set("allocatedTo", new Date(ey, em - 1, ed, 23, 59, 59, 999).toISOString());
-                if (productId) cp.set("productId", productId);
-                if (employeeId) cp.set("employeeId", employeeId);
-                if (clientId) cp.set("clientId", clientId);
-                const ccRes = await authFetch(
-                    `${API_BASE}/api/service-cases/count-carryover-history?${cp.toString()}`
-                );
-                const ccJson = await ccRes.json();
-                if (ccRes.ok && ccJson.success) {
-                    (ccJson.data || []).forEach((r: any) => {
-                        const qty = Number(r.returnedQuantity) || 0;
-                        if (qty <= 0) return;
-                        countExtras.push({
-                            id: String(r.id),
-                            productId: r.productId != null ? String(r.productId) : "",
-                            productName: r.productName ?? null,
-                            clientName: r.clientName ?? null,
-                            subclientName: r.subclientName ?? null,
-                            // sits on the day it was handed out
-                            workDate: localYmd(r.allocatedAt) || r.workDate,
-                            quantity: qty,
-                            fulfilledCount: 0,
-                            pendingCount: qty,
-                            allocatedTotal: qty,
-                            allocations: [
-                                {
-                                    employeeId: r.employeeId != null ? String(r.employeeId) : null,
-                                    employeeName: r.employeeName ?? null,
-                                    quantity: qty,
-                                    fulfilledQuantity: 0,
-                                    allocatedAt: r.allocatedAt ?? null,
-                                },
-                            ],
-                        } as CountRow);
-                    });
-                }
-            } catch {
-                /* optional: Daily-wise still works without these */
-            }
+            // Older (backlog) cases allocated TODAY keep their old work_date, so
+            // the date-range query never returns them (only when range has today).
+            const backlogPromise: Promise<ServiceCaseRow[]> =
+                fromDate <= todayYmd && toDate >= todayYmd
+                    ? safeList(() =>
+                          fetchEveryPage({
+                              workDateTo: dayBeforeYmd(todayYmd),
+                              allocatedFrom: dayStartIso(todayYmd),
+                              allocatedTo: dayEndIso(todayYmd),
+                          })
+                      )
+                    : Promise.resolve([]);
 
-            const counts = await countsPromise;
+            // Older cases (work_date before the range) SUBMITTED inside the range
+            const submittedPromise: Promise<ServiceCaseRow[]> = safeList(() =>
+                fetchEveryPage({
+                    submissionStatus: "SUBMITTED",
+                    submittedFrom: dayStartIso(fromDate),
+                    submittedTo: dayEndIso(toDate),
+                    workDateTo: dayBeforeYmd(fromDate),
+                })
+            );
+
+            const [main, backlog, submitted, counts] = await Promise.all([
+                fetchEveryPage({ workDateFrom: fromDate, workDateTo: toDate }),
+                backlogPromise,
+                submittedPromise,
+                countsPromise,
+            ]);
             if (isStale()) return;
+
+            // merge in the same order as before, deduped by id
+            const all: ServiceCaseRow[] = [...main];
+            const seen = new Set(all.map((r) => r.id));
+            [...backlog, ...submitted].forEach((r) => {
+                if (!seen.has(r.id)) {
+                    seen.add(r.id);
+                    all.push(r);
+                }
+            });
+
             setCardCases(all);
-            setDailyExtra(extras);
             setRawCardCounts(counts);
-            setDailyCountExtras(countExtras);
         } catch (err: any) {
             if (isStale()) return;
             console.error("Failed to load client cards:", err);
             setError(err?.message || "Failed to load production report.");
             setCardCases([]);
-            setDailyExtra([]);
             setRawCardCounts([]);
-            setDailyCountExtras([]);
         } finally {
             if (!isStale()) setCardsLoading(false);
         }
-    }, [productId, fromDate, toDate, employeeId, clientId]);
+    }, [productId, fromDate, toDate, employeeId, clientId, fetchEveryPage]);
+
+    // ---- Daily-wise extras: fetched ONLY while the Daily-wise view is
+    // showing, in parallel with (not after) the cards above. ----
+    const fetchDailyExtras = useCallback(async () => {
+        const seq = ++extrasSeq.current;
+        const isStale = () => seq !== extrasSeq.current;
+        setExtrasLoading(true);
+        try {
+            const filterParams = (cp: URLSearchParams) => {
+                if (productId) cp.set("productId", productId);
+                if (employeeId) cp.set("employeeId", employeeId);
+                if (clientId) cp.set("clientId", clientId);
+            };
+
+            // (a) older cases allocated inside the range (workDate before it)
+            const olderPromise = safeList(() =>
+                fetchEveryPage({
+                    workDateTo: dayBeforeYmd(fromDate),
+                    allocatedFrom: dayStartIso(fromDate),
+                    allocatedTo: dayEndIso(toDate),
+                })
+            );
+
+            // (b) allocated in the range, not submitted, sent back to the pool
+            const carryPromise = safeList<ServiceCaseRow>(async () => {
+                const cp = new URLSearchParams();
+                cp.set("allocatedFrom", dayStartIso(fromDate));
+                cp.set("allocatedTo", dayEndIso(toDate));
+                filterParams(cp);
+                const cRes = await authFetch(
+                    `${API_BASE}/api/service-cases/carryover-history?${cp.toString()}`
+                );
+                const cJson = await cRes.json();
+                if (!(cRes.ok && cJson.success)) return [];
+                return (cJson.data || []).map((r: any): ServiceCaseRow => ({
+                    id: String(r.id),
+                    caseNumber: r.caseNumber || "-",
+                    productId: r.productId != null ? String(r.productId) : "",
+                    productName: r.productName ?? null,
+                    clientId: r.clientId != null ? String(r.clientId) : null,
+                    clientName: r.clientName ?? null,
+                    subclientName: r.subclientName ?? null,
+                    workDate: r.workDate || localYmd(r.allocatedAt),
+                    assignedEmployeeId: r.employeeId != null ? String(r.employeeId) : null,
+                    assignedEmployeeName: r.employeeName ?? null,
+                    allocatedByName: null,
+                    allocationStatus: "ALLOCATED",
+                    quantity: null,
+                    amount: null,
+                    submissionStatus: "PENDING",
+                    submissionType: null,
+                    queryText: null,
+                    submittedAt: null,
+                    allocatedAt: r.allocatedAt ?? null,
+                }));
+            });
+
+            // Count units handed out in the range and returned to the pool
+            const countExtrasPromise = safeList<CountRow>(async () => {
+                const cp = new URLSearchParams();
+                cp.set("allocatedFrom", dayStartIso(fromDate));
+                cp.set("allocatedTo", dayEndIso(toDate));
+                filterParams(cp);
+                const ccRes = await authFetch(
+                    `${API_BASE}/api/service-cases/count-carryover-history?${cp.toString()}`
+                );
+                const ccJson = await ccRes.json();
+                if (!(ccRes.ok && ccJson.success)) return [];
+                const out: CountRow[] = [];
+                (ccJson.data || []).forEach((r: any) => {
+                    const qty = Number(r.returnedQuantity) || 0;
+                    if (qty <= 0) return;
+                    out.push({
+                        id: String(r.id),
+                        productId: r.productId != null ? String(r.productId) : "",
+                        productName: r.productName ?? null,
+                        clientName: r.clientName ?? null,
+                        subclientName: r.subclientName ?? null,
+                        // sits on the day it was handed out
+                        workDate: localYmd(r.allocatedAt) || r.workDate,
+                        quantity: qty,
+                        fulfilledCount: 0,
+                        pendingCount: qty,
+                        allocatedTotal: qty,
+                        allocations: [
+                            {
+                                employeeId: r.employeeId != null ? String(r.employeeId) : null,
+                                employeeName: r.employeeName ?? null,
+                                quantity: qty,
+                                fulfilledQuantity: 0,
+                                allocatedAt: r.allocatedAt ?? null,
+                            },
+                        ],
+                    } as CountRow);
+                });
+                return out;
+            });
+
+            const [older, carry, countExtras] = await Promise.all([
+                olderPromise,
+                carryPromise,
+                countExtrasPromise,
+            ]);
+            if (isStale()) return;
+            setDailyOlder(older);
+            setDailyCarry(carry);
+            setDailyCountExtras(countExtras);
+        } finally {
+            if (!isStale()) setExtrasLoading(false);
+        }
+    }, [productId, fromDate, toDate, employeeId, clientId, fetchEveryPage]);
+
+    useEffect(() => {
+        if (effectiveView !== "daily") {
+            extrasSeq.current++; // drop any in-flight extras
+            setExtrasLoading(false);
+            return;
+        }
+        fetchDailyExtras();
+    }, [effectiveView, fetchDailyExtras]);
 
     // Client-name + from-date filter on count rows, done here (not in the
     // fetch) so loading the clients dropdown doesn't trigger a refetch.
@@ -898,10 +861,11 @@ export default function ProductionReport() {
     //   today    = ONLY cases whose date is today (never the total)
     //   mins     = time (cases allocated x service AMP) — used by employee view
     // Daily-wise also counts the extras above; every other view is unchanged.
-    const casesForView = useMemo(
-        () => (effectiveView === "daily" ? [...cardCases, ...dailyExtra] : cardCases),
-        [effectiveView, cardCases, dailyExtra]
-    );
+    const casesForView = useMemo(() => {
+        if (effectiveView !== "daily") return cardCases;
+        const ids = new Set(cardCases.map((r) => r.id));
+        return [...cardCases, ...dailyOlder.filter((r) => !ids.has(r.id)), ...dailyCarry];
+    }, [effectiveView, cardCases, dailyOlder, dailyCarry]);
 
     // Daily-wise also counts the returned-to-pool units above.
     const countsForView = useMemo(
@@ -1243,7 +1207,7 @@ export default function ProductionReport() {
     // by Status / Submission / Search just like the on-screen table. It no
     // longer depends on which card is open.
     const handleExportExcel = () => {
-        if (cardsLoading) {
+        if (cardsLoading || extrasLoading) {
             showToast("Report is still loading — try again in a moment.");
             return;
         }
