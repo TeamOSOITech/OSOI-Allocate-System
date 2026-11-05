@@ -4815,9 +4815,8 @@ async function listMyMissedCases(req, res) {
 // shown on the first login of the next day (Profile page).
 //
 // WHO SEES WHAT
-//   The caller's DIRECT REPORTEES (user_master."Reporting Manager" = the
-//   caller's email) PLUS THE CALLER THEMSELVES. A user with no reportees
-//   gets isManager:false and an empty list (the popup then never shows).
+//   SUPER_ADMIN, OPS_MANAGER -> everyone in the organization (scope "ORG")
+//   everyone else            -> only their own missed work (scope "SELF")
 //
 // WHAT COUNTS AS "NOT SUBMITTED"
 //   Anything allocated to one of those people YESTERDAY (APP_TIMEZONE)
@@ -4829,40 +4828,27 @@ async function listMyMissedCases(req, res) {
 // ------------------------------------------------------------
 async function listTeamMissedYesterday(req, res) {
   try {
-    const { userId, organizationId } = req.user;
+    const { userId, organizationId, role } = req.user;
     const {
       ensureRollover: ensureRolloverFn,
       startOfTodayISO,
     } = require("./caseRollover");
 
-    const norm = (v) => (v || "").toString().trim().toLowerCase();
-
-    const { data: people, error: pErr } = await supabase
-      .from("user_master")
-      .select('"Auth User Id", "Email", "Reporting Manager"')
-      .eq("organization_id", organizationId);
-    if (pErr) throw pErr;
-
-    const me = (people || []).find((p) => p["Auth User Id"] === userId);
-    const myEmail = norm(me?.["Email"]);
-    const reportees = (people || []).filter(
-      (p) =>
-        p["Auth User Id"] !== userId &&
-        myEmail &&
-        norm(p["Reporting Manager"]) === myEmail,
-    );
+    // Who sees what:
+    //   ORG  (Super Admin, Ops Manager) -> everyone in the organization
+    //   SELF (everyone else: Team Member, Vertical Head, Process Lead,
+    //         Audit Manager, ...)       -> only their OWN missed work
+    const scope = WHOLE_ORG_ROLES.includes(role) ? "ORG" : "SELF";
+    const teamIds = scope === "ORG" ? null : [userId]; // null = whole org
 
     const empty = {
-      isManager: reportees.length > 0,
+      scope,
+      // kept for older clients: "manager view" = anything wider than SELF
+      isManager: scope !== "SELF",
       forDate: null,
       totalPending: 0,
       members: [],
     };
-    if (reportees.length === 0) {
-      return res.json({ success: true, data: empty });
-    }
-
-    const teamIds = [userId, ...reportees.map((p) => p["Auth User Id"])];
 
     // make sure day-end leftovers are already in the logs
     await ensureRolloverFn(organizationId);
@@ -4873,27 +4859,25 @@ async function listTeamMissedYesterday(req, res) {
       new Date(new Date(todayStart).getTime() - 60 * 60 * 1000),
     );
 
+    const logQuery = (table, cols) => {
+      let q = supabase
+        .from(table)
+        .select(cols)
+        .eq("organization_id", String(organizationId))
+        .gte("allocated_at", yesterdayStart)
+        .lt("allocated_at", todayStart);
+      if (teamIds) q = q.in("employee_id", teamIds.map(String));
+      return q.limit(5000);
+    };
     const [casesRes, countsRes] = await Promise.all([
-      supabase
-        .from("case_carryover_log")
-        .select(
-          "id, case_id, case_number, product_id, client_id, subclient_id, employee_id, allocated_at",
-        )
-        .eq("organization_id", String(organizationId))
-        .in("employee_id", teamIds.map(String))
-        .gte("allocated_at", yesterdayStart)
-        .lt("allocated_at", todayStart)
-        .limit(5000),
-      supabase
-        .from("case_count_carryover_log")
-        .select(
-          "id, count_id, product_id, client_id, subclient_id, employee_id, allocated_at, returned_quantity",
-        )
-        .eq("organization_id", String(organizationId))
-        .in("employee_id", teamIds.map(String))
-        .gte("allocated_at", yesterdayStart)
-        .lt("allocated_at", todayStart)
-        .limit(5000),
+      logQuery(
+        "case_carryover_log",
+        "id, case_id, case_number, product_id, client_id, subclient_id, employee_id, allocated_at",
+      ),
+      logQuery(
+        "case_count_carryover_log",
+        "id, count_id, product_id, client_id, subclient_id, employee_id, allocated_at, returned_quantity",
+      ),
     ]);
     if (casesRes.error) throw casesRes.error;
     if (countsRes.error) throw countsRes.error;
@@ -4921,7 +4905,10 @@ async function listTeamMissedYesterday(req, res) {
         all.map((r) => r.subclient_id),
         organizationId,
       ),
-      getEmployeeNameMap(teamIds, organizationId),
+      getEmployeeNameMap(
+        teamIds || [...new Set(all.map((r) => String(r.employee_id)))],
+        organizationId,
+      ),
     ]);
 
     const byEmp = new Map();
@@ -4989,7 +4976,8 @@ async function listTeamMissedYesterday(req, res) {
     res.json({
       success: true,
       data: {
-        isManager: true,
+        scope,
+        isManager: scope !== "SELF",
         forDate: yesterdayStart,
         totalPending: members.reduce((s, m) => s + m.total, 0),
         members,
