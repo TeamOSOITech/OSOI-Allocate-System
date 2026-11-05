@@ -43,6 +43,26 @@ function clean(value, max) {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Organisation emails only — same rule as Add User (personal / free providers
+// are blocked). Enforced here too, so calling the API directly can't bypass it.
+const BLOCKED_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.in",
+  "yahoo.co.in",
+  "ymail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "rediffmail.com",
+  "icloud.com",
+  "aol.com",
+  "protonmail.com",
+  "proton.me",
+  "msn.com",
+]);
 const PHONE_RE = /^[0-9+\-() ]{7,20}$/;
 const SOURCE_RE = /^[a-z0-9_-]{1,50}$/i;
 
@@ -71,6 +91,13 @@ router.post("/demo-request", demoLimiter, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Please enter a valid email address.",
+      });
+    }
+    if (BLOCKED_EMAIL_DOMAINS.has(email.split("@")[1])) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please use your organisation email (e.g. name@yourcompany.com). Gmail, Yahoo, Outlook etc. are not allowed.",
       });
     }
     if (!organizationName || organizationName.length < 2) {
