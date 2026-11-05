@@ -7747,6 +7747,8 @@ type MissedMember = {
     items: MissedItem[];
 };
 type MissedData = {
+    // ORG = whole organization (Global Admin / Ops Manager), SELF = only my own work
+    scope?: "ORG" | "SELF";
     isManager: boolean;
     forDate: string | null;
     totalPending: number;
@@ -7793,7 +7795,8 @@ function MissedSubmissionPopup({
                 if (cancelled || !res.ok || !json.success) return;
                 const d: MissedData = json.data;
                 setData(d);
-                if (d.isManager && d.totalPending > 0 && !missedAlreadyShownToday(userKey)) {
+                // everyone gets it: managers see their team, employees see their own
+                if (d.totalPending > 0 && !missedAlreadyShownToday(userKey)) {
                     missedRecordShown(userKey);
                     setShowSummary(true);
                 }
@@ -7806,7 +7809,10 @@ function MissedSubmissionPopup({
         };
     }, [enabled, userKey]);
 
-    if (!enabled || !data || !data.isManager || data.totalPending === 0) return null;
+    if (!enabled || !data || data.totalPending === 0) return null;
+
+    // SELF = a normal employee looking at their own missed work
+    const isSelf = data.scope === "SELF" || (!data.scope && !data.isManager);
 
     const people = data.members.length;
     const youIncluded = data.members.some((m) => m.isMe);
@@ -7842,7 +7848,9 @@ function MissedSubmissionPopup({
                         boxShadow: "0 8px 22px rgba(0,0,0,.22)",
                     }}
                 >
-                    Not submitted yesterday · {data.totalPending}
+                    {isSelf
+                        ? `Unsubmitted work · ${data.totalPending}`
+                        : `Not submitted yesterday · ${data.totalPending}`}
                 </button>
             )}
 
@@ -7868,13 +7876,28 @@ function MissedSubmissionPopup({
                     >
                         <div>
                             <div style={{ fontWeight: 700, fontSize: 15, color: "#17181C" }}>
-                                ⚠ Yesterday some people didn't submit their work
+                                {isSelf
+                                    ? "⚠ Action required: yesterday's work was not submitted"
+                                    : "⚠ Pending submissions from yesterday"}
                             </div>
                             <div style={{ fontSize: 13, color: "#5B6479", marginTop: 4 }}>
-                                {data.totalPending} pending{" "}
-                                {data.totalPending === 1 ? "item" : "items"} from {people}{" "}
-                                {people === 1 ? "person" : "people"} on {yesterdayLabel}
-                                {youIncluded ? " (including yours)" : ""}.
+                                {isSelf ? (
+                                    <>
+                                        You had {data.totalPending} pending{" "}
+                                        {data.totalPending === 1 ? "item" : "items"} on{" "}
+                                        {yesterdayLabel} that{" "}
+                                        {data.totalPending === 1 ? "was" : "were"} not submitted.
+                                    </>
+                                ) : (
+                                    <>
+                                        {data.totalPending} allocated{" "}
+                                        {data.totalPending === 1 ? "item" : "items"} from {people}{" "}
+                                        {people === 1 ? "team member" : "team members"} on{" "}
+                                        {yesterdayLabel} {data.totalPending === 1 ? "was" : "were"}{" "}
+                                        not submitted
+                                        {youIncluded ? " (including yours)" : ""}.
+                                    </>
+                                )}
                             </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -7930,11 +7953,17 @@ function MissedSubmissionPopup({
                         >
                             <div>
                                 <div style={{ fontWeight: 700, fontSize: 16, color: "#17181C" }}>
-                                    Not submitted · {yesterdayLabel}
+                                    {isSelf ? "Your unsubmitted work" : "Not submitted"} ·{" "}
+                                    {yesterdayLabel}
                                 </div>
                                 <div style={{ fontSize: 12.5, color: "#5B6479" }}>
-                                    {data.totalPending} pending · {people}{" "}
-                                    {people === 1 ? "person" : "people"}
+                                    {isSelf
+                                        ? `${data.totalPending} ${
+                                              data.totalPending === 1 ? "item" : "items"
+                                          } not submitted`
+                                        : `${data.totalPending} pending · ${people} ${
+                                              people === 1 ? "person" : "people"
+                                          }`}
                                 </div>
                             </div>
                             <button
@@ -7948,7 +7977,8 @@ function MissedSubmissionPopup({
 
                         <div style={{ overflowY: "auto", padding: "12px 20px 20px" }}>
                             {data.members.map((m) => {
-                                const isOpen = openEmp === m.employeeId;
+                                // an employee only has their own row: keep it open
+                                const isOpen = isSelf || openEmp === m.employeeId;
                                 const parts = [
                                     m.caseCount > 0
                                         ? `${m.caseCount} ${m.caseCount === 1 ? "case" : "cases"}`
@@ -7996,9 +8026,11 @@ function MissedSubmissionPopup({
                                             <span style={{ fontSize: 12.5, color: "#5B6479" }}>
                                                 {parts.join(" · ")} not submitted
                                             </span>
-                                            <span style={{ color: "#8A92A6", fontSize: 12 }}>
-                                                {isOpen ? "▴" : "▾"}
-                                            </span>
+                                            {!isSelf && (
+                                                <span style={{ color: "#8A92A6", fontSize: 12 }}>
+                                                    {isOpen ? "▴" : "▾"}
+                                                </span>
+                                            )}
                                         </button>
 
                                         {isOpen && (
