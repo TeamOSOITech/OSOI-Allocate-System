@@ -5,6 +5,31 @@ import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/authFetch";
 import { getCurrentUser } from "../../utils/auth";
 
+// Book a Demo accepts ONLY organisation emails. Same rule as Add User
+// (personal / free providers are blocked), plus the common regional variants.
+const BLOCKED_EMAIL_DOMAINS = [
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.in",
+    "yahoo.co.in",
+    "ymail.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "rediffmail.com",
+    "icloud.com",
+    "aol.com",
+    "protonmail.com",
+    "proton.me",
+    "msn.com",
+];
+const isOrgEmail = (email: string) => {
+    const v = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return false;
+    return !BLOCKED_EMAIL_DOMAINS.includes(v.split("@")[1]);
+};
+
 // Public marketing/landing page — this is now what "/" shows before
 // login, per the reference design. The "Existing User? Login Here"
 // panel at the bottom is a REAL, working login form (calls the same
@@ -1133,6 +1158,12 @@ const Landing = () => {
         }
         if (!demoEmail || !/\S+@\S+\.\S+/.test(demoEmail)) {
             setDemoError("Enter a valid email address.");
+            return;
+        }
+        if (!isOrgEmail(demoEmail)) {
+            setDemoError(
+                "Please use your organisation email (e.g. name@yourcompany.com). Gmail, Yahoo, Outlook etc. are not allowed."
+            );
             return;
         }
         setDemoLoading(true);
@@ -3864,7 +3895,7 @@ const Landing = () => {
                                     <div className="lp-demo-field">
                                         <input
                                             type="email"
-                                            placeholder="Email"
+                                            placeholder="Organisation email"
                                             value={demoEmail}
                                             onChange={(e) => setDemoEmail(e.target.value)}
                                             className="lp-login-input"
