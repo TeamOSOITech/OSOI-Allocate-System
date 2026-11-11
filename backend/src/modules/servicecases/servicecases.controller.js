@@ -2460,7 +2460,14 @@ async function autoAllocateServiceCases(req, res) {
     // first, so they are part of this allocation.
     await ensureRollover(req.user.organizationId);
 
-    const { data: pendingCases, error } = await supabase
+    // FIX: month-wise — the Cases tab only shows cases from workDateFrom
+    // (start of the month). Without this lower bound, older-month PENDING
+    // cases were silently picked up here, used up everyone's 10h capacity
+    // and left nothing for the count entries.
+    const workDateFrom = /^\d{4}-\d{2}-\d{2}$/.test(req.body.workDateFrom || "")
+      ? req.body.workDateFrom
+      : null;
+    let pendingQuery = supabase
       .from("service_cases")
       .select("id, case_number, sequence_number")
       .eq("organization_id", req.user.organizationId)
@@ -2468,8 +2475,13 @@ async function autoAllocateServiceCases(req, res) {
       // lte() carries unallocated backlog forward, matching the Cases
       // tab's list view (includeBacklog).
       .lte("work_date", workDate)
-      .eq("allocation_status", "PENDING")
-      .order("sequence_number", { ascending: true });
+      .eq("allocation_status", "PENDING");
+    if (workDateFrom)
+      pendingQuery = pendingQuery.gte("work_date", workDateFrom);
+    const { data: pendingCases, error } = await pendingQuery.order(
+      "sequence_number",
+      { ascending: true },
+    );
     if (error) throw error;
 
     if (!pendingCases || pendingCases.length === 0) {

@@ -183,9 +183,15 @@ async function autoPreviewCountAllocations(req, res) {
         message: "Everyone selected is on leave - nobody to allocate to.",
       });
     }
-    const rows = (await loadCounts(orgId, { productId, workDate })).filter(
-      (c) => c.unallocated > 0,
-    );
+    // FIX: month-wise — only count rows from workDateFrom (start of the
+    // month, same as the page shows). Older-month rows used to soak up the
+    // preview units, the page then hid them and the boxes stayed at 0.
+    const workDateFrom = /^\d{4}-\d{2}-\d{2}$/.test(req.body.workDateFrom || "")
+      ? req.body.workDateFrom
+      : null;
+    const rows = (
+      await loadCounts(orgId, { productId, workDate, workDateFrom })
+    ).filter((c) => c.unallocated > 0);
     const load = await getRecentLoad(orgId, productId, workDate, employeeIds);
     const extra = req.body.extraLoad || {};
     employeeIds.forEach((id) => {
