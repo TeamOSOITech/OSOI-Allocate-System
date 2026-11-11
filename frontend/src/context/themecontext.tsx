@@ -23,14 +23,14 @@ type ThemePalette = {
 // keeps working unchanged — only the color values move.
 export const THEMES: Record<ThemeName, ThemePalette> = {
     default: { label: "Default", blue: "#204297", lightBlue: "#08A1CE", green: "#2EBBA8" },
-    purple: { label: "Purple", blue: "#5B21B6", lightBlue: "#8B5CF6", green: "#A78BFA" },
+    purple: { label: "Mauve", blue: "#7C3AED", lightBlue: "#A78BFA", green: "#C4B5FD" },
     brown: { label: "Brown", blue: "#5D4037", lightBlue: "#8D6E63", green: "#BCAAA4" },
     red: { label: "Red", blue: "#B91C1C", lightBlue: "#EF4444", green: "#F87171" },
-    yellow: { label: "Yellow", blue: "#B45309", lightBlue: "#F59E0B", green: "#FBBF24" },
-    pink: { label: "Pink", blue: "#BE185D", lightBlue: "#EC4899", green: "#F472B6" },
-    green: { label: "Green", blue: "#15803D", lightBlue: "#22C55E", green: "#86EFAC" },
-    orange: { label: "Orange", blue: "#C2410C", lightBlue: "#F97316", green: "#FDBA74" },
-    white: { label: "White", blue: "#E5E7EB", lightBlue: "#F3F4F6", green: "#FFFFFF" },
+    yellow: { label: "Amber", blue: "#B45309", lightBlue: "#F59E0B", green: "#FBBF24" },
+    pink: { label: "Raspberry", blue: "#A00062", lightBlue: "#C8107A", green: "#F859A9" },
+    green: { label: "Deep Teal", blue: "#115E59", lightBlue: "#14B8A6", green: "#5EEAD4" },
+    orange: { label: "Sand", blue: "#92400E", lightBlue: "#FBBF24", green: "#E0A458" },
+    white: { label: "Blue Gray", blue: "#334155", lightBlue: "#94A3B8", green: "#CBD5E1" },
 };
 
 const STORAGE_KEY_THEME = "app_theme_color";

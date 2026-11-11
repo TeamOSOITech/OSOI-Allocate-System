@@ -1521,95 +1521,101 @@ export default function TodaysAllocationCases({
             let casePreviewed = 0;
             let countPreviewed = 0;
 
-            // A) cases with case numbers (preview only)
-            try {
-                const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        productId,
-                        workDate,
-                        employeeIds: presentIds,
-                        // FIX: only this month's cases (same as the Cases tab),
-                        // so hidden older-month cases don't eat the 10h capacity
-                        workDateFrom: monthStart,
-                        // NEW (10h DAILY LIMIT)
-                        remainingMinutes,
-                        ampMinutes: amp,
-                    }),
-                });
-                const json = await res.json();
-                if (res.ok && json.success) {
-                    setAutoResult(json.data);
-                    (json.data?.perEmployee || []).forEach((p: any) => {
-                        extraLoad[p.employeeId] = p.caseCount || 0;
-                        // NEW (10h DAILY LIMIT): what the cases just used up of the
-                        // day is not available to the count-only preview any more
-                        remainingMinutes[p.employeeId] =
-                            (remainingMinutes[p.employeeId] ?? MAX_ALLOC_MINUTES) -
-                            (p.caseCount || 0) * amp;
+            // A) cases with case numbers (preview only) — only when the
+            // Cases tab is selected
+            if (view === "cases")
+                try {
+                    const res = await authFetch(`${API_BASE}/api/service-cases/auto-allocate`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            productId,
+                            workDate,
+                            employeeIds: presentIds,
+                            // FIX: only this month's cases (same as the Cases tab),
+                            // so hidden older-month cases don't eat the 10h capacity
+                            workDateFrom: monthStart,
+                            // NEW (10h DAILY LIMIT)
+                            remainingMinutes,
+                            ampMinutes: amp,
+                        }),
                     });
-                    const assignments: { caseId: string; employeeId: string }[] =
-                        json.data?.assignments || [];
-                    setPendingSelection((prev) => {
+                    const json = await res.json();
+                    if (res.ok && json.success) {
+                        setAutoResult(json.data);
+                        (json.data?.perEmployee || []).forEach((p: any) => {
+                            extraLoad[p.employeeId] = p.caseCount || 0;
+                            // NEW (10h DAILY LIMIT): what the cases just used up of the
+                            // day is not available to the count-only preview any more
+                            remainingMinutes[p.employeeId] =
+                                (remainingMinutes[p.employeeId] ?? MAX_ALLOC_MINUTES) -
+                                (p.caseCount || 0) * amp;
+                        });
+                        const assignments: { caseId: string; employeeId: string }[] =
+                            json.data?.assignments || [];
+                        setPendingSelection((prev) => {
+                            const next = { ...prev };
+                            assignments.forEach((a) => {
+                                next[a.caseId] = a.employeeId;
+                            });
+                            return next;
+                        });
+                        setAutoPreviewCaseIds(assignments.map((a) => a.caseId));
+                        casePreviewed = assignments.length;
+                        casesMsg = json.message || "";
+                    } else {
+                        throw new Error(json?.message || "Auto allocation failed");
+                    }
+                } catch (e) {
+                    throw e;
+                }
+
+            // B) count-only entries (preview only) — only when the Counts
+            // tab is selected
+            if (view === "counts") {
+                const cRes = await authFetch(
+                    `${API_BASE}/api/service-cases/count-allocations/auto-preview`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            productId,
+                            workDate,
+                            employeeIds: presentIds,
+                            // FIX: same month filter as the Counts list
+                            workDateFrom: monthStart,
+                            extraLoad,
+                            // NEW (10h DAILY LIMIT)
+                            remainingMinutes,
+                            ampMinutes: amp,
+                        }),
+                    }
+                );
+                const cJson = await cRes.json();
+                if (cRes.ok && cJson.success) {
+                    // only rows of the current month are on screen — ignore any
+                    // preview row for an older month's count entry
+                    const shownCountIds = new Set(countRows.map((c) => c.id));
+                    const assignments: { countId: string; employeeId: string; quantity: number }[] =
+                        (cJson.data?.assignments || []).filter((a: any) =>
+                            shownCountIds.has(a.countId)
+                        );
+                    setCountDraft((prev) => {
                         const next = { ...prev };
                         assignments.forEach((a) => {
-                            next[a.caseId] = a.employeeId;
+                            next[a.countId] = {
+                                ...(next[a.countId] || {}),
+                                [a.employeeId]: a.quantity,
+                            };
                         });
                         return next;
                     });
-                    setAutoPreviewCaseIds(assignments.map((a) => a.caseId));
-                    casePreviewed = assignments.length;
-                    casesMsg = json.message || "";
-                } else if (countRows.length === 0) {
-                    throw new Error(json?.message || "Auto allocation failed");
-                }
-            } catch (e) {
-                if (countRows.length === 0) throw e;
-            }
-
-            // B) count-only entries (preview only) — fills the quantity boxes
-            const cRes = await authFetch(
-                `${API_BASE}/api/service-cases/count-allocations/auto-preview`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        productId,
-                        workDate,
-                        employeeIds: presentIds,
-                        // FIX: same month filter as the Counts list
-                        workDateFrom: monthStart,
-                        extraLoad,
-                        // NEW (10h DAILY LIMIT)
-                        remainingMinutes,
-                        ampMinutes: amp,
-                    }),
-                }
-            );
-            const cJson = await cRes.json();
-            if (cRes.ok && cJson.success) {
-                // only rows of the current month are on screen — ignore any
-                // preview row for an older month's count entry
-                const shownCountIds = new Set(countRows.map((c) => c.id));
-                const assignments: { countId: string; employeeId: string; quantity: number }[] = (
-                    cJson.data?.assignments || []
-                ).filter((a: any) => shownCountIds.has(a.countId));
-                setCountDraft((prev) => {
-                    const next = { ...prev };
-                    assignments.forEach((a) => {
-                        next[a.countId] = {
-                            ...(next[a.countId] || {}),
-                            [a.employeeId]: a.quantity,
-                        };
+                    setCountAutoResult({
+                        allocatedCount: cJson.data?.allocatedCount || 0,
+                        perEmployee: cJson.data?.perEmployee || [],
                     });
-                    return next;
-                });
-                setCountAutoResult({
-                    allocatedCount: cJson.data?.allocatedCount || 0,
-                    perEmployee: cJson.data?.perEmployee || [],
-                });
-                countPreviewed = cJson.data?.allocatedCount || 0;
+                    countPreviewed = cJson.data?.allocatedCount || 0;
+                }
             }
 
             if (casePreviewed === 0 && countPreviewed === 0) {
