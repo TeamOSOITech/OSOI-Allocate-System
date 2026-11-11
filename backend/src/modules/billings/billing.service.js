@@ -212,7 +212,19 @@ const verifyWebhookSignature = (rawBody, signature) => {
 // notes are just metadata Razorpay stores verbatim (trustworthy only
 // because *we* set them at order-creation time) while amount is the
 // actual charged figure Razorpay enforces.
-const verifyOrderMatchesPlan = async (orderId, claimedPlanKey) => {
+//
+// FLOW SEPARATION (replay hardening): the order's own notes (stamped by OUR
+// createOrder, so trustworthy) also decide WHICH flow a payment may be used
+// in, so one payment can never be spent twice across the two flows:
+//   - in-app UPGRADE (pass { organizationId }): the order must have been
+//     created by upgrade/create-order for THIS organization
+//     (notes.upgrade === "true" and notes.organization_id matches);
+//   - pre-signup (no options): the order must NOT be an upgrade order.
+const verifyOrderMatchesPlan = async (
+  orderId,
+  claimedPlanKey,
+  { organizationId } = {},
+) => {
   const expectedConfig = PLAN_CONFIG[claimedPlanKey];
   if (!expectedConfig) return false;
 
@@ -223,6 +235,16 @@ const verifyOrderMatchesPlan = async (orderId, claimedPlanKey) => {
   if (orderPlan !== claimedPlanKey) return false;
 
   if (Number(order.amount) !== Number(expectedConfig.amount)) return false;
+
+  const notes = order.notes || {};
+  if (organizationId !== undefined && organizationId !== null) {
+    if (String(notes.upgrade) !== "true") return false;
+    if (String(notes.organization_id || "") !== String(organizationId)) {
+      return false;
+    }
+  } else if (String(notes.upgrade) === "true" || notes.organization_id) {
+    return false;
+  }
 
   return true;
 };

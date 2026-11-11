@@ -16,6 +16,9 @@ const {
 
 const SIGNUP_TOKEN_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
+// Postgres unique_violation - "this payment id is already recorded".
+const isUniqueViolation = (error) => error?.code === "23505";
+
 const generateSignupRecord = ({ email, plan, orderId, paymentId }) => ({
   email,
   plan,
@@ -183,15 +186,45 @@ const verifyPaymentHandler = async (req, res) => {
       paymentId,
     });
 
-    const { error } = await supabase
+    // SECURITY (replay): INSERT only, never upsert. An upsert used to
+    // overwrite an already-used row with a fresh token and used=false, so the
+    // same paid payment could be replayed to create unlimited tenants.
+    const { error } = await supabase.from("payment_signups").insert(record);
+
+    if (!error) {
+      return res.json({
+        success: true,
+        data: { signupToken: record.signup_token },
+      });
+    }
+    if (!isUniqueViolation(error)) throw error;
+
+    // This payment is already recorded: a browser retry, or the webhook got
+    // here first. Never reset or re-issue anything.
+    const { data: existing, error: lookupError } = await supabase
       .from("payment_signups")
-      .upsert(record, { onConflict: "razorpay_payment_id" });
+      .select("signup_token, used, expires_at")
+      .eq("razorpay_payment_id", paymentId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
 
-    if (error) throw error;
-
+    if (!existing || existing.used) {
+      return res.status(409).json({
+        success: false,
+        message: "This payment has already been used.",
+      });
+    }
+    if (new Date(existing.expires_at) < new Date()) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This signup link has expired. Please contact support with your payment ID.",
+      });
+    }
+    // unused + not expired: hand back the SAME token (safe retry)
     return res.json({
       success: true,
-      data: { signupToken: record.signup_token },
+      data: { signupToken: existing.signup_token },
     });
   } catch (err) {
     return sendError(res, err, 500);
@@ -220,6 +253,11 @@ const webhookHandler = async (req, res) => {
       const plan = payment.notes?.plan || null;
       const email = payment.email;
 
+      // In-app upgrade payments must never mint a new-account signup token.
+      if (payment.notes?.upgrade === "true" || payment.notes?.organization_id) {
+        return res.json({ success: true });
+      }
+
       const record = generateSignupRecord({
         email,
         plan,
@@ -227,9 +265,18 @@ const webhookHandler = async (req, res) => {
         paymentId: payment.id,
       });
 
-      await supabase
+      // SECURITY (replay): insert-only. Razorpay retries webhooks, and the
+      // old upsert RESET an already-used signup row (new token, used=false)
+      // every time. A duplicate is fine - ack it and change nothing.
+      const { error: insertError } = await supabase
         .from("payment_signups")
-        .upsert(record, { onConflict: "razorpay_payment_id" });
+        .insert(record);
+
+      if (insertError && !isUniqueViolation(insertError)) {
+        // let Razorpay retry later
+        console.error("Razorpay webhook insert failed:", insertError.message);
+        return res.status(500).json({ success: false });
+      }
     }
 
     return res.json({ success: true });
@@ -388,7 +435,12 @@ const verifyUpgradePaymentHandler = async (req, res) => {
     // created for `normalizedPlan`. Without this, any authenticated
     // user with billing.manage could pay for Basic and claim
     // Professional here to upgrade their org's user limit for less.
-    const planMatches = await verifyOrderMatchesPlan(orderId, normalizedPlan);
+    // The order must also have been created by upgrade/create-order FOR THIS
+    // organization (notes.upgrade + notes.organization_id), so a payment made
+    // by/for someone else (or a pre-signup payment) can't be claimed here.
+    const planMatches = await verifyOrderMatchesPlan(orderId, normalizedPlan, {
+      organizationId: req.user.organizationId,
+    });
     if (!planMatches) {
       console.error(
         `upgrade/verify-payment: order ${orderId} does not match claimed plan "${normalizedPlan}" (org ${req.user.organizationId}) — refusing to upgrade.`,
@@ -415,11 +467,47 @@ const verifyUpgradePaymentHandler = async (req, res) => {
       });
     }
 
-    const subscription = await upgradeOrgSubscription(
-      supabase,
-      req.user.organizationId,
-      planRow,
-    );
+    // SECURITY (replay): a payment id may extend a subscription exactly once.
+    // Claim it BEFORE touching the subscription (processed_payments has a
+    // UNIQUE razorpay_payment_id); if the upgrade itself fails, release the
+    // claim so the customer who paid can retry.
+    const { error: claimError } = await supabase
+      .from("processed_payments")
+      .insert({
+        razorpay_payment_id: paymentId,
+        razorpay_order_id: orderId,
+        organization_id: req.user.organizationId,
+        plan: normalizedPlan,
+      });
+
+    if (claimError) {
+      if (isUniqueViolation(claimError)) {
+        return res.status(409).json({
+          success: false,
+          message: "This payment has already been applied.",
+        });
+      }
+      throw claimError;
+    }
+
+    let subscription;
+    try {
+      subscription = await upgradeOrgSubscription(
+        supabase,
+        req.user.organizationId,
+        planRow,
+      );
+    } catch (upgradeErr) {
+      await supabase
+        .from("processed_payments")
+        .delete()
+        .eq("razorpay_payment_id", paymentId)
+        .then(
+          () => {},
+          () => {},
+        );
+      throw upgradeErr;
+    }
 
     return res.json({
       success: true,
