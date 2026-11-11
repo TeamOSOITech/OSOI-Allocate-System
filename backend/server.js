@@ -10,31 +10,19 @@ const rateLimit = require("express-rate-limit");
 
 const app = express();
 
-// Render sits behind two proxy hops (Cloudflare -> Render's load balancer), so
-// the X-Forwarded-For chain is "<client>, <cloudflare>, <render>". Trusting
-// exactly that many hops makes req.ip the REAL client address. Without it every
-// user shares one IP and the per-IP rate limits (see auth.routes.js) would lock
-// everybody out together; trusting too MANY hops would let a client spoof its
-// IP by sending its own X-Forwarded-For. Override with TRUST_PROXY_HOPS when
-// the deployment topology changes.
+// Production path: client -> Vercel (/api rewrite) -> Cloudflare -> Render's
+// load balancer -> this app. The X-Forwarded-For chain this app sees is
+// "<client>, <vercel>, <cloudflare>, <render>" (4 hops), so trusting exactly 4
+// makes req.ip the REAL client address (verified on the live deployment).
+// Too few hops = every user shares one IP and the per-IP rate limits lock
+// everybody out together; too many = a client can spoof its IP by sending its
+// own X-Forwarded-For. Override with TRUST_PROXY_HOPS if the topology changes.
 const TRUST_PROXY_HOPS =
   process.env.TRUST_PROXY_HOPS &&
   Number.isInteger(Number(process.env.TRUST_PROXY_HOPS))
     ? Number(process.env.TRUST_PROXY_HOPS)
-    : 2;
+    : 4;
 app.set("trust proxy", TRUST_PROXY_HOPS);
-
-// TEMPORARY - check karke hata dena
-app.get("/api/ipcheck", (req, res) => {
-  if (!process.env.IPCHECK_KEY || req.query.key !== process.env.IPCHECK_KEY) {
-    return res.status(404).end();
-  }
-  res.json({
-    ip: req.ip,
-    xff: req.headers["x-forwarded-for"] || null,
-    hops: TRUST_PROXY_HOPS,
-  });
-});
 
 // ========================
 // 🔐 Security middleware
