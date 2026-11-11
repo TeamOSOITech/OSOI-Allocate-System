@@ -19,12 +19,37 @@ const {
 // forgot-password email sender. Both are now capped per IP.
 // Only FAILED logins count (skipSuccessfulRequests): an office where many
 // people share one public IP and all log in at 9:00 must not lock itself out.
+const loginEmailKey = (req) =>
+  String(req.body?.email || "")
+    .trim()
+    .toLowerCase();
+
+// Per IP + EMAIL: one person fumbling their OWN password only locks THEIR
+// email on that IP. Colleagues on the same office IP (same public address)
+// keep logging in with their own emails. 10 failed tries per 15 minutes.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // 20 FAILED attempts per IP per window
+  max: 10, // 10 FAILED attempts per IP+email per window
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => `login:${req.ip}|${loginEmailKey(req)}`,
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again in a few minutes.",
+  },
+});
+
+// Per-IP CEILING across all emails (credential stuffing: one IP trying many
+// different accounts). Much higher than the per-email limit above so a whole
+// office behind one public IP is never locked out by normal mistakes.
+const loginIpCeilingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100, // 100 FAILED attempts per IP per window, any emails
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `loginip:${req.ip}`,
   message: {
     success: false,
     message: "Too many login attempts. Please try again in a few minutes.",
@@ -98,7 +123,13 @@ const loginAccountLimiter = rateLimit({
 });
 
 // Login using Supabase Authentication
-router.post("/login", loginLimiter, loginAccountLimiter, loginHandler);
+router.post(
+  "/login",
+  loginIpCeilingLimiter,
+  loginLimiter,
+  loginAccountLimiter,
+  loginHandler,
+);
 
 // Clears the auth cookies. No rate limit needed — it only ever hurts
 // the caller's own session, nothing to abuse.
