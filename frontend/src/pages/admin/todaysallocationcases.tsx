@@ -1530,6 +1530,9 @@ export default function TodaysAllocationCases({
                         productId,
                         workDate,
                         employeeIds: presentIds,
+                        // FIX: only this month's cases (same as the Cases tab),
+                        // so hidden older-month cases don't eat the 10h capacity
+                        workDateFrom: monthStart,
                         // NEW (10h DAILY LIMIT)
                         remainingMinutes,
                         ampMinutes: amp,
@@ -1575,6 +1578,8 @@ export default function TodaysAllocationCases({
                         productId,
                         workDate,
                         employeeIds: presentIds,
+                        // FIX: same month filter as the Counts list
+                        workDateFrom: monthStart,
                         extraLoad,
                         // NEW (10h DAILY LIMIT)
                         remainingMinutes,
