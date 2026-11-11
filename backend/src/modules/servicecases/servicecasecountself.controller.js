@@ -850,6 +850,10 @@ async function addCaseNumbersToCount(req, res) {
           allocation_status: "ALLOCATED",
           allocated_at: now,
           allocated_by: me,
+          // links the case back to its count, so the Production Report can
+          // show this employee's outcomes (Completed / Out of Scope / ...)
+          // (needs sql/add_count_id_to_service_cases.sql)
+          count_id: countId,
         };
         // anything other than WIP is submitted right away
         if (type !== "WIP") {
@@ -863,9 +867,21 @@ async function addCaseNumbersToCount(req, res) {
         return row;
       });
 
-      const { error: insErr } = await supabase
-        .from("service_cases")
-        .insert(rows);
+      let { error: insErr } = await supabase.from("service_cases").insert(rows);
+      // Migration not run yet: adding case numbers must keep working, so
+      // retry once without the link (the outcome breakdown just stays empty).
+      if (
+        insErr &&
+        (insErr.code === "PGRST204" ||
+          insErr.code === "42703" ||
+          /count_id/i.test(insErr.message || ""))
+      ) {
+        console.warn(
+          "service_cases.count_id is missing — run sql/add_count_id_to_service_cases.sql in Supabase. Saving without the count link.",
+        );
+        rows.forEach((r) => delete r.count_id);
+        ({ error: insErr } = await supabase.from("service_cases").insert(rows));
+      }
       if (insErr) {
         // give the reserved slots back — nothing was created
         if (reservedSlots > 0) {

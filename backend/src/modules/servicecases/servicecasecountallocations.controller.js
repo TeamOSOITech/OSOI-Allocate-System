@@ -43,7 +43,13 @@ async function guardProduct(req, productId) {
 // Count rows still open (fulfilled < quantity), with their allocations.
 async function loadCounts(
   orgId,
-  { productId, workDate, workDateFrom = null, includeDone = false },
+  {
+    productId,
+    workDate,
+    workDateFrom = null,
+    includeDone = false,
+    includeOutcomes = false,
+  },
 ) {
   // FIX: paged — see fetchAll.js (a plain .limit(1000) silently cut off rows).
   const { data, error } = await fetchAll(() => {
@@ -82,6 +88,62 @@ async function loadCounts(
     allocs = allocs.concat(a || []);
   }
 
+  // Production Report only: what became of the cases each employee added
+  // from a count. Cases carry count_id (sql/add_count_id_to_service_cases.sql)
+  // and created_by = the employee who typed the case number. Grouped here
+  // per (count, employee). If the column is not there yet, the breakdown is
+  // simply empty and the report falls back to "added" only.
+  const outcomeByKey = new Map(); // `${countId}|${employeeId}` -> buckets
+  if (includeOutcomes && ids.length) {
+    let caseRows = [];
+    let outcomesAvailable = true;
+    for (let i = 0; i < ids.length && outcomesAvailable; i += 150) {
+      const slice = ids.slice(i, i + 150);
+      const { data: cr, error: cErr } = await fetchAll(() =>
+        supabase
+          .from("service_cases")
+          .select("count_id, created_by, submission_status, submission_type")
+          .eq("organization_id", orgId)
+          .in("count_id", slice)
+          .order("id", { ascending: true }),
+      );
+      if (cErr) {
+        if (
+          cErr.code === "42703" ||
+          cErr.code === "PGRST204" ||
+          /count_id/i.test(cErr.message || "")
+        ) {
+          outcomesAvailable = false; // migration not run yet
+          caseRows = [];
+          break;
+        }
+        throw cErr;
+      }
+      caseRows = caseRows.concat(cr || []);
+    }
+    for (const r of caseRows) {
+      const key = `${r.count_id}|${r.created_by}`;
+      let o = outcomeByKey.get(key);
+      if (!o) {
+        o = {
+          completed: 0,
+          doneByTeam: 0,
+          doneByClient: 0,
+          outOfScope: 0,
+          query: 0,
+          pending: 0, // added but not submitted yet (WIP)
+        };
+        outcomeByKey.set(key, o);
+      }
+      if (r.submission_status !== "SUBMITTED") o.pending++;
+      else if (r.submission_type === "DONE_BY_TEAM") o.doneByTeam++;
+      else if (r.submission_type === "DONE_BY_CLIENT") o.doneByClient++;
+      else if (r.submission_type === "OUT_OF_SCOPE") o.outOfScope++;
+      else if (r.submission_type === "QUERY") o.query++;
+      else o.completed++;
+    }
+  }
+
   const [productMap, clientMap, subclientMap, employeeMap] = await Promise.all([
     getProductNameMap(
       open.map((c) => c.product_id),
@@ -117,14 +179,41 @@ async function loadCounts(
       pendingCount: c.quantity - fulfilled,
       allocatedTotal,
       unallocated: c.quantity - allocatedTotal,
-      allocations: mine.map((a) => ({
-        employeeId: a.employee_id,
-        employeeName: employeeMap[a.employee_id] || null,
-        quantity: a.quantity,
-        fulfilledQuantity: a.fulfilled_quantity || 0,
-        allocatedAt: a.allocated_at || null,
-        allocatedByName: employeeMap[a.allocated_by] || null,
-      })),
+      allocations: mine.map((a) => {
+        const fulfilledQuantity = a.fulfilled_quantity || 0;
+        const base = {
+          employeeId: a.employee_id,
+          employeeName: employeeMap[a.employee_id] || null,
+          quantity: a.quantity,
+          fulfilledQuantity,
+          allocatedAt: a.allocated_at || null,
+          allocatedByName: employeeMap[a.allocated_by] || null,
+        };
+        if (!includeOutcomes) return base;
+        const o = outcomeByKey.get(`${c.id}|${a.employee_id}`) || {
+          completed: 0,
+          doneByTeam: 0,
+          doneByClient: 0,
+          outOfScope: 0,
+          query: 0,
+          pending: 0,
+        };
+        const tracked =
+          o.completed +
+          o.doneByTeam +
+          o.doneByClient +
+          o.outOfScope +
+          o.query +
+          o.pending;
+        return {
+          ...base,
+          // cases added before the count link existed cannot be traced
+          outcomes: {
+            ...o,
+            untracked: Math.max(0, fulfilledQuantity - tracked),
+          },
+        };
+      }),
     };
   });
 }
@@ -143,6 +232,7 @@ async function listCountAllocations(req, res) {
       workDate: req.query.workDate || null,
       workDateFrom: req.query.workDateFrom || null,
       includeDone: req.query.includeDone === "true",
+      includeOutcomes: req.query.includeDone === "true",
     });
     res.json({ success: true, data });
   } catch (err) {
