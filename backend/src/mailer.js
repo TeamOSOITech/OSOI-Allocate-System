@@ -50,9 +50,11 @@ async function sendMail({ to, subject, html }) {
         timeout: 15000,
       });
 
+      const maskedTo = String(to).replace(/(^.).*(@.*$)/, "$1***$2");
       console.log(
-        `[mailer] Mail sent to ${to} — Brevo messageId: ${response.data?.messageId}`,
+        `[mailer] Mail sent to ${maskedTo} — Brevo messageId: ${response.data?.messageId}`,
       );
+
       return response.data;
     } catch (err) {
       lastErr = err;

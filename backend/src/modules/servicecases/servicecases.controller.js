@@ -2964,7 +2964,10 @@ async function notifyAllocation(req, res) {
           text: `${ALLOC_MESSAGE} ${APP_LOGIN_URL}`,
           html: buildAllocationEmailHtml(),
         });
-        console.log(`[notify] sent (${kind}) to:`, to);
+        console.log(
+          `[notify] sent (${kind}) to:`,
+          String(to).replace(/(^.).*(@.*$)/, "$1***$2"),
+        );
       }),
     );
 
