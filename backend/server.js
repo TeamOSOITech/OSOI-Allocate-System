@@ -22,6 +22,8 @@ const TRUST_PROXY_HOPS =
   Number.isInteger(Number(process.env.TRUST_PROXY_HOPS))
     ? Number(process.env.TRUST_PROXY_HOPS)
     : 2;
+app.set("trust proxy", TRUST_PROXY_HOPS);
+
 // TEMPORARY - check karke hata dena
 app.get("/api/ipcheck", (req, res) => {
   if (!process.env.IPCHECK_KEY || req.query.key !== process.env.IPCHECK_KEY) {
