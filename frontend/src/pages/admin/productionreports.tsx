@@ -175,6 +175,61 @@ function isOnBehalf(r: ServiceCaseRow) {
     );
 }
 
+// What became of the cases one employee added from a count (backend
+// groups service_cases by count_id + created_by). `untracked` = cases added
+// before the count link existed, whose outcome cannot be traced.
+type AllocOutcomes = {
+    completed: number;
+    doneByTeam: number;
+    doneByClient: number;
+    outOfScope: number;
+    query: number;
+    pending: number;
+    untracked: number;
+};
+
+// One row of the "Without case number" list (also what the View popup shows).
+type CountViewRow = {
+    id: string;
+    productName: string | null;
+    clientName: string | null;
+    subclientName: string | null;
+    workDate: string;
+    recv: number;
+    added: number;
+    pending: number;
+    holders: {
+        name: string;
+        qty: number;
+        added: number;
+        by: string;
+        at: string;
+        out?: AllocOutcomes;
+    }[];
+};
+
+// "2 Completed · 1 Out of Scope" - only the outcomes that actually exist.
+function outcomeParts(o?: AllocOutcomes | null): string[] {
+    if (!o) return [];
+    const parts: string[] = [];
+    if (o.completed) parts.push(`${o.completed} Completed`);
+    if (o.doneByTeam) parts.push(`${o.doneByTeam} Completed by Team`);
+    if (o.doneByClient) parts.push(`${o.doneByClient} Completed by Client`);
+    if (o.outOfScope) parts.push(`${o.outOfScope} Out of Scope`);
+    if (o.query) parts.push(`${o.query} Query`);
+    if (o.pending) parts.push(`${o.pending} Not Submitted`);
+    if (o.untracked) parts.push(`${o.untracked} earlier entries`);
+    return parts;
+}
+
+// total of one outcome across all holders of a count (for the Excel export)
+function sumOutcome(
+    holders: { outcomes?: AllocOutcomes }[],
+    key: Exclude<keyof AllocOutcomes, "untracked">
+): number {
+    return holders.reduce((x, h) => x + (h.outcomes?.[key] || 0), 0);
+}
+
 // Count-only work (no case numbers yet) from /api/service-cases/count-allocations.
 type CountRow = {
     id: string;
@@ -194,6 +249,7 @@ type CountRow = {
         fulfilledQuantity: number;
         allocatedAt?: string | null;
         allocatedByName?: string | null;
+        outcomes?: AllocOutcomes;
     }[];
 };
 
@@ -472,6 +528,17 @@ export default function ProductionReport() {
         const t = setTimeout(() => scrollWithinPage(detailRef.current), 60);
         return () => clearTimeout(t);
     }, [openGroup]);
+
+    // "View" on a count row: popup with each employee's outcome breakdown
+    const [viewCount, setViewCount] = useState<CountViewRow | null>(null);
+    useEffect(() => {
+        if (!viewCount) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setViewCount(null);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [viewCount]);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -1077,7 +1144,14 @@ export default function ProductionReport() {
             pending: number;
             allocated: number; // pending units that are with someone
             unallocated: number; // pending units still in the pool
-            holders: { name: string; qty: number; added: number; by: string; at: string }[];
+            holders: {
+                name: string;
+                qty: number;
+                added: number;
+                by: string;
+                at: string;
+                out?: AllocOutcomes;
+            }[];
         };
         const out: R[] = [];
         const holdersOf = (c: CountRow, onlyName?: string) =>
@@ -1088,6 +1162,7 @@ export default function ProductionReport() {
                     added: a.fulfilledQuantity,
                     by: (a.allocatedByName || "").trim(),
                     at: a.allocatedAt ? localYmd(a.allocatedAt) : "",
+                    out: a.outcomes,
                 }))
                 .filter((h) => h.name && h.qty > 0 && (!onlyName || h.name === onlyName));
         const base = (c: CountRow) => ({
@@ -1329,12 +1404,20 @@ export default function ProductionReport() {
                     Pending: c.pendingCount,
                     "Allocated To (added / given)": holders.length
                         ? holders
-                              .map(
-                                  (h) =>
-                                      `${(h.employeeName || "").trim()} (${h.fulfilledQuantity}/${h.quantity})`
-                              )
+                              .map((h) => {
+                                  const parts = outcomeParts(h.outcomes);
+                                  return `${(h.employeeName || "").trim()} (${h.fulfilledQuantity}/${h.quantity}${
+                                      parts.length ? `: ${parts.join(", ")}` : ""
+                                  })`;
+                              })
                               .join(", ")
                         : "Unallocated",
+                    Completed: sumOutcome(holders, "completed"),
+                    "Completed by Team": sumOutcome(holders, "doneByTeam"),
+                    "Completed by Client": sumOutcome(holders, "doneByClient"),
+                    "Out of Scope": sumOutcome(holders, "outOfScope"),
+                    Query: sumOutcome(holders, "query"),
+                    "Not Submitted": sumOutcome(holders, "pending"),
                     "Allocated By":
                         Array.from(
                             new Set(
@@ -1353,6 +1436,12 @@ export default function ProductionReport() {
                     { wch: 10 },
                     { wch: 10 },
                     { wch: 50 },
+                    { wch: 12 },
+                    { wch: 18 },
+                    { wch: 18 },
+                    { wch: 12 },
+                    { wch: 10 },
+                    { wch: 14 },
                     { wch: 18 },
                 ];
                 XLSX.utils.book_append_sheet(wb, wc, "Without case number");
@@ -2073,6 +2162,7 @@ export default function ProductionReport() {
                                             <span>Pending</span>
                                             <span>Allocated To (added / given)</span>
                                             <span>Allocated By</span>
+                                            <span style={{ textAlign: "center" }}>Details</span>
                                         </div>
                                         {withoutRows.map((r, idx) => (
                                             <div
@@ -2123,9 +2213,18 @@ export default function ProductionReport() {
                                                         )
                                                     ).join(", ") || "—"}
                                                 </span>
+                                                <span style={{ textAlign: "center" }}>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.viewBtn}
+                                                        onClick={() => setViewCount(r)}
+                                                    >
+                                                        View
+                                                    </button>
+                                                </span>
                                             </div>
                                         ))}
-                                        <div style={{ ...styles.totalsRow, minWidth: 1340 }}>
+                                        <div style={{ ...styles.totalsRow, minWidth: 1430 }}>
                                             <span style={{ flex: 1 }}>
                                                 {withoutRows.length} count
                                                 {withoutRows.length !== 1 ? "s" : ""} ·{" "}
@@ -2136,6 +2235,179 @@ export default function ProductionReport() {
                                                 pending
                                             </span>
                                         </div>
+                                        {viewCount && (
+                                            <div
+                                                style={styles.modalOverlay}
+                                                onClick={() => setViewCount(null)}
+                                            >
+                                                <div
+                                                    style={styles.modalCard}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <div style={styles.modalHead}>
+                                                        <div>
+                                                            <div style={styles.modalTitle}>
+                                                                {viewCount.productName || "—"}
+                                                            </div>
+                                                            <div style={styles.modalSub}>
+                                                                {viewCount.clientName || "—"}
+                                                                {viewCount.subclientName
+                                                                    ? ` · ${viewCount.subclientName}`
+                                                                    : ""}{" "}
+                                                                · received {viewCount.workDate} ·{" "}
+                                                                {viewCount.recv} received ·{" "}
+                                                                {viewCount.added} added ·{" "}
+                                                                {viewCount.pending} pending
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            style={styles.modalClose}
+                                                            onClick={() => setViewCount(null)}
+                                                            aria-label="Close"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    </div>
+                                                    {viewCount.holders.length === 0 ? (
+                                                        <div style={styles.emptyNote}>
+                                                            Not allocated to anyone yet.
+                                                        </div>
+                                                    ) : (
+                                                        <div style={{ overflowX: "auto" }}>
+                                                            <table style={styles.modalTable}>
+                                                                <thead>
+                                                                    <tr>
+                                                                        {[
+                                                                            "Employee",
+                                                                            "Added / Given",
+                                                                            "Completed",
+                                                                            "Completed by Team",
+                                                                            "Completed by Client",
+                                                                            "Out of Scope",
+                                                                            "Query",
+                                                                            "Not Submitted",
+                                                                            "Earlier entries",
+                                                                        ].map((h) => (
+                                                                            <th
+                                                                                key={h}
+                                                                                style={
+                                                                                    styles.modalTh
+                                                                                }
+                                                                            >
+                                                                                {h}
+                                                                            </th>
+                                                                        ))}
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {viewCount.holders.map(
+                                                                        (h, hi) => {
+                                                                            const o = h.out;
+                                                                            const n = (
+                                                                                v?: number
+                                                                            ) =>
+                                                                                o && v
+                                                                                    ? String(v)
+                                                                                    : "—";
+                                                                            return (
+                                                                                <tr
+                                                                                    key={`${h.name}-${hi}`}
+                                                                                >
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTdName
+                                                                                        }
+                                                                                    >
+                                                                                        {h.name}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {h.added}/
+                                                                                        {h.qty}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.completed
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.doneByTeam
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.doneByClient
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.outOfScope
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.query
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.pending
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td
+                                                                                        style={
+                                                                                            styles.modalTd
+                                                                                        }
+                                                                                    >
+                                                                                        {n(
+                                                                                            o?.untracked
+                                                                                        )}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            );
+                                                                        }
+                                                                    )}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    )}
+                                                    <div style={styles.modalNote}>
+                                                        "Earlier entries" are cases added before
+                                                        outcomes were tracked, so their outcome is
+                                                        not available.
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -3054,9 +3326,83 @@ const styles: Record<string, CSSProperties> = {
     },
     // grid for the "Without case number" list
     withoutGrid: {
-        gridTemplateColumns: "1fr 1fr 1fr 130px 120px 80px 90px 100px 1.6fr 1fr",
-        minWidth: 1340,
+        gridTemplateColumns: "1fr 1fr 1fr 130px 120px 80px 90px 100px 1.6fr 1fr 80px",
+        minWidth: 1430,
     },
+    viewBtn: {
+        padding: "4px 14px",
+        borderRadius: radius.sm,
+        border: "1px solid #ececf5",
+        background: "#fff",
+        color: BRAND.blue,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        cursor: "pointer",
+    },
+    modalOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 1100,
+    },
+    modalCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        width: "min(960px, 100%)",
+        maxHeight: "85vh",
+        overflowY: "auto",
+        padding: 20,
+    },
+    modalHead: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: 12,
+        marginBottom: 14,
+    },
+    modalTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.semibold, color: "#17181C" },
+    modalSub: { fontSize: fontSize.sm, color: "#767F92", marginTop: 4 },
+    modalClose: {
+        border: "none",
+        background: "transparent",
+        fontSize: 26,
+        lineHeight: 1,
+        cursor: "pointer",
+        color: "#767F92",
+    },
+    modalTable: { width: "100%", borderCollapse: "collapse", minWidth: 760 },
+    modalTh: {
+        textAlign: "center",
+        padding: "10px 12px",
+        background: "#F4F8FD",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        color: "#767F92",
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        whiteSpace: "nowrap",
+    },
+    modalTd: {
+        textAlign: "center",
+        padding: "10px 12px",
+        borderTop: "1px solid #f1f1f1",
+        fontSize: fontSize.base,
+        color: "#17181C",
+    },
+    modalTdName: {
+        textAlign: "left",
+        padding: "10px 12px",
+        borderTop: "1px solid #f1f1f1",
+        fontSize: fontSize.base,
+        fontWeight: fontWeight.medium,
+        color: "#17181C",
+    },
+    modalNote: { marginTop: 12, fontSize: fontSize.xs, color: "#9CA3AF" },
     countNotice: {
         padding: "10px 14px",
         borderRadius: radius.md,
