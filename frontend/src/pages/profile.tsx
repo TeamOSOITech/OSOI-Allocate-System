@@ -1451,11 +1451,11 @@ export default function Profile({ onLogout }: ProfileProps) {
         // everything allocated today = cases with number + waiting counts
         const allocatedTotal = total + waitingToday;
 
-        // NEW: utilised time = AMP of every case submitted today (an open
-        // Query is not finished work, so it is not counted). It grows as the
-        // employee submits cases.
+        // CHANGED: utilised time = AMP of cases marked COMPLETED only.
+        // Done by Team / Done by Client / Out of Scope / Query are NOT
+        // counted as utilised time.
         const utilisedMins = todaysCases
-            .filter((c) => isSubmitted(c) && c.submissionType !== "QUERY")
+            .filter((c) => isSubmitted(c) && c.submissionType === "COMPLETED")
             .reduce((s, c) => s + ampOf(c.productId), 0);
 
         return {
@@ -1523,8 +1523,10 @@ export default function Profile({ onLogout }: ProfileProps) {
         const allocatedMins =
             monthCases.reduce((sum, c) => sum + ampOf(c.productId), 0) +
             waitingCounts.reduce((sum, m) => sum + ampOf(m.productId) * m.remaining, 0);
+        // CHANGED: only COMPLETED cases count as utilised time (not Done by
+        // Team / Done by Client / Out of Scope / Query).
         const utilisedMins = submittedList
-            .filter((c) => c.submissionType !== "QUERY")
+            .filter((c) => c.submissionType === "COMPLETED")
             .reduce((sum, c) => sum + ampOf(c.productId), 0);
         return {
             allocatedTotal: monthCases.length + waiting,
