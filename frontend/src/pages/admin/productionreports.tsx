@@ -150,6 +150,9 @@ type ServiceCaseRow = {
     submissionType:
         "COMPLETED" | "DONE_BY_TEAM" | "DONE_BY_CLIENT" | "QUERY" | "OUT_OF_SCOPE" | null;
     queryText: string | null;
+    // true when the case began as a count (Without case number) and its case
+    // number was added later
+    fromCount?: boolean;
     // reason typed when the status was "Out of Scope"
     outOfScopeReason?: string | null;
     submittedAt: string | null;
@@ -1356,6 +1359,8 @@ export default function ProductionReport() {
             // Sheet 1 - cases WITH a case number
             const sheetData = caseRows.map((r) => ({
                 "Case #": r.caseNumber,
+                // "From count" = began as a count, case number added later
+                Source: r.fromCount ? "From count" : "",
                 Client: r.clientName || "",
                 Subclient: r.subclientName || "",
                 Service: r.productName || "",
@@ -1374,6 +1379,7 @@ export default function ProductionReport() {
             const ws = XLSX.utils.json_to_sheet(sheetData);
             ws["!cols"] = [
                 { wch: 14 },
+                { wch: 12 },
                 { wch: 22 },
                 { wch: 22 },
                 { wch: 16 },
@@ -2462,6 +2468,14 @@ export default function ProductionReport() {
                                                         >
                                                             <span style={styles.colCase}>
                                                                 {r.caseNumber}
+                                                                {r.fromCount && (
+                                                                    <span
+                                                                        style={styles.fromCountChip}
+                                                                        title="Started as a count (without case number); case number added later"
+                                                                    >
+                                                                        From count
+                                                                    </span>
+                                                                )}
                                                             </span>
                                                             <span style={styles.colClient}>
                                                                 {r.clientName || "—"}
@@ -2643,6 +2657,18 @@ export default function ProductionReport() {
                                                             <div style={styles.mobileCardHeader}>
                                                                 <span style={styles.mobileCardCase}>
                                                                     {r.caseNumber}
+                                                                    {r.fromCount && (
+                                                                        <span
+                                                                            style={{
+                                                                                ...styles.fromCountChip,
+                                                                                display:
+                                                                                    "inline-block",
+                                                                                marginLeft: 8,
+                                                                            }}
+                                                                        >
+                                                                            From count
+                                                                        </span>
+                                                                    )}
                                                                 </span>
                                                                 <span
                                                                     style={{
@@ -3455,6 +3481,18 @@ const styles: Record<string, CSSProperties> = {
         fontSize: fontSize.sm,
         color: "#374151",
         minWidth: 1850,
+    },
+    fromCountChip: {
+        display: "block",
+        width: "fit-content",
+        marginTop: 3,
+        padding: "1px 7px",
+        borderRadius: 999,
+        background: "rgba(8,145,178,0.12)",
+        color: BRAND.cyan,
+        fontSize: fontSize.xxs,
+        fontWeight: fontWeight.semibold,
+        lineHeight: 1.5,
     },
     colCase: {
         overflow: "hidden",

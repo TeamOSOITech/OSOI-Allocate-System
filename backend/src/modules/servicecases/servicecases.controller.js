@@ -869,6 +869,12 @@ async function listServiceCases(req, res) {
       // marks it done.
       submissionStatus: r.submission_status || "PENDING",
       submissionType: r.submission_type || null,
+      // true when this case started as a count ("Without case number") and
+      // got its case number added later (needs service_cases.count_id —
+      // sql/add_count_id_to_service_cases.sql). Cases added before that
+      // migration are not flagged, because their origin was never stored.
+      fromCount: !!r.count_id,
+      countId: r.count_id || null,
       queryText: r.query_text || "",
       outOfScopeReason: r.out_of_scope_reason || "",
       submittedAt: r.submitted_at || null,

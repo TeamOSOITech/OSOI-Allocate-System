@@ -1817,6 +1817,69 @@ export default function Profile({ onLogout }: ProfileProps) {
         });
     }, [pendingTodayCases, bulkSearch, bulkTypeById]);
 
+    // Bulk Submit: copy row 1's client (+ subclient) onto every other listed
+    // case that has no client yet. Cases that already have a client are left
+    // alone, and a case is skipped if that client is not mapped to ITS service
+    // (the list can mix services).
+    const casesMissingClient = useMemo(
+        () => bulkVisibleCases.filter((c) => !c.clientId).length,
+        [bulkVisibleCases]
+    );
+    // how many listed cases have a client/subclient CHOSEN in this popup
+    // (cases that already had a client saved are not counted - they can't be
+    // cleared from here)
+    const casesWithPickedClient = useMemo(
+        () => bulkVisibleCases.filter((c) => pickClient[c.id] || pickSub[c.id]).length,
+        [bulkVisibleCases, pickClient, pickSub]
+    );
+    // Clear what was chosen (by hand or by "Apply row 1 client to all") on
+    // the listed cases. Clients already saved on a case stay.
+    const clearBulkPickedClients = () => {
+        const ids = new Set(bulkVisibleCases.map((c) => c.id));
+        const drop = (prev: Record<string, string>) =>
+            Object.fromEntries(Object.entries(prev).filter(([id]) => !ids.has(id)));
+        setPickClient(drop);
+        setPickSub(drop);
+        setBulkError(null);
+    };
+    const applyBulkFirstClientToCases = () => {
+        const list = bulkVisibleCases;
+        if (list.length < 2) return;
+        const first = list[0];
+        const clientId = effClientId(first);
+        if (!clientId) {
+            setBulkError("Select a client in row 1 first, then apply it to all.");
+            return;
+        }
+        const subId = effSubId(first);
+        const nextClient: Record<string, string> = {};
+        const nextSub: Record<string, string> = {};
+        let skipped = 0;
+        list.slice(1).forEach((c) => {
+            let rowClient = effClientId(c);
+            if (!c.clientId) {
+                const allowed = (clientsByProduct[String(c.productId)] || []).some(
+                    (cl) => cl.id === clientId
+                );
+                if (!allowed) {
+                    skipped++;
+                    return;
+                }
+                nextClient[c.id] = clientId;
+                nextSub[c.id] = ""; // a new client resets the subclient
+                rowClient = clientId;
+            }
+            if (!c.subclientId && subId && rowClient === clientId) nextSub[c.id] = subId;
+        });
+        setPickClient((prev) => ({ ...prev, ...nextClient }));
+        setPickSub((prev) => ({ ...prev, ...nextSub }));
+        setBulkError(
+            skipped > 0
+                ? `${skipped} case${skipped > 1 ? "s" : ""} not updated — this client is not mapped to ${skipped > 1 ? "their services" : "its service"}.`
+                : null
+        );
+    };
+
     const openBulkModal = () => {
         const initialType: Record<string, "PENDING" | SubmissionType> = {};
         const initialQuery: Record<string, string> = {};
@@ -2370,6 +2433,18 @@ export default function Profile({ onLogout }: ProfileProps) {
                 })),
             };
         });
+
+    // Clear the client / subclient chosen on this service's rows. A client or
+    // subclient that is fixed on the count itself is not editable, so it stays.
+    const clearBulkClients = (mc: MyCountRow) =>
+        setBulkCnRows((prev) => ({
+            ...prev,
+            [mc.id]: (prev[mc.id] || []).map((r) => ({
+                ...r,
+                clientId: mc.clientId ? r.clientId : "",
+                subclientId: mc.subclientId ? r.subclientId : "",
+            })),
+        }));
 
     const pasteBulkCnRows = (mc: MyCountRow, start: number, text: string) => {
         const parts = text
@@ -5174,12 +5249,51 @@ export default function Profile({ onLogout }: ProfileProps) {
                                     </button>
                                 </div>
 
-                                <input
-                                    style={{ ...styles.textInput, width: "100%", marginBottom: 12 }}
-                                    value={bulkSearch}
-                                    onChange={(e) => setBulkSearch(e.target.value)}
-                                    placeholder="Search by case number, client, sub-client, service or status…"
-                                />
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        gap: 10,
+                                        alignItems: "center",
+                                        marginBottom: 12,
+                                    }}
+                                >
+                                    <input
+                                        style={{ ...styles.textInput, flex: 1, minWidth: 0 }}
+                                        value={bulkSearch}
+                                        onChange={(e) => setBulkSearch(e.target.value)}
+                                        placeholder="Search by case number, client, sub-client, service or status…"
+                                    />
+                                    {/* only when some listed case still has no client */}
+                                    {bulkVisibleCases.length > 1 && casesMissingClient > 0 && (
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-outline"
+                                            style={{
+                                                ...styles.selfAllocAllBtn,
+                                                whiteSpace: "nowrap",
+                                            }}
+                                            disabled={bulkSubmitting}
+                                            onClick={applyBulkFirstClientToCases}
+                                        >
+                                            Apply row 1 client to all
+                                        </button>
+                                    )}
+                                    {/* undo what was chosen / applied above */}
+                                    {casesWithPickedClient > 0 && (
+                                        <button
+                                            type="button"
+                                            className="pf-btn pf-btn-outline"
+                                            style={{
+                                                ...styles.selfAllocAllBtn,
+                                                whiteSpace: "nowrap",
+                                            }}
+                                            disabled={bulkSubmitting}
+                                            onClick={clearBulkPickedClients}
+                                        >
+                                            Clear clients
+                                        </button>
+                                    )}
+                                </div>
 
                                 <div style={styles.bulkTableWrap}>
                                     <table style={{ ...styles.bulkTable, minWidth: 880 }}>
@@ -6121,17 +6235,37 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                 <label style={styles.smallLabel}>
                                                     <strong>{mc.productName || "Service"}</strong>
                                                 </label>
-                                                {rows.length > 1 && (
-                                                    <button
-                                                        type="button"
-                                                        className="pf-btn pf-btn-outline"
-                                                        style={styles.selfAllocAllBtn}
-                                                        disabled={bulkCnSubmitting}
-                                                        onClick={() => applyBulkFirstClient(mc.id)}
-                                                    >
-                                                        Apply row 1 client to all
-                                                    </button>
-                                                )}
+                                                <div style={{ display: "flex", gap: 8 }}>
+                                                    {rows.length > 1 && (
+                                                        <button
+                                                            type="button"
+                                                            className="pf-btn pf-btn-outline"
+                                                            style={styles.selfAllocAllBtn}
+                                                            disabled={bulkCnSubmitting}
+                                                            onClick={() =>
+                                                                applyBulkFirstClient(mc.id)
+                                                            }
+                                                        >
+                                                            Apply row 1 client to all
+                                                        </button>
+                                                    )}
+                                                    {/* undo the chosen client / subclient */}
+                                                    {rows.some(
+                                                        (r) =>
+                                                            (!mc.clientId && r.clientId) ||
+                                                            (!mc.subclientId && r.subclientId)
+                                                    ) && (
+                                                        <button
+                                                            type="button"
+                                                            className="pf-btn pf-btn-outline"
+                                                            style={styles.selfAllocAllBtn}
+                                                            disabled={bulkCnSubmitting}
+                                                            onClick={() => clearBulkClients(mc)}
+                                                        >
+                                                            Clear clients
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                             {rows.length === 0 ? (
                                                 <span style={styles.smallMuted}>Added ✓</span>
