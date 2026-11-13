@@ -7,6 +7,7 @@ import { useRoleLabels } from "../context/roleLabelsContext";
 import { useOrgSettings } from "../context/orgsettings";
 import { useCollarMode } from "../context/collarmode";
 import BlueAllocationBlock from "./blue/allocationblock";
+import AllocationAcceptancePopup from "../components/allocationacceptancepopup";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const MOBILE_BREAKPOINT = 768;
@@ -7047,6 +7048,17 @@ export default function Profile({ onLogout }: ProfileProps) {
                     {toastMsg}
                 </div>
             )}
+
+            {/* Work someone else allocated to ME: Accept / Decline (with a reason) */}
+            <AllocationAcceptancePopup
+                userKey={myId}
+                enabled={!isBlueMode && !isViewingOther && !!myId}
+                // declined work leaves my lists - reload cases and counts
+                onChanged={() => {
+                    refreshCases();
+                    loadMyCounts();
+                }}
+            />
 
             {/* Open-query reminder for every role (own / team / whole org) */}
             <TeamQueriesPopup
