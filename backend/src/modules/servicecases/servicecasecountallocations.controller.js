@@ -8,6 +8,11 @@
 
 const supabase = require("../../config/supabaseClient");
 const { fetchAll } = require("../../utils/fetchAll");
+// Accept / Decline columns (sql/allocation_acceptance.sql)
+const {
+  isMissingAcceptanceColumn,
+  acceptanceForAllocation,
+} = require("./acceptanceFields");
 const {
   getRecentLoad,
   distributeFairly,
@@ -483,9 +488,29 @@ async function saveCountAllocations(req, res) {
         allocated_at: now,
       }));
     if (upserts.length) {
-      const { error: uErr } = await supabase
+      // New / increased allocations must be Accepted by the employee (unless
+      // the person allocated it to himself). Each row has its own employee, so
+      // the status is set per row. If the acceptance_* columns do not exist
+      // yet (sql/allocation_acceptance.sql not run), save without them.
+      const withAcceptance = upserts.map((u) => ({
+        ...u,
+        ...acceptanceForAllocation({
+          toEmployeeId: u.employee_id,
+          byUserId: userIdOf(req),
+          now,
+        }),
+      }));
+      let { error: uErr } = await supabase
         .from("service_case_count_allocations")
-        .upsert(upserts, { onConflict: "count_id,employee_id" });
+        .upsert(withAcceptance, { onConflict: "count_id,employee_id" });
+      if (uErr && isMissingAcceptanceColumn(uErr)) {
+        console.warn(
+          "[acceptance] acceptance_* columns missing — run sql/allocation_acceptance.sql. Saving without Accept/Decline.",
+        );
+        ({ error: uErr } = await supabase
+          .from("service_case_count_allocations")
+          .upsert(upserts, { onConflict: "count_id,employee_id" }));
+      }
       if (uErr) throw uErr;
     }
     const decreases = positive.filter((i) => {

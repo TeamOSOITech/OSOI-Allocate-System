@@ -86,6 +86,11 @@ const {
   getMappedClientIds,
   assertClientMappedToProduct,
 } = require("./serviceClients");
+// Accept / Decline columns (sql/allocation_acceptance.sql), written safely
+const {
+  withAcceptanceFallback,
+  acceptanceForAllocation,
+} = require("./acceptanceFields");
 // NEW (NOTIFY): self-contained Brevo mail sender (no extra file/package
 // needed — Node 18+ has fetch built in). Uses the same Brevo account as
 // reset-password / signup emails. .env keys used:
@@ -2282,19 +2287,40 @@ async function allocateServiceCase(req, res) {
       }
     }
 
-    const { data, error } = await supabase
-      .from("service_cases")
-      .update({
-        assigned_employee_id: employeeId,
-        allocation_status: employeeId ? "ALLOCATED" : "PENDING",
-        allocated_at: employeeId ? new Date().toISOString() : null,
-        // who performed THIS allocation — cleared back to null on "Clear".
-        allocated_by: employeeId ? req.user.userId : null,
-      })
-      .eq("id", id)
-      .eq("organization_id", req.user.organizationId)
-      .select()
-      .maybeSingle();
+    const allocNow = new Date().toISOString();
+    // allocated to someone else -> they must Accept / Decline (PENDING);
+    // allocated to myself, or cleared -> nothing to answer.
+    // Re-saving a case that is ALREADY with this same employee is not a new
+    // allocation, so it keeps whatever answer (waiting / accepted) it has.
+    const sameEmployee =
+      !!employeeId &&
+      !!existing.assigned_employee_id &&
+      String(existing.assigned_employee_id) === String(employeeId);
+    const acceptance = sameEmployee
+      ? {}
+      : acceptanceForAllocation({
+          toEmployeeId: employeeId,
+          byUserId: req.user.userId,
+          now: allocNow,
+        });
+    const { data, error } = await withAcceptanceFallback(
+      (extra) =>
+        supabase
+          .from("service_cases")
+          .update({
+            assigned_employee_id: employeeId,
+            allocation_status: employeeId ? "ALLOCATED" : "PENDING",
+            allocated_at: employeeId ? allocNow : null,
+            // who performed THIS allocation — cleared back to null on "Clear".
+            allocated_by: employeeId ? req.user.userId : null,
+            ...extra,
+          })
+          .eq("id", id)
+          .eq("organization_id", req.user.organizationId)
+          .select()
+          .maybeSingle(),
+      acceptance,
+    );
     if (error) throw error;
     if (!data) {
       return res
@@ -4282,20 +4308,30 @@ async function selfAllocateServiceCases(req, res) {
 
     await Promise.all(
       caseIds.map(async (id) => {
-        const { data, error } = await supabase
-          .from("service_cases")
-          .update({
-            assigned_employee_id: req.user.userId,
-            allocation_status: "ALLOCATED",
-            allocated_at: now,
-            allocated_by: req.user.userId,
-          })
-          .eq("id", id)
-          .eq("organization_id", req.user.organizationId)
-          .eq("allocation_status", "PENDING")
-          .is("assigned_employee_id", null)
-          .select("id, case_number")
-          .maybeSingle();
+        // taking a case yourself = already accepted (clears any old PENDING)
+        const { data, error } = await withAcceptanceFallback(
+          (extra) =>
+            supabase
+              .from("service_cases")
+              .update({
+                assigned_employee_id: req.user.userId,
+                allocation_status: "ALLOCATED",
+                allocated_at: now,
+                allocated_by: req.user.userId,
+                ...extra,
+              })
+              .eq("id", id)
+              .eq("organization_id", req.user.organizationId)
+              .eq("allocation_status", "PENDING")
+              .is("assigned_employee_id", null)
+              .select("id, case_number")
+              .maybeSingle(),
+          acceptanceForAllocation({
+            toEmployeeId: req.user.userId,
+            byUserId: req.user.userId,
+            now,
+          }),
+        );
         if (error) throw error;
         if (data) {
           allocatedCount++;
@@ -5150,4 +5186,8 @@ module.exports = {
   getClientNameMap,
   getSubclientNameMap,
   getEmployeeNameMap,
+  // used by allocationAcceptance.controller.js (reminder mail)
+  buildAllocationEmailHtml,
+  sendEmail,
+  APP_LOGIN_URL,
 };

@@ -407,4 +407,17 @@ app.listen(PORT, () => {
     );
   runRollover();
   setInterval(runRollover, 5 * 60 * 1000);
+
+  // NEW (ACCEPTANCE): allocations nobody has accepted / declined for 2 hours
+  // -> reminder mail to the employee AND their reporting manager. Checked
+  // every 5 minutes; each allocation is mailed once (claimed before sending).
+  const {
+    runAcceptanceReminders,
+  } = require("./src/modules/servicecases/allocationAcceptance.controller");
+  const runReminders = () =>
+    runAcceptanceReminders().catch((e) =>
+      console.error("Acceptance reminders failed:", e?.message || e),
+    );
+  setTimeout(runReminders, 60 * 1000); // not at the very first second of boot
+  setInterval(runReminders, 5 * 60 * 1000);
 });

@@ -64,6 +64,12 @@ const {
   fillCaseClient,
 } = require("./servicecasecountself.controller");
 
+// NEW: Accept / Decline for work that someone else allocated to me.
+const {
+  listMyPendingAcceptances,
+  respondToAcceptances,
+} = require("./allocationAcceptance.controller");
+
 // NEW: Service <-> Client mapping (which clients belong to which service).
 const {
   listClientsForProduct,
@@ -181,6 +187,10 @@ router.get("/team-queries", listTeamQueries);
 router.get("/team-missed-yesterday", listTeamMissedYesterday);
 router.get("/carryover-history", listCarryoverHistory);
 router.get("/count-carryover-history", listCountCarryoverHistory);
+// NEW: login popup — allocations waiting for MY Accept / Decline. Any
+// logged-in employee; "me" is always req.user.userId inside the handlers.
+router.get("/my-acceptances", listMyPendingAcceptances);
+router.post("/my-acceptances/respond", respondToAcceptances);
 router.post("/my-counts/self-allocate", selfAllocateCounts);
 router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
 
