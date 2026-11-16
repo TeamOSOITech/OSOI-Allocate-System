@@ -798,6 +798,41 @@ export default function Profile({ onLogout }: ProfileProps) {
     const viewingRef = useRef<string | null>(null);
     const [viewingId, setViewingId] = useState<string | null>(null);
     const isViewingOther = !!viewingId && viewingId !== myId;
+
+    // NEW: work allocated to this employee that still waits for his Accept /
+    // Decline (kept in the Allocated count, but flagged so nobody reads it as
+    // "already accepted"). Reloaded every 30s and after Accept / Decline.
+    const [acceptSummary, setAcceptSummary] = useState<{
+        cases: number;
+        counts: number;
+        total: number;
+        since: string | null;
+        byName: string[];
+    } | null>(null);
+    const loadAcceptSummary = async () => {
+        try {
+            const target = viewingId && viewingId !== myId ? viewingId : null;
+            const res = await authFetch(
+                `${API_BASE}/api/service-cases/acceptance-summary${
+                    target ? `?employeeId=${encodeURIComponent(target)}` : ""
+                }`
+            );
+            const json = await safeJson(res);
+            if (res.ok && json.success) setAcceptSummary(json.data || null);
+        } catch (err) {
+            console.error("Failed to load acceptance summary:", err);
+        }
+    };
+    useEffect(() => {
+        if (!myId) return;
+        setAcceptSummary(null);
+        loadAcceptSummary();
+        const t = window.setInterval(() => {
+            if (!document.hidden) loadAcceptSummary();
+        }, 30000);
+        return () => window.clearInterval(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [myId, viewingId]);
     const [empList, setEmpList] = useState<SearchEmp[]>([]);
     const [empQuery, setEmpQuery] = useState("");
     const [empDropOpen, setEmpDropOpen] = useState(false);
@@ -3499,6 +3534,60 @@ export default function Profile({ onLogout }: ProfileProps) {
 
             {!isBlueMode && (
                 <>
+                    {/* NEW: allocated, but not accepted by the employee yet */}
+                    {acceptSummary && acceptSummary.total > 0 && (
+                        <div
+                            role="status"
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 10,
+                                flexWrap: "wrap",
+                                margin: "0 0 12px",
+                                padding: "10px 14px",
+                                borderRadius: 12,
+                                background: `${BRAND.amber}1f`,
+                                border: `1px solid ${BRAND.amber}66`,
+                                color: "#92400e",
+                                fontSize: 13,
+                                fontWeight: 600,
+                            }}
+                        >
+                            <span style={{ display: "flex" }}>
+                                <ClockIcon />
+                            </span>
+                            <span>
+                                {isViewingOther
+                                    ? `${acceptSummary.total} allocated case${acceptSummary.total === 1 ? "" : "s"} not accepted yet`
+                                    : `${acceptSummary.total} allocated case${acceptSummary.total === 1 ? " is" : "s are"} waiting for your acceptance`}
+                                {acceptSummary.byName.length > 0 &&
+                                    ` · by ${acceptSummary.byName.join(", ")}`}
+                                {acceptSummary.cases > 0 && acceptSummary.counts > 0
+                                    ? ` (${acceptSummary.cases} with case no. + ${acceptSummary.counts} count)`
+                                    : ""}
+                            </span>
+                            {!isViewingOther && (
+                                <button
+                                    type="button"
+                                    onClick={() => window.location.reload()}
+                                    style={{
+                                        marginLeft: "auto",
+                                        padding: "5px 12px",
+                                        borderRadius: 8,
+                                        border: "none",
+                                        background: BRAND.amber,
+                                        color: "#fff",
+                                        fontWeight: 700,
+                                        fontSize: 12,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Review &amp; Accept
+                                </button>
+                            )}
+                        </div>
+                    )}
+
                     {/* ---- Stats (click a card -> its cases table opens below) ---- */}
                     <div style={isMobile ? styles.statsGridMobile : styles.statsGrid}>
                         <StatCard
@@ -3510,6 +3599,11 @@ export default function Profile({ onLogout }: ProfileProps) {
                                 topStats.waiting > 0
                                     ? `${topStats.withNo} with case no. · ${topStats.waiting} waiting`
                                     : periodLabel
+                            }
+                            corner={
+                                acceptSummary && acceptSummary.total > 0
+                                    ? `${acceptSummary.total} waiting for acceptance`
+                                    : undefined
                             }
                             active={isDaily && openCard === "all" && activeTab === "today"}
                             onClick={isDaily ? () => openStatCard("all") : undefined}
@@ -7057,6 +7151,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                 onChanged={() => {
                     refreshCases();
                     loadMyCounts();
+                    loadAcceptSummary();
                 }}
             />
 
@@ -7168,6 +7263,7 @@ function StatCard({
     active,
     progress,
     badge,
+    corner,
 }: {
     icon: React.ReactNode;
     tint: string;
@@ -7179,6 +7275,7 @@ function StatCard({
     active?: boolean;
     progress?: number; // 0-100, thin bar under the text
     badge?: string; // small pill at the top-right (e.g. "25%")
+    corner?: string; // amber tag sitting on the top-right corner (e.g. "Waiting for acceptance")
 }) {
     return (
         <div
@@ -7194,6 +7291,7 @@ function StatCard({
             }}
             style={{
                 ...styles.statCard,
+                position: "relative",
                 cursor: onClick ? "pointer" : "default",
                 outline: active ? `2px solid ${tint}` : "none",
                 boxShadow: active ? `0 8px 22px ${tint}33` : styles.statCard.boxShadow,
@@ -7231,6 +7329,26 @@ function StatCard({
             {onClick && (
                 <span style={{ fontSize: 11, fontWeight: 600, color: tint, whiteSpace: "nowrap" }}>
                     {active ? "Hide ▴" : "View ▾"}
+                </span>
+            )}
+            {corner && (
+                <span
+                    style={{
+                        position: "absolute",
+                        top: -9,
+                        right: 10,
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        background: "#fef3c7",
+                        border: "1px solid #fcd34d",
+                        color: "#92400e",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        lineHeight: 1.4,
+                    }}
+                >
+                    {corner}
                 </span>
             )}
             {badge && (

@@ -122,7 +122,15 @@ export default function AllocationAcceptancePopup({
             if (document.visibilityState === "visible") load();
         };
         document.addEventListener("visibilitychange", onVisible);
-        return () => document.removeEventListener("visibilitychange", onVisible);
+        // NEW: also look every 30s while the tab is open, so a fresh
+        // allocation pops up without the employee having to refresh
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === "visible") load();
+        }, 30000);
+        return () => {
+            document.removeEventListener("visibilitychange", onVisible);
+            window.clearInterval(timer);
+        };
     }, [enabled, userKey, load]);
 
     const send = async (decisions: Decision[]) => {
