@@ -30,6 +30,11 @@ const { escapeLike } = require("../../utils/likeEscape");
 //   APP_URL                     <-- e.g. https://yourapp.com (or http://localhost:5173 in dev)
 
 const { createClient } = require("@supabase/supabase-js");
+const {
+  canEditHrDetails,
+  sanitizeHrDetails,
+  saveHrDetails,
+} = require("./hrDetails");
 const { sendMail, buildResetLinkEmailHtml } = require("../../mailer"); // adjust path if mailer.js lives elsewhere
 const { PLAN_USER_LIMITS } = require("../billings/billing.service");
 const { getPrimaryFrontendUrl } = require("../../config/frontendUrl");
@@ -390,38 +395,89 @@ async function createUserAndGenerateResetLink({
   // ---------------------------------------------------------------------
   let userMasterInserted = true;
   let userMasterError = null;
+  let hrDetailsSaved = false;
+  let hrDetailsError = null;
 
   try {
-    const { error: insertError } = await supabaseAdmin
+    const baseRow = {
+      "First Name": metadata?.firstName || null,
+      "Last Name": metadata?.lastName || null,
+      "Employee ID": metadata?.employeeId || null,
+      Department: metadata?.department || null,
+      "Date of Birth": metadata?.dob || null,
+      "Date of Joining": metadata?.doj || null,
+      // NEW: optional. Only written when given, so Add User keeps working
+      // even before the "Date of Exit" column has been created.
+      ...(metadata?.doe ? { "Date of Exit": metadata.doe } : {}),
+      "Reporting Manager": metadata?.reportingManager || null,
+      "Worked In Teams": metadata?.workedInTeams || null,
+      Designation: metadata?.designation || null,
+      Email: email,
+      "Login Email": email,
+      Role: metadata?.role || null,
+      "Auth User Id": data.user.id,
+      organization_id: organizationId,
+      // Only written for Blue Collar users, so White Collar creation keeps
+      // working even before the collar_type column exists.
+      ...(metadata?.collarType === "BLUE"
+        ? {
+            collar_type: "BLUE",
+            blue_location_id: metadata?.locationId || null,
+          }
+        : {}),
+    };
+
+    // NEW: optional Blue Collar personal details (sql/blue_employee_details.sql).
+    // Only the ones actually filled are written, and only for Blue users.
+    const blueExtras =
+      metadata?.collarType === "BLUE"
+        ? Object.fromEntries(
+            [
+              ["Gender", metadata?.gender],
+              ["Father or Husband Name", metadata?.fatherHusbandName],
+              ["Blood Group", metadata?.bloodGroup],
+              ["Emergency Contact Name", metadata?.emergencyContactName],
+              ["Emergency Contact Phone", metadata?.emergencyContactPhone],
+              ["Permanent Address", metadata?.address],
+            ].filter(([, v]) => v),
+          )
+        : {};
+
+    let { error: insertError } = await supabaseAdmin
       .from("user_master")
-      .insert({
-        "First Name": metadata?.firstName || null,
-        "Last Name": metadata?.lastName || null,
-        "Employee ID": metadata?.employeeId || null,
-        Department: metadata?.department || null,
-        "Date of Birth": metadata?.dob || null,
-        "Date of Joining": metadata?.doj || null,
-        // NEW: optional. Only written when given, so Add User keeps working
-        // even before the "Date of Exit" column has been created.
-        ...(metadata?.doe ? { "Date of Exit": metadata.doe } : {}),
-        "Reporting Manager": metadata?.reportingManager || null,
-        "Worked In Teams": metadata?.workedInTeams || null,
-        Designation: metadata?.designation || null,
-        Email: email,
-        "Login Email": email,
-        Role: metadata?.role || null,
-        "Auth User Id": data.user.id,
-        organization_id: organizationId,
-        // Only written for Blue Collar users, so White Collar creation keeps
-        // working even before the collar_type column exists.
-        ...(metadata?.collarType === "BLUE"
-          ? {
-              collar_type: "BLUE",
-              blue_location_id: metadata?.locationId || null,
-            }
-          : {}),
-      });
+      .insert({ ...baseRow, ...blueExtras });
+
+    // If those columns have not been created yet, do NOT lose the login:
+    // save the user without them and say so in the log.
+    if (
+      insertError &&
+      Object.keys(blueExtras).length > 0 &&
+      (insertError.code === "42703" ||
+        insertError.code === "PGRST204" ||
+        /column/i.test(insertError.message || ""))
+    ) {
+      console.warn(
+        "[add-user] Blue detail columns missing - run sql/blue_employee_details.sql. Saved without them.",
+      );
+      ({ error: insertError } = await supabaseAdmin
+        .from("user_master")
+        .insert(baseRow));
+    }
     if (insertError) throw insertError;
+
+    // NEW: optional HR details (Super Admin only - already filtered and
+    // validated in processAddUserRequest). Separate table; a failure here
+    // never undoes the account, it is only reported back.
+    if (metadata?.hrDetails && Object.keys(metadata.hrDetails).length > 0) {
+      const hr = await saveHrDetails({
+        supabaseAdmin,
+        authUserId: data.user.id,
+        organizationId,
+        clean: metadata.hrDetails,
+      });
+      hrDetailsSaved = hr.saved;
+      hrDetailsError = hr.error;
+    }
   } catch (err) {
     userMasterInserted = false;
     userMasterError = err?.message || JSON.stringify(err);
@@ -506,6 +562,8 @@ async function createUserAndGenerateResetLink({
     resetEmailError,
     userMasterInserted,
     userMasterError,
+    hrDetailsSaved,
+    hrDetailsError,
   };
 }
 
@@ -627,6 +685,36 @@ async function processAddUserRequest(body, requester) {
     };
   }
 
+  // NEW: optional Blue Collar personal details
+  if (String(body.collarType || "").toUpperCase() === "BLUE") {
+    if (body.gender && !["Male", "Female", "Other"].includes(body.gender)) {
+      return {
+        statusCode: 400,
+        body: { message: "Please pick a valid gender." },
+      };
+    }
+    if (
+      body.bloodGroup &&
+      !["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].includes(
+        body.bloodGroup,
+      )
+    ) {
+      return {
+        statusCode: 400,
+        body: { message: "Please pick a valid blood group." },
+      };
+    }
+    if (
+      body.emergencyContactPhone &&
+      !isValidPhone(body.emergencyContactPhone)
+    ) {
+      return {
+        statusCode: 400,
+        body: { message: "Emergency contact phone must be exactly 10 digits." },
+      };
+    }
+  }
+
   if (body.reportingManager) {
     const rmCheck = await validateReportingManager(
       body.reportingManager,
@@ -658,6 +746,17 @@ async function processAddUserRequest(body, requester) {
     };
   }
 
+  // NEW: HR details are Super Admin only. For anyone else they are silently
+  // ignored (never trusted from the request body), even if sent by hand.
+  let hrDetails = {};
+  if (canEditHrDetails(requesterRole) && body.hrDetails) {
+    const hr = sanitizeHrDetails(body.hrDetails);
+    if (hr.error) {
+      return { statusCode: 400, body: { message: hr.error } };
+    }
+    hrDetails = hr.clean;
+  }
+
   if (body.password && String(body.password).length < 8) {
     return {
       statusCode: 400,
@@ -675,6 +774,8 @@ async function processAddUserRequest(body, requester) {
     resetEmailError,
     userMasterInserted,
     userMasterError,
+    hrDetailsSaved,
+    hrDetailsError,
   } = await createUserAndGenerateResetLink({
     email,
     tempPassword,
@@ -697,6 +798,25 @@ async function processAddUserRequest(body, requester) {
           ? "BLUE"
           : "WHITE",
       locationId: body.locationId || null,
+      hrDetails,
+      gender: String(body.gender || "")
+        .trim()
+        .slice(0, 20),
+      fatherHusbandName: String(body.fatherHusbandName || "")
+        .trim()
+        .slice(0, 100),
+      bloodGroup: String(body.bloodGroup || "")
+        .trim()
+        .slice(0, 5),
+      emergencyContactName: String(body.emergencyContactName || "")
+        .trim()
+        .slice(0, 100),
+      emergencyContactPhone: String(body.emergencyContactPhone || "")
+        .trim()
+        .slice(0, 15),
+      address: String(body.address || "")
+        .trim()
+        .slice(0, 300),
     },
   });
 
@@ -716,6 +836,8 @@ async function processAddUserRequest(body, requester) {
       resetEmailError,
       userMasterInserted,
       userMasterError,
+      hrDetailsSaved,
+      hrDetailsError,
     },
   };
 }
