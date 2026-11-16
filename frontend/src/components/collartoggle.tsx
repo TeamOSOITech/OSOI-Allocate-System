@@ -1,10 +1,18 @@
 // src/components/collartoggle.tsx
 //
-// White Collar / Blue Collar switch shown at the top of the Home page.
+// Service Team (white collar) / Manpower Team (blue collar) switch, shown on
+// the Home page and on the Add User page.
 // Team Members (locked to one mode) just get a read-only badge.
 
 import { useCollarMode } from "../context/collarmode";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
+
+// Display names. The internal values stay "WHITE" / "BLUE" everywhere (DB,
+// localStorage, API) - only the text shown on screen is renamed.
+export const COLLAR_LABELS = {
+    WHITE: "Service Team",
+    BLUE: "Manpower Team",
+} as const;
 
 export default function CollarToggle({
     onChange,
@@ -30,6 +38,7 @@ export default function CollarToggle({
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 6,
+                    whiteSpace: "nowrap",
                     padding: "7px 14px",
                     border: "none",
                     borderRadius: radius.pill,
@@ -73,7 +82,7 @@ export default function CollarToggle({
                     className={mode === "BLUE" ? "ti ti-helmet" : "ti ti-briefcase"}
                     aria-hidden="true"
                 />
-                {mode === "BLUE" ? "Blue Collar" : "White Collar"}
+                {mode === "BLUE" ? COLLAR_LABELS.BLUE : COLLAR_LABELS.WHITE}
             </span>
         );
     }
@@ -91,8 +100,8 @@ export default function CollarToggle({
                 border: "1px solid #D1D5DB",
             }}
         >
-            {pill("WHITE", "White Collar", "ti ti-briefcase")}
-            {pill("BLUE", "Blue Collar", "ti ti-helmet")}
+            {pill("WHITE", COLLAR_LABELS.WHITE, "ti ti-briefcase")}
+            {pill("BLUE", COLLAR_LABELS.BLUE, "ti ti-helmet")}
         </div>
     );
 }

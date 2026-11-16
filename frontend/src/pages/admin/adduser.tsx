@@ -11,8 +11,19 @@ import FormErrorBoundary from "../../components/formErrorBoundary";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
 import { useCollarMode } from "../../context/collarmode";
+import CollarToggle from "../../components/collartoggle";
+import HrDetailsModal, {
+    EMPTY_HR_DETAILS,
+    countHrFilled,
+    type HrDetails,
+} from "../../components/hrDetailsModal";
 
 const MOBILE_BREAKPOINT = 768;
+
+// Only these roles see the "HR Details" section on this form (PAN, Aadhaar,
+// PF/ESI ...). Keep in sync with HR_ALLOWED_ROLES in
+// backend/src/modules/users/hrDetails.js — the backend is the real check.
+const HR_ALLOWED_ROLES = ["SUPER_ADMIN"];
 
 // Domains that are NOT allowed for the Email field — personal/free email
 // providers. Only company/professional domains (e.g. abc@infosys.com) pass.
@@ -333,6 +344,13 @@ export default function AddUser() {
         Teams: "",
         password: "",
         role: "",
+        // NEW (Blue Collar only, all optional): personal details
+        gender: "",
+        fatherHusbandName: "",
+        bloodGroup: "",
+        emergencyContactName: "",
+        emergencyContactPhone: "",
+        address: "",
     });
 
     // Fields that must be filled before submit. DOB, Contact Number and
@@ -364,6 +382,12 @@ export default function AddUser() {
             ? { border: "1px solid #dc2626", background: "#fff5f5" }
             : {}),
     });
+
+    // HR Details (Super Admin only) — filled in the separate panel, sent
+    // together with the rest of the form on Register.
+    const [hrDetails, setHrDetails] = useState<HrDetails>(EMPTY_HR_DETAILS);
+    const [showHrModal, setShowHrModal] = useState(false);
+    const hrFilledCount = countHrFilled(hrDetails);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -486,6 +510,7 @@ export default function AddUser() {
     };
 
     const currentUser = getCurrentUser();
+    const canEditHr = HR_ALLOWED_ROLES.includes(currentUser?.role || "");
     const assignableForCurrentUser = ASSIGNABLE_ROLES_BY_CREATOR[currentUser?.role || ""] ?? [];
 
     // FIX: was a `useState` seeded once at mount, so if the org's custom
@@ -956,9 +981,21 @@ export default function AddUser() {
 
     const handleRegister = async () => {
         const missing = validateRequired();
-        if (missing.length > 0) {
+        // NEW: Blue Collar people must have a Location (it decides which
+        // services they see)
+        if (missing.length > 0 || (isBlue && !blueLocationId)) {
             setShowFieldErrors(true);
             setError("Please fill all required fields.");
+            return;
+        }
+
+        // NEW: emergency phone, when given, must be 10 digits
+        if (
+            isBlue &&
+            formData.emergencyContactPhone &&
+            !/^\d{10}$/.test(formData.emergencyContactPhone)
+        ) {
+            setError("Emergency contact phone must be exactly 10 digits.");
             return;
         }
 
@@ -1012,6 +1049,8 @@ export default function AddUser() {
                     lastName,
                     collarType: collarMode,
                     locationId: isBlue ? blueLocationId || null : null,
+                    // only sent when this user may fill it AND something is filled
+                    ...(canEditHr && hrFilledCount > 0 ? { hrDetails } : {}),
                 }),
             });
 
@@ -1251,6 +1290,23 @@ export default function AddUser() {
                                 </div>
                             </div>
                         )}
+
+                        {/* Which team the new user belongs to. Same switch as Home -
+                            changing it here changes it everywhere (remembered). */}
+                        <div style={styles.modeRow}>
+                            <span style={styles.modeRowLabel}>Adding user to</span>
+                            <CollarToggle
+                                onChange={() => {
+                                    setError("");
+                                    setShowFieldErrors(false);
+                                }}
+                            />
+                            <span style={styles.modeRowHint}>
+                                {isBlue
+                                    ? "Manpower-based work - Location is required for this user"
+                                    : "Service-based work"}
+                            </span>
+                        </div>
 
                         <div style={styles.formCard}>
                             {/* Section: Personal Information */}
@@ -1549,11 +1605,21 @@ export default function AddUser() {
                                     </div>
                                     {isBlue && (
                                         <div>
-                                            <label style={styles.label}>
-                                                Location (where they work)
+                                            <label
+                                                style={{ ...styles.label, ...styles.labelRequired }}
+                                            >
+                                                Location (where they work) *
                                             </label>
                                             <select
-                                                style={styles.input}
+                                                style={{
+                                                    ...styles.input,
+                                                    ...(showFieldErrors && !blueLocationId
+                                                        ? {
+                                                              border: "1px solid #dc2626",
+                                                              background: "#fff5f5",
+                                                          }
+                                                        : {}),
+                                                }}
                                                 value={blueLocationId}
                                                 onChange={(e) => setBlueLocationId(e.target.value)}
                                             >
@@ -1611,8 +1677,187 @@ export default function AddUser() {
                                             }
                                         />
                                     </div>
+                                    {isBlue && (
+                                        <>
+                                            <div>
+                                                <label style={styles.label}>Gender</label>
+                                                <select
+                                                    style={styles.input}
+                                                    value={formData.gender}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            gender: e.target.value,
+                                                        })
+                                                    }
+                                                >
+                                                    <option value="">Select Gender</option>
+                                                    <option value="Male">Male</option>
+                                                    <option value="Female">Female</option>
+                                                    <option value="Other">Other</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={styles.label}>
+                                                    Father / Husband Name
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    style={styles.input}
+                                                    maxLength={100}
+                                                    value={formData.fatherHusbandName}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            fatherHusbandName: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder="e.g. Ramesh Kumar"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={styles.label}>Blood Group</label>
+                                                <select
+                                                    style={styles.input}
+                                                    value={formData.bloodGroup}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            bloodGroup: e.target.value,
+                                                        })
+                                                    }
+                                                >
+                                                    <option value="">Select Blood Group</option>
+                                                    {[
+                                                        "A+",
+                                                        "A-",
+                                                        "B+",
+                                                        "B-",
+                                                        "AB+",
+                                                        "AB-",
+                                                        "O+",
+                                                        "O-",
+                                                    ].map((g) => (
+                                                        <option key={g} value={g}>
+                                                            {g}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={styles.label}>
+                                                    Emergency Contact Person
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    style={styles.input}
+                                                    maxLength={100}
+                                                    value={formData.emergencyContactName}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            emergencyContactName: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder="e.g. Sunita Devi"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={styles.label}>
+                                                    Emergency Contact Phone
+                                                </label>
+                                                <input
+                                                    type="tel"
+                                                    inputMode="numeric"
+                                                    style={styles.input}
+                                                    maxLength={10}
+                                                    value={formData.emergencyContactPhone}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            emergencyContactPhone:
+                                                                e.target.value.replace(/\D/g, ""),
+                                                        })
+                                                    }
+                                                    placeholder="e.g. 9876543210"
+                                                />
+                                            </div>
+                                            <div
+                                                style={
+                                                    isMobile ? undefined : { gridColumn: "1 / -1" }
+                                                }
+                                            >
+                                                <label style={styles.label}>Address</label>
+                                                <textarea
+                                                    style={{
+                                                        ...styles.input,
+                                                        minHeight: 70,
+                                                        resize: "vertical",
+                                                    }}
+                                                    maxLength={300}
+                                                    value={formData.address}
+                                                    onChange={(e) =>
+                                                        setFormData({
+                                                            ...formData,
+                                                            address: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder="House / street, area, city, PIN"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </div>
+
+                            {/* Section: HR Details (Super Admin only) — click opens the panel */}
+                            {canEditHr && (
+                                <>
+                                    <div style={styles.sectionHeader}>
+                                        <i
+                                            className="ti ti-id-badge-2"
+                                            style={{ fontSize: fontSize.lg, color: BRAND.blue }}
+                                        />
+                                        <span style={styles.sectionHeaderText}>HR Details</span>
+                                    </div>
+                                    <div style={styles.sectionBody}>
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 14,
+                                                flexWrap: "wrap",
+                                            }}
+                                        >
+                                            <button
+                                                type="button"
+                                                style={styles.bulkBtn}
+                                                onClick={() => setShowHrModal(true)}
+                                            >
+                                                <i
+                                                    className="ti ti-id-badge-2"
+                                                    style={{ fontSize: fontSize.md }}
+                                                />
+                                                {hrFilledCount > 0
+                                                    ? "Edit HR Details"
+                                                    : "Add HR Details"}
+                                            </button>
+                                            <span
+                                                style={{
+                                                    fontSize: fontSize.sm,
+                                                    color:
+                                                        hrFilledCount > 0 ? "#15803d" : "#767F92",
+                                                    fontWeight: fontWeight.medium,
+                                                }}
+                                            >
+                                                {hrFilledCount > 0
+                                                    ? `${hrFilledCount} field${hrFilledCount === 1 ? "" : "s"} filled — saved when you click Register User`
+                                                    : "Optional — PAN, Aadhaar, PF / ESI, service history etc."}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
 
                             {/* Section: Security */}
                             <div style={styles.sectionHeader}>
@@ -1717,6 +1962,18 @@ export default function AddUser() {
                         </div>
                     </div>
                 </div>
+
+                <HrDetailsModal
+                    open={canEditHr && showHrModal}
+                    value={hrDetails}
+                    brand={BRAND}
+                    isMobile={isMobile}
+                    onClose={() => setShowHrModal(false)}
+                    onSave={(next: HrDetails) => {
+                        setHrDetails(next);
+                        setShowHrModal(false);
+                    }}
+                />
 
                 {showSuccess && (
                     <div style={styles.overlay}>
@@ -2291,6 +2548,20 @@ function getStyles(BRAND: {
             cursor: "pointer",
             whiteSpace: "nowrap",
         },
+
+        modeRow: {
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            margin: "0 0 12px",
+        },
+        modeRowLabel: {
+            fontSize: fontSize.sm,
+            fontWeight: fontWeight.semibold,
+            color: "#3D4459",
+        },
+        modeRowHint: { fontSize: fontSize.xs, color: "#767F92" },
 
         formCard: {
             flex: 1,
