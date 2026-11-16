@@ -11,7 +11,6 @@ import FormErrorBoundary from "../../components/formErrorBoundary";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 import { useTheme } from "../../context/themecontext";
 import { useCollarMode } from "../../context/collarmode";
-import CollarToggle from "../../components/collartoggle";
 import HrDetailsModal, {
     EMPTY_HR_DETAILS,
     countHrFilled,
@@ -1291,23 +1290,6 @@ export default function AddUser() {
                             </div>
                         )}
 
-                        {/* Which team the new user belongs to. Same switch as Home -
-                            changing it here changes it everywhere (remembered). */}
-                        <div style={styles.modeRow}>
-                            <span style={styles.modeRowLabel}>Adding user to</span>
-                            <CollarToggle
-                                onChange={() => {
-                                    setError("");
-                                    setShowFieldErrors(false);
-                                }}
-                            />
-                            <span style={styles.modeRowHint}>
-                                {isBlue
-                                    ? "Manpower-based work - Location is required for this user"
-                                    : "Service-based work"}
-                            </span>
-                        </div>
-
                         <div style={styles.formCard}>
                             {/* Section: Personal Information */}
                             <div style={styles.sectionHeader}>
@@ -2548,20 +2530,6 @@ function getStyles(BRAND: {
             cursor: "pointer",
             whiteSpace: "nowrap",
         },
-
-        modeRow: {
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-            margin: "0 0 12px",
-        },
-        modeRowLabel: {
-            fontSize: fontSize.sm,
-            fontWeight: fontWeight.semibold,
-            color: "#3D4459",
-        },
-        modeRowHint: { fontSize: fontSize.xs, color: "#767F92" },
 
         formCard: {
             flex: 1,
