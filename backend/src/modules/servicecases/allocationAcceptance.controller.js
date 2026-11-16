@@ -219,6 +219,88 @@ async function listMyPendingAcceptances(req, res) {
 }
 
 // ------------------------------------------------------------
+// GET /api/service-cases/acceptance-summary[?employeeId=...]
+//
+// Profile page: how much work allocated to this employee is still waiting
+// for HIS Accept / Decline. "me" by default; a manager opening someone
+// else's Profile sends ?employeeId= (the route's viewOtherEmployee check
+// decides who may). Same filters as /my-acceptances, so the numbers match
+// the popup the employee sees.
+// ------------------------------------------------------------
+async function getAcceptanceSummary(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const target = req.query.employeeId
+      ? String(req.query.employeeId)
+      : req.user.userId;
+    const empty = { cases: 0, counts: 0, total: 0, since: null, byName: [] };
+
+    const { data: caseRows, error: cErr } = await fetchAll(() =>
+      supabase
+        .from("service_cases")
+        .select("id, allocated_at, allocated_by")
+        .eq("organization_id", orgId)
+        .eq("assigned_employee_id", target)
+        .eq("allocation_status", "ALLOCATED")
+        .eq("acceptance_status", "PENDING")
+        .or(NOT_SUBMITTED)
+        .order("id", { ascending: true }),
+    );
+    if (cErr) {
+      if (isMissingColumn(cErr)) {
+        warnMissingColumns();
+        return res.json({ success: true, data: empty });
+      }
+      throw cErr;
+    }
+
+    const { data: allocRows, error: aErr } = await supabase
+      .from("service_case_count_allocations")
+      .select("quantity, allocated_at, allocated_by")
+      .eq("organization_id", orgId)
+      .eq("employee_id", target)
+      .eq("acceptance_status", "PENDING")
+      .or(NOTHING_DONE);
+    if (aErr && !isMissingColumn(aErr)) throw aErr;
+
+    const cases = caseRows || [];
+    const allocs = (allocRows || []).filter((a) => (a.quantity || 0) > 0);
+    const countUnits = allocs.reduce(
+      (s, a) => s + (Number(a.quantity) || 0),
+      0,
+    );
+
+    const stamps = [...cases, ...allocs]
+      .map((r) => r.allocated_at)
+      .filter(Boolean)
+      .sort();
+    const byIds = [
+      ...new Set(
+        [...cases, ...allocs].map((r) => r.allocated_by).filter(Boolean),
+      ),
+    ];
+    const names = byIds.length ? await getEmployeeNameMap(byIds, orgId) : {};
+
+    res.json({
+      success: true,
+      data: {
+        cases: cases.length,
+        counts: countUnits,
+        total: cases.length + countUnits,
+        since: stamps[0] || null,
+        byName: byIds.map((id) => names[id]).filter(Boolean),
+      },
+    });
+  } catch (err) {
+    console.error("getAcceptanceSummary error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
+// ------------------------------------------------------------
 // POST /api/service-cases/my-acceptances/respond
 // body: { decisions: [{ kind: "CASE"|"COUNT", id, action: "ACCEPT"|"DECLINE", reason?, reasonNote? }] }
 // reasonNote is required when reason is "Other".
@@ -1100,5 +1182,6 @@ module.exports = {
   listMyPendingAcceptances,
   respondToAcceptances,
   getAcceptanceStatus,
+  getAcceptanceSummary,
   runAcceptanceReminders,
 };
