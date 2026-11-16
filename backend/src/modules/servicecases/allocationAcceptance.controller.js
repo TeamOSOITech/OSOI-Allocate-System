@@ -18,6 +18,7 @@
 const supabase = require("../../config/supabaseClient");
 const { fetchAll } = require("../../utils/fetchAll");
 const { sendPushToUsers } = require("../../utils/webpush");
+const { startOfTodayISO } = require("./caseRollover");
 const {
   getProductNameMap,
   getClientNameMap,
@@ -560,6 +561,144 @@ async function respondToAcceptances(req, res) {
 }
 
 // ------------------------------------------------------------
+// GET /api/service-cases/acceptance-status
+//
+// For the person who ALLOCATES: what became of the work I allocated TODAY,
+// per employee - accepted / still waiting (and since when) / declined (and
+// why). So there is no need to wait for the 2-hour mail to find out.
+// Allocations I made to myself are not listed (nothing to accept).
+// ------------------------------------------------------------
+async function getAcceptanceStatus(req, res) {
+  try {
+    const orgId = req.user.organizationId;
+    const me = req.user.userId;
+    const since = startOfTodayISO(); // 00:00 today in APP_TIMEZONE
+
+    const empty = { accepted: 0, waiting: 0, declined: 0 };
+
+    const { data: caseRows, error: cErr } = await fetchAll(() =>
+      supabase
+        .from("service_cases")
+        .select("assigned_employee_id, acceptance_status, allocated_at")
+        .eq("organization_id", orgId)
+        .eq("allocated_by", me)
+        .eq("allocation_status", "ALLOCATED")
+        .not("assigned_employee_id", "is", null)
+        .gte("allocated_at", since)
+        .order("id", { ascending: true }),
+    );
+    if (cErr) {
+      if (isMissingColumn(cErr)) {
+        warnMissingColumns();
+        return res.json({
+          success: true,
+          data: { ready: false, rows: [], totals: empty },
+        });
+      }
+      throw cErr;
+    }
+
+    const { data: countRows, error: ctErr } = await supabase
+      .from("service_case_count_allocations")
+      .select("employee_id, quantity, acceptance_status, allocated_at")
+      .eq("organization_id", orgId)
+      .eq("allocated_by", me)
+      .gte("allocated_at", since);
+    if (ctErr && !isMissingColumn(ctErr)) throw ctErr;
+
+    // declined work leaves the lists, so the log is the only record of it
+    const { data: declineRows, error: dErr } = await supabase
+      .from("allocation_decline_log")
+      .select("employee_id, employee_name, quantity, reason, declined_at")
+      .eq("organization_id", orgId)
+      .eq("allocated_by", me)
+      .gte("declined_at", since);
+    if (dErr)
+      console.error("[acceptance] decline log read failed:", dErr.message);
+
+    const byEmp = new Map();
+    const row = (id) => {
+      if (!byEmp.has(id)) {
+        byEmp.set(id, {
+          employeeId: id,
+          name: null,
+          accepted: 0,
+          waiting: 0,
+          declined: 0,
+          waitingSince: null,
+          declineReasons: [],
+        });
+      }
+      return byEmp.get(id);
+    };
+    const markStatus = (id, status, units, allocatedAt) => {
+      const r = row(id);
+      if (status === "PENDING") {
+        r.waiting += units;
+        if (allocatedAt && (!r.waitingSince || allocatedAt < r.waitingSince)) {
+          r.waitingSince = allocatedAt;
+        }
+      } else {
+        r.accepted += units;
+      }
+    };
+
+    (caseRows || []).forEach((c) => {
+      if (String(c.assigned_employee_id) === String(me)) return;
+      markStatus(
+        c.assigned_employee_id,
+        c.acceptance_status,
+        1,
+        c.allocated_at,
+      );
+    });
+    (countRows || []).forEach((a) => {
+      if (String(a.employee_id) === String(me)) return;
+      markStatus(
+        a.employee_id,
+        a.acceptance_status,
+        Number(a.quantity) || 0,
+        a.allocated_at,
+      );
+    });
+    (declineRows || []).forEach((d) => {
+      if (String(d.employee_id) === String(me)) return;
+      const r = row(d.employee_id);
+      r.declined += Number(d.quantity) || 1;
+      if (d.employee_name && !r.name) r.name = d.employee_name;
+      if (d.reason && !r.declineReasons.includes(d.reason))
+        r.declineReasons.push(d.reason);
+    });
+
+    const ids = [...byEmp.keys()];
+    const names = ids.length ? await getEmployeeNameMap(ids, orgId) : {};
+    const rows = ids
+      .map((id) => ({
+        ...byEmp.get(id),
+        name: names[id] || byEmp.get(id).name || "Unknown",
+      }))
+      .sort((a, b) => b.waiting - a.waiting || a.name.localeCompare(b.name));
+
+    const totals = rows.reduce(
+      (t, r) => ({
+        accepted: t.accepted + r.accepted,
+        waiting: t.waiting + r.waiting,
+        declined: t.declined + r.declined,
+      }),
+      { ...empty },
+    );
+
+    res.json({ success: true, data: { ready: true, rows, totals } });
+  } catch (err) {
+    console.error("getAcceptanceStatus error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong on our end. Please try again.",
+    });
+  }
+}
+
+// ------------------------------------------------------------
 // 2-hour reminder
 // ------------------------------------------------------------
 
@@ -626,10 +765,66 @@ function detailBlock(lines) {
     .join("")}</div>`;
 }
 
+// A mail link that opens on EVERY device. "localhost" means "this phone itself"
+// on iOS / Android, so a localhost link can never open (Safari: "can't open
+// the page / localhost"). Reminders are only sent when the app link is a real
+// public https address.
+function isUsableAppLink(url) {
+  if (!/^https:\/\//i.test(url || "")) return false;
+  if (url.includes(",")) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(host))
+      return false;
+    if (host.endsWith(".local") || host.endsWith(".localhost")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ONE block for a manager: every team member who has not answered, each with
+// their own items (lines are already HTML-escaped by itemLines)
+function managerDetailBlock(entries) {
+  const MAX_PEOPLE = 40;
+  const shown = entries.slice(0, MAX_PEOPLE);
+  const more = entries.length - shown.length;
+  return `<div style="margin:0 0 26px;padding:12px 14px;background:#FFF7E6;border:1px solid #F5D58A;border-radius:12px;color:#7A4B00;font-size:14px;line-height:1.6;text-align:left;">${shown
+    .map(
+      (e) =>
+        `<div style="margin:0 0 10px;"><div style="font-weight:800;">${esc(e.name)} — ${e.total} case${
+          e.total > 1 ? "s" : ""
+        }</div>${e.lines
+          .map(
+            (l) => `<div style="font-weight:600;font-size:13px;">• ${l}</div>`,
+          )
+          .join("")}</div>`,
+    )
+    .join(
+      "",
+    )}${more > 0 ? `<div style="font-weight:700;">+ ${more} more</div>` : ""}</div>`;
+}
+
 let reminderRunning = false;
+let warnedBadLink = false;
 
 async function runAcceptanceReminders() {
   if (reminderRunning) return; // the previous tick is still mailing
+  // Never mail a link that will not open (e.g. a local dev server whose
+  // FRONTEND_URL is http://localhost:5173). Checked BEFORE claiming anything,
+  // so the allocations stay waiting for a server that has the real link.
+  if (
+    !isUsableAppLink(APP_LOGIN_URL) &&
+    process.env.ACCEPT_REMINDER_ALLOW_LOCAL !== "true"
+  ) {
+    if (!warnedBadLink) {
+      warnedBadLink = true;
+      console.warn(
+        `[acceptance] reminders are OFF on this server: the app link "${APP_LOGIN_URL}" is not a public https address. Set FRONTEND_URL to the live site (e.g. https://your-app.vercel.app). For local testing only: ACCEPT_REMINDER_ALLOW_LOCAL=true.`,
+      );
+    }
+    return;
+  }
   reminderRunning = true;
   try {
     const nowMs = Date.now();
@@ -764,7 +959,13 @@ async function runAcceptanceReminders() {
       };
     }
 
+    const waited = `${REMINDER_AFTER_HOURS} hour${REMINDER_AFTER_HOURS > 1 ? "s" : ""}`;
+    const byManager = new Map(); // `${org}|${manager email}` -> { manager, entries[] }
+
+    // ---- 1) each employee gets THEIR OWN reminder ----
     for (const g of groups.values()) {
+      g.attempted = false;
+      g.ok = false;
       try {
         const { productMap, clientMap, people } = nameMaps[g.org];
         const person = people[g.emp] || {};
@@ -775,18 +976,16 @@ async function runAcceptanceReminders() {
           g.cases.length +
           g.counts.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
         const lines = itemLines(g.cases, g.counts, productMap, clientMap);
-        const detailHtml = detailBlock(lines);
-        const waited = `${REMINDER_AFTER_HOURS} hour${REMINDER_AFTER_HOURS > 1 ? "s" : ""}`;
 
         const [empEmail, manager] = await Promise.all([
           authEmailOf(g.emp),
           resolveManager(person["Reporting Manager"], g.org),
         ]);
 
-        const jobs = [];
         if (empEmail) {
-          jobs.push(
-            sendEmail({
+          g.attempted = true;
+          try {
+            await sendEmail({
               to: empEmail,
               subject: "Reminder: you haven't accepted your allocation",
               text: `${total} item(s) allocated to you more than ${waited} ago are still waiting. Please login and accept or decline them. ${APP_LOGIN_URL}`,
@@ -797,67 +996,99 @@ async function runAcceptanceReminders() {
                 subtext: `${total} item${total > 1 ? "s" : ""} allocated to you more than ${waited} ago ${total > 1 ? "are" : "is"} still waiting. Please login and accept or decline ${total > 1 ? "them" : "it"}.`,
                 headSolid: "#D97706",
                 headGradient: "linear-gradient(135deg,#F59E0B,#D97706)",
-                detailHtml,
+                detailHtml: detailBlock(lines),
               }),
-            }),
-          );
+            });
+            g.ok = true;
+          } catch (e) {
+            console.error(
+              "[acceptance] employee reminder failed:",
+              e?.message || e,
+            );
+          }
         } else {
           console.warn(
             `[acceptance] no email for employee ${g.emp} — reminder skipped`,
           );
         }
+
+        // the manager gets ONE mail for the whole team (phase 2)
         if (
           manager.email &&
           manager.email.toLowerCase() !== String(empEmail || "").toLowerCase()
         ) {
-          jobs.push(
-            sendEmail({
-              to: manager.email,
-              subject: `${name} hasn't accepted their allocation`,
-              text: `${name} has not accepted ${total} allocated item(s) after ${waited}. ${APP_LOGIN_URL}`,
-              html: buildAllocationEmailHtml({
-                icon: "&#9203;",
-                heading: "Allocation Not Accepted",
-                headline: `${esc(name)} hasn't accepted the allocation yet.`,
-                subtext: `${total} item${total > 1 ? "s" : ""} allocated to ${esc(name)} more than ${waited} ago ${total > 1 ? "are" : "is"} still waiting for a response.`,
-                headSolid: "#D97706",
-                headGradient: "linear-gradient(135deg,#F59E0B,#D97706)",
-                detailHtml,
-              }),
-            }),
-          );
+          const key = `${g.org}|${manager.email.toLowerCase()}`;
+          const m = byManager.get(key) || { org: g.org, manager, entries: [] };
+          m.entries.push({ g, name, total, lines });
+          byManager.set(key, m);
         } else if (!manager.email) {
           console.warn(
             `[acceptance] no reporting manager email for ${g.emp} — manager mail skipped`,
           );
         }
 
-        if (jobs.length) {
-          const results = await Promise.allSettled(jobs);
-          const ok = results.filter((r) => r.status === "fulfilled").length;
-          results
-            .filter((r) => r.status === "rejected")
-            .forEach((r) =>
-              console.error(
-                "[acceptance] reminder mail failed:",
-                r.reason?.message || r.reason,
-              ),
-            );
-          if (ok === 0) await releaseClaim(g);
-        }
-
-        // browser push too (never throws)
+        // browser push to the employee (never throws)
         await sendPushToUsers({
           organizationId: g.org,
-          userIds: [g.emp, manager.authId].filter(Boolean),
+          userIds: [g.emp],
           title: "Allocation not accepted yet",
-          body: `${name} has ${total} allocated item${total > 1 ? "s" : ""} waiting for a response.`,
+          body: `You have ${total} allocated item${total > 1 ? "s" : ""} waiting for your response.`,
           url: "/",
         });
       } catch (e) {
         console.error("[acceptance] reminder group failed:", e?.message || e);
         await releaseClaim(g).catch(() => {});
+        g.attempted = false;
+        g.ok = true; // already released - do not release twice
       }
+    }
+
+    // ---- 2) each manager gets ONE mail listing everybody who has not answered ----
+    for (const m of byManager.values()) {
+      const n = m.entries.length;
+      const items = m.entries.reduce((x, e) => x + e.total, 0);
+      const first = m.entries[0].name;
+      m.entries.forEach((e) => (e.g.attempted = true));
+      try {
+        await sendEmail({
+          to: m.manager.email,
+          subject:
+            n === 1
+              ? `${first} hasn't accepted their allocation`
+              : `${n} team members haven't accepted their allocation`,
+          text: `${n} team member${n > 1 ? "s have" : " has"} not accepted ${items} allocated item(s) after ${waited}: ${m.entries
+            .map((e) => `${e.name} (${e.total})`)
+            .join(", ")}. ${APP_LOGIN_URL}`,
+          html: buildAllocationEmailHtml({
+            icon: "&#9203;",
+            heading: "Allocation Not Accepted",
+            headline:
+              n === 1
+                ? `${esc(first)} hasn't accepted the allocation yet.`
+                : `${n} team members haven't accepted their allocation yet.`,
+            subtext: `${items} item${items > 1 ? "s" : ""} allocated more than ${waited} ago ${items > 1 ? "are" : "is"} still waiting for a response.`,
+            headSolid: "#D97706",
+            headGradient: "linear-gradient(135deg,#F59E0B,#D97706)",
+            detailHtml: managerDetailBlock(m.entries),
+          }),
+        });
+        m.entries.forEach((e) => (e.g.ok = true));
+        await sendPushToUsers({
+          organizationId: m.org,
+          userIds: [m.manager.authId].filter(Boolean),
+          title: "Allocation not accepted yet",
+          body: `${n} team member${n > 1 ? "s have" : " has"} not accepted their allocation.`,
+          url: "/",
+        });
+      } catch (e) {
+        console.error("[acceptance] manager reminder failed:", e?.message || e);
+      }
+    }
+
+    // anything we tried to mail where NO mail went out is released, so the
+    // next run tries again (a row nobody could be mailed about stays claimed)
+    for (const g of groups.values()) {
+      if (g.attempted && !g.ok) await releaseClaim(g).catch(() => {});
     }
   } finally {
     reminderRunning = false;
@@ -868,5 +1099,6 @@ module.exports = {
   DECLINE_REASONS,
   listMyPendingAcceptances,
   respondToAcceptances,
+  getAcceptanceStatus,
   runAcceptanceReminders,
 };

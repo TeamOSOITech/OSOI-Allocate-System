@@ -68,6 +68,7 @@ const {
 const {
   listMyPendingAcceptances,
   respondToAcceptances,
+  getAcceptanceStatus,
 } = require("./allocationAcceptance.controller");
 
 // NEW: Service <-> Client mapping (which clients belong to which service).
@@ -191,6 +192,8 @@ router.get("/count-carryover-history", listCountCarryoverHistory);
 // logged-in employee; "me" is always req.user.userId inside the handlers.
 router.get("/my-acceptances", listMyPendingAcceptances);
 router.post("/my-acceptances/respond", respondToAcceptances);
+// NEW: for whoever allocates - who accepted / is still waiting / declined.
+router.get("/acceptance-status", allocPerm, getAcceptanceStatus);
 router.post("/my-counts/self-allocate", selfAllocateCounts);
 router.post("/my-counts/add-case-numbers", addCaseNumbersToCount);
 
