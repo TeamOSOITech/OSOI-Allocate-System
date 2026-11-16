@@ -67,6 +67,7 @@ import { useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
+import AcceptanceStatusButton from "../../components/acceptancestatus";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 10;
@@ -1805,6 +1806,8 @@ export default function TodaysAllocationCases({
                 <i className="ti ti-alarm" />
                 Anything Urgent
             </button>
+            {/* who accepted / is waiting / declined (no need to wait for the 2h mail) */}
+            <AcceptanceStatusButton />
             <div style={{ marginLeft: "auto", minWidth: 220 }}>
                 <input
                     type="text"
