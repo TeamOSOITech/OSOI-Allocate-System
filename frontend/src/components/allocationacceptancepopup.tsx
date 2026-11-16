@@ -43,6 +43,18 @@ type Decision = {
 };
 
 const keyOf = (i: { kind: string; id: string }) => `${i.kind}:${i.id}`;
+
+// One line in the answer list. Cases that already have a case number are
+// grouped per service ("Sir lunddryy · 3 cases" + View) so the numbers are not
+// repeated line by line; each count (no case numbers yet) stays its own line.
+type AnswerRow = {
+    key: string;
+    service: string;
+    allocatedByName: string | null;
+    kind: "CASES" | "COUNT";
+    quantity: number;
+    members: { kind: "CASE" | "COUNT"; id: string }[];
+};
 const OTHER = "Other";
 const MAX_NOTE = 300;
 
@@ -75,8 +87,8 @@ export default function AllocationAcceptancePopup({
     const [note, setNote] = useState<string | null>(null);
     // "View": what exactly was allocated, service by service
     const [showView, setShowView] = useState(false);
-    // services whose case-number list is open in the View popup
-    const [openNumbers, setOpenNumbers] = useState<Record<string, boolean>>({});
+    // service whose case numbers are shown in the small list popup
+    const [numbersFor, setNumbersFor] = useState<string | null>(null);
     // one reason for "Decline all"
     const [allReason, setAllReason] = useState("");
     // text typed when the reason is "Other" (per row, and for Decline all)
@@ -148,33 +160,31 @@ export default function AllocationAcceptancePopup({
         }
     };
 
-    const accept = (i: AcceptanceItem) => send([{ kind: i.kind, id: i.id, action: "ACCEPT" }]);
+    const accept = (r: AnswerRow) =>
+        send(r.members.map((m) => ({ kind: m.kind, id: m.id, action: "ACCEPT" as const })));
     // a reason is complete when it is picked, and (for "Other") also written
     const reasonReady = (reason: string, note: string) =>
         !!reason && (reason !== OTHER || note.trim().length > 0);
 
-    const decline = (i: AcceptanceItem) => {
-        const k = keyOf(i);
-        const reason = reasonByKey[k];
-        const note = noteByKey[k] || "";
+    const decline = (r: AnswerRow) => {
+        const reason = reasonByKey[r.key];
+        const note = noteByKey[r.key] || "";
         if (!reasonReady(reason, note)) return;
-        send([
-            {
-                kind: i.kind,
-                id: i.id,
-                action: "DECLINE",
+        send(
+            r.members.map((m) => ({
+                kind: m.kind,
+                id: m.id,
+                action: "DECLINE" as const,
                 reason,
                 ...(reason === OTHER ? { reasonNote: note.trim() } : {}),
-            },
-        ]);
+            }))
+        );
     };
     const acceptAll = () =>
         send(items.map((i) => ({ kind: i.kind, id: i.id, action: "ACCEPT" as const })));
     const declineAll = () => {
         if (!reasonReady(allReason, allNote)) return;
-        if (
-            !window.confirm(`Decline all ${items.length} allocation${items.length > 1 ? "s" : ""}?`)
-        )
+        if (!window.confirm(`Decline all ${rows.length} allocation${rows.length > 1 ? "s" : ""}?`))
             return;
         send(
             items.map((i) => ({
@@ -219,28 +229,75 @@ export default function AllocationAcceptancePopup({
         return [...map.values()].sort((a, b) => b.cases - a.cases);
     }, [items]);
 
+    const rows = useMemo<AnswerRow[]>(() => {
+        const out: AnswerRow[] = [];
+        const caseRows = new Map<string, AnswerRow>();
+        items.forEach((i) => {
+            const service = i.productName || "Service";
+            if (i.kind === "CASE") {
+                let r = caseRows.get(service);
+                if (!r) {
+                    r = {
+                        key: `CASES:${service}`,
+                        service,
+                        allocatedByName: i.allocatedByName,
+                        kind: "CASES",
+                        quantity: 0,
+                        members: [],
+                    };
+                    caseRows.set(service, r);
+                    out.push(r);
+                }
+                r.quantity += 1;
+                r.members.push({ kind: "CASE", id: i.id });
+            } else {
+                out.push({
+                    key: `COUNT:${i.id}`,
+                    service,
+                    allocatedByName: i.allocatedByName,
+                    kind: "COUNT",
+                    quantity: i.quantity,
+                    members: [{ kind: "COUNT", id: i.id }],
+                });
+            }
+        });
+        return out;
+    }, [items]);
+
     const totalWith = useMemo(
         () => byService.reduce((x, g) => x + g.numbers.length, 0),
         [byService]
     );
     const totalWithout = useMemo(() => byService.reduce((x, g) => x + g.noNumber, 0), [byService]);
 
-    // Esc closes the View popup only (the accept / decline popup stays)
+    // Esc closes the top-most detail popup (case numbers first, then View Details);
+    // the accept / decline popup itself stays
     useEffect(() => {
-        if (!showView) return;
+        if (!showView && !numbersFor) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") setShowView(false);
+            if (e.key !== "Escape") return;
+            if (numbersFor) setNumbersFor(null);
+            else setShowView(false);
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [showView]);
+    }, [showView, numbersFor]);
 
     // everything answered -> nothing left to look at
     useEffect(() => {
-        if (items.length === 0) setShowView(false);
+        if (items.length === 0) {
+            setShowView(false);
+            setNumbersFor(null);
+        }
     }, [items.length]);
 
     if (!enabled || items.length === 0) return null;
+
+    // case numbers of the service whose "View" was clicked, in sequence
+    const numbersGroup = numbersFor ? byService.find((g) => g.service === numbersFor) : null;
+    const sortedNumbers = numbersGroup
+        ? [...numbersGroup.numbers].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        : [];
 
     return (
         <div style={S.overlay}>
@@ -279,28 +336,27 @@ export default function AllocationAcceptancePopup({
                             </tr>
                         </thead>
                         <tbody>
-                            {items.map((i) => {
-                                const k = keyOf(i);
+                            {rows.map((r) => {
+                                const k = r.key;
                                 const reason = reasonByKey[k] || "";
                                 const note = noteByKey[k] || "";
                                 const ready = reasonReady(reason, note);
                                 return (
                                     <tr key={k}>
                                         <td style={S.td}>
-                                            <strong>{i.productName || "—"}</strong>
-                                            <div style={S.muted}>by {i.allocatedByName || "—"}</div>
+                                            <strong>{r.service}</strong>
+                                            <div style={S.muted}>by {r.allocatedByName || "—"}</div>
                                         </td>
                                         <td style={S.td}>
-                                            {i.kind === "CASE" ? (
-                                                <strong>{i.caseNumber || "—"}</strong>
-                                            ) : (
-                                                <>
-                                                    <strong>
-                                                        {i.quantity} case{i.quantity > 1 ? "s" : ""}
-                                                    </strong>
-                                                    <div style={S.muted}>no case no. yet</div>
-                                                </>
-                                            )}
+                                            {/* case numbers are NOT shown here - only inside View Details */}
+                                            <strong>
+                                                {r.quantity} case{r.quantity > 1 ? "s" : ""}
+                                            </strong>
+                                            <div style={S.muted}>
+                                                {r.kind === "CASES"
+                                                    ? "with case numbers"
+                                                    : "no case no. yet"}
+                                            </div>
                                         </td>
                                         <td style={{ ...S.td, minWidth: 290 }}>
                                             <div style={S.answerRow}>
@@ -341,7 +397,7 @@ export default function AllocationAcceptancePopup({
                                                               ? "Write your reason first"
                                                               : "Pick a reason first"
                                                     }
-                                                    onClick={() => decline(i)}
+                                                    onClick={() => decline(r)}
                                                 >
                                                     Decline
                                                 </button>
@@ -352,7 +408,7 @@ export default function AllocationAcceptancePopup({
                                                         opacity: busy ? 0.6 : 1,
                                                     }}
                                                     disabled={busy}
-                                                    onClick={() => accept(i)}
+                                                    onClick={() => accept(r)}
                                                 >
                                                     Accept
                                                 </button>
@@ -433,7 +489,7 @@ export default function AllocationAcceptancePopup({
                         }
                         onClick={declineAll}
                     >
-                        Decline all ({items.length})
+                        Decline all ({rows.length})
                     </button>
                     <button
                         type="button"
@@ -441,7 +497,7 @@ export default function AllocationAcceptancePopup({
                         disabled={busy}
                         onClick={acceptAll}
                     >
-                        Accept all ({items.length})
+                        Accept all ({rows.length})
                     </button>
                 </div>
             </div>
@@ -493,7 +549,6 @@ export default function AllocationAcceptancePopup({
                                 </thead>
                                 <tbody>
                                     {byService.map((g) => {
-                                        const isOpen = !!openNumbers[g.service];
                                         return (
                                             <tr key={g.service}>
                                                 <td style={S.td}>
@@ -511,26 +566,13 @@ export default function AllocationAcceptancePopup({
                                                                 type="button"
                                                                 style={S.listBtn}
                                                                 onClick={() =>
-                                                                    setOpenNumbers((prev) => ({
-                                                                        ...prev,
-                                                                        [g.service]:
-                                                                            !prev[g.service],
-                                                                    }))
+                                                                    setNumbersFor(g.service)
                                                                 }
                                                             >
-                                                                {isOpen ? "Hide" : "View"}
+                                                                View
                                                             </button>
                                                         )}
                                                     </div>
-                                                    {isOpen && (
-                                                        <div style={S.numList}>
-                                                            {g.numbers.map((n) => (
-                                                                <span key={n} style={S.numChip}>
-                                                                    {n}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    )}
                                                 </td>
                                                 <td style={S.td}>
                                                     <strong>{g.noNumber}</strong>
@@ -566,6 +608,53 @@ export default function AllocationAcceptancePopup({
                                 type="button"
                                 style={S.closeBtn}
                                 onClick={() => setShowView(false)}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {numbersGroup && (
+                <div style={S.numOverlay} onClick={() => setNumbersFor(null)}>
+                    <div
+                        style={S.numCard}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Case numbers"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={S.viewHead}>
+                            <div>
+                                <h3 style={S.title}>Case numbers</h3>
+                                <p style={S.sub}>
+                                    {numbersGroup.service} · {sortedNumbers.length} case
+                                    {sortedNumbers.length > 1 ? "s" : ""}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                style={S.closeX}
+                                onClick={() => setNumbersFor(null)}
+                                aria-label="Close"
+                            >
+                                ×
+                            </button>
+                        </div>
+                        <div style={S.numGrid}>
+                            {sortedNumbers.map((n, idx) => (
+                                <div key={`${n}-${idx}`} style={S.numItem}>
+                                    <span style={S.numIdx}>{idx + 1}</span>
+                                    <strong>{n}</strong>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={S.footer}>
+                            <button
+                                type="button"
+                                style={S.closeBtn}
+                                onClick={() => setNumbersFor(null)}
                             >
                                 Close
                             </button>
@@ -689,21 +778,45 @@ const S: Record<string, CSSProperties> = {
         fontWeight: fontWeight.semibold,
         cursor: "pointer",
     },
-    numList: {
+    numOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.35)",
         display: "flex",
-        flexWrap: "wrap",
-        gap: 4,
-        marginTop: 6,
-        maxHeight: 110,
-        overflowY: "auto",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 1400,
     },
-    numChip: {
-        padding: "2px 8px",
-        borderRadius: 6,
+    numCard: {
+        background: "#fff",
+        borderRadius: radius.lg,
+        boxShadow: "0 24px 60px rgba(0,0,0,0.3)",
+        width: "min(520px, 100%)",
+        maxHeight: "80vh",
+        display: "flex",
+        flexDirection: "column",
+        padding: 20,
+    },
+    numGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+        gap: 8,
+        overflowY: "auto",
+        maxHeight: "55vh",
+        padding: 2,
+    },
+    numItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        borderRadius: radius.sm,
         background: "#F1F5F9",
         color: "#17181C",
-        fontSize: fontSize.xs,
+        fontSize: fontSize.sm,
     },
+    numIdx: { minWidth: 20, color: "#9CA3AF", fontSize: fontSize.xs },
     chips: { display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" },
     chip: {
         padding: "4px 12px",
