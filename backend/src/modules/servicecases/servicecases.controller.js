@@ -2710,7 +2710,14 @@ const OVERLOAD_NOTIF_MESSAGE = "Please check.";
 
 // App link shown in the email button. Set FRONTEND_URL in .env
 // (e.g. https://your-app.vercel.app). Falls back to "#" if missing.
-const APP_URL = (process.env.FRONTEND_URL || "").replace(/\/+$/, "");
+// FRONTEND_URL can hold several origins separated by commas (for CORS), e.g.
+// "https://app.vercel.app,http://localhost:5173". A mail link must be ONE
+// address, so only the FIRST origin is used (same rule as
+// config/frontendUrl.js). Using the whole value produced a broken link that
+// phones (Safari / Chrome) could not open.
+const APP_URL = ((process.env.FRONTEND_URL || "").split(",")[0] || "")
+  .trim()
+  .replace(/\/+$/, "");
 const APP_LOGIN_URL = APP_URL ? `${APP_URL}/login` : "#";
 // NEW: Logo2.png must be in the frontend's public/ folder so it opens at
 // https://your-app.vercel.app/Logo2.png (email needs a full public URL).
@@ -2796,6 +2803,11 @@ function buildAllocationEmailHtml({
                 </tr>
               </table>
               <!--<![endif]-->
+              ${
+                APP_LOGIN_URL && APP_LOGIN_URL !== "#"
+                  ? `<p class="txt-sub" style="margin:18px 0 0;color:#6b7690;font-size:12px;line-height:1.5;">Button not opening? Tap or copy this link:<br /><a href="${APP_LOGIN_URL}" target="_blank" style="color:#204297;word-break:break-all;">${APP_LOGIN_URL}</a></p>`
+                  : ""
+              }
 
                </td>
           </tr>
