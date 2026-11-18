@@ -349,6 +349,30 @@ function firstOfMonthStr() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+// "YYYY-MM" of the current month — the default value of the Month picker.
+function currentMonthStr() {
+    return firstOfMonthStr().slice(0, 7);
+}
+
+// From / To dates for a "YYYY-MM" month. The end is never later than today,
+// so the current month runs from the 1st up to today.
+function monthRange(ym: string) {
+    const [y, m] = ym.split("-").map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const end = `${ym}-${String(lastDay).padStart(2, "0")}`;
+    const today = todayStr();
+    return { from: `${ym}-01`, to: end > today ? today : end };
+}
+
+// "October 2026"
+function monthLabel(ym: string) {
+    const [y, m] = ym.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleString("en-IN", {
+        month: "long",
+        year: "numeric",
+    });
+}
+
 const clientKey = (name: string | null) => (name || "").trim() || NO_CLIENT;
 
 const NO_SERVICE = "No service";
@@ -488,6 +512,14 @@ export default function ProductionReport() {
     const [viewMode, setViewMode] = useState<"client" | "employee" | "daily">("client");
     // Range = today only -> client cards are replaced by Work-wise totals.
     const isToday = fromDate === todayStr() && toDate === todayStr();
+    // The month shown in the Month picker. Empty when From / To were edited
+    // by hand into a range that is not exactly one whole month.
+    const selectedMonth = (() => {
+        if (!fromDate || !toDate) return "";
+        const ym = fromDate.slice(0, 7);
+        const r = monthRange(ym);
+        return fromDate === r.from && toDate === r.to ? ym : "";
+    })();
     const effectiveView: ViewMode = isToday ? "work" : viewMode;
 
     const [error, setError] = useState("");
@@ -1086,8 +1118,10 @@ export default function ProductionReport() {
     // current month (default), otherwise the plain date range.
     const totalLabel = isToday
         ? "Today"
-        : fromDate === firstOfMonthStr() && toDate === todayStr()
-          ? "This Month"
+        : selectedMonth
+          ? selectedMonth === currentMonthStr()
+              ? "This Month"
+              : monthLabel(selectedMonth)
           : `${fromDate} to ${toDate}`;
 
     const summaryTitle =
@@ -1569,6 +1603,20 @@ export default function ProductionReport() {
         setViewMode("client");
     };
 
+    // Month picker: one whole month (up to today for the current month).
+    // Clearing the picker goes back to the current month.
+    const handleMonthChange = (v: string) => {
+        let ym = v || currentMonthStr();
+        if (ym > currentMonthStr()) {
+            showToast("Future month can't be selected.");
+            ym = currentMonthStr();
+        }
+        const r = monthRange(ym);
+        setFromDate(r.from);
+        setToDate(r.to);
+        setOpenGroup(null);
+    };
+
     // Dates after today can't be selected. The date input's max= only stops
     // the picker — a typed / pasted future date still gets through — so the
     // value is clamped here as well.
@@ -1855,31 +1903,28 @@ export default function ProductionReport() {
                             ))}
                         </select>
                     </div>
-                    <div
-                        style={
-                            isMobile
-                                ? { gridColumn: "1 / -1", display: "flex", gap: 8 }
-                                : { display: "flex", gap: 8 }
-                        }
-                    >
-                        <button
-                            type="button"
+                    <div style={isMobile ? { gridColumn: "1 / -1" } : undefined}>
+                        <label style={styles.label}>Month</label>
+                        {/* white calendar icon on the filled (gradient) state */}
+                        <style>{`.pr-month-active::-webkit-calendar-picker-indicator{filter:invert(1);cursor:pointer}`}</style>
+                        <input
+                            type="month"
+                            className={selectedMonth ? "pr-month-active" : undefined}
                             style={{
-                                ...styles.quickBtn,
-                                ...(!isToday &&
-                                fromDate === firstOfMonthStr() &&
-                                toDate === todayStr()
-                                    ? styles.quickBtnActive
+                                ...filterFieldStyle,
+                                ...(selectedMonth
+                                    ? {
+                                          background: GRADIENT,
+                                          color: "#fff",
+                                          border: "1px solid transparent",
+                                          fontWeight: fontWeight.medium,
+                                      }
                                     : {}),
                             }}
-                            onClick={() => {
-                                setFromDate(firstOfMonthStr());
-                                setToDate(todayStr());
-                            }}
-                        >
-                            <i className="ti ti-calendar-month" />
-                            This Month
-                        </button>
+                            value={selectedMonth}
+                            max={currentMonthStr()}
+                            onChange={(e) => handleMonthChange(e.target.value)}
+                        />
                     </div>
                     <button
                         type="button"
@@ -1902,7 +1947,7 @@ export default function ProductionReport() {
                         <div style={styles.cardsHeader}>
                             <span style={styles.cardsTitle}>
                                 <i className="ti ti-clock" style={{ marginRight: 6 }} />
-                                Employee-wise Time{totalLabel === "This Month" ? " — Monthly" : ""}
+                                Employee-wise Time{selectedMonth && !isToday ? " — Monthly" : ""}
                             </span>
                             <span style={styles.cardsHint}>
                                 {totalLabel} · cases allocated to each person × service AMP
