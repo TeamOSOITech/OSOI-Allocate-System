@@ -38,7 +38,7 @@
 //     From = To = today) the client cards are replaced by a Work-wise
 //     summary: only today's totals, one card per work / service.
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
@@ -551,9 +551,23 @@ export default function ProductionReport() {
     // Which list is open under the card: cases WITH a case number, or counts
     // WITHOUT one yet.
     const [openSection, setOpenSection] = useState<"with" | "without">("with");
-    const openCard = (key: string, section: "with" | "without") => {
+    // Which number of the card was clicked: everything on the card ("all"),
+    // only what was received today ("receiving") or only what is allocated.
+    const [openMetric, setOpenMetric] = useState<"all" | "receiving" | "allocated">("all");
+    // Which card row (Today's Receiving / Allocated) is expanded on the card to
+    // show its With / Without case number lines.
+    const [expanded, setExpanded] = useState<{
+        key: string;
+        metric: "receiving" | "allocated";
+    } | null>(null);
+    const openCard = (
+        key: string,
+        section: "with" | "without",
+        metric: "all" | "receiving" | "allocated" = "all"
+    ) => {
         setOpenGroup(key);
         setOpenSection(section);
+        setOpenMetric(metric);
     };
     // After "View Details" is clicked the table opens BELOW all the cards;
     // jump straight to it so the user doesn't have to scroll.
@@ -657,6 +671,7 @@ export default function ProductionReport() {
     // switching view (or entering / leaving Today) closes the open detail table
     useEffect(() => {
         setOpenGroup(null);
+        setExpanded(null);
     }, [effectiveView]);
 
     // ---- cards data: every case in the date range (service / employee /
@@ -987,6 +1002,10 @@ export default function ProductionReport() {
             withoutNo: number; // count-only units still WITHOUT a case number (pending)
             recv: number; // count units received (added + pending)
             added: number; // count units that already got case numbers
+            allocWith: number; // allocated cases (with case number)
+            allocWithout: number; // allocated count units (without case number)
+            todayWith: number; // today's receiving - cases
+            todayWithout: number; // today's receiving - count units
         };
         const map = new Map<string, G>();
         const bucket = (key: string) => {
@@ -1001,6 +1020,10 @@ export default function ProductionReport() {
                     withoutNo: 0,
                     recv: 0,
                     added: 0,
+                    allocWith: 0,
+                    allocWithout: 0,
+                    todayWith: 0,
+                    todayWithout: 0,
                 });
             return map.get(key)!;
         };
@@ -1009,8 +1032,14 @@ export default function ProductionReport() {
             const b = bucket(caseGroupKey(c, effectiveView, fromDate, toDate));
             b.total += 1;
             b.withNo += 1;
-            if (caseDay(c, fromDate, toDate) === today) b.today += 1;
-            if (c.allocationStatus === "ALLOCATED") b.allocated += 1;
+            if (caseDay(c, fromDate, toDate) === today) {
+                b.today += 1;
+                b.todayWith += 1;
+            }
+            if (c.allocationStatus === "ALLOCATED") {
+                b.allocated += 1;
+                b.allocWith += 1;
+            }
             if (c.submissionStatus === "SUBMITTED") b.submitted += 1;
             if (c.assignedEmployeeName) b.mins += ampOf(c.productId);
         });
@@ -1056,8 +1085,13 @@ export default function ProductionReport() {
             b.withoutNo += c.pendingCount - sh.pending;
             b.recv += c.quantity - sh.recv;
             b.added += c.fulfilledCount - sh.added;
-            if (c.workDate === today) b.today += c.pendingCount - sh.pending;
-            b.allocated += Math.max(0, c.allocatedTotal - fulfilledSum - sh.pending);
+            if (c.workDate === today) {
+                b.today += c.pendingCount - sh.pending;
+                b.todayWithout += c.pendingCount - sh.pending;
+            }
+            const allocMain = Math.max(0, c.allocatedTotal - fulfilledSum - sh.pending);
+            b.allocated += allocMain;
+            b.allocWithout += allocMain;
             sh.byDay.forEach((e: any, day: string) => {
                 const t = bucket(day);
                 t.total += e.pending;
@@ -1065,7 +1099,11 @@ export default function ProductionReport() {
                 t.recv += e.recv;
                 t.added += e.added;
                 t.allocated += e.pending;
-                if (day === today) t.today += e.pending;
+                t.allocWithout += e.pending;
+                if (day === today) {
+                    t.today += e.pending;
+                    t.todayWithout += e.pending;
+                }
             });
         });
 
@@ -1152,8 +1190,14 @@ export default function ProductionReport() {
         const q = searchQuery.toLowerCase();
         return casesForView
             .filter((c) => caseGroupKey(c, effectiveView, fromDate, toDate) === openGroup)
+            .filter((c) => {
+                if (openMetric === "allocated") return c.allocationStatus === "ALLOCATED";
+                if (openMetric === "receiving") return caseDay(c, fromDate, toDate) === todayStr();
+                return true;
+            })
             .filter((c) => caseMatchesFilters(c, statusFilter, submissionFilter, q));
     }, [
+        openMetric,
         casesForView,
         openGroup,
         effectiveView,
@@ -1282,6 +1326,11 @@ export default function ProductionReport() {
 
         return out
             .filter((r) => {
+                if (openMetric === "allocated" && r.allocated <= 0) return false;
+                if (openMetric === "receiving") {
+                    const isHeld = r.id.endsWith("-held");
+                    if (isHeld ? openGroup !== today : r.workDate !== today) return false;
+                }
                 if (statusFilter === "PENDING" && r.unallocated <= 0) return false;
                 if (statusFilter === "ALLOCATED" && r.allocated <= 0) return false;
                 // Submitted = units that already got their case numbers
@@ -1296,6 +1345,7 @@ export default function ProductionReport() {
             })
             .sort((a, b) => b.workDate.localeCompare(a.workDate));
     }, [
+        openMetric,
         countsForView,
         openGroup,
         effectiveView,
@@ -1675,6 +1725,664 @@ export default function ProductionReport() {
         label: submissionLabel(r.submissionType),
     });
 
+    // Detail list (With / Without case number tabs) - opens right under the
+    // row of the card that was clicked.
+    const detailPanel = openGroup ? (
+        <div ref={detailRef} style={styles.tableWrap}>
+            <div style={styles.tableWrapHead}>
+                <span style={styles.cardsTitle}>
+                    {effectiveView === "daily" ? prettyDate(openGroup) : openGroup}
+                    {openMetric === "allocated" && " · Allocated"}
+                    {openMetric === "receiving" && " · Today's Receiving"}
+                </span>
+                <button type="button" style={styles.resetBtn} onClick={() => setOpenGroup(null)}>
+                    <i className="ti ti-x" />
+                    Close
+                </button>
+            </div>
+            {/* With / Without case number switch (also opened by clicking the
+                            matching row on the card) */}
+            <div style={styles.viewTabs}>
+                {(
+                    [
+                        [
+                            "with",
+                            "With case number",
+                            openMetric === "allocated"
+                                ? (openCardStats?.allocWith ?? 0)
+                                : openMetric === "receiving"
+                                  ? (openCardStats?.todayWith ?? 0)
+                                  : (openCardStats?.withNo ?? 0),
+                        ],
+                        [
+                            "without",
+                            "Without case number",
+                            openMetric === "allocated"
+                                ? (openCardStats?.allocWithout ?? 0)
+                                : openMetric === "receiving"
+                                  ? (openCardStats?.todayWithout ?? 0)
+                                  : (openCardStats?.withoutNo ?? 0),
+                        ],
+                    ] as const
+                ).map(([id, label, n]) => (
+                    <button
+                        key={id}
+                        type="button"
+                        style={{
+                            ...styles.viewTab,
+                            ...(openSection === id ? styles.viewTabActive : {}),
+                        }}
+                        onClick={() => setOpenSection(id)}
+                    >
+                        {label} ({n})
+                    </button>
+                ))}
+            </div>
+            {openSection === "without" && (
+                <div style={styles.tableCard}>
+                    {loading ? (
+                        <div style={styles.emptyNote}>Loading…</div>
+                    ) : withoutRows.length === 0 ? (
+                        <div style={styles.emptyNote}>
+                            {openMetric === "allocated"
+                                ? "Is din koi allocated count (without case number) nahi hai - sab kaam ko case number mil chuka hai."
+                                : openMetric === "receiving"
+                                  ? "Is din koi count (without case number) receive nahi hua."
+                                  : "No counts received for this filter."}
+                        </div>
+                    ) : (
+                        <div style={styles.tableScroll}>
+                            <div
+                                style={{
+                                    ...styles.tableHeadRow,
+                                    ...styles.withoutGrid,
+                                }}
+                            >
+                                <span>Service</span>
+                                <span>Client</span>
+                                <span>Subclient</span>
+                                <span>Case Received On</span>
+                                <span>Allocated On</span>
+                                <span>Received</span>
+                                <span>Added</span>
+                                <span>Pending</span>
+                                <span>Allocated To (added / given)</span>
+                                <span>Allocated By</span>
+                                <span style={{ textAlign: "center" }}>Details</span>
+                            </div>
+                            {withoutRows.map((r, idx) => (
+                                <div
+                                    key={r.id}
+                                    style={{
+                                        ...styles.tableRow,
+                                        ...styles.withoutGrid,
+                                        background: idx % 2 === 0 ? "#fff" : "#fafbff",
+                                    }}
+                                >
+                                    <span>{r.productName || "—"}</span>
+                                    <span>{r.clientName || "—"}</span>
+                                    <span>{r.subclientName || "—"}</span>
+                                    <span>{r.workDate}</span>
+                                    {/* day the count was handed out (Date above = day received) */}
+                                    <span style={{ whiteSpace: "nowrap" }}>
+                                        {r.holders
+                                            .map((h) => h.at)
+                                            .filter(Boolean)
+                                            .sort()
+                                            .pop() || "—"}
+                                    </span>
+                                    <span style={{ fontWeight: fontWeight.semibold }}>
+                                        {r.recv}
+                                    </span>
+                                    <span style={{ color: BRAND.green }}>{r.added}</span>
+                                    <span style={{ color: BRAND.amber }}>{r.pending}</span>
+                                    <span>
+                                        {r.holders.length === 0
+                                            ? "Unallocated"
+                                            : r.holders
+                                                  .map((h) => `${h.name} (${h.added}/${h.qty})`)
+                                                  .join(", ")}
+                                    </span>
+                                    <span>
+                                        {Array.from(
+                                            new Set(r.holders.map((h) => h.by).filter(Boolean))
+                                        ).join(", ") || "—"}
+                                    </span>
+                                    <span style={{ textAlign: "center" }}>
+                                        <button
+                                            type="button"
+                                            style={styles.viewBtn}
+                                            onClick={() => setViewCount(r)}
+                                        >
+                                            View
+                                        </button>
+                                    </span>
+                                </div>
+                            ))}
+                            <div style={{ ...styles.totalsRow, minWidth: 1430 }}>
+                                <span style={{ flex: 1 }}>
+                                    {withoutRows.length} count
+                                    {withoutRows.length !== 1 ? "s" : ""} ·{" "}
+                                    {withoutRows.reduce((x, r) => x + r.recv, 0)} received ·{" "}
+                                    {withoutRows.reduce((x, r) => x + r.added, 0)} added ·{" "}
+                                    {withoutRows.reduce((x, r) => x + r.pending, 0)} pending
+                                </span>
+                            </div>
+                            {viewCount && (
+                                <div style={styles.modalOverlay} onClick={() => setViewCount(null)}>
+                                    <div
+                                        style={styles.modalCard}
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <div style={styles.modalHead}>
+                                            <div>
+                                                <div style={styles.modalTitle}>
+                                                    {viewCount.productName || "—"}
+                                                </div>
+                                                <div style={styles.modalSub}>
+                                                    {viewCount.clientName || "—"}
+                                                    {viewCount.subclientName
+                                                        ? ` · ${viewCount.subclientName}`
+                                                        : ""}{" "}
+                                                    · received {viewCount.workDate} ·{" "}
+                                                    {viewCount.recv} received · {viewCount.added}{" "}
+                                                    added · {viewCount.pending} pending
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                style={styles.modalClose}
+                                                onClick={() => setViewCount(null)}
+                                                aria-label="Close"
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                        {viewCount.holders.length === 0 ? (
+                                            <div style={styles.emptyNote}>
+                                                Not allocated to anyone yet.
+                                            </div>
+                                        ) : (
+                                            <div style={{ overflowX: "auto" }}>
+                                                <table style={styles.modalTable}>
+                                                    <thead>
+                                                        <tr>
+                                                            {[
+                                                                "Employee",
+                                                                "Added / Given",
+                                                                "Completed",
+                                                                "Completed by Team",
+                                                                "Completed by Client",
+                                                                "Out of Scope",
+                                                                "Query",
+                                                                "Not Submitted",
+                                                                "Earlier entries",
+                                                            ].map((h) => (
+                                                                <th key={h} style={styles.modalTh}>
+                                                                    {h}
+                                                                </th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {viewCount.holders.map((h, hi) => {
+                                                            const o = h.out;
+                                                            const n = (v?: number) =>
+                                                                o && v ? String(v) : "—";
+                                                            return (
+                                                                <tr key={`${h.name}-${hi}`}>
+                                                                    <td style={styles.modalTdName}>
+                                                                        {h.name}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {h.added}/{h.qty}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.completed)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.doneByTeam)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.doneByClient)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.outOfScope)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.query)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.pending)}
+                                                                    </td>
+                                                                    <td style={styles.modalTd}>
+                                                                        {n(o?.untracked)}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                        <div style={styles.modalNote}>
+                                            "Earlier entries" are cases added before outcomes were
+                                            tracked, so their outcome is not available.
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+            {openSection === "with" && (
+                <div style={styles.tableCard}>
+                    {/* scrolls sideways ONLY the table rows, so the scrollbar sits
+                                right under the table, above totals + pagination */}
+                    <div style={styles.tableScroll}>
+                        {!isMobile ? (
+                            <>
+                                <div style={styles.tableHeadRow}>
+                                    <span style={styles.colCase}>Case #</span>
+                                    <span style={styles.colClient}>Client</span>
+                                    <span style={styles.colClient}>Subclient</span>
+                                    <span style={styles.colService}>Service</span>
+                                    <span style={styles.colDate}>Date</span>
+                                    <span style={styles.colDate}>Allocated On</span>
+                                    <span style={styles.colEmployee}>Allocated To</span>
+                                    <span style={styles.colAllocatedBy}>Allocated By</span>
+                                    <span style={styles.colStatus}>Status</span>
+                                    <span style={styles.colStatus}>Submission</span>
+                                    <span style={styles.colAllocatedBy}>Submitted By</span>
+                                    <span style={styles.colStatus}>Submitted Date</span>
+                                    <span style={styles.colQuery}>Query</span>
+                                </div>
+                                {loading ? (
+                                    <div style={styles.emptyNote}>Loading report…</div>
+                                ) : rows.length === 0 ? (
+                                    <div style={styles.emptyNote}>
+                                        No cases found for this filter.
+                                    </div>
+                                ) : (
+                                    rows.map((r, idx) => {
+                                        const allocPill = allocationPillProps(r);
+                                        const subPill = submissionPillProps(r);
+                                        const onBehalf = isOnBehalf(r);
+                                        return (
+                                            <div
+                                                key={r.id}
+                                                style={{
+                                                    ...styles.tableRow,
+                                                    background: idx % 2 === 0 ? "#fff" : "#fafbff",
+                                                }}
+                                            >
+                                                <span style={styles.colCase}>
+                                                    {r.caseNumber}
+                                                    {r.fromCount && (
+                                                        <span
+                                                            style={styles.fromCountChip}
+                                                            title="Started as a count (without case number); case number added later"
+                                                        >
+                                                            From count
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span style={styles.colClient}>
+                                                    {r.clientName || "—"}
+                                                </span>
+                                                <span style={styles.colClient}>
+                                                    {r.subclientName || "—"}
+                                                </span>
+                                                <span style={styles.colService}>
+                                                    {r.productName || "—"}
+                                                </span>
+                                                <span style={styles.colDate}>{r.workDate}</span>
+                                                {/* day the case was handed out (a backlog case keeps
+                                                            its old work date) */}
+                                                <span
+                                                    style={styles.colDate}
+                                                    title={
+                                                        r.allocatedAt
+                                                            ? new Date(
+                                                                  r.allocatedAt
+                                                              ).toLocaleString()
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {r.allocatedAt ? localYmd(r.allocatedAt) : "—"}
+                                                </span>
+                                                <span style={styles.colEmployee}>
+                                                    {r.assignedEmployeeName || "Unallocated"}
+                                                </span>
+                                                <span style={styles.colAllocatedBy}>
+                                                    {r.allocatedByName || "—"}
+                                                </span>
+                                                <span style={styles.colStatus}>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusPill,
+                                                            background: allocPill.background,
+                                                            color: allocPill.color,
+                                                        }}
+                                                    >
+                                                        {allocPill.label}
+                                                    </span>
+                                                </span>
+                                                <span style={styles.colStatus}>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusPill,
+                                                            background: subPill.background,
+                                                            color: subPill.color,
+                                                        }}
+                                                        title={r.outOfScopeReason || undefined}
+                                                    >
+                                                        {subPill.label}
+                                                    </span>
+                                                </span>
+                                                {/* NEW: who submitted — flagged when it was
+                                                        someone other than the allocated employee */}
+                                                <span
+                                                    style={{
+                                                        ...styles.colAllocatedBy,
+                                                        display: "flex",
+                                                        flexDirection: "column",
+                                                        alignItems: "flex-start",
+                                                        gap: 3,
+                                                    }}
+                                                    title={r.submittedByName || undefined}
+                                                >
+                                                    <span
+                                                        style={{
+                                                            maxWidth: "100%",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                        }}
+                                                    >
+                                                        {r.submissionStatus === "SUBMITTED"
+                                                            ? r.submittedByName || "—"
+                                                            : "—"}
+                                                    </span>
+                                                    {onBehalf && (
+                                                        <span
+                                                            style={styles.onBehalfChip}
+                                                            title={`Allocated to ${
+                                                                r.assignedEmployeeName || "-"
+                                                            }, submitted by ${r.submittedByName}`}
+                                                        >
+                                                            On behalf
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span
+                                                    style={styles.colStatus}
+                                                    title={
+                                                        r.submittedAt
+                                                            ? new Date(
+                                                                  r.submittedAt
+                                                              ).toLocaleString()
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {submittedDateStr(r.submittedAt) || "—"}
+                                                </span>
+                                                {/* A completed query keeps its text, so it still
+                                                reads as "was a query". Open queries also get a
+                                                Mark completed button for anyone allowed to. */}
+                                                <span
+                                                    style={{
+                                                        ...styles.colQuery,
+                                                        display: "flex",
+                                                        flexDirection: "column",
+                                                        alignItems: "flex-start",
+                                                        gap: 4,
+                                                    }}
+                                                >
+                                                    <span
+                                                        title={r.queryText || undefined}
+                                                        style={{
+                                                            maxWidth: "100%",
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                        }}
+                                                    >
+                                                        {r.queryText || "—"}
+                                                    </span>
+                                                    {r.submissionType === "QUERY" &&
+                                                        canCompleteQuery && (
+                                                            <button
+                                                                type="button"
+                                                                style={styles.completeQueryBtn}
+                                                                disabled={completingId === r.id}
+                                                                onClick={() => completeQuery(r)}
+                                                            >
+                                                                {completingId === r.id
+                                                                    ? "Saving…"
+                                                                    : "Mark completed"}
+                                                            </button>
+                                                        )}
+                                                </span>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </>
+                        ) : (
+                            <div style={styles.mobileCardList}>
+                                {loading ? (
+                                    <div style={styles.emptyNote}>Loading report…</div>
+                                ) : rows.length === 0 ? (
+                                    <div style={styles.emptyNote}>
+                                        No cases found for this filter.
+                                    </div>
+                                ) : (
+                                    rows.map((r) => {
+                                        const allocPill = allocationPillProps(r);
+                                        const subPill = submissionPillProps(r);
+                                        const onBehalf = isOnBehalf(r);
+                                        return (
+                                            <div key={r.id} style={styles.mobileCard}>
+                                                <div style={styles.mobileCardHeader}>
+                                                    <span style={styles.mobileCardCase}>
+                                                        {r.caseNumber}
+                                                        {r.fromCount && (
+                                                            <span
+                                                                style={{
+                                                                    ...styles.fromCountChip,
+                                                                    display: "inline-block",
+                                                                    marginLeft: 8,
+                                                                }}
+                                                            >
+                                                                From count
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusPill,
+                                                            background: allocPill.background,
+                                                            color: allocPill.color,
+                                                        }}
+                                                    >
+                                                        {allocPill.label}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Client
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.clientName || "—"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Subclient
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.subclientName || "—"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Service
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.productName || "—"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>Date</span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.workDate}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Allocated On
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.allocatedAt
+                                                            ? localYmd(r.allocatedAt)
+                                                            : "—"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Allocated To
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.assignedEmployeeName || "Unallocated"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Allocated By
+                                                    </span>
+                                                    <span style={styles.mobileCardValue}>
+                                                        {r.allocatedByName || "—"}
+                                                    </span>
+                                                </div>
+                                                <div style={styles.mobileCardRow}>
+                                                    <span style={styles.mobileCardLabel}>
+                                                        Submission
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            ...styles.statusPill,
+                                                            background: subPill.background,
+                                                            color: subPill.color,
+                                                        }}
+                                                        title={r.outOfScopeReason || undefined}
+                                                    >
+                                                        {subPill.label}
+                                                    </span>
+                                                </div>
+                                                {r.submissionStatus === "SUBMITTED" &&
+                                                    r.submittedByName && (
+                                                        <div style={styles.mobileCardRow}>
+                                                            <span style={styles.mobileCardLabel}>
+                                                                Submitted By
+                                                            </span>
+                                                            <span
+                                                                style={{
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    gap: 6,
+                                                                }}
+                                                            >
+                                                                <span
+                                                                    style={styles.mobileCardValue}
+                                                                >
+                                                                    {r.submittedByName}
+                                                                </span>
+                                                                {onBehalf && (
+                                                                    <span
+                                                                        style={styles.onBehalfChip}
+                                                                    >
+                                                                        On behalf
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                {r.submittedAt && (
+                                                    <div style={styles.mobileCardRow}>
+                                                        <span style={styles.mobileCardLabel}>
+                                                            Submitted Date
+                                                        </span>
+                                                        <span style={styles.mobileCardValue}>
+                                                            {submittedDateStr(r.submittedAt)}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {(r.submissionType === "QUERY" || r.queryText) && (
+                                                    <div style={styles.mobileCardRow}>
+                                                        <span style={styles.mobileCardLabel}>
+                                                            Query
+                                                        </span>
+                                                        <span style={styles.mobileCardValue}>
+                                                            {r.queryText || "—"}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {r.submissionType === "QUERY" &&
+                                                    canCompleteQuery && (
+                                                        <button
+                                                            type="button"
+                                                            style={styles.completeQueryBtn}
+                                                            disabled={completingId === r.id}
+                                                            onClick={() => completeQuery(r)}
+                                                        >
+                                                            {completingId === r.id
+                                                                ? "Saving…"
+                                                                : "Mark completed"}
+                                                        </button>
+                                                    )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    {!loading && rows.length > 0 && (
+                        <div style={styles.totalsRow}>
+                            <span style={{ flex: 1 }}>
+                                Page total ({rows.length} case
+                                {rows.length !== 1 ? "s" : ""})
+                                {` · ${totalCount} matching in total`}
+                            </span>
+                        </div>
+                    )}
+                    <div style={styles.paginationRow}>
+                        <button
+                            type="button"
+                            style={styles.pageBtn}
+                            disabled={page <= 1}
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        >
+                            <i className="ti ti-chevron-left" />
+                        </button>
+                        <span style={styles.pageIndicator}>
+                            Page {page}
+                            {` of ${Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}`}
+                        </span>
+                        <button
+                            type="button"
+                            style={styles.pageBtn}
+                            disabled={page * PAGE_SIZE >= totalCount}
+                            onClick={() => setPage((p) => p + 1)}
+                        >
+                            <i className="ti ti-chevron-right" />
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    ) : null;
+
     return (
         <div style={styles.root}>
             <div
@@ -2025,954 +2733,164 @@ export default function ProductionReport() {
                                 gridTemplateColumns: `repeat(${cardCols}, minmax(0, 1fr))`,
                             }}
                         >
-                            {groupCards.map((c) => {
+                            {groupCards.map((c, gi) => {
                                 const active = openGroup === c.key;
                                 const isDaily = effectiveView === "daily";
                                 const name = isDaily ? prettyDate(c.key) : c.key;
+                                const openIdx = groupCards.findIndex((g) => g.key === openGroup);
+                                // detail list always opens after ALL the cards
+                                const rowEnd = openIdx < 0 ? -1 : groupCards.length - 1;
                                 return (
-                                    <div
-                                        key={c.key}
-                                        style={{
-                                            ...styles.clientCard,
-                                            // only top/right/bottom — keeps the blue left accent
-                                            borderTopColor: active ? BRAND.blue : "#e5e9f0",
-                                            borderRightColor: active ? BRAND.blue : "#e5e9f0",
-                                            borderBottomColor: active ? BRAND.blue : "#e5e9f0",
-                                            boxShadow: active
-                                                ? "0 8px 22px rgba(var(--brand-blue-rgb),0.2)"
-                                                : "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
-                                        }}
-                                    >
-                                        <div style={styles.clientCardTop}>
-                                            <div style={styles.clientCardName} title={name}>
-                                                {name}
-                                                {isDaily && c.key === todayStr() && (
-                                                    <span style={styles.todayChip}>Today</span>
-                                                )}
-                                            </div>
-                                            <div style={styles.totalBox}>
-                                                <div style={styles.totalNum}>{c.total}</div>
-                                                <div style={styles.totalLbl}>
-                                                    {isDaily ? "Total" : totalLabel}
+                                    <Fragment key={c.key}>
+                                        <div
+                                            style={{
+                                                ...styles.clientCard,
+                                                // only top/right/bottom — keeps the blue left accent
+                                                borderTopColor: active ? BRAND.blue : "#e5e9f0",
+                                                borderRightColor: active ? BRAND.blue : "#e5e9f0",
+                                                borderBottomColor: active ? BRAND.blue : "#e5e9f0",
+                                                boxShadow: active
+                                                    ? "0 8px 22px rgba(var(--brand-blue-rgb),0.2)"
+                                                    : "0 4px 14px rgba(var(--brand-blue-rgb),0.07)",
+                                            }}
+                                        >
+                                            <div style={styles.clientCardTop}>
+                                                <div style={styles.clientCardName} title={name}>
+                                                    {name}
+                                                    {isDaily && c.key === todayStr() && (
+                                                        <span style={styles.todayChip}>Today</span>
+                                                    )}
+                                                </div>
+                                                <div style={styles.totalBox}>
+                                                    <div style={styles.totalNum}>{c.total}</div>
+                                                    <div style={styles.totalLbl}>
+                                                        {isDaily ? "Total" : totalLabel}
+                                                    </div>
                                                 </div>
                                             </div>
+                                            <div style={styles.statList}>
+                                                {effectiveView === "employee" ? (
+                                                    <>
+                                                        <StatRow
+                                                            label="With case number"
+                                                            value={c.withNo}
+                                                            color={BRAND.blue}
+                                                            onClick={() => openCard(c.key, "with")}
+                                                        />
+                                                        <StatRow
+                                                            label="Without case number"
+                                                            value={c.withoutNo}
+                                                            color={BRAND.amber}
+                                                            onClick={() =>
+                                                                openCard(c.key, "without")
+                                                            }
+                                                        />
+                                                        <StatRow
+                                                            label="Today's Allocation"
+                                                            value={c.today}
+                                                            color={BRAND.blue}
+                                                        />
+                                                        <StatRow
+                                                            label="Submitted"
+                                                            value={c.submitted}
+                                                            color={BRAND.green}
+                                                        />
+                                                        <StatRow
+                                                            label="Time"
+                                                            value={
+                                                                c.mins > 0
+                                                                    ? formatMinutes(c.mins)
+                                                                    : "0m"
+                                                            }
+                                                            color={BRAND.cyan}
+                                                        />
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <StatRow
+                                                            label="Today's Receiving"
+                                                            value={c.today}
+                                                            color={BRAND.blue}
+                                                            onClick={() =>
+                                                                openCard(
+                                                                    c.key,
+                                                                    c.todayWith > 0 ||
+                                                                        c.todayWithout === 0
+                                                                        ? "with"
+                                                                        : "without",
+                                                                    "receiving"
+                                                                )
+                                                            }
+                                                        />
+                                                        <StatRow
+                                                            label="Total Allocated"
+                                                            value={c.allocWith + c.allocWithout}
+                                                            color={BRAND.cyan}
+                                                            onClick={() =>
+                                                                openCard(
+                                                                    c.key,
+                                                                    c.allocWith > 0 ||
+                                                                        c.allocWithout === 0
+                                                                        ? "with"
+                                                                        : "without",
+                                                                    "allocated"
+                                                                )
+                                                            }
+                                                        />
+                                                        <StatRow
+                                                            label="With case number"
+                                                            value={c.allocWith}
+                                                            color={BRAND.blue}
+                                                            onClick={() =>
+                                                                openCard(c.key, "with", "allocated")
+                                                            }
+                                                        />
+                                                        <StatRow
+                                                            label="Without case number"
+                                                            value={c.allocWithout}
+                                                            color={BRAND.amber}
+                                                            onClick={() =>
+                                                                openCard(
+                                                                    c.key,
+                                                                    "without",
+                                                                    "allocated"
+                                                                )
+                                                            }
+                                                        />
+                                                        <StatRow
+                                                            label="Submitted"
+                                                            value={c.submitted}
+                                                            color={BRAND.green}
+                                                        />
+                                                    </>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                style={{
+                                                    ...styles.viewDetailsBtn,
+                                                    ...(active ? styles.viewDetailsBtnActive : {}),
+                                                }}
+                                                onClick={() =>
+                                                    active
+                                                        ? setOpenGroup(null)
+                                                        : openCard(c.key, "with")
+                                                }
+                                            >
+                                                {active ? "Hide Details" : "View Details"}
+                                            </button>
                                         </div>
-                                        <div style={styles.statList}>
-                                            {effectiveView === "employee" ? (
-                                                <>
-                                                    <StatRow
-                                                        label="With case number"
-                                                        value={c.withNo}
-                                                        color={BRAND.blue}
-                                                        onClick={() => openCard(c.key, "with")}
-                                                    />
-                                                    <StatRow
-                                                        label="Without case number"
-                                                        value={c.withoutNo}
-                                                        color={BRAND.amber}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Today's Allocation"
-                                                        value={c.today}
-                                                        color={BRAND.blue}
-                                                    />
-                                                    <StatRow
-                                                        label="Submitted"
-                                                        value={c.submitted}
-                                                        color={BRAND.green}
-                                                    />
-                                                    <StatRow
-                                                        label="Time"
-                                                        value={
-                                                            c.mins > 0
-                                                                ? formatMinutes(c.mins)
-                                                                : "0m"
-                                                        }
-                                                        color={BRAND.cyan}
-                                                    />
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <StatRow
-                                                        label="Today's Receiving"
-                                                        value={c.today}
-                                                        color={BRAND.blue}
-                                                    />
-                                                    <StatRow
-                                                        label="Allocated"
-                                                        value={c.allocated}
-                                                        color={BRAND.cyan}
-                                                    />
-                                                    <StatRow
-                                                        label="With case number"
-                                                        value={c.withNo}
-                                                        color={BRAND.blue}
-                                                        onClick={() => openCard(c.key, "with")}
-                                                    />
-                                                    <StatRow
-                                                        label="Without case number"
-                                                        value={c.withoutNo}
-                                                        color={BRAND.amber}
-                                                        onClick={() => openCard(c.key, "without")}
-                                                    />
-                                                    <StatRow
-                                                        label="Submitted"
-                                                        value={c.submitted}
-                                                        color={BRAND.green}
-                                                    />
-                                                </>
-                                            )}
-                                        </div>
-                                        <button
-                                            type="button"
-                                            style={{
-                                                ...styles.viewDetailsBtn,
-                                                ...(active ? styles.viewDetailsBtnActive : {}),
-                                            }}
-                                            onClick={() =>
-                                                active
-                                                    ? setOpenGroup(null)
-                                                    : openCard(c.key, "with")
-                                            }
-                                        >
-                                            {active ? "Hide Details" : "View Details"}
-                                        </button>
-                                    </div>
+                                        {detailPanel && gi === rowEnd && (
+                                            <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
+                                                {detailPanel}
+                                            </div>
+                                        )}
+                                    </Fragment>
                                 );
                             })}
                         </div>
                     )}
                 </div>
-
-                {/* Table stays hidden until a client card's "View Details" is clicked */}
-                {openGroup && (
-                    <div ref={detailRef} style={styles.tableWrap}>
-                        <div style={styles.tableWrapHead}>
-                            <span style={styles.cardsTitle}>
-                                {effectiveView === "daily" ? prettyDate(openGroup) : openGroup}
-                            </span>
-                            <button
-                                type="button"
-                                style={styles.resetBtn}
-                                onClick={() => setOpenGroup(null)}
-                            >
-                                <i className="ti ti-x" />
-                                Close
-                            </button>
-                        </div>
-                        {/* With / Without case number switch (also opened by clicking the
-                            matching row on the card) */}
-                        <div style={styles.viewTabs}>
-                            {(
-                                [
-                                    ["with", "With case number", openCardStats?.withNo ?? 0],
-                                    [
-                                        "without",
-                                        "Without case number",
-                                        openCardStats?.withoutNo ?? 0,
-                                    ],
-                                ] as const
-                            ).map(([id, label, n]) => (
-                                <button
-                                    key={id}
-                                    type="button"
-                                    style={{
-                                        ...styles.viewTab,
-                                        ...(openSection === id ? styles.viewTabActive : {}),
-                                    }}
-                                    onClick={() => setOpenSection(id)}
-                                >
-                                    {label} ({n})
-                                </button>
-                            ))}
-                        </div>
-                        {openSection === "without" && (
-                            <div style={styles.tableCard}>
-                                {loading ? (
-                                    <div style={styles.emptyNote}>Loading…</div>
-                                ) : withoutRows.length === 0 ? (
-                                    <div style={styles.emptyNote}>
-                                        No counts received for this filter.
-                                    </div>
-                                ) : (
-                                    <div style={styles.tableScroll}>
-                                        <div
-                                            style={{
-                                                ...styles.tableHeadRow,
-                                                ...styles.withoutGrid,
-                                            }}
-                                        >
-                                            <span>Service</span>
-                                            <span>Client</span>
-                                            <span>Subclient</span>
-                                            <span>Case Received On</span>
-                                            <span>Allocated On</span>
-                                            <span>Received</span>
-                                            <span>Added</span>
-                                            <span>Pending</span>
-                                            <span>Allocated To (added / given)</span>
-                                            <span>Allocated By</span>
-                                            <span style={{ textAlign: "center" }}>Details</span>
-                                        </div>
-                                        {withoutRows.map((r, idx) => (
-                                            <div
-                                                key={r.id}
-                                                style={{
-                                                    ...styles.tableRow,
-                                                    ...styles.withoutGrid,
-                                                    background: idx % 2 === 0 ? "#fff" : "#fafbff",
-                                                }}
-                                            >
-                                                <span>{r.productName || "—"}</span>
-                                                <span>{r.clientName || "—"}</span>
-                                                <span>{r.subclientName || "—"}</span>
-                                                <span>{r.workDate}</span>
-                                                {/* day the count was handed out (Date above = day received) */}
-                                                <span style={{ whiteSpace: "nowrap" }}>
-                                                    {r.holders
-                                                        .map((h) => h.at)
-                                                        .filter(Boolean)
-                                                        .sort()
-                                                        .pop() || "—"}
-                                                </span>
-                                                <span style={{ fontWeight: fontWeight.semibold }}>
-                                                    {r.recv}
-                                                </span>
-                                                <span style={{ color: BRAND.green }}>
-                                                    {r.added}
-                                                </span>
-                                                <span style={{ color: BRAND.amber }}>
-                                                    {r.pending}
-                                                </span>
-                                                <span>
-                                                    {r.holders.length === 0
-                                                        ? "Unallocated"
-                                                        : r.holders
-                                                              .map(
-                                                                  (h) =>
-                                                                      `${h.name} (${h.added}/${h.qty})`
-                                                              )
-                                                              .join(", ")}
-                                                </span>
-                                                <span>
-                                                    {Array.from(
-                                                        new Set(
-                                                            r.holders
-                                                                .map((h) => h.by)
-                                                                .filter(Boolean)
-                                                        )
-                                                    ).join(", ") || "—"}
-                                                </span>
-                                                <span style={{ textAlign: "center" }}>
-                                                    <button
-                                                        type="button"
-                                                        style={styles.viewBtn}
-                                                        onClick={() => setViewCount(r)}
-                                                    >
-                                                        View
-                                                    </button>
-                                                </span>
-                                            </div>
-                                        ))}
-                                        <div style={{ ...styles.totalsRow, minWidth: 1430 }}>
-                                            <span style={{ flex: 1 }}>
-                                                {withoutRows.length} count
-                                                {withoutRows.length !== 1 ? "s" : ""} ·{" "}
-                                                {withoutRows.reduce((x, r) => x + r.recv, 0)}{" "}
-                                                received ·{" "}
-                                                {withoutRows.reduce((x, r) => x + r.added, 0)} added
-                                                · {withoutRows.reduce((x, r) => x + r.pending, 0)}{" "}
-                                                pending
-                                            </span>
-                                        </div>
-                                        {viewCount && (
-                                            <div
-                                                style={styles.modalOverlay}
-                                                onClick={() => setViewCount(null)}
-                                            >
-                                                <div
-                                                    style={styles.modalCard}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    <div style={styles.modalHead}>
-                                                        <div>
-                                                            <div style={styles.modalTitle}>
-                                                                {viewCount.productName || "—"}
-                                                            </div>
-                                                            <div style={styles.modalSub}>
-                                                                {viewCount.clientName || "—"}
-                                                                {viewCount.subclientName
-                                                                    ? ` · ${viewCount.subclientName}`
-                                                                    : ""}{" "}
-                                                                · received {viewCount.workDate} ·{" "}
-                                                                {viewCount.recv} received ·{" "}
-                                                                {viewCount.added} added ·{" "}
-                                                                {viewCount.pending} pending
-                                                            </div>
-                                                        </div>
-                                                        <button
-                                                            type="button"
-                                                            style={styles.modalClose}
-                                                            onClick={() => setViewCount(null)}
-                                                            aria-label="Close"
-                                                        >
-                                                            ×
-                                                        </button>
-                                                    </div>
-                                                    {viewCount.holders.length === 0 ? (
-                                                        <div style={styles.emptyNote}>
-                                                            Not allocated to anyone yet.
-                                                        </div>
-                                                    ) : (
-                                                        <div style={{ overflowX: "auto" }}>
-                                                            <table style={styles.modalTable}>
-                                                                <thead>
-                                                                    <tr>
-                                                                        {[
-                                                                            "Employee",
-                                                                            "Added / Given",
-                                                                            "Completed",
-                                                                            "Completed by Team",
-                                                                            "Completed by Client",
-                                                                            "Out of Scope",
-                                                                            "Query",
-                                                                            "Not Submitted",
-                                                                            "Earlier entries",
-                                                                        ].map((h) => (
-                                                                            <th
-                                                                                key={h}
-                                                                                style={
-                                                                                    styles.modalTh
-                                                                                }
-                                                                            >
-                                                                                {h}
-                                                                            </th>
-                                                                        ))}
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                    {viewCount.holders.map(
-                                                                        (h, hi) => {
-                                                                            const o = h.out;
-                                                                            const n = (
-                                                                                v?: number
-                                                                            ) =>
-                                                                                o && v
-                                                                                    ? String(v)
-                                                                                    : "—";
-                                                                            return (
-                                                                                <tr
-                                                                                    key={`${h.name}-${hi}`}
-                                                                                >
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTdName
-                                                                                        }
-                                                                                    >
-                                                                                        {h.name}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {h.added}/
-                                                                                        {h.qty}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.completed
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.doneByTeam
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.doneByClient
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.outOfScope
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.query
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.pending
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td
-                                                                                        style={
-                                                                                            styles.modalTd
-                                                                                        }
-                                                                                    >
-                                                                                        {n(
-                                                                                            o?.untracked
-                                                                                        )}
-                                                                                    </td>
-                                                                                </tr>
-                                                                            );
-                                                                        }
-                                                                    )}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-                                                    )}
-                                                    <div style={styles.modalNote}>
-                                                        "Earlier entries" are cases added before
-                                                        outcomes were tracked, so their outcome is
-                                                        not available.
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {openSection === "with" && (
-                            <div style={styles.tableCard}>
-                                {/* scrolls sideways ONLY the table rows, so the scrollbar sits
-                                right under the table, above totals + pagination */}
-                                <div style={styles.tableScroll}>
-                                    {!isMobile ? (
-                                        <>
-                                            <div style={styles.tableHeadRow}>
-                                                <span style={styles.colCase}>Case #</span>
-                                                <span style={styles.colClient}>Client</span>
-                                                <span style={styles.colClient}>Subclient</span>
-                                                <span style={styles.colService}>Service</span>
-                                                <span style={styles.colDate}>Date</span>
-                                                <span style={styles.colDate}>Allocated On</span>
-                                                <span style={styles.colEmployee}>Allocated To</span>
-                                                <span style={styles.colAllocatedBy}>
-                                                    Allocated By
-                                                </span>
-                                                <span style={styles.colStatus}>Status</span>
-                                                <span style={styles.colStatus}>Submission</span>
-                                                <span style={styles.colAllocatedBy}>
-                                                    Submitted By
-                                                </span>
-                                                <span style={styles.colStatus}>Submitted Date</span>
-                                                <span style={styles.colQuery}>Query</span>
-                                            </div>
-                                            {loading ? (
-                                                <div style={styles.emptyNote}>Loading report…</div>
-                                            ) : rows.length === 0 ? (
-                                                <div style={styles.emptyNote}>
-                                                    No cases found for this filter.
-                                                </div>
-                                            ) : (
-                                                rows.map((r, idx) => {
-                                                    const allocPill = allocationPillProps(r);
-                                                    const subPill = submissionPillProps(r);
-                                                    const onBehalf = isOnBehalf(r);
-                                                    return (
-                                                        <div
-                                                            key={r.id}
-                                                            style={{
-                                                                ...styles.tableRow,
-                                                                background:
-                                                                    idx % 2 === 0
-                                                                        ? "#fff"
-                                                                        : "#fafbff",
-                                                            }}
-                                                        >
-                                                            <span style={styles.colCase}>
-                                                                {r.caseNumber}
-                                                                {r.fromCount && (
-                                                                    <span
-                                                                        style={styles.fromCountChip}
-                                                                        title="Started as a count (without case number); case number added later"
-                                                                    >
-                                                                        From count
-                                                                    </span>
-                                                                )}
-                                                            </span>
-                                                            <span style={styles.colClient}>
-                                                                {r.clientName || "—"}
-                                                            </span>
-                                                            <span style={styles.colClient}>
-                                                                {r.subclientName || "—"}
-                                                            </span>
-                                                            <span style={styles.colService}>
-                                                                {r.productName || "—"}
-                                                            </span>
-                                                            <span style={styles.colDate}>
-                                                                {r.workDate}
-                                                            </span>
-                                                            {/* day the case was handed out (a backlog case keeps
-                                                            its old work date) */}
-                                                            <span
-                                                                style={styles.colDate}
-                                                                title={
-                                                                    r.allocatedAt
-                                                                        ? new Date(
-                                                                              r.allocatedAt
-                                                                          ).toLocaleString()
-                                                                        : undefined
-                                                                }
-                                                            >
-                                                                {r.allocatedAt
-                                                                    ? localYmd(r.allocatedAt)
-                                                                    : "—"}
-                                                            </span>
-                                                            <span style={styles.colEmployee}>
-                                                                {r.assignedEmployeeName ||
-                                                                    "Unallocated"}
-                                                            </span>
-                                                            <span style={styles.colAllocatedBy}>
-                                                                {r.allocatedByName || "—"}
-                                                            </span>
-                                                            <span style={styles.colStatus}>
-                                                                <span
-                                                                    style={{
-                                                                        ...styles.statusPill,
-                                                                        background:
-                                                                            allocPill.background,
-                                                                        color: allocPill.color,
-                                                                    }}
-                                                                >
-                                                                    {allocPill.label}
-                                                                </span>
-                                                            </span>
-                                                            <span style={styles.colStatus}>
-                                                                <span
-                                                                    style={{
-                                                                        ...styles.statusPill,
-                                                                        background:
-                                                                            subPill.background,
-                                                                        color: subPill.color,
-                                                                    }}
-                                                                    title={
-                                                                        r.outOfScopeReason ||
-                                                                        undefined
-                                                                    }
-                                                                >
-                                                                    {subPill.label}
-                                                                </span>
-                                                            </span>
-                                                            {/* NEW: who submitted — flagged when it was
-                                                        someone other than the allocated employee */}
-                                                            <span
-                                                                style={{
-                                                                    ...styles.colAllocatedBy,
-                                                                    display: "flex",
-                                                                    flexDirection: "column",
-                                                                    alignItems: "flex-start",
-                                                                    gap: 3,
-                                                                }}
-                                                                title={
-                                                                    r.submittedByName || undefined
-                                                                }
-                                                            >
-                                                                <span
-                                                                    style={{
-                                                                        maxWidth: "100%",
-                                                                        overflow: "hidden",
-                                                                        textOverflow: "ellipsis",
-                                                                    }}
-                                                                >
-                                                                    {r.submissionStatus ===
-                                                                    "SUBMITTED"
-                                                                        ? r.submittedByName || "—"
-                                                                        : "—"}
-                                                                </span>
-                                                                {onBehalf && (
-                                                                    <span
-                                                                        style={styles.onBehalfChip}
-                                                                        title={`Allocated to ${
-                                                                            r.assignedEmployeeName ||
-                                                                            "-"
-                                                                        }, submitted by ${r.submittedByName}`}
-                                                                    >
-                                                                        On behalf
-                                                                    </span>
-                                                                )}
-                                                            </span>
-                                                            <span
-                                                                style={styles.colStatus}
-                                                                title={
-                                                                    r.submittedAt
-                                                                        ? new Date(
-                                                                              r.submittedAt
-                                                                          ).toLocaleString()
-                                                                        : undefined
-                                                                }
-                                                            >
-                                                                {submittedDateStr(r.submittedAt) ||
-                                                                    "—"}
-                                                            </span>
-                                                            {/* A completed query keeps its text, so it still
-                                                reads as "was a query". Open queries also get a
-                                                Mark completed button for anyone allowed to. */}
-                                                            <span
-                                                                style={{
-                                                                    ...styles.colQuery,
-                                                                    display: "flex",
-                                                                    flexDirection: "column",
-                                                                    alignItems: "flex-start",
-                                                                    gap: 4,
-                                                                }}
-                                                            >
-                                                                <span
-                                                                    title={r.queryText || undefined}
-                                                                    style={{
-                                                                        maxWidth: "100%",
-                                                                        overflow: "hidden",
-                                                                        textOverflow: "ellipsis",
-                                                                    }}
-                                                                >
-                                                                    {r.queryText || "—"}
-                                                                </span>
-                                                                {r.submissionType === "QUERY" &&
-                                                                    canCompleteQuery && (
-                                                                        <button
-                                                                            type="button"
-                                                                            style={
-                                                                                styles.completeQueryBtn
-                                                                            }
-                                                                            disabled={
-                                                                                completingId ===
-                                                                                r.id
-                                                                            }
-                                                                            onClick={() =>
-                                                                                completeQuery(r)
-                                                                            }
-                                                                        >
-                                                                            {completingId === r.id
-                                                                                ? "Saving…"
-                                                                                : "Mark completed"}
-                                                                        </button>
-                                                                    )}
-                                                            </span>
-                                                        </div>
-                                                    );
-                                                })
-                                            )}
-                                        </>
-                                    ) : (
-                                        <div style={styles.mobileCardList}>
-                                            {loading ? (
-                                                <div style={styles.emptyNote}>Loading report…</div>
-                                            ) : rows.length === 0 ? (
-                                                <div style={styles.emptyNote}>
-                                                    No cases found for this filter.
-                                                </div>
-                                            ) : (
-                                                rows.map((r) => {
-                                                    const allocPill = allocationPillProps(r);
-                                                    const subPill = submissionPillProps(r);
-                                                    const onBehalf = isOnBehalf(r);
-                                                    return (
-                                                        <div key={r.id} style={styles.mobileCard}>
-                                                            <div style={styles.mobileCardHeader}>
-                                                                <span style={styles.mobileCardCase}>
-                                                                    {r.caseNumber}
-                                                                    {r.fromCount && (
-                                                                        <span
-                                                                            style={{
-                                                                                ...styles.fromCountChip,
-                                                                                display:
-                                                                                    "inline-block",
-                                                                                marginLeft: 8,
-                                                                            }}
-                                                                        >
-                                                                            From count
-                                                                        </span>
-                                                                    )}
-                                                                </span>
-                                                                <span
-                                                                    style={{
-                                                                        ...styles.statusPill,
-                                                                        background:
-                                                                            allocPill.background,
-                                                                        color: allocPill.color,
-                                                                    }}
-                                                                >
-                                                                    {allocPill.label}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Client
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.clientName || "—"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Subclient
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.subclientName || "—"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Service
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.productName || "—"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Date
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.workDate}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Allocated On
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.allocatedAt
-                                                                        ? localYmd(r.allocatedAt)
-                                                                        : "—"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Allocated To
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.assignedEmployeeName ||
-                                                                        "Unallocated"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Allocated By
-                                                                </span>
-                                                                <span
-                                                                    style={styles.mobileCardValue}
-                                                                >
-                                                                    {r.allocatedByName || "—"}
-                                                                </span>
-                                                            </div>
-                                                            <div style={styles.mobileCardRow}>
-                                                                <span
-                                                                    style={styles.mobileCardLabel}
-                                                                >
-                                                                    Submission
-                                                                </span>
-                                                                <span
-                                                                    style={{
-                                                                        ...styles.statusPill,
-                                                                        background:
-                                                                            subPill.background,
-                                                                        color: subPill.color,
-                                                                    }}
-                                                                    title={
-                                                                        r.outOfScopeReason ||
-                                                                        undefined
-                                                                    }
-                                                                >
-                                                                    {subPill.label}
-                                                                </span>
-                                                            </div>
-                                                            {r.submissionStatus === "SUBMITTED" &&
-                                                                r.submittedByName && (
-                                                                    <div
-                                                                        style={styles.mobileCardRow}
-                                                                    >
-                                                                        <span
-                                                                            style={
-                                                                                styles.mobileCardLabel
-                                                                            }
-                                                                        >
-                                                                            Submitted By
-                                                                        </span>
-                                                                        <span
-                                                                            style={{
-                                                                                display: "flex",
-                                                                                alignItems:
-                                                                                    "center",
-                                                                                gap: 6,
-                                                                            }}
-                                                                        >
-                                                                            <span
-                                                                                style={
-                                                                                    styles.mobileCardValue
-                                                                                }
-                                                                            >
-                                                                                {r.submittedByName}
-                                                                            </span>
-                                                                            {onBehalf && (
-                                                                                <span
-                                                                                    style={
-                                                                                        styles.onBehalfChip
-                                                                                    }
-                                                                                >
-                                                                                    On behalf
-                                                                                </span>
-                                                                            )}
-                                                                        </span>
-                                                                    </div>
-                                                                )}
-                                                            {r.submittedAt && (
-                                                                <div style={styles.mobileCardRow}>
-                                                                    <span
-                                                                        style={
-                                                                            styles.mobileCardLabel
-                                                                        }
-                                                                    >
-                                                                        Submitted Date
-                                                                    </span>
-                                                                    <span
-                                                                        style={
-                                                                            styles.mobileCardValue
-                                                                        }
-                                                                    >
-                                                                        {submittedDateStr(
-                                                                            r.submittedAt
-                                                                        )}
-                                                                    </span>
-                                                                </div>
-                                                            )}
-                                                            {(r.submissionType === "QUERY" ||
-                                                                r.queryText) && (
-                                                                <div style={styles.mobileCardRow}>
-                                                                    <span
-                                                                        style={
-                                                                            styles.mobileCardLabel
-                                                                        }
-                                                                    >
-                                                                        Query
-                                                                    </span>
-                                                                    <span
-                                                                        style={
-                                                                            styles.mobileCardValue
-                                                                        }
-                                                                    >
-                                                                        {r.queryText || "—"}
-                                                                    </span>
-                                                                </div>
-                                                            )}
-                                                            {r.submissionType === "QUERY" &&
-                                                                canCompleteQuery && (
-                                                                    <button
-                                                                        type="button"
-                                                                        style={
-                                                                            styles.completeQueryBtn
-                                                                        }
-                                                                        disabled={
-                                                                            completingId === r.id
-                                                                        }
-                                                                        onClick={() =>
-                                                                            completeQuery(r)
-                                                                        }
-                                                                    >
-                                                                        {completingId === r.id
-                                                                            ? "Saving…"
-                                                                            : "Mark completed"}
-                                                                    </button>
-                                                                )}
-                                                        </div>
-                                                    );
-                                                })
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                {!loading && rows.length > 0 && (
-                                    <div style={styles.totalsRow}>
-                                        <span style={{ flex: 1 }}>
-                                            Page total ({rows.length} case
-                                            {rows.length !== 1 ? "s" : ""})
-                                            {` · ${totalCount} matching in total`}
-                                        </span>
-                                    </div>
-                                )}
-                                <div style={styles.paginationRow}>
-                                    <button
-                                        type="button"
-                                        style={styles.pageBtn}
-                                        disabled={page <= 1}
-                                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                    >
-                                        <i className="ti ti-chevron-left" />
-                                    </button>
-                                    <span style={styles.pageIndicator}>
-                                        Page {page}
-                                        {` of ${Math.max(1, Math.ceil(totalCount / PAGE_SIZE))}`}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        style={styles.pageBtn}
-                                        disabled={page * PAGE_SIZE >= totalCount}
-                                        onClick={() => setPage((p) => p + 1)}
-                                    >
-                                        <i className="ti ti-chevron-right" />
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
             </div>
 
             {toast && <div style={styles.toast}>{toast}</div>}
