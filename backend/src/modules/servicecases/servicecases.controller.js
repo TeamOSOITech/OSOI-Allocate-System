@@ -578,7 +578,11 @@ async function listServiceCases(req, res) {
         ]);
       const matchedDate = tryParseSearchDate(term);
 
-      searchOrParts = [`case_number.ilike.${escapeOrFilterValue(`%${term}%`)}`];
+      // SECURITY: escape %, _ and \ in the user's text first so they are
+      // matched literally (not as wildcards), THEN quote for the .or() DSL.
+      searchOrParts = [
+        `case_number.ilike.${escapeOrFilterValue(`%${escapeLikeWildcards(term)}%`)}`,
+      ];
       if (matchingProductIds.length) {
         searchOrParts.push(`product_id.in.(${matchingProductIds.join(",")})`);
       }

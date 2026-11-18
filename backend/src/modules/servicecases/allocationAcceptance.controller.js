@@ -813,38 +813,86 @@ async function resolveManager(reportingManager, orgId) {
   return { email: null, authId: null };
 }
 
+// Label for one line: the service name (+ client when there is one). If the
+// name can not be found we show the client, and only then a neutral "Other"
+// (never the bare word "Service").
+function itemLabel(productId, clientId, productMap, clientMap) {
+  return (
+    [productMap[productId], clientMap[clientId]]
+      .filter(Boolean)
+      .map(esc)
+      .join(" · ") || "Other"
+  );
+}
+
+// Lines look like "Data Export · Client — 10 cases" (name + how many cases).
 function itemLines(cases, counts, productMap, clientMap) {
   const lines = [];
   const grouped = new Map();
   cases.forEach((c) => {
     const key = `${c.product_id}|${c.client_id || ""}`;
-    const g = grouped.get(key) || { c, numbers: [] };
-    g.numbers.push(c.case_number);
+    const g = grouped.get(key) || { c, n: 0 };
+    g.n += 1;
     grouped.set(key, g);
   });
-  for (const { c, numbers } of grouped.values()) {
-    const shown = numbers.slice(0, 8).map(esc).join(", ");
-    const extra = numbers.length > 8 ? ` +${numbers.length - 8} more` : "";
+  for (const { c, n } of grouped.values()) {
     lines.push(
-      `${esc(productMap[c.product_id] || "Service")}${
-        clientMap[c.client_id] ? ` · ${esc(clientMap[c.client_id])}` : ""
-      } — ${numbers.length} case${numbers.length > 1 ? "s" : ""}: ${shown}${extra}`,
+      `${itemLabel(c.product_id, c.client_id, productMap, clientMap)} — ${n} case${n > 1 ? "s" : ""}`,
     );
   }
   counts.forEach((a) => {
+    const q = Number(a.quantity) || 0;
     lines.push(
-      `${esc(productMap[a.product_id] || "Service")}${
-        clientMap[a.client_id] ? ` · ${esc(clientMap[a.client_id])}` : ""
-      } — ${a.quantity} case${a.quantity > 1 ? "s" : ""} (case numbers not added yet)`,
+      `${itemLabel(a.product_id, a.client_id, productMap, clientMap)} — ${q} case${q > 1 ? "s" : ""}`,
     );
   });
   return lines;
 }
 
-function detailBlock(lines) {
-  return `<div style="margin:0 0 26px;padding:12px 14px;background:#FFF7E6;border:1px solid #F5D58A;border-radius:12px;color:#7A4B00;font-size:14px;font-weight:600;line-height:1.7;text-align:left;">${lines
-    .map((l) => `<div>• ${l}</div>`)
-    .join("")}</div>`;
+// ---- Email-safe "waiting" cards (tables + inline styles only) ------------
+// itemLines() gives strings like "Data Export · Client — 10 cases". Show each
+// as a bold name with the count in orange.
+const FONT =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif";
+
+function itemRow(line) {
+  const m = String(line).match(/^(.*) — (\d+ cases?)(.*)$/);
+  if (!m) {
+    return `<div style="margin:0 0 8px;color:#1e2a4a;font-size:14px;font-weight:600;line-height:1.5;">${line}</div>`;
+  }
+  const detail = m[3].replace(/^:\s*/, "").trim();
+  return `<div style="margin:0 0 10px;"><div style="color:#1e2a4a;font-size:14px;font-weight:700;line-height:1.5;">${m[1]} <span style="color:#C2410C;font-weight:800;">&middot; ${m[2]}</span></div>${
+    detail
+      ? `<div style="color:#8b8f9c;font-size:12.5px;line-height:1.5;">${detail}</div>`
+      : ""
+  }</div>`;
+}
+
+const CARD_OPEN = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px;background:#FFFAF0;border:1px solid #F8DFB0;border-radius:14px;text-align:left;font-family:${FONT};"><tr><td style="padding:16px 18px 8px;">`;
+const CARD_CLOSE = "</td></tr></table>";
+
+// Employee mail: just how many cases are waiting.
+function detailBlock(total) {
+  return `${CARD_OPEN}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px;"><tr><td style="color:#1e2a4a;font-size:15px;font-weight:800;">Waiting for your response</td><td align="right" style="color:#C2410C;font-size:13px;font-weight:800;white-space:nowrap;">${total} case${total > 1 ? "s" : ""}</td></tr></table>${CARD_CLOSE}`;
+}
+
+// ONE block for a manager: every team member who has not answered, with just
+// their name and how many cases are waiting.
+function managerDetailBlock(entries) {
+  const MAX_PEOPLE = 40;
+  const shown = entries.slice(0, MAX_PEOPLE);
+  const more = entries.length - shown.length;
+  const people = shown
+    .map(
+      (e, i) =>
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 ${i === shown.length - 1 ? 8 : 0}px;"><tr><td style="padding:9px 0;${i ? "border-top:1px solid #F8DFB0;" : ""}color:#1e2a4a;font-size:15px;font-weight:800;">${esc(e.name)}</td><td align="right" style="padding:9px 0;${i ? "border-top:1px solid #F8DFB0;" : ""}color:#C2410C;font-size:13px;font-weight:800;white-space:nowrap;">${e.total} case${e.total > 1 ? "s" : ""}</td></tr></table>`,
+    )
+    .join("");
+  return `${CARD_OPEN}${people}${
+    more > 0
+      ? `<div style="margin:0 0 10px;color:#C2410C;font-size:13px;font-weight:700;">+ ${more} more</div>`
+      : ""
+  }${CARD_CLOSE}`;
 }
 
 // A mail link that opens on EVERY device. "localhost" means "this phone itself"
@@ -863,28 +911,6 @@ function isUsableAppLink(url) {
   } catch {
     return false;
   }
-}
-
-// ONE block for a manager: every team member who has not answered, each with
-// their own items (lines are already HTML-escaped by itemLines)
-function managerDetailBlock(entries) {
-  const MAX_PEOPLE = 40;
-  const shown = entries.slice(0, MAX_PEOPLE);
-  const more = entries.length - shown.length;
-  return `<div style="margin:0 0 26px;padding:12px 14px;background:#FFF7E6;border:1px solid #F5D58A;border-radius:12px;color:#7A4B00;font-size:14px;line-height:1.6;text-align:left;">${shown
-    .map(
-      (e) =>
-        `<div style="margin:0 0 10px;"><div style="font-weight:800;">${esc(e.name)} — ${e.total} case${
-          e.total > 1 ? "s" : ""
-        }</div>${e.lines
-          .map(
-            (l) => `<div style="font-weight:600;font-size:13px;">• ${l}</div>`,
-          )
-          .join("")}</div>`,
-    )
-    .join(
-      "",
-    )}${more > 0 ? `<div style="font-weight:700;">+ ${more} more</div>` : ""}</div>`;
 }
 
 let reminderRunning = false;
@@ -1076,9 +1102,10 @@ async function runAcceptanceReminders() {
                 heading: "Allocation Not Accepted",
                 headline: "You haven't accepted your allocation yet.",
                 subtext: `${total} item${total > 1 ? "s" : ""} allocated to you more than ${waited} ago ${total > 1 ? "are" : "is"} still waiting. Please login and accept or decline ${total > 1 ? "them" : "it"}.`,
-                headSolid: "#D97706",
-                headGradient: "linear-gradient(135deg,#F59E0B,#D97706)",
-                detailHtml: detailBlock(lines),
+                headSolid: "#EA6C0A",
+                headGradient:
+                  "linear-gradient(135deg,#FBBF24 0%,#F97316 55%,#EA580C 100%)",
+                detailHtml: detailBlock(total),
               }),
             });
             g.ok = true;
@@ -1149,8 +1176,9 @@ async function runAcceptanceReminders() {
                 ? `${esc(first)} hasn't accepted the allocation yet.`
                 : `${n} team members haven't accepted their allocation yet.`,
             subtext: `${items} item${items > 1 ? "s" : ""} allocated more than ${waited} ago ${items > 1 ? "are" : "is"} still waiting for a response.`,
-            headSolid: "#D97706",
-            headGradient: "linear-gradient(135deg,#F59E0B,#D97706)",
+            headSolid: "#EA6C0A",
+            headGradient:
+              "linear-gradient(135deg,#FBBF24 0%,#F97316 55%,#EA580C 100%)",
             detailHtml: managerDetailBlock(m.entries),
           }),
         });

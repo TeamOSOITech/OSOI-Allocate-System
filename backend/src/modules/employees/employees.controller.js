@@ -33,6 +33,25 @@ const ROLE_CHANGE_ASSIGNABLE = {
   OPS_MANAGER: ["PROCESS_LEAD", "VERTICAL_HEAD", "TEAM_MEMBER"],
 };
 
+// SECURITY: Date of Birth is personal data. Only roles that can manage
+// employee records (and the employee themself) get the full date. Everyone
+// else gets the day + month with a fixed placeholder year, so the Home page
+// birthday widget (which only needs day/month) keeps working but nobody can
+// read another person's age / year of birth from the API.
+const DOB_FULL_ACCESS_ROLES = ["SUPER_ADMIN", "OPS_MANAGER", "PROCESS_LEAD"];
+const DOB_PLACEHOLDER_YEAR = "2000"; // leap year, so 29 Feb still works
+
+function maskDateOfBirth(employee, viewer) {
+  if (!employee || !employee.dateOfBirth) return employee;
+  if (DOB_FULL_ACCESS_ROLES.includes(viewer.role)) return employee;
+  if (employee.id === viewer.userId) return employee;
+  const m = String(employee.dateOfBirth).match(/^\d{4}-(\d{2}-\d{2})/);
+  return {
+    ...employee,
+    dateOfBirth: m ? `${DOB_PLACEHOLDER_YEAR}-${m[1]}` : null,
+  };
+}
+
 async function listEmployees(req, res) {
   const orgId = req.user.organizationId;
 
@@ -57,7 +76,7 @@ async function listEmployees(req, res) {
       });
     }
 
-    res.json(employees);
+    res.json(employees.map((e) => maskDateOfBirth(e, req.user)));
   } catch (error) {
     console.error("Failed to fetch user_master:", error);
     res.status(500).json({ error: "Failed to load employees" });
@@ -73,7 +92,7 @@ async function getEmployeeById(req, res) {
     return res.status(404).json({ error: "Employee not found" });
   }
 
-  res.json(employee);
+  res.json(maskDateOfBirth(employee, req.user));
 }
 
 async function updateEmployee(req, res) {
