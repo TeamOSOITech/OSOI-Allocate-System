@@ -96,6 +96,24 @@ router.patch("/:id/status", async (req, res) => {
   try {
     const { status, actualHours } = req.body;
 
+    // SECURITY: validate input instead of writing whatever the client sends.
+    if (typeof status !== "string" || !/^[A-Z_]{2,30}$/.test(status)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid status." });
+    }
+    if (
+      actualHours !== undefined &&
+      actualHours !== null &&
+      (!Number.isFinite(Number(actualHours)) ||
+        Number(actualHours) < 0 ||
+        Number(actualHours) > 1000)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid actualHours." });
+    }
+
     const { data: existing, error: fetchError } = await supabase
       .from("tasks")
       .select("assigned_to")

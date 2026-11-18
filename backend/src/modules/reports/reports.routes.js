@@ -19,6 +19,30 @@ router.post("/daily", async (req, res) => {
     } = req.body;
     const today = todayInTz();
 
+    // SECURITY: basic bounds/length checks so the endpoint can't be used to
+    // store absurd values or megabytes of text.
+    if (
+      hoursWorked !== undefined &&
+      hoursWorked !== null &&
+      (!Number.isFinite(Number(hoursWorked)) ||
+        Number(hoursWorked) < 0 ||
+        Number(hoursWorked) > 24)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "hoursWorked must be 0-24." });
+    }
+    if (
+      [remarks, pendingReasons].some(
+        (v) => typeof v === "string" && v.length > 5000,
+      ) ||
+      JSON.stringify([tasksCompleted, tasksPending]).length > 20000
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Report is too long." });
+    }
+
     const { data, error } = await supabase
       .from("daily_reports")
       .upsert(

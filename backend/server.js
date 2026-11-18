@@ -175,7 +175,10 @@ const CSRF_EXEMPT_PATHS = [
 ];
 
 app.use((req, res, next) => {
-  if (CSRF_EXEMPT_PATHS.some((p) => req.path.startsWith(p))) return next();
+  // SECURITY: exact match (ignoring a trailing slash). startsWith() would also
+  // exempt look-alike paths such as /api/auth/login-anything.
+  const reqPath = req.path.length > 1 ? req.path.replace(/\/+$/, "") : req.path;
+  if (CSRF_EXEMPT_PATHS.includes(reqPath)) return next();
   return csrfProtection(req, res, next);
 });
 
