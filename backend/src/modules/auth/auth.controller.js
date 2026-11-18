@@ -74,8 +74,22 @@ const logoutHandler = async (req, res) => {
   // PERF cache: stop honouring this token immediately
   invalidateAuthCache(accessToken);
 
-  if (accessToken) {
-    const { error } = await supabase.auth.admin.signOut(accessToken, "local");
+  // SECURITY: the access cookie lives 1 hour but the refresh cookie 30 days.
+  // If the access cookie has already expired, logout used to revoke nothing,
+  // so a stolen/copied refresh token kept working for weeks after "logout".
+  // Exchange the refresh token for a fresh access token just to revoke it.
+  let tokenToRevoke = accessToken;
+  if (!tokenToRevoke && req.cookies?.refreshToken) {
+    try {
+      const s = await refreshSession(req.cookies.refreshToken);
+      tokenToRevoke = s?.accessToken;
+    } catch {
+      // refresh token already invalid/expired - nothing left to revoke
+    }
+  }
+
+  if (tokenToRevoke) {
+    const { error } = await supabase.auth.admin.signOut(tokenToRevoke, "local");
     if (error) {
       // Don't fail the logout over this — the cookies still get cleared
       // below either way — but log it so a broken revoke doesn't go
