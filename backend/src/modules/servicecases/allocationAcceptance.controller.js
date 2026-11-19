@@ -42,6 +42,9 @@ const DECLINE_REASONS = [
 
 // how long an allocation may stay unanswered before the reminder goes out
 const REMINDER_AFTER_HOURS = Number(process.env.ACCEPT_REMINDER_HOURS) || 2;
+// after the reminder mail goes out, an allocation that is STILL not accepted /
+// declined within this many minutes goes back to the main pool automatically
+const RELEASE_AFTER_MINUTES = Number(process.env.ACCEPT_RELEASE_MINUTES) || 30;
 // never mail about allocations older than this (e.g. right after deploy)
 const REMINDER_MAX_AGE_HOURS = 72;
 
@@ -916,7 +919,7 @@ function isUsableAppLink(url) {
 let reminderRunning = false;
 let warnedBadLink = false;
 
-async function runAcceptanceReminders() {
+async function sendAcceptanceReminders() {
   if (reminderRunning) return; // the previous tick is still mailing
   // Never mail a link that will not open (e.g. a local dev server whose
   // FRONTEND_URL is http://localhost:5173). Checked BEFORE claiming anything,
@@ -1096,12 +1099,12 @@ async function runAcceptanceReminders() {
             await sendEmail({
               to: empEmail,
               subject: "Reminder: you haven't accepted your allocation",
-              text: `${total} item(s) allocated to you more than ${waited} ago are still waiting. Please login and accept or decline them. ${APP_LOGIN_URL}`,
+              text: `${total} item(s) allocated to you more than ${waited} ago are still waiting. Please login and accept or decline them. If you do not accept within ${RELEASE_AFTER_MINUTES} minutes of this mail, ${total > 1 ? "they" : "it"} will go back to the main pool. ${APP_LOGIN_URL}`,
               html: buildAllocationEmailHtml({
                 icon: "&#9203;",
                 heading: "Allocation Not Accepted",
                 headline: "You haven't accepted your allocation yet.",
-                subtext: `${total} item${total > 1 ? "s" : ""} allocated to you more than ${waited} ago ${total > 1 ? "are" : "is"} still waiting. Please login and accept or decline ${total > 1 ? "them" : "it"}.`,
+                subtext: `${total} item${total > 1 ? "s" : ""} allocated to you more than ${waited} ago ${total > 1 ? "are" : "is"} still waiting. Please login and accept or decline ${total > 1 ? "them" : "it"}. If you do not accept within ${RELEASE_AFTER_MINUTES} minutes of this mail, ${total > 1 ? "they" : "it"} will go back to the main pool.`,
                 headSolid: "#EA6C0A",
                 headGradient:
                   "linear-gradient(135deg,#FBBF24 0%,#F97316 55%,#EA580C 100%)",
@@ -1167,7 +1170,9 @@ async function runAcceptanceReminders() {
               : `${n} team members haven't accepted their allocation`,
           text: `${n} team member${n > 1 ? "s have" : " has"} not accepted ${items} allocated item(s) after ${waited}: ${m.entries
             .map((e) => `${e.name} (${e.total})`)
-            .join(", ")}. ${APP_LOGIN_URL}`,
+            .join(
+              ", ",
+            )}. If not accepted within ${RELEASE_AFTER_MINUTES} minutes of this mail, ${items > 1 ? "they" : "it"} will go back to the main pool. ${APP_LOGIN_URL}`,
           html: buildAllocationEmailHtml({
             icon: "&#9203;",
             heading: "Allocation Not Accepted",
@@ -1175,7 +1180,7 @@ async function runAcceptanceReminders() {
               n === 1
                 ? `${esc(first)} hasn't accepted the allocation yet.`
                 : `${n} team members haven't accepted their allocation yet.`,
-            subtext: `${items} item${items > 1 ? "s" : ""} allocated more than ${waited} ago ${items > 1 ? "are" : "is"} still waiting for a response.`,
+            subtext: `${items} item${items > 1 ? "s" : ""} allocated more than ${waited} ago ${items > 1 ? "are" : "is"} still waiting for a response. If not accepted within ${RELEASE_AFTER_MINUTES} minutes of this mail, ${items > 1 ? "they" : "it"} will automatically go back to the main pool.`,
             headSolid: "#EA6C0A",
             headGradient:
               "linear-gradient(135deg,#FBBF24 0%,#F97316 55%,#EA580C 100%)",
@@ -1202,6 +1207,185 @@ async function runAcceptanceReminders() {
     }
   } finally {
     reminderRunning = false;
+  }
+}
+
+// ------------------------------------------------------------
+// AUTO-RETURN TO MAIN POOL
+//
+// RELEASE_AFTER_MINUTES after the reminder mail went out, anything the employee
+// STILL has not accepted / declined goes back to the pool - exactly what a
+// manual "Decline" does. Already-accepted and already-submitted work is never
+// touched. Runs on the same 5-minute tick as the reminders, so the return
+// happens 30-35 minutes after the mail.
+// ------------------------------------------------------------
+let releaseRunning = false;
+
+async function releaseUnacceptedToPool() {
+  if (releaseRunning) return;
+  releaseRunning = true;
+  try {
+    const nowMs = Date.now();
+    const cutoff = new Date(
+      nowMs - RELEASE_AFTER_MINUTES * 60 * 1000,
+    ).toISOString();
+    const oldest = new Date(
+      nowMs - REMINDER_MAX_AGE_HOURS * 3600 * 1000,
+    ).toISOString();
+    const REASON = `Not accepted within ${RELEASE_AFTER_MINUTES} minutes of the reminder (auto-returned to pool)`;
+
+    // one atomic UPDATE ... RETURNING, so a restart / second server cannot
+    // return the same row twice
+    const { data: caseRows, error: cErr } = await supabase
+      .from("service_cases")
+      .update({
+        assigned_employee_id: null,
+        allocation_status: "PENDING",
+        allocated_at: null,
+        allocated_by: null,
+        acceptance_status: "ACCEPTED", // back to the default for the next allocation
+        accepted_at: null,
+        acceptance_reminder_sent_at: null,
+      })
+      .eq("acceptance_status", "PENDING")
+      .eq("allocation_status", "ALLOCATED")
+      .not("assigned_employee_id", "is", null)
+      .not("acceptance_reminder_sent_at", "is", null)
+      .lte("acceptance_reminder_sent_at", cutoff)
+      .gte("acceptance_reminder_sent_at", oldest)
+      .or(NOT_SUBMITTED)
+      .select(
+        "id, organization_id, assigned_employee_id, case_number, product_id, work_date, allocated_at, allocated_by",
+      );
+    if (cErr) {
+      if (isMissingColumn(cErr)) return warnMissingColumns();
+      throw cErr;
+    }
+
+    // counts: nothing fulfilled yet -> the whole allocation is removed
+    const { data: countRows, error: ctErr } = await supabase
+      .from("service_case_count_allocations")
+      .delete()
+      .eq("acceptance_status", "PENDING")
+      .not("acceptance_reminder_sent_at", "is", null)
+      .lte("acceptance_reminder_sent_at", cutoff)
+      .gte("acceptance_reminder_sent_at", oldest)
+      .or(NOTHING_DONE)
+      .select(
+        "count_id, organization_id, employee_id, quantity, allocated_at, allocated_by",
+      );
+    if (ctErr && !isMissingColumn(ctErr)) throw ctErr;
+
+    const cases = caseRows || [];
+    const counts = countRows || [];
+    if (!cases.length && !counts.length) return;
+
+    // names for the decline log
+    const empIds = [
+      ...new Set([
+        ...cases.map((c) => c.assigned_employee_id),
+        ...counts.map((c) => c.employee_id),
+      ]),
+    ].filter(Boolean);
+    const { data: people } = await supabase
+      .from("user_master")
+      .select('"Auth User Id", "First Name", "Last Name"')
+      .in("Auth User Id", empIds);
+    const nameOf = Object.fromEntries(
+      (people || []).map((p) => [
+        p["Auth User Id"],
+        `${p["First Name"] || ""} ${p["Last Name"] || ""}`.trim() || null,
+      ]),
+    );
+
+    const logs = [];
+    cases.forEach((c) =>
+      logs.push({
+        organization_id: c.organization_id,
+        kind: "CASE",
+        case_id: String(c.id),
+        case_number: c.case_number,
+        product_id: c.product_id ? String(c.product_id) : null,
+        product_name: null,
+        work_date: c.work_date || null,
+        quantity: 1,
+        employee_id: c.assigned_employee_id,
+        employee_name: nameOf[c.assigned_employee_id] || null,
+        allocated_by: c.allocated_by || null,
+        allocated_at: c.allocated_at || null,
+        reason: REASON,
+      }),
+    );
+    counts.forEach((c) =>
+      logs.push({
+        organization_id: c.organization_id,
+        kind: "COUNT",
+        count_id: String(c.count_id),
+        product_id: null,
+        product_name: null,
+        work_date: null,
+        quantity: Number(c.quantity) || 0,
+        employee_id: c.employee_id,
+        employee_name: nameOf[c.employee_id] || null,
+        allocated_by: c.allocated_by || null,
+        allocated_at: c.allocated_at || null,
+        reason: REASON,
+      }),
+    );
+    // a logging problem must never undo the return
+    const { error: logErr } = await supabase
+      .from("allocation_decline_log")
+      .insert(logs);
+    if (logErr) console.error("[acceptance] auto-return log failed:", logErr);
+
+    // tell the employee and whoever allocated it (browser push, never throws)
+    const notify = new Map(); // `${org}|${user}` -> { org, user, n, mine }
+    const bump = (org, user, key) => {
+      if (!user) return;
+      const k = `${org}|${user}|${key}`;
+      const cur = notify.get(k) || { org, user, key, n: 0 };
+      cur.n++;
+      notify.set(k, cur);
+    };
+    cases.forEach((c) => {
+      bump(c.organization_id, c.assigned_employee_id, "emp");
+      bump(c.organization_id, c.allocated_by, "allocator");
+    });
+    counts.forEach((c) => {
+      bump(c.organization_id, c.employee_id, "emp");
+      bump(c.organization_id, c.allocated_by, "allocator");
+    });
+    for (const n of notify.values()) {
+      await sendPushToUsers({
+        organizationId: n.org,
+        userIds: [n.user],
+        title:
+          n.key === "emp"
+            ? "Allocation returned to pool"
+            : "Allocation returned to pool (not accepted)",
+        body:
+          n.key === "emp"
+            ? `${n.n} item${n.n > 1 ? "s were" : " was"} not accepted within ${RELEASE_AFTER_MINUTES} minutes of the reminder and went back to the main pool.`
+            : `${n.n} item${n.n > 1 ? "s" : ""} you allocated ${n.n > 1 ? "were" : "was"} not accepted in time and went back to the main pool.`,
+        url: "/",
+      });
+    }
+    console.log(
+      `[acceptance] returned ${cases.length} case(s) and ${counts.length} count allocation(s) to the main pool`,
+    );
+  } finally {
+    releaseRunning = false;
+  }
+}
+
+// reminders first, then return whatever is overdue - one tick does both
+async function runAcceptanceReminders() {
+  try {
+    await sendAcceptanceReminders();
+  } finally {
+    await releaseUnacceptedToPool().catch((e) =>
+      console.error("[acceptance] auto-return failed:", e?.message || e),
+    );
   }
 }
 
