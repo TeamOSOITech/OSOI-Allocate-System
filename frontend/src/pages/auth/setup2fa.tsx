@@ -122,6 +122,29 @@ export default function Setup2FA() {
 
     if (!user) return null;
 
+    const logoutBtn = (
+        <button
+            type="button"
+            onClick={logout}
+            style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#F4F8FD",
+                border: "1px solid #DCE6F2",
+                borderRadius: 999,
+                padding: "6px 12px",
+                color: "#2A2F8F",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+            }}
+        >
+            <i className="ti ti-logout" />
+            Log out
+        </button>
+    );
+
     return (
         <div
             style={{
@@ -195,25 +218,36 @@ export default function Setup2FA() {
                         }}
                     />
 
-                    <div style={{ position: "relative", zIndex: 1 }}>
+                    {/* same as the login page: mobile = white-chip logo on the brand panel,
+                        desktop = logo in the top-right corner of the form panel */}
+                    {isMobile && (
                         <div
                             style={{
-                                display: "inline-flex",
-                                lineHeight: 0,
-                                background: "#fff",
-                                borderRadius: 14,
-                                padding: "8px 14px",
-                                boxShadow: "0 8px 24px rgba(10,12,50,.28)",
+                                position: "relative",
+                                zIndex: 1,
+                                display: "flex",
+                                alignSelf: "flex-start",
                             }}
                         >
-                            <img
-                                src="/Logo.png"
-                                alt="Alookate"
-                                draggable={false}
-                                style={{ height: 26, width: "auto" }}
-                            />
+                            <div
+                                style={{
+                                    display: "inline-flex",
+                                    lineHeight: 0,
+                                    background: "#fff",
+                                    borderRadius: 14,
+                                    padding: "8px 14px",
+                                    boxShadow: "0 8px 24px rgba(10,12,50,.28)",
+                                }}
+                            >
+                                <img
+                                    src="/Logo.png"
+                                    alt="Alookate"
+                                    draggable={false}
+                                    style={{ height: 26, width: "auto" }}
+                                />
+                            </div>
                         </div>
-                    </div>
+                    )}
 
                     <div
                         style={{
@@ -288,12 +322,28 @@ export default function Setup2FA() {
                 <div
                     style={{
                         flex: 1,
+                        position: "relative", // pins the logo to this panel's corner
                         padding: isMobile ? "22px 20px 24px" : "32px 44px 36px",
                         display: "flex",
                         flexDirection: "column",
                         minWidth: 0,
                     }}
                 >
+                    {!isMobile && (
+                        <img
+                            src="/Allookate.png"
+                            alt="Alookate"
+                            draggable={false}
+                            style={{
+                                position: "absolute",
+                                top: 28,
+                                right: 32,
+                                height: 34,
+                                width: "auto",
+                                display: "block",
+                            }}
+                        />
+                    )}
                     <div
                         style={{
                             display: "flex",
@@ -304,26 +354,7 @@ export default function Setup2FA() {
                         <span style={{ color: "#767F92", fontSize: 14, fontWeight: 600 }}>
                             {user.firstName ? `Hi ${user.firstName} 👋` : "Welcome 👋"}
                         </span>
-                        <button
-                            type="button"
-                            onClick={logout}
-                            style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 6,
-                                background: "#F4F8FD",
-                                border: "1px solid #DCE6F2",
-                                borderRadius: 999,
-                                padding: "6px 12px",
-                                color: "#2A2F8F",
-                                fontWeight: 700,
-                                fontSize: 12,
-                                cursor: "pointer",
-                            }}
-                        >
-                            <i className="ti ti-logout" />
-                            Log out
-                        </button>
+                        {isMobile && logoutBtn}
                     </div>
 
                     <div
@@ -350,6 +381,7 @@ export default function Setup2FA() {
                             Set up 2-step verification
                         </h2>
                         <TwoFactorSetup onEnabled={goHome} plain />
+                        {!isMobile && <div style={{ marginTop: 18 }}>{logoutBtn}</div>}
                     </div>
                 </div>
             </div>
