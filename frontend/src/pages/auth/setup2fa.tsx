@@ -244,6 +244,7 @@ export default function Setup2FA() {
                             <h1
                                 style={{
                                     margin: 0,
+                                    color: "#fff", // index.css gives every h1 a dark colour
                                     fontSize: isMobile ? 24 : 32,
                                     lineHeight: 1.1,
                                     fontWeight: 800,
