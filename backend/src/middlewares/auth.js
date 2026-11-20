@@ -1,5 +1,10 @@
 const crypto = require("crypto");
 const supabase = require("../config/supabaseClient");
+const {
+  listFactors,
+  isVerifiedTotp,
+  isMfaRequired,
+} = require("../modules/auth/mfa.service");
 // getUser() mutates the calling client's internal session state, so it
 // must run on the isolated auth client, never on the shared service-role
 // `supabase` client used for .from(...) queries elsewhere — see the
@@ -89,6 +94,18 @@ function invalidateAuthCacheForUser(userId) {
   }
 }
 
+// the `aal` claim ("aal1" = password only, "aal2" = password + 2FA) of a JWT
+function jwtAal(token) {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(String(token).split(".")[1], "base64url").toString("utf8"),
+    );
+    return payload.aal;
+  } catch {
+    return null;
+  }
+}
+
 // The original (uncached) verification. Returns { user } on success, or
 // { status, message } for a failure — failures are never cached.
 async function verifyToken(token) {
@@ -97,6 +114,28 @@ async function verifyToken(token) {
   if (error || !data?.user) {
     console.error("AUTH: token verification failed:", error?.message);
     return { status: 401, message: "Invalid or expired token" };
+  }
+
+  // 2FA: a user with a confirmed authenticator may only use an aal2 token
+  // (one issued AFTER the code was entered). A password-only (aal1) token is
+  // refused, otherwise 2FA could be skipped by reusing the first-step token.
+  // The factor list comes from Supabase's admin API (the source of truth),
+  // not from the user object, which can be missing or stale. Fails closed.
+  let hasTotp = false;
+  try {
+    hasTotp = (await listFactors(data.user.id)).some(isVerifiedTotp);
+  } catch (e) {
+    console.error("AUTH: could not read 2FA factors:", e?.message);
+    return {
+      status: 503,
+      message: "Could not verify two-factor status. Please try again.",
+    };
+  }
+  if (hasTotp && jwtAal(token) !== "aal2") {
+    return {
+      status: 401,
+      message: "Two-factor verification required. Please log in again.",
+    };
   }
 
   // MULTI-TENANCY: organization_id is resolved server-side from the
@@ -156,15 +195,21 @@ async function verifyToken(token) {
   // PROCESS_LEAD, OPS_MANAGER, AUDIT_MANAGER, SUPER_ADMIN) — see
   // src/config/permissions.js. Collapse spaces so a display-style value
   // like "Team Member" still normalizes to "TEAM_MEMBER".
+  const role = String(profile.Role).trim().toUpperCase().replace(/\s+/g, "_");
   return {
     user: {
       userId: data.user.id,
       email: data.user.email,
-      role: String(profile.Role).trim().toUpperCase().replace(/\s+/g, "_"),
+      role,
       organizationId: profile.organization_id,
+      mfaEnabled: hasTotp,
+      // must use 2FA but has not turned it on yet -> locked to the setup page
+      mfaSetupRequired: !hasTotp && isMfaRequired(role),
     },
   };
 }
+
+const MFA_SETUP_ALLOWED_PREFIXES = ["/api/auth/mfa/", "/api/auth/logout"];
 
 const CLIENT_ALLOWED_PREFIXES = [
   "/api/client-portal",
@@ -219,6 +264,21 @@ const authenticate = async (req, res, next) => {
       !CLIENT_ALLOWED_PREFIXES.some((p) => req.originalUrl.startsWith(p))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    // 2FA IS COMPULSORY: until the user has turned it on, the ONLY things they
+    // can reach are the 2FA setup endpoints and logout. Everything else is
+    // refused HERE on the server (the frontend just sends them to the setup
+    // page), so skipping the screen gains nothing.
+    if (
+      user.mfaSetupRequired &&
+      !MFA_SETUP_ALLOWED_PREFIXES.some((p) => req.originalUrl.startsWith(p))
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: "MFA_SETUP_REQUIRED",
+        message: "Set up two-step verification to continue.",
+      });
     }
 
     // hand each request its own copy so a handler can't mutate the cached one

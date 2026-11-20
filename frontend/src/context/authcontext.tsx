@@ -60,6 +60,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 return { success: false, message: data.message || "Login failed" };
             }
 
+            // 2FA: password OK but a code is still needed - the login page
+            // (pages/auth/login.tsx) owns that second step.
+            if (data.mfaRequired) {
+                return {
+                    success: false,
+                    mfaRequired: true,
+                    message: "Two-step verification required. Use the login page.",
+                };
+            }
+
             // FIX (Finding #05 follow-up): saveSession only takes { user }
             // now — accessToken/refreshToken no longer exist on data.data
             // (stripped server-side) and passing them here was a stale

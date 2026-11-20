@@ -16,6 +16,7 @@ import { getCurrentUser, ADMIN_TIER_ROLES, ADMIN_AND_VERTICAL_HEAD_ROLES } from 
 // is actually visited. This is the single biggest first-load win
 // available without touching the backend or the tech stack at all.
 const Login = lazy(() => import("./pages/auth/login"));
+const Setup2FA = lazy(() => import("./pages/auth/setup2fa"));
 const Landing = lazy(() => import("./pages/public/landing"));
 const Register = lazy(() => import("./pages/auth/register"));
 const ForgotPassword = lazy(() => import("./pages/auth/forgotPassword"));
@@ -394,6 +395,8 @@ function App() {
                     <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
                         <Routes>
                             <Route path="/login" element={<Login />} />
+                            {/* compulsory 2FA setup: reachable while 2FA is still off */}
+                            <Route path="/setup-2fa" element={<Setup2FA />} />
 
                             {/* NEW: Home page — Holidays + Birthdays. Open to every logged-in
                         role (no requiredRole), same as Profile. This is also

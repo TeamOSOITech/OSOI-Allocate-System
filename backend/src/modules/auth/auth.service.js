@@ -33,6 +33,8 @@ const buildResetPageLink = (linkData) => {
   )}&type=recovery`;
 };
 
+const { getVerifiedTotpFactor } = require("./mfa.service");
+
 const login = async (rawEmail, password) => {
   // Registration stores emails lowercased/trimmed; match that here so a
   // differently-cased login ("Bob@X.com") finds the same accounts.
@@ -138,9 +140,14 @@ const login = async (rawEmail, password) => {
 
   console.log("Login successful, role:", normalizedRole);
 
+  // 2FA: if this account has a confirmed authenticator, the password alone
+  // is NOT a login. (Fails closed: an error here fails the login.)
+  const totp = await getVerifiedTotpFactor(authData.user);
+
   return {
     accessToken: authData.session.access_token,
     refreshToken: authData.session.refresh_token,
+    mfa: totp ? { factorId: totp.id } : null,
 
     user: {
       id: authData.user.id,

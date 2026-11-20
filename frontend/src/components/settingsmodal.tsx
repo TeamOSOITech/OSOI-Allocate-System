@@ -17,12 +17,13 @@ import { useOrgSettings, saveCaseNumberRequired } from "../context/orgsettings";
 import { fontFamily } from "../styles/theme";
 import { useCollarMode } from "../context/collarmode";
 import CollarToggle from "./collartoggle";
+import TwoFactorSetup from "./mfasetupcard";
 import { authFetch } from "../utils/authFetch";
 import { getCurrentUser } from "../utils/auth";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
-type SectionKey = "appearance" | "logo" | "work" | "plan" | "mode" | "tenant";
+type SectionKey = "appearance" | "security" | "logo" | "work" | "plan" | "mode" | "tenant";
 
 // Roles the platform owner can give a tenant's login (same codes as the backend).
 const TENANT_ROLE_OPTIONS: { value: string; label: string }[] = [
@@ -289,6 +290,7 @@ export default function SettingsModal({
 
     const nav: { key: SectionKey; label: string; icon: string }[] = [
         { key: "appearance", label: "Appearance", icon: "ti-palette" },
+        { key: "security", label: "Security", icon: "ti-shield-lock" },
         ...(canSwitchMode
             ? [{ key: "mode" as SectionKey, label: "Work mode", icon: "ti-switch-horizontal" }]
             : []),
@@ -424,6 +426,16 @@ export default function SettingsModal({
                     </div>
 
                     <div style={s.content}>
+                        {section === "security" && (
+                            <>
+                                <h4 style={s.h2}>Two-step verification</h4>
+                                <p style={s.sub}>
+                                    Protect your account with a code from an authenticator app in
+                                    addition to your password.
+                                </p>
+                                <TwoFactorSetup />
+                            </>
+                        )}
                         {section === "appearance" && (
                             <>
                                 <h4 style={s.h2}>Theme color</h4>

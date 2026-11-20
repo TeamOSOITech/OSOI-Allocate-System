@@ -3,7 +3,9 @@ const { login, forgotPassword, refreshSession } = require("./auth.service");
 const {
   setAuthCookies,
   clearAuthCookies,
+  setMfaPendingCookie,
 } = require("../../config/authCookies");
+const { sealPending, PENDING_TTL_MS, isMfaRequired } = require("./mfa.service");
 const supabase = require("../../config/supabaseClient");
 const { invalidateAuthCache } = require("../../middlewares/auth");
 
@@ -30,6 +32,27 @@ const loginHandler = async (req, res) => {
 
     const data = await login(email, password);
 
+    // 2FA: password was right but a code is still needed. NO session cookies
+    // yet - the password-only session is parked in an encrypted, 5-minute
+    // cookie until POST /api/auth/mfa/verify-login succeeds.
+    if (data.mfa) {
+      setMfaPendingCookie(
+        res,
+        sealPending({
+          accessToken: data.accessToken,
+          factorId: data.mfa.factorId,
+          user: data.user,
+          attempts: 0,
+        }),
+        PENDING_TTL_MS,
+      );
+      return res.status(200).json({
+        success: true,
+        mfaRequired: true,
+        message: "Enter the 6-digit code from your authenticator app.",
+      });
+    }
+
     // SECURITY: tokens go into httpOnly cookies (not readable by JS, so
     // an XSS bug can no longer steal them). FIX (Finding #05): they were
     // ALSO being spread into the JSON response body on every login —
@@ -49,7 +72,13 @@ const loginHandler = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Login successful",
-      data: { ...safeData, csrfToken },
+      // mfaSetupRequired: this account must use 2FA but has not set it up yet,
+      // so the frontend sends the user straight to the setup page.
+      data: {
+        ...safeData,
+        csrfToken,
+        mfaSetupRequired: isMfaRequired(data.user.role),
+      },
     });
   } catch (err) {
     console.error("LOGIN ERROR:", err);

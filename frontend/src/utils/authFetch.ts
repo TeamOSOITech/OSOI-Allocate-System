@@ -235,6 +235,24 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
 
     let res = await fetchWithColdStartRetry(url, buildInit());
 
+    // 2FA IS COMPULSORY: the server answers MFA_SETUP_REQUIRED to every
+    // request except the 2FA setup ones until the user has turned it on.
+    // Send them to the setup page (once) and stop the caller.
+    if (res.status === 403) {
+        try {
+            const body = await res.clone().json();
+            if (body?.code === "MFA_SETUP_REQUIRED") {
+                if (!window.location.pathname.startsWith("/setup-2fa")) {
+                    window.location.href = "/setup-2fa";
+                }
+                throw new Error("Two-step verification setup required.");
+            }
+        } catch (e: any) {
+            if (e?.message === "Two-step verification setup required.") throw e;
+            /* not JSON / not ours - fall through */
+        }
+    }
+
     // CSRF desync fix: if the in-memory/localStorage csrfToken has fallen
     // out of sync with the actual csrfToken cookie (session refreshed in
     // another tab, backend restart, cookie expired/rotated, etc.), every

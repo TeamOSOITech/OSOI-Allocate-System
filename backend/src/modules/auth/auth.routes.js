@@ -135,6 +135,43 @@ router.post(
 // the caller's own session, nothing to abuse.
 router.post("/logout", logoutHandler);
 
+// ---- 2FA (TOTP) ----
+const mfaController = require("./mfa.controller");
+const { authenticate } = require("../../middlewares/auth");
+
+// wrong codes only; Supabase also rate-limits challenge/verify itself
+const mfaLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `mfa:${req.ip}`,
+  message: {
+    success: false,
+    message: "Too many wrong codes. Please try again in a few minutes.",
+  },
+});
+
+// public: runs BEFORE the session exists (uses the encrypted pending cookie)
+router.post("/mfa/verify-login", mfaLoginLimiter, mfaController.verifyLogin);
+
+router.get("/mfa/status", authenticate, mfaController.status);
+router.post("/mfa/enroll", authenticate, mfaLoginLimiter, mfaController.enroll);
+router.post(
+  "/mfa/enroll/verify",
+  authenticate,
+  mfaLoginLimiter,
+  mfaController.enrollVerify,
+);
+router.post(
+  "/mfa/disable",
+  authenticate,
+  mfaLoginLimiter,
+  mfaController.disable,
+);
+router.post("/mfa/reset/:userId", authenticate, mfaController.reset);
+
 // Called by the frontend's authFetch wrapper on a 401 — uses the
 // refreshToken httpOnly cookie to mint a new access token without the
 // user having to log in again. Rate-limited a bit looser than login

@@ -34,9 +34,116 @@ const Login = () => {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const [resetSending, setResetSending] = useState(false);
-    const [view, setView] = useState<"login" | "forgot" | "sent">("login");
+    const [view, setView] = useState<"login" | "forgot" | "sent" | "mfa">("login");
+    const [mfaCode, setMfaCode] = useState("");
 
     const API_URL = import.meta.env.VITE_API_URL;
+
+    // Everything that happens once a session really exists - used by BOTH the
+    // password login and the 2FA code step.
+    const finishLogin = (data: any) => {
+        // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
+        // cookies set by the server above — storing them in
+        // localStorage too would just be dead, readable-by-XSS weight
+        // with no purpose. Only the (non-sensitive) user profile is
+        // kept client-side, for displaying name/role in the UI and as
+        // the PrivateRoute "am I logged in" signal in App.jsx.
+        try {
+            localStorage.setItem("user", JSON.stringify(data.data.user));
+        } catch {
+            /* storage blocked */
+        }
+        // Tell the profile page to show the open-query reminder after THIS login.
+        try {
+            localStorage.setItem("pf_query_reminder_pending", "1");
+            // managers: team-queries popup (first login of the day / urgent)
+            localStorage.setItem("pf_team_query_popup_pending", "1");
+        } catch {
+            /* storage blocked */
+        }
+
+        // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
+        // (onrender.com) are different domains, so our JS can never
+        // read the csrfToken cookie the backend also sets — the
+        // browser only exposes a cookie to JS running on the SAME
+        // domain that set it. The backend anticipates this and also
+        // returns the same value in this response body, which (unlike
+        // the cookie) our own same-origin fetch() call CAN read. Every
+        // authFetch() call after this attaches it as X-CSRF-Token.
+        if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
+
+        // 2FA is compulsory for this account and not set up yet: the server
+        // blocks everything else, so go straight to the setup page.
+        if (data.data.mfaSetupRequired) {
+            window.location.href = "/setup-2fa";
+            return;
+        }
+
+        const userRole = data.data.user.role;
+
+        // FIX: this switch only knew the OLD roles (ADMIN/MANAGER/
+        // EMPLOYEE). After migrating user_master."Role" to the new
+        // 6-tier system, every login fell through to "Invalid role"
+        // below — nobody could actually get in, even with a correct
+        // password, because the role string never matched a case.
+        switch (userRole) {
+            case "SUPER_ADMIN":
+            case "OPS_MANAGER":
+            case "AUDIT_MANAGER":
+            case "PROCESS_LEAD":
+                window.location.href = "/profile";
+                break;
+
+            case "VERTICAL_HEAD":
+                window.location.href = "/profile";
+                break;
+
+            case "TEAM_MEMBER":
+                window.location.href = "/profile";
+                break;
+
+            case "CLIENT":
+                window.location.href = "/client-dashboard";
+                break;
+
+            default:
+                setError("Invalid role");
+        }
+    };
+
+    const handleMfaVerify = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const code = mfaCode.replace(/\s/g, "");
+        if (!/^\d{6}$/.test(code)) {
+            setError("Enter the 6-digit code from your authenticator app.");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const res = await fetch(`${API_URL}/api/auth/mfa/verify-login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code }),
+                credentials: "include",
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                // sign-in expired / too many wrong codes -> back to the start
+                if (res.status === 401 && /log in again/i.test(data.message || "")) {
+                    setView("login");
+                    setPassword("");
+                }
+                throw new Error(data.message || "Verification failed.");
+            }
+            finishLogin(data);
+        } catch (err: any) {
+            setError(err.message || "Verification failed.");
+            setMfaCode("");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -68,66 +175,15 @@ const Login = () => {
                 throw new Error(data.message || "Login failed");
             }
 
-            // COOKIE-AUTH: accessToken/refreshToken now live in httpOnly
-            // cookies set by the server above — storing them in
-            // localStorage too would just be dead, readable-by-XSS weight
-            // with no purpose. Only the (non-sensitive) user profile is
-            // kept client-side, for displaying name/role in the UI and as
-            // the PrivateRoute "am I logged in" signal in App.jsx.
-            try {
-                localStorage.setItem("user", JSON.stringify(data.data.user));
-            } catch {
-                /* storage blocked */
-            }
-            // Tell the profile page to show the open-query reminder after THIS login.
-            try {
-                localStorage.setItem("pf_query_reminder_pending", "1");
-                // managers: team-queries popup (first login of the day / urgent)
-                localStorage.setItem("pf_team_query_popup_pending", "1");
-            } catch {
-                /* storage blocked */
+            // 2FA: password was right, but an authenticator code is needed
+            // before a session exists (see backend mfa.controller.js).
+            if (data.mfaRequired) {
+                setMfaCode("");
+                setView("mfa");
+                return;
             }
 
-            // CROSS-DOMAIN CSRF FIX: frontend (vercel.app) and backend
-            // (onrender.com) are different domains, so our JS can never
-            // read the csrfToken cookie the backend also sets — the
-            // browser only exposes a cookie to JS running on the SAME
-            // domain that set it. The backend anticipates this and also
-            // returns the same value in this response body, which (unlike
-            // the cookie) our own same-origin fetch() call CAN read. Every
-            // authFetch() call after this attaches it as X-CSRF-Token.
-            if (data.data.csrfToken) setCsrfToken(data.data.csrfToken);
-
-            const userRole = data.data.user.role;
-
-            // FIX: this switch only knew the OLD roles (ADMIN/MANAGER/
-            // EMPLOYEE). After migrating user_master."Role" to the new
-            // 6-tier system, every login fell through to "Invalid role"
-            // below — nobody could actually get in, even with a correct
-            // password, because the role string never matched a case.
-            switch (userRole) {
-                case "SUPER_ADMIN":
-                case "OPS_MANAGER":
-                case "AUDIT_MANAGER":
-                case "PROCESS_LEAD":
-                    window.location.href = "/profile";
-                    break;
-
-                case "VERTICAL_HEAD":
-                    window.location.href = "/profile";
-                    break;
-
-                case "TEAM_MEMBER":
-                    window.location.href = "/profile";
-                    break;
-
-                case "CLIENT":
-                    window.location.href = "/client-dashboard";
-                    break;
-
-                default:
-                    setError("Invalid role");
-            }
+            finishLogin(data);
         } catch (err: any) {
             setError(err.message || "Login failed.");
         } finally {
@@ -577,7 +633,140 @@ const Login = () => {
                         />
                     )}
 
-                    {view === "sent" ? (
+                    {view === "mfa" ? (
+                        <>
+                            <div
+                                style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: "50%",
+                                    background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    margin: "0 auto 12px",
+                                    boxShadow: "0 8px 20px rgba(42,47,143,.28)",
+                                }}
+                            >
+                                <i
+                                    className="ti ti-device-mobile-lock"
+                                    style={{ color: "#fff", fontSize: fontSize["2xl"] }}
+                                />
+                            </div>
+
+                            <h2
+                                style={{
+                                    margin: 0,
+                                    textAlign: "center",
+                                    color: "#17181C",
+                                    fontSize: fontSize.xl,
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Two-step verification
+                            </h2>
+
+                            <p
+                                style={{
+                                    marginTop: 4,
+                                    marginBottom: 12,
+                                    textAlign: "center",
+                                    color: "#767F92",
+                                    fontSize: fontSize.base,
+                                }}
+                            >
+                                Enter the 6-digit code from your authenticator app
+                            </p>
+
+                            {error && (
+                                <div
+                                    style={{
+                                        background: "#EEF4FB",
+                                        border: "1px solid #C7D9F0",
+                                        color: "#2A2F8F",
+                                        padding: "8px 12px",
+                                        borderRadius: 10,
+                                        marginBottom: 12,
+                                        fontSize: fontSize.base,
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    {error}
+                                </div>
+                            )}
+
+                            <form onSubmit={handleMfaVerify}>
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    autoComplete="one-time-code"
+                                    autoFocus
+                                    maxLength={7}
+                                    placeholder="123456"
+                                    value={mfaCode}
+                                    onChange={(e) =>
+                                        setMfaCode(e.target.value.replace(/[^\d\s]/g, ""))
+                                    }
+                                    style={{
+                                        width: "100%",
+                                        padding: isMobile ? "14px 16px" : "12px 14px",
+                                        border: "1px solid #C7D9F0",
+                                        borderRadius: 12,
+                                        background: "#F4F8FD",
+                                        color: "#17181C",
+                                        colorScheme: "light",
+                                        outline: "none",
+                                        fontSize: 22,
+                                        letterSpacing: 8,
+                                        textAlign: "center",
+                                        marginBottom: 12,
+                                        boxSizing: "border-box",
+                                    }}
+                                />
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    style={{
+                                        width: "100%",
+                                        padding: isMobile ? "13px" : "9px",
+                                        border: "none",
+                                        borderRadius: 10,
+                                        cursor: loading ? "default" : "pointer",
+                                        color: "#fff",
+                                        fontWeight: 700,
+                                        fontSize: fontSize.md,
+                                        background: "linear-gradient(135deg,#2BAADD,#2A2F8F)",
+                                        boxShadow: "0 10px 24px rgba(42,47,143,.28)",
+                                    }}
+                                >
+                                    {loading ? "Verifying..." : "Verify"}
+                                </button>
+                            </form>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setView("login");
+                                    setError("");
+                                    setPassword("");
+                                }}
+                                style={{
+                                    marginTop: 8,
+                                    textAlign: "center",
+                                    color: "#2A2F8F",
+                                    fontWeight: 700,
+                                    fontSize: fontSize.base,
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    display: "block",
+                                    width: "100%",
+                                }}
+                            >
+                                ← Back to Login
+                            </button>
+                        </>
+                    ) : view === "sent" ? (
                         <>
                             <div
                                 style={{
