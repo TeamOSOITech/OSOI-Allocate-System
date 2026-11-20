@@ -1,10 +1,10 @@
 // src/pages/auth/setup2fa.tsx
 //
-// Full-page "set up two-step verification" screen, styled like the login page
-// (brand panel on the left, the task on the right). A user whose 2FA is
-// compulsory but not yet on is sent here after login (and by authFetch when
-// the server answers MFA_SETUP_REQUIRED). The server refuses everything else
-// until they finish, so this page only needs the 2FA endpoints + logout.
+// Full-page "set up two-step verification" screen. Brand panel on the left
+// (a live-looking authenticator code instead of paragraphs), the task on the
+// right. A user whose 2FA is compulsory but not yet on lands here after login
+// (and via authFetch on MFA_SETUP_REQUIRED). The server refuses everything
+// else until they finish, so this page only needs the 2FA endpoints + logout.
 import { useEffect, useState } from "react";
 import TwoFactorSetup from "../../components/mfasetupcard";
 
@@ -28,23 +28,70 @@ function useIsMobile(breakpoint = 860) {
     return w < breakpoint;
 }
 
-const POINTS: { icon: string; title: string; text: string }[] = [
-    {
-        icon: "ti-shield-lock",
-        title: "Stops stolen passwords",
-        text: "A password alone can no longer open your account.",
-    },
-    {
-        icon: "ti-device-mobile",
-        title: "Code stays on your phone",
-        text: "Your authenticator app makes a new 6-digit code every 30 seconds.",
-    },
-    {
-        icon: "ti-clock-hour-4",
-        title: "One minute, one time",
-        text: "Set it up once. After that, sign-in only takes one extra code.",
-    },
+const CHIPS = [
+    { icon: "ti-shield-lock", label: "Stops stolen passwords" },
+    { icon: "ti-device-mobile", label: "Code stays on your phone" },
+    { icon: "ti-clock-hour-4", label: "Takes 1 minute" },
 ];
+
+// Decorative, NO numbers: password -> phone code -> access.
+function Flow() {
+    const node = (path: string, label: string) => (
+        <div style={{ display: "grid", justifyItems: "center", gap: 6 }}>
+            <div
+                style={{
+                    width: 54,
+                    height: 54,
+                    borderRadius: 16,
+                    background: "rgba(255,255,255,.14)",
+                    border: "1px solid rgba(255,255,255,.26)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                }}
+            >
+                <svg
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                >
+                    <path d={path} />
+                </svg>
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,.85)" }}>
+                {label}
+            </span>
+        </div>
+    );
+    const line = (
+        <span
+            style={{
+                flex: 1,
+                height: 2,
+                margin: "0 8px 20px",
+                borderRadius: 2,
+                background: "rgba(255,255,255,.3)",
+            }}
+        />
+    );
+    return (
+        <div aria-hidden style={{ display: "flex", alignItems: "center", maxWidth: 340 }}>
+            {node("M6 11V8a6 6 0 0 1 12 0v3M5 11h14v9H5z", "Password")}
+            {line}
+            {node(
+                "M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM11 18h2",
+                "Phone code"
+            )}
+            {line}
+            {node("M5 12.5l4.5 4.5L19 7.5", "Access")}
+        </div>
+    );
+}
 
 export default function Setup2FA() {
     const user = readUser();
@@ -105,7 +152,7 @@ export default function Setup2FA() {
                     display: "flex",
                     flexDirection: isMobile ? "column" : "row",
                     boxShadow: "0 25px 60px rgba(42,47,143,.15)",
-                    minHeight: isMobile ? "auto" : 600,
+                    minHeight: isMobile ? "auto" : 620,
                 }}
             >
                 {/* LEFT: brand panel */}
@@ -113,7 +160,7 @@ export default function Setup2FA() {
                     style={{
                         flex: isMobile ? "none" : 1,
                         position: "relative",
-                        padding: isMobile ? "28px 24px" : "44px 40px",
+                        padding: isMobile ? "24px" : "44px 40px",
                         background:
                             "radial-gradient(120% 140% at 15% 10%,#2BAADD 0%,#2A2F8F 45%,#181A38 100%)",
                         color: "#fff",
@@ -143,7 +190,7 @@ export default function Setup2FA() {
                             background: "rgba(255,255,255,.14)",
                             filter: "blur(6px)",
                             top: isMobile ? -60 : -50,
-                            right: isMobile ? -40 : -40,
+                            right: -40,
                             pointerEvents: "none",
                         }}
                     />
@@ -152,7 +199,6 @@ export default function Setup2FA() {
                         <div
                             style={{
                                 display: "inline-flex",
-                                alignItems: "center",
                                 lineHeight: 0,
                                 background: "#fff",
                                 borderRadius: 14,
@@ -164,7 +210,7 @@ export default function Setup2FA() {
                                 src="/Logo.png"
                                 alt="Alookate"
                                 draggable={false}
-                                style={{ height: 26, width: "auto", display: "block" }}
+                                style={{ height: 26, width: "auto" }}
                             />
                         </div>
                     </div>
@@ -173,96 +219,67 @@ export default function Setup2FA() {
                         style={{
                             position: "relative",
                             zIndex: 1,
-                            marginTop: isMobile ? 22 : "auto",
+                            marginTop: isMobile ? 20 : "auto",
                             marginBottom: isMobile ? 0 : "auto",
                             paddingTop: isMobile ? 0 : 24,
+                            display: "grid",
+                            gap: isMobile ? 0 : 22,
                         }}
                     >
-                        <div
-                            style={{
-                                width: isMobile ? 44 : 54,
-                                height: isMobile ? 44 : 54,
-                                borderRadius: 16,
-                                background: "rgba(255,255,255,.16)",
-                                border: "1px solid rgba(255,255,255,.28)",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                marginBottom: isMobile ? 12 : 18,
-                            }}
-                        >
-                            <i
-                                className="ti ti-shield-check"
-                                style={{ fontSize: 28, color: "#fff" }}
-                            />
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            <div
+                                style={{
+                                    width: 50,
+                                    height: 50,
+                                    borderRadius: 16,
+                                    background: "rgba(255,255,255,.16)",
+                                    border: "1px solid rgba(255,255,255,.28)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                }}
+                            >
+                                <i className="ti ti-shield-check" style={{ fontSize: 26 }} />
+                            </div>
+                            <h1
+                                style={{
+                                    margin: 0,
+                                    fontSize: isMobile ? 24 : 32,
+                                    lineHeight: 1.1,
+                                    fontWeight: 800,
+                                    letterSpacing: "-0.5px",
+                                }}
+                            >
+                                Secure your account
+                            </h1>
                         </div>
-                        <h1
-                            style={{
-                                margin: 0,
-                                fontSize: isMobile ? 26 : 34,
-                                lineHeight: 1.15,
-                                fontWeight: 800,
-                                letterSpacing: "-0.5px",
-                            }}
-                        >
-                            Secure your
-                            <br />
-                            account
-                        </h1>
-                        <p
-                            style={{
-                                margin: "12px 0 0",
-                                fontSize: 15,
-                                lineHeight: 1.55,
-                                color: "rgba(255,255,255,.82)",
-                                maxWidth: 360,
-                            }}
-                        >
-                            Two-step verification adds a second lock to your sign-in.
-                        </p>
 
-                        {/* on a phone the task itself must stay near the top, so the
-                            three reassurance points are desktop-only */}
-                        <div
-                            style={{
-                                marginTop: 28,
-                                display: isMobile ? "none" : "grid",
-                                gap: 14,
-                            }}
-                        >
-                            {POINTS.map((p) => (
-                                <div key={p.title} style={{ display: "flex", gap: 12 }}>
-                                    <div
+                        {/* phone-sized screens keep the task near the top */}
+                        {!isMobile && <Flow />}
+
+                        {!isMobile && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {CHIPS.map((c) => (
+                                    <span
+                                        key={c.label}
                                         style={{
-                                            flex: "0 0 34px",
-                                            width: 34,
-                                            height: 34,
-                                            borderRadius: 10,
-                                            background: "rgba(255,255,255,.14)",
-                                            display: "flex",
+                                            display: "inline-flex",
                                             alignItems: "center",
-                                            justifyContent: "center",
+                                            gap: 7,
+                                            padding: "7px 12px",
+                                            borderRadius: 999,
+                                            background: "rgba(255,255,255,.12)",
+                                            border: "1px solid rgba(255,255,255,.2)",
+                                            fontSize: 13,
+                                            fontWeight: 600,
                                         }}
                                     >
-                                        <i className={`ti ${p.icon}`} style={{ fontSize: 18 }} />
-                                    </div>
-                                    <div>
-                                        <div style={{ fontWeight: 700, fontSize: 14 }}>
-                                            {p.title}
-                                        </div>
-                                        <div
-                                            style={{
-                                                fontSize: 13,
-                                                color: "rgba(255,255,255,.72)",
-                                                lineHeight: 1.45,
-                                            }}
-                                        >
-                                            {p.text}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                                        <i className={`ti ${c.icon}`} style={{ fontSize: 16 }} />
+                                        {c.label}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -270,58 +287,69 @@ export default function Setup2FA() {
                 <div
                     style={{
                         flex: 1,
-                        padding: isMobile ? "26px 20px 24px" : "44px 44px 32px",
+                        padding: isMobile ? "22px 20px 24px" : "32px 44px 36px",
                         display: "flex",
                         flexDirection: "column",
-                        justifyContent: "center",
                         minWidth: 0,
                     }}
                 >
-                    <div style={{ color: "#767F92", fontSize: 14, fontWeight: 600 }}>
-                        {user.firstName ? `Hi ${user.firstName},` : "Welcome,"}
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                        }}
+                    >
+                        <span style={{ color: "#767F92", fontSize: 14, fontWeight: 600 }}>
+                            {user.firstName ? `Hi ${user.firstName} 👋` : "Welcome 👋"}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={logout}
+                            style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                background: "#F4F8FD",
+                                border: "1px solid #DCE6F2",
+                                borderRadius: 999,
+                                padding: "6px 12px",
+                                color: "#2A2F8F",
+                                fontWeight: 700,
+                                fontSize: 12,
+                                cursor: "pointer",
+                            }}
+                        >
+                            <i className="ti ti-logout" />
+                            Log out
+                        </button>
                     </div>
-                    <h2
-                        style={{
-                            margin: "4px 0 6px",
-                            color: "#17181C",
-                            fontSize: isMobile ? 22 : 26,
-                            fontWeight: 800,
-                            letterSpacing: "-0.3px",
-                        }}
-                    >
-                        Set up two-step verification
-                    </h2>
-                    <p
-                        style={{
-                            margin: "0 0 22px",
-                            color: "#767F92",
-                            fontSize: 14,
-                            lineHeight: 1.5,
-                        }}
-                    >
-                        Use an authenticator app such as Google Authenticator.
-                    </p>
 
-                    <TwoFactorSetup onEnabled={goHome} plain />
-
-                    <button
-                        type="button"
-                        onClick={logout}
+                    <div
                         style={{
-                            marginTop: 18,
-                            alignSelf: "flex-start",
-                            background: "none",
-                            border: "none",
-                            color: "#2A2F8F",
-                            fontWeight: 700,
-                            fontSize: 13,
-                            cursor: "pointer",
-                            padding: 0,
+                            flex: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "center",
+                            width: "100%",
+                            maxWidth: 420,
+                            margin: "0 auto",
+                            paddingTop: 12,
                         }}
                     >
-                        <i className="ti ti-logout" style={{ marginRight: 6 }} />
-                        Log out
-                    </button>
+                        <h2
+                            style={{
+                                margin: "0 0 18px",
+                                color: "#17181C",
+                                fontSize: isMobile ? 22 : 26,
+                                fontWeight: 800,
+                                letterSpacing: "-0.3px",
+                            }}
+                        >
+                            Set up 2-step verification
+                        </h2>
+                        <TwoFactorSetup onEnabled={goHome} plain />
+                    </div>
                 </div>
             </div>
         </div>
