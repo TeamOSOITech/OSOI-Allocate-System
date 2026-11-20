@@ -53,11 +53,31 @@ function setAuthCookies(res, { accessToken, refreshToken }) {
   return csrfToken;
 }
 
+// Short-lived, encrypted cookie that carries a "password OK, 2FA code still
+// needed" login between the two steps (see modules/auth/mfa.service.js).
+function setMfaPendingCookie(res, sealed, maxAgeMs = 60 * 1000) {
+  res.cookie("mfaPending", sealed, {
+    ...baseCookieOpts,
+    maxAge: maxAgeMs,
+  });
+}
+
+function clearMfaPendingCookie(res) {
+  res.clearCookie("mfaPending", { ...baseCookieOpts });
+}
+
 function clearAuthCookies(res) {
   const clearOpts = { ...baseCookieOpts };
+  res.clearCookie("mfaPending", clearOpts);
   res.clearCookie("accessToken", clearOpts);
   res.clearCookie("refreshToken", clearOpts);
   res.clearCookie("csrfToken", { ...clearOpts, httpOnly: false });
 }
 
-module.exports = { setAuthCookies, clearAuthCookies, generateCsrfToken };
+module.exports = {
+  setAuthCookies,
+  clearAuthCookies,
+  generateCsrfToken,
+  setMfaPendingCookie,
+  clearMfaPendingCookie,
+};

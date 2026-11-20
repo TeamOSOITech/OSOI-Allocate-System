@@ -168,6 +168,7 @@ const CSRF_EXEMPT_PATHS = [
   "/api/billing/mock-checkout",
   "/api/billing/verify-payment",
   "/api/auth/login",
+  "/api/auth/mfa/verify-login", // second login step - no session/CSRF cookie yet
   "/api/auth/refresh",
   "/api/auth/forgot-password",
   "/api/auth/register-organization",
