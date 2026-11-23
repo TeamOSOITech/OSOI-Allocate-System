@@ -167,6 +167,101 @@ function openPending(value) {
   }
 }
 
+// ---------------------------------------------------------------- recovery codes
+// 10 one-time codes (e.g. "K7MQ2-X9TDP") shown ONCE at 2FA setup. If the
+// authenticator app is lost, ONE code signs the user in AND removes the old
+// authenticator so a new one can be set up (see mfa.controller verifyRecovery).
+// Only an HMAC of each code is stored. The codes are random (~50 bits), so a
+// fast keyed hash is enough - and it keeps the "use this code" check a single
+// atomic UPDATE (a code can never be used twice).
+const RECOVERY_CODE_COUNT = 10;
+const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no I, L, O, 0, 1
+
+const normalizeRecovery = (v) =>
+  String(v || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+const isRecoveryCode = (v) =>
+  typeof v === "string" && normalizeRecovery(v).length === 10;
+
+function newRecoveryCode() {
+  let s = "";
+  for (let i = 0; i < 10; i++) {
+    s += RECOVERY_ALPHABET[crypto.randomInt(RECOVERY_ALPHABET.length)];
+  }
+  return `${s.slice(0, 5)}-${s.slice(5)}`;
+}
+
+// Set MFA_RECOVERY_SECRET in .env and never change it afterwards, otherwise
+// every stored code stops matching.
+const recoveryKey = () =>
+  crypto
+    .createHash("sha256")
+    .update(
+      `${process.env.MFA_RECOVERY_SECRET || process.env.MFA_PENDING_SECRET || API_KEY}|mfa-recovery`,
+    )
+    .digest();
+
+const hashRecovery = (userId, code) =>
+  crypto
+    .createHmac("sha256", recoveryKey())
+    .update(`${userId}|${normalizeRecovery(code)}`)
+    .digest("hex");
+
+// Creates a fresh set (old unused codes are replaced). Returns the plain codes.
+// The new set is saved BEFORE the old one is removed, so a failure can never
+// leave the user with no codes.
+async function replaceRecoveryCodes(userId) {
+  const codes = Array.from({ length: RECOVERY_CODE_COUNT }, newRecoveryCode);
+  const batchId = crypto.randomUUID();
+  const { error } = await supabase.from("mfa_recovery_codes").insert(
+    codes.map((c) => ({
+      user_id: userId,
+      code_hash: hashRecovery(userId, c),
+      batch_id: batchId,
+    })),
+  );
+  if (error) throw error;
+  const { error: delErr } = await supabase
+    .from("mfa_recovery_codes")
+    .delete()
+    .eq("user_id", userId)
+    .neq("batch_id", batchId);
+  if (delErr) throw delErr;
+  return codes;
+}
+
+// true if the code was valid AND unused (it is now burned). One atomic UPDATE.
+async function consumeRecoveryCode(userId, code) {
+  const { data, error } = await supabase
+    .from("mfa_recovery_codes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("code_hash", hashRecovery(userId, code))
+    .is("used_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data || []).length > 0;
+}
+
+async function countRecoveryCodes(userId) {
+  const { count, error } = await supabase
+    .from("mfa_recovery_codes")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .is("used_at", null);
+  if (error) throw error;
+  return count || 0;
+}
+
+async function deleteRecoveryCodes(userId) {
+  const { error } = await supabase
+    .from("mfa_recovery_codes")
+    .delete()
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
 // WHO MUST USE 2FA - set MFA_REQUIRED_ROLES in .env:
 //   (not set) or ALL   -> everyone, every role (the default)
 //   SUPER_ADMIN,OPS_MANAGER -> only those roles
@@ -187,6 +282,12 @@ const isMfaRequired = (role) => {
 };
 
 module.exports = {
+  RECOVERY_CODE_COUNT,
+  isRecoveryCode,
+  replaceRecoveryCodes,
+  consumeRecoveryCode,
+  countRecoveryCodes,
+  deleteRecoveryCodes,
   PENDING_TTL_MS,
   MAX_CODE_ATTEMPTS,
   isCode,

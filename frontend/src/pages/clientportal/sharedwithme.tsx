@@ -1,19 +1,26 @@
-// src/pages/client/sharedwithme.tsx
+// src/pages/clientportal/sharedwithme.tsx
 //
 // "Shared with me" — for ANY logged-in user (staff of another org, a team
 // member, etc.) who has been given view access to a page for some client.
 // New client-only logins see the same thing inside the Client Dashboard.
-// Add a route + a sidebar link for this page (see notes in the chat).
+//
+// The client dropdown (searchable, with prev / next arrows, see ./sharepicker)
+// is passed into the report and shown in the right side of its header.
 
 import { lazy, Suspense, useEffect, useState } from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { authFetch } from "../../utils/authFetch";
-import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
+import { fontFamily, radius } from "../../styles/theme";
+import SharePicker from "./sharepicker";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
 const SharedProductionReport = lazy(() => import("./sharedproductionreport"));
-const SHARED_PAGES: Record<string, ComponentType<{ shareId?: string }>> = {
+// `eyebrow` makes the report draw its own "Shared with me" header
+const SHARED_PAGES: Record<
+    string,
+    ComponentType<{ shareId?: string; eyebrow?: string; picker?: ReactNode }>
+> = {
     "production-reports": SharedProductionReport,
 };
 
@@ -67,20 +74,6 @@ const SharedWithMe = () => {
 
     return (
         <div style={{ padding: "24px 28px", fontFamily: fontFamily.base, minHeight: "100%" }}>
-            <div
-                style={{
-                    fontSize: fontSize["2xl"],
-                    fontWeight: fontWeight.semibold,
-                    color: "#17181C",
-                    marginBottom: 4,
-                }}
-            >
-                Shared with me
-            </div>
-            <div style={{ color: "#6b6280", fontSize: fontSize.sm, marginBottom: 18 }}>
-                Pages that have been shared with you. These are read-only.
-            </div>
-
             {loading && <div style={{ color: "#6b6280" }}>Loading…</div>}
 
             {!loading && error && (
@@ -106,47 +99,27 @@ const SharedWithMe = () => {
 
             {!loading && !error && pages.length > 0 && (
                 <>
-                    <div
-                        role="tablist"
-                        style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}
-                    >
-                        {pages.map((p) => {
-                            const isActive = p.shareId === active;
-                            return (
-                                <button
-                                    key={p.shareId}
-                                    role="tab"
-                                    aria-selected={isActive}
-                                    onClick={() => setActive(p.shareId)}
-                                    style={{
-                                        padding: "9px 18px",
-                                        borderRadius: radius.lg,
-                                        border: isActive
-                                            ? "1px solid var(--brand-blue)"
-                                            : "1px solid #D9DEEE",
-                                        background: isActive ? "var(--brand-blue)" : "#fff",
-                                        color: isActive ? "#fff" : "#2b2a3a",
-                                        fontSize: fontSize.base,
-                                        fontWeight: fontWeight.semibold,
-                                        fontFamily: fontFamily.base,
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    <i
-                                        className="ti ti-file-text"
-                                        aria-hidden="true"
-                                        style={{ marginRight: 8 }}
-                                    />
-                                    {p.label}
-                                    {p.clientName ? ` — ${p.clientName}` : ""}
-                                </button>
-                            );
-                        })}
-                    </div>
-
                     {Page && current && (
                         <Suspense fallback={<div style={{ color: "#6b6280" }}>Loading…</div>}>
-                            <Page key={current.shareId} shareId={current.shareId} />
+                            <Page
+                                key={current.shareId}
+                                shareId={current.shareId}
+                                eyebrow="Shared with me"
+                                // the client dropdown lives in the right side of the report header
+                                picker={
+                                    <SharePicker
+                                        compact
+                                        items={pages.map((p) => ({
+                                            id: p.shareId,
+                                            title: p.clientName || p.label,
+                                            subtitle: p.clientName ? p.label : undefined,
+                                            isNew: !p.seen,
+                                        }))}
+                                        activeId={active}
+                                        onPick={setActive}
+                                    />
+                                }
+                            />
                         </Suspense>
                     )}
                 </>

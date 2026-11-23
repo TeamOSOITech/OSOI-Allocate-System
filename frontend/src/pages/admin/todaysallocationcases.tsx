@@ -1083,7 +1083,15 @@ export default function TodaysAllocationCases({
     // server (no case counts / details) and every employee appears ONCE, so
     // an employee who got many cases still receives a single message.
     const notifyEmployees = async (employeeIds: string[], overloadEmployeeIds: string[] = []) => {
-        const unique = [...new Set(employeeIds.filter(Boolean))];
+        // Work allocated to YOURSELF needs no "work allocated" message
+        // (the backend skips it too) - so leave yourself out of the count.
+        let myId = "";
+        try {
+            myId = String(JSON.parse(localStorage.getItem("user") || "null")?.id ?? "");
+        } catch {
+            myId = "";
+        }
+        const unique = [...new Set(employeeIds.filter((id) => Boolean(id) && String(id) !== myId))];
         if (unique.length === 0) {
             setNotifyStatus(null);
             return;

@@ -631,11 +631,13 @@ async function loadGrant(req, pageKey) {
     return q.order("created_at", { ascending: false }).limit(1);
   };
   let { data, error } = await run(
-    "id, organization_id, client_id, permission, filters",
+    "id, organization_id, client_id, permission, filters, shared_by, created_at",
   );
-  // `filters` column not created yet (migration pending) -> old behaviour
-  if (error && /filters/i.test(String(error.message || ""))) {
-    ({ data, error } = await run("id, organization_id, client_id, permission"));
+  // `filters` / `shared_by` column not created yet (migration pending) -> old behaviour
+  if (error && /filters|shared_by/i.test(String(error.message || ""))) {
+    ({ data, error } = await run(
+      "id, organization_id, client_id, permission, created_at",
+    ));
   }
   if (error) throw error;
   return data?.[0] || null;
@@ -1080,10 +1082,30 @@ async function getSharedProductionReport(req, res) {
       byStatus[c.status] = (byStatus[c.status] || 0) + 1;
     });
 
+    // WHO shared this page and WHEN (shown to the client as "Shared by / on").
+    // Only the sender's name is exposed - never an email or anything else.
+    let sharedBy = null;
+    if (grant.shared_by) {
+      const { data: su } = await supabase
+        .from("user_master")
+        .select('"First Name", "Last Name"')
+        .eq("Auth User Id", grant.shared_by)
+        .limit(1);
+      sharedBy =
+        `${su?.[0]?.["First Name"] || ""} ${su?.[0]?.["Last Name"] || ""}`.trim() ||
+        null;
+    }
+
     res.json({
       success: true,
       data: {
         client: { id: client.id, name: client.name },
+        share: {
+          page: PAGE_KEYS["production-reports"]?.label || "Production Reports",
+          sharedBy,
+          sharedAt: grant.created_at || null,
+          permission: "View only",
+        },
         from,
         to,
         bounds: { min: minDate, max: maxDate },
