@@ -28,6 +28,10 @@ const EVERYONE = [...ADMIN_AND_VERTICAL_HEAD, "TEAM_MEMBER"];
 const SUPER_ADMIN_ONLY = ["SUPER_ADMIN"];
 
 const SHARED_PATH = "/shared-with-me";
+// TEMPORARY: "Shared with me" is hidden from the sidebar for now.
+// Set to false to bring the button back (the /shared-with-me route in
+// App.jsx is untouched, so the page itself still works).
+const HIDE_SHARED_WITH_ME = true;
 
 const menuItems: MenuItem[] = [
     // NEW: Home — Holidays + Birthdays (see pages/home.tsx). Points at
@@ -284,6 +288,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
     const [newShares, setNewShares] = useState(0);
     useEffect(() => {
         if (role === "CLIENT") return; // clients see shared pages inside their dashboard
+        if (HIDE_SHARED_WITH_ME) return; // entry is hidden -> no need to load the count
         let cancelled = false;
         const load = async () => {
             try {
@@ -324,7 +329,7 @@ const Sidebar = ({ onLogout }: SidebarProps) => {
               (item) =>
                   item.roles.includes(role) &&
                   (!item.mode || item.mode === collarMode) &&
-                  (item.path !== SHARED_PATH || shareCount > 0)
+                  (item.path !== SHARED_PATH || (!HIDE_SHARED_WITH_ME && shareCount > 0))
           );
 
     const handleLogout = () => {
