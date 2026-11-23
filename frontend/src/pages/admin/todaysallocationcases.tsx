@@ -606,7 +606,10 @@ export default function TodaysAllocationCases({
 
     const fetchAllCases = useCallback(async () => {
         void fetchOtherLoad();
-        if (!productId || !workDate) {
+        // FIX: "All Services" (no productId) loads the cases of EVERY service
+        // (before, it cleared the list). otherCases stays empty in that mode,
+        // so nothing is counted twice.
+        if (!workDate) {
             setAllCases([]);
             return;
         }
@@ -616,7 +619,7 @@ export default function TodaysAllocationCases({
                 const params = new URLSearchParams();
                 params.set("page", String(p));
                 params.set("pageSize", "100");
-                params.set("productId", productId);
+                if (productId) params.set("productId", productId);
                 params.set("workDate", workDate);
                 params.set("includeBacklog", "true");
                 // FIX: also load cases allocated on this day that were logged on an EARLIER
@@ -649,12 +652,15 @@ export default function TodaysAllocationCases({
     // selected date, and on the selected date alone. Only the totals are
     // needed, so pageSize=1 and we read pagination.total.
     const fetchCaseSummary = useCallback(async () => {
-        if (!productId || !workDate) return;
+        // FIX: with "All Services" (no productId) the old code returned here and
+        // KEPT the previous service's numbers on screen. Now it counts the
+        // pending cases of ALL services (productId is just left out).
+        if (!workDate) return;
         const build = (extra: Record<string, string>) => {
             const p = new URLSearchParams();
             p.set("page", "1");
             p.set("pageSize", "1");
-            p.set("productId", productId);
+            if (productId) p.set("productId", productId);
             p.set("allocationStatus", "PENDING");
             Object.entries(extra).forEach(([k, v]) => p.set(k, v));
             return p.toString();
@@ -723,6 +729,9 @@ export default function TodaysAllocationCases({
     }, [productId]);
 
     useEffect(() => {
+        // The Allocate tab (hideHeader) owns the Service filter and starts on
+        // "All Services" - do not jump to the first service there.
+        if (hideHeader) return;
         if (!productId && products.length > 0) {
             autoSelectedRef.current = true;
             onChangeProductId(products[0].id);
@@ -742,10 +751,12 @@ export default function TodaysAllocationCases({
         fetchAllCases();
     }, [fetchAllCases]);
 
+    // FIX: also runs for "All Services" (productId = "") - fetchCounts then
+    // loads the count-only rows of every service instead of keeping the last
+    // service's rows.
     useEffect(() => {
-        if (!productId) return;
         fetchCounts();
-    }, [fetchCounts, productId]);
+    }, [fetchCounts]);
 
     const selectedProduct = useMemo(
         () => products.find((p) => String(p.id) === String(productId)) || null,
@@ -1019,7 +1030,9 @@ export default function TodaysAllocationCases({
             carry: casesCarry + countsCarry,
             total,
             // time still to allocate (all of it belongs to the selected service)
-            totalMins: total * ampOf(productId),
+            // minutes only make sense for ONE service (each has its own time per
+            // case) - hidden for "All Services"
+            totalMins: productId ? total * ampOf(productId) : 0,
         };
     }, [countRows, caseSummary, workDate, ampOf, productId]);
 
