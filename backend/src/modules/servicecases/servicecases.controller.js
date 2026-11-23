@@ -2843,6 +2843,23 @@ async function notifyAllocation(req, res) {
         .status(400)
         .json({ success: false, message: "No employees provided." });
     }
+
+    // SELF-ALLOCATION: someone who allocates work to THEMSELVES already
+    // knows about it, so they get no "Work allocated today" mail (and no
+    // overload alert). Done BEFORE the once-per-day claim below, so it does
+    // not use up their first mail of the day - a later allocation by someone
+    // else still notifies them.
+    const selfId = String(req.user?.userId || "");
+    const otherIds = employeeIds.filter((id) => id !== selfId);
+    if (otherIds.length === 0) {
+      return res.json({
+        success: true,
+        data: { sent: 0, failed: 0, skipped: employeeIds.length, moreSent: 0 },
+      });
+    }
+    employeeIds.length = 0;
+    employeeIds.push(...otherIds);
+
     if (employeeIds.length > 500) {
       return res
         .status(400)
