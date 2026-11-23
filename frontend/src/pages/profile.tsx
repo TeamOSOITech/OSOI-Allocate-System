@@ -9975,10 +9975,22 @@ function getStyles(
             fontSize: fontSize.base,
             color: "#17181C",
         },
+        // Sticky: Cancel / Allocate / Submit stay visible at the bottom of the
+        // modal while a long list (100+ rows) scrolls underneath them.
+        // (modal has padding 24 -> negative margins make the bar full width / flush)
         bulkModalFooter: {
             display: "flex",
             gap: 10,
             marginTop: 16,
+            marginLeft: -24,
+            marginRight: -24,
+            marginBottom: -24,
+            padding: "12px 24px 24px",
+            position: "sticky",
+            bottom: 0,
+            zIndex: 5,
+            background: "#fff",
+            borderTop: "1px solid #f1f1f5",
         },
         bulkCancelBtn: {
             flex: 1,

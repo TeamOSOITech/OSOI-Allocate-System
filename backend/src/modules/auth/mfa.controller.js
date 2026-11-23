@@ -20,13 +20,17 @@ const fail = (res, err, fallback) => {
   return res.status(status).json({ success: false, message: fallback });
 };
 
+// Recovery codes are ONLY for the Global Admin (SUPER_ADMIN). Everyone else
+// who loses their authenticator asks the Global Admin to reset their 2FA.
+const canHaveRecoveryCodes = (role) => role === "SUPER_ADMIN";
+
 // GET /api/auth/mfa/status
 const status = async (req, res) => {
   try {
     const factors = await mfa.listFactors(req.user.userId);
     const verified = factors.find(mfa.isVerifiedTotp);
     let recoveryCodesRemaining = null; // null = could not be read
-    if (verified) {
+    if (verified && canHaveRecoveryCodes(req.user.role)) {
       try {
         recoveryCodesRemaining = await mfa.countRecoveryCodes(req.user.userId);
       } catch (e) {
@@ -38,6 +42,7 @@ const status = async (req, res) => {
       data: {
         enabled: !!verified,
         required: mfa.isMfaRequired(req.user.role),
+        recoveryCodesSupported: canHaveRecoveryCodes(req.user.role),
         recoveryCodesRemaining,
       },
     });
@@ -99,11 +104,14 @@ const enrollVerify = async (req, res) => {
     });
     // Recovery codes: shown to the user ONCE, right now. If creating them
     // fails, 2FA is still on - the user can generate codes from Settings.
+    // Only the Global Admin gets codes - other roles get none.
     let recoveryCodes = null;
-    try {
-      recoveryCodes = await mfa.replaceRecoveryCodes(req.user.userId);
-    } catch (e) {
-      console.error("MFA recovery codes error:", e?.message);
+    if (canHaveRecoveryCodes(req.user.role)) {
+      try {
+        recoveryCodes = await mfa.replaceRecoveryCodes(req.user.userId);
+      } catch (e) {
+        console.error("MFA recovery codes error:", e?.message);
+      }
     }
     return res.json({
       success: true,
@@ -330,6 +338,13 @@ const verifyRecovery = async (req, res) => {
 // authenticator code. Returns the plain codes ONCE.
 const regenerateRecoveryCodes = async (req, res) => {
   try {
+    if (!canHaveRecoveryCodes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Recovery codes are only for the Global Admin. Ask your Global Admin to reset your 2FA if you lose your authenticator.",
+      });
+    }
     const factors = await mfa.listFactors(req.user.userId);
     const verified = factors.find(mfa.isVerifiedTotp);
     if (!verified) {

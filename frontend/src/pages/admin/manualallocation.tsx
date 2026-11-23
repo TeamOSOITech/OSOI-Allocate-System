@@ -390,6 +390,21 @@ function downloadCsv(filename: string, rows: string[][]) {
     URL.revokeObjectURL(url);
 }
 
+// Remembers the last selected service for the CURRENT calendar day only.
+const LAST_SERVICE_KEY = "manualalloc_last_service_v2";
+function readTodaysService(): string {
+    try {
+        const raw = localStorage.getItem(LAST_SERVICE_KEY);
+        if (!raw) return "";
+        const saved = JSON.parse(raw);
+        return saved?.day === todayStr() && typeof saved.productId === "string"
+            ? saved.productId
+            : "";
+    } catch {
+        return "";
+    }
+}
+
 export default function ManualAllocation() {
     const isMobile = useIsMobile();
     const navigate = useNavigate();
@@ -405,9 +420,10 @@ export default function ManualAllocation() {
     const [date, setDate] = useState(() => todayStr());
 
     const [products, setProducts] = useState<Product[]>([]);
-    const [productId, setProductId] = useState(
-        () => localStorage.getItem("manualalloc_last_productId") || ""
-    ); // "" = All
+    // Service filter: first visit of a NEW day starts on "All Services". After
+    // the user picks a service, that last selection is kept for the rest of
+    // the day (reload / come back later). Next day it starts on All again.
+    const [productId, setProductId] = useState(() => readTodaysService()); // "" = All
     const [searchText, setSearchText] = useState("");
     const [filtersOpen, setFiltersOpen] = useState(true);
 
@@ -415,7 +431,11 @@ export default function ManualAllocation() {
     // service instead of resetting to "All" (date no longer persists —
     // see the comment above the `date` state; it always starts on today).
     useEffect(() => {
-        localStorage.setItem("manualalloc_last_productId", productId);
+        try {
+            localStorage.setItem(LAST_SERVICE_KEY, JSON.stringify({ day: todayStr(), productId }));
+        } catch {
+            /* storage blocked - selection just won't be remembered */
+        }
     }, [productId]);
 
     // ---- data ----

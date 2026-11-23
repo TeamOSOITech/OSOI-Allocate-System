@@ -119,6 +119,8 @@ export default function TwoFactorSetup({
     const [copied, setCopied] = useState(false);
     const [left, setLeft] = useState<number | null>(null);
     const [regen, setRegen] = useState(false);
+    // recovery codes exist ONLY for the Global Admin (SUPER_ADMIN)
+    const [codesSupported, setCodesSupported] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -127,6 +129,7 @@ export default function TwoFactorSetup({
             if (!res.ok || !json.success) throw new Error();
             setStatus(json.data.enabled ? "on" : "off");
             setRequired(!!json.data.required);
+            setCodesSupported(!!json.data.recoveryCodesSupported);
             setLeft(
                 typeof json.data.recoveryCodesRemaining === "number"
                     ? json.data.recoveryCodesRemaining
@@ -371,7 +374,7 @@ export default function TwoFactorSetup({
                             </p>
                         )}
                         {error && <p style={{ color: "#B42318", fontSize: 13 }}>{error}</p>}
-                        {status === "on" && (
+                        {status === "on" && codesSupported && (
                             <p
                                 style={{
                                     color: left === 0 ? "#B54708" : "#767F92",
@@ -392,17 +395,19 @@ export default function TwoFactorSetup({
                             </button>
                         ) : (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                <button
-                                    style={ghostBtn}
-                                    onClick={() => {
-                                        setNotice("");
-                                        setCode("");
-                                        setError("");
-                                        setRegen(true);
-                                    }}
-                                >
-                                    New recovery codes
-                                </button>
+                                {codesSupported && (
+                                    <button
+                                        style={ghostBtn}
+                                        onClick={() => {
+                                            setNotice("");
+                                            setCode("");
+                                            setError("");
+                                            setRegen(true);
+                                        }}
+                                    >
+                                        New recovery codes
+                                    </button>
+                                )}
                                 {!required && (
                                     <button
                                         style={ghostBtn}
