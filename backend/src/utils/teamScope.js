@@ -48,7 +48,8 @@ async function getTeamScope(req) {
   };
 
   const team = await getOwnTeam(req);
-  if (!team) return empty;
+  // NOTE: no early return when team is empty any more — the user can still
+  // have assigned cases whose services must be selectable (see FIX below).
 
   const [prodRes, clientLinkRes, subLinkRes, subRes] = await Promise.all([
     supabase
@@ -77,6 +78,22 @@ async function getTeamScope(req) {
       .filter((p) => (p.teams || []).some((t) => norm(t) === team))
       .map((p) => String(p.id)),
   );
+
+  // FIX: a case can be ASSIGNED to an employee for a service that is not on
+  // their own team (the manager decides who works on what). Without this the
+  // employee's Client / Subclient dropdown on that case was empty, while the
+  // admin saw the clients. Services of cases assigned to this user that still
+  // miss a client / subclient are therefore allowed too.
+  const { data: myCases, error: myCasesErr } = await supabase
+    .from("service_cases")
+    .select("product_id")
+    .eq("organization_id", orgId)
+    .eq("assigned_employee_id", req.user.userId)
+    .or("client_id.is.null,subclient_id.is.null");
+  if (myCasesErr) throw myCasesErr;
+  (myCases || []).forEach((c) => {
+    if (c.product_id != null) productIds.add(String(c.product_id));
+  });
 
   const clientIds = new Set(
     (clientLinkRes.data || [])
