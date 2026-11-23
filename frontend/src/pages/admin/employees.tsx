@@ -286,6 +286,13 @@ export default function Employees() {
     const canResetPassword = (employee: Employee | null | undefined) =>
         (role === "SUPER_ADMIN" || role === "OPS_MANAGER") && canEditEmployee(employee);
 
+    // NEW: Reset 2FA — Global Admin (SUPER_ADMIN) only, for anyone in the org
+    // except themselves. Mirrors POST /api/auth/mfa/reset/:userId on the backend.
+    const canReset2fa = (employee: Employee | null | undefined) =>
+        role === "SUPER_ADMIN" &&
+        !!employee &&
+        String(employee.id) !== String(currentUser?.id ?? "");
+
     const [search, setSearch] = useState("");
     // A–Z / Z–A sort by name (toggled by the arrow button in the filter row).
     const [sortAsc, setSortAsc] = useState(true);
@@ -334,6 +341,12 @@ export default function Employees() {
     const [resetting, setResetting] = useState(false);
     const [resetError, setResetError] = useState("");
     const [resetDone, setResetDone] = useState(false);
+
+    // ---- Reset 2FA (Global Admin only) ----
+    const [show2faModal, setShow2faModal] = useState(false);
+    const [reset2faBusy, setReset2faBusy] = useState(false);
+    const [reset2faError, setReset2faError] = useState("");
+    const [reset2faDone, setReset2faDone] = useState(false);
 
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
@@ -516,6 +529,42 @@ export default function Employees() {
             setResetError(err?.message || "Failed to reset password");
         } finally {
             setResetting(false);
+        }
+    };
+
+    const open2faModal = () => {
+        if (!canReset2fa(selectedEmployee)) return;
+        setReset2faError("");
+        setReset2faDone(false);
+        setShow2faModal(true);
+    };
+
+    const close2faModal = () => {
+        if (reset2faBusy) return;
+        setShow2faModal(false);
+        setReset2faError("");
+        setReset2faDone(false);
+    };
+
+    // Removes the person's authenticator (lost / replaced phone). They then
+    // sign in with their password and set 2FA up again.
+    const handleReset2fa = async () => {
+        if (!selectedEmployee || !canReset2fa(selectedEmployee)) return;
+        setReset2faBusy(true);
+        setReset2faError("");
+        try {
+            const res = await authFetch(`${apiBase}/api/auth/mfa/reset/${selectedEmployee.id}`, {
+                method: "POST",
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok || body?.success === false) {
+                throw new Error(body?.message || body?.error || "Failed to reset 2FA");
+            }
+            setReset2faDone(true);
+        } catch (err: any) {
+            setReset2faError(err?.message || "Failed to reset 2FA");
+        } finally {
+            setReset2faBusy(false);
         }
     };
 
@@ -1662,6 +1711,17 @@ export default function Employees() {
                                                 <i className="ti ti-key" /> Reset Password
                                             </button>
                                         )}
+
+                                        {canReset2fa(selectedEmployee) && (
+                                            <button
+                                                type="button"
+                                                style={styles.drawerEditBtn}
+                                                onClick={open2faModal}
+                                                disabled={saving}
+                                            >
+                                                <i className="ti ti-device-mobile-lock" /> Reset 2FA
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -2023,6 +2083,93 @@ export default function Employees() {
                             >
                                 {deleting ? "Deleting..." : "Delete"}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Reset 2FA modal — Global Admin only */}
+            {show2faModal && selectedEmployee && (
+                <div style={styles.modalOverlay}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.resetModalIcon}>
+                            <i
+                                className={
+                                    reset2faDone ? "ti ti-check" : "ti ti-device-mobile-lock"
+                                }
+                            />
+                        </div>
+                        <h3
+                            style={{
+                                margin: "0 0 6px",
+                                fontSize: fontSize.xl,
+                                fontWeight: fontWeight.bold,
+                                color: "#16233a",
+                            }}
+                        >
+                            {reset2faDone ? "2FA reset" : "Reset 2FA"}
+                        </h3>
+                        <p style={{ margin: 0, fontSize: fontSize.base, color: "#7d90a6" }}>
+                            {reset2faDone ? (
+                                <>
+                                    Two-step verification was removed for{" "}
+                                    <strong>{selectedEmployee.name}</strong>. They can sign in with
+                                    their password and will be asked to set it up again.
+                                </>
+                            ) : (
+                                <>
+                                    This removes the authenticator and recovery codes of{" "}
+                                    <strong>{selectedEmployee.name}</strong>. Only do this after you
+                                    have confirmed it is really them (lost or replaced phone). They
+                                    will get an email about it.
+                                </>
+                            )}
+                        </p>
+                        {reset2faError && (
+                            <p
+                                style={{
+                                    margin: "10px 0 0",
+                                    fontSize: fontSize.sm,
+                                    color: "#DC2626",
+                                    fontWeight: fontWeight.medium,
+                                    textAlign: "left",
+                                }}
+                            >
+                                {reset2faError}
+                            </p>
+                        )}
+                        <div style={styles.modalButtons}>
+                            {reset2faDone ? (
+                                <button
+                                    type="button"
+                                    style={styles.saveButton}
+                                    onClick={close2faModal}
+                                >
+                                    Done
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        style={styles.cancelButton}
+                                        onClick={close2faModal}
+                                        disabled={reset2faBusy}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={{
+                                            ...styles.saveButton,
+                                            opacity: reset2faBusy ? 0.7 : 1,
+                                        }}
+                                        onClick={handleReset2fa}
+                                        disabled={reset2faBusy}
+                                    >
+                                        {reset2faBusy ? "Resetting..." : "Reset 2FA"}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -155,6 +155,11 @@ const mfaLoginLimiter = rateLimit({
 
 // public: runs BEFORE the session exists (uses the encrypted pending cookie)
 router.post("/mfa/verify-login", mfaLoginLimiter, mfaController.verifyLogin);
+router.post(
+  "/mfa/verify-recovery",
+  mfaLoginLimiter,
+  mfaController.verifyRecovery,
+);
 
 router.get("/mfa/status", authenticate, mfaController.status);
 router.post("/mfa/enroll", authenticate, mfaLoginLimiter, mfaController.enroll);
@@ -169,6 +174,12 @@ router.post(
   authenticate,
   mfaLoginLimiter,
   mfaController.disable,
+);
+router.post(
+  "/mfa/recovery-codes",
+  authenticate,
+  mfaLoginLimiter,
+  mfaController.regenerateRecoveryCodes,
 );
 router.post("/mfa/reset/:userId", authenticate, mfaController.reset);
 

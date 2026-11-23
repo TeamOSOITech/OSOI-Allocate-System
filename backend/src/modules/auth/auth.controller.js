@@ -40,6 +40,8 @@ const loginHandler = async (req, res) => {
         res,
         sealPending({
           accessToken: data.accessToken,
+          // needed so a recovery-code login can create the full session
+          refreshToken: data.refreshToken,
           factorId: data.mfa.factorId,
           user: data.user,
           attempts: 0,

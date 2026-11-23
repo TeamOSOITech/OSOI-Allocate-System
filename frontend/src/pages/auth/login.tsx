@@ -36,6 +36,9 @@ const Login = () => {
     const [resetSending, setResetSending] = useState(false);
     const [view, setView] = useState<"login" | "forgot" | "sent" | "mfa">("login");
     const [mfaCode, setMfaCode] = useState("");
+    // lost authenticator: sign in with a one-time recovery code instead
+    const [useRecovery, setUseRecovery] = useState(false);
+    const [recoveryCode, setRecoveryCode] = useState("");
 
     const API_URL = import.meta.env.VITE_API_URL;
 
@@ -145,6 +148,42 @@ const Login = () => {
         }
     };
 
+    // Lost authenticator: ONE recovery code signs in and removes the old
+    // authenticator (the next screen is the 2FA setup page).
+    const handleRecoveryVerify = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const code = recoveryCode.replace(/[^A-Za-z0-9]/g, "");
+        if (code.length !== 10) {
+            setError("Enter your 10-character recovery code (like ABCDE-FGHJK).");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const res = await fetch(`${API_URL}/api/auth/mfa/verify-recovery`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code }),
+                credentials: "include",
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                if (res.status === 401 && /log in again/i.test(data.message || "")) {
+                    setView("login");
+                    setPassword("");
+                    setUseRecovery(false);
+                }
+                throw new Error(data.message || "Verification failed.");
+            }
+            finishLogin(data);
+        } catch (err: any) {
+            setError(err.message || "Verification failed.");
+            setRecoveryCode("");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setLoading(true);
@@ -179,6 +218,8 @@ const Login = () => {
             // before a session exists (see backend mfa.controller.js).
             if (data.mfaRequired) {
                 setMfaCode("");
+                setRecoveryCode("");
+                setUseRecovery(false);
                 setView("mfa");
                 return;
             }
@@ -675,7 +716,9 @@ const Login = () => {
                                     fontSize: fontSize.base,
                                 }}
                             >
-                                Enter the 6-digit code from your authenticator app
+                                {useRecovery
+                                    ? "Enter one of your saved recovery codes"
+                                    : "Enter the 6-digit code from your authenticator app"}
                             </p>
 
                             {error && (
@@ -695,17 +738,26 @@ const Login = () => {
                                 </div>
                             )}
 
-                            <form onSubmit={handleMfaVerify}>
+                            <form onSubmit={useRecovery ? handleRecoveryVerify : handleMfaVerify}>
                                 <input
+                                    key={useRecovery ? "recovery" : "totp"}
                                     type="text"
-                                    inputMode="numeric"
-                                    autoComplete="one-time-code"
+                                    inputMode={useRecovery ? "text" : "numeric"}
+                                    autoComplete={useRecovery ? "off" : "one-time-code"}
+                                    autoCapitalize={useRecovery ? "characters" : "off"}
+                                    spellCheck={false}
                                     autoFocus
-                                    maxLength={7}
-                                    placeholder="123456"
-                                    value={mfaCode}
+                                    maxLength={useRecovery ? 12 : 7}
+                                    placeholder={useRecovery ? "ABCDE-FGHJK" : "123456"}
+                                    value={useRecovery ? recoveryCode : mfaCode}
                                     onChange={(e) =>
-                                        setMfaCode(e.target.value.replace(/[^\d\s]/g, ""))
+                                        useRecovery
+                                            ? setRecoveryCode(
+                                                  e.target.value
+                                                      .toUpperCase()
+                                                      .replace(/[^A-Z0-9-]/g, "")
+                                              )
+                                            : setMfaCode(e.target.value.replace(/[^\d\s]/g, ""))
                                     }
                                     style={{
                                         width: "100%",
@@ -716,8 +768,8 @@ const Login = () => {
                                         color: "#17181C",
                                         colorScheme: "light",
                                         outline: "none",
-                                        fontSize: 22,
-                                        letterSpacing: 8,
+                                        fontSize: useRecovery ? 20 : 22,
+                                        letterSpacing: useRecovery ? 3 : 8,
                                         textAlign: "center",
                                         marginBottom: 12,
                                         boxSizing: "border-box",
@@ -746,9 +798,48 @@ const Login = () => {
                             <button
                                 type="button"
                                 onClick={() => {
+                                    setUseRecovery((v) => !v);
+                                    setError("");
+                                    setMfaCode("");
+                                    setRecoveryCode("");
+                                }}
+                                style={{
+                                    marginTop: 12,
+                                    textAlign: "center",
+                                    color: "#2A2F8F",
+                                    fontWeight: 600,
+                                    fontSize: fontSize.base,
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    display: "block",
+                                    width: "100%",
+                                }}
+                            >
+                                {useRecovery
+                                    ? "Use my authenticator app instead"
+                                    : "Lost your authenticator? Use a recovery code"}
+                            </button>
+                            {useRecovery && (
+                                <p
+                                    style={{
+                                        margin: "6px 0 0",
+                                        textAlign: "center",
+                                        color: "#767F92",
+                                        fontSize: fontSize.sm,
+                                    }}
+                                >
+                                    No recovery code? Ask your Global Admin to reset your 2FA.
+                                </p>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => {
                                     setView("login");
                                     setError("");
                                     setPassword("");
+                                    setUseRecovery(false);
                                 }}
                                 style={{
                                     marginTop: 8,

@@ -113,6 +113,12 @@ export default function TwoFactorSetup({
     const [notice, setNotice] = useState("");
     const [qrFailed, setQrFailed] = useState(false);
     const [showKey, setShowKey] = useState(false);
+    // recovery codes: shown ONCE (after setup / after "new codes")
+    const [codes, setCodes] = useState<string[] | null>(null);
+    const [saved, setSaved] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [left, setLeft] = useState<number | null>(null);
+    const [regen, setRegen] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -121,6 +127,11 @@ export default function TwoFactorSetup({
             if (!res.ok || !json.success) throw new Error();
             setStatus(json.data.enabled ? "on" : "off");
             setRequired(!!json.data.required);
+            setLeft(
+                typeof json.data.recoveryCodesRemaining === "number"
+                    ? json.data.recoveryCodesRemaining
+                    : null
+            );
         } catch {
             setStatus("error");
         }
@@ -133,6 +144,7 @@ export default function TwoFactorSetup({
     const reset = () => {
         setSetup(null);
         setDisabling(false);
+        setRegen(false);
         setCode("");
         setError("");
     };
@@ -167,18 +179,143 @@ export default function TwoFactorSetup({
             reset();
             setStatus("on");
             setNotice("Two-step verification is now on.");
-            onEnabled?.();
+            const fresh: string[] | null = json.data?.recoveryCodes || null;
+            if (fresh?.length) {
+                // the user must see (and save) the codes BEFORE moving on
+                setLeft(fresh.length);
+                setSaved(false);
+                setCopied(false);
+                setCodes(fresh);
+            } else {
+                // could not create codes now -> they can make them in Settings
+                onEnabled?.();
+            }
         });
+
+    const newCodes = () =>
+        run(async () => {
+            const json = await post("recovery-codes", { code });
+            const fresh: string[] = json.data?.recoveryCodes || [];
+            reset();
+            setLeft(fresh.length);
+            setSaved(false);
+            setCopied(false);
+            setCodes(fresh);
+        });
+
+    const copyCodes = async () => {
+        try {
+            await navigator.clipboard.writeText((codes || []).join("\n"));
+            setCopied(true);
+        } catch {
+            setError("Could not copy. Please download or write the codes down.");
+        }
+    };
+
+    const downloadCodes = () => {
+        const text =
+            "Allookate - two-step verification recovery codes\n" +
+            "Each code works ONCE. Keep this file somewhere safe (not on the same phone as your authenticator).\n\n" +
+            (codes || []).join("\n") +
+            "\n";
+        const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "allookate-recovery-codes.txt";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setCopied(true);
+    };
+
+    const finishCodes = () => {
+        setCodes(null);
+        setSaved(false);
+        setCopied(false);
+        setNotice("Two-step verification is on. Keep your recovery codes safe.");
+        onEnabled?.();
+    };
 
     const turnOff = () =>
         run(async () => {
             await post("disable", { code });
             reset();
             setStatus("off");
+            setLeft(null);
             setNotice("Two-step verification is now off.");
         });
 
     const digits = (v: string) => v.replace(/\D/g, "").slice(0, 6);
+
+    if (codes) {
+        return (
+            <div style={plain ? { ...card, border: "none", padding: 0, maxWidth: "none" } : card}>
+                <strong style={{ color: "#17181C" }}>Save your recovery codes</strong>
+                <p style={{ color: "#3D4459", fontSize: 13, margin: "6px 0 10px" }}>
+                    If you lose your phone, one of these codes lets you sign in. Each code works{" "}
+                    <strong>only once</strong>. They are shown <strong>only now</strong> - store
+                    them somewhere safe, not on the same phone as your authenticator.
+                </p>
+                <div
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 6,
+                        padding: 12,
+                        background: "#F4F8FD",
+                        border: "1px solid #C7D9F0",
+                        borderRadius: 10,
+                        fontFamily: "monospace",
+                        fontSize: 15,
+                        color: "#17181C",
+                        letterSpacing: 1,
+                        textAlign: "center",
+                        userSelect: "all",
+                    }}
+                >
+                    {codes.map((c) => (
+                        <span key={c}>{c}</span>
+                    ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                    <button type="button" style={ghostBtn} onClick={copyCodes}>
+                        {copied ? "Copied" : "Copy"}
+                    </button>
+                    <button type="button" style={ghostBtn} onClick={downloadCodes}>
+                        Download
+                    </button>
+                </div>
+                {error && <p style={{ color: "#B42318", fontSize: 13 }}>{error}</p>}
+                <label
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        margin: "14px 0 12px",
+                        fontSize: 13,
+                        color: "#3D4459",
+                        cursor: "pointer",
+                    }}
+                >
+                    <input
+                        type="checkbox"
+                        checked={saved}
+                        onChange={(e) => setSaved(e.target.checked)}
+                    />
+                    I have saved these codes in a safe place
+                </label>
+                <button
+                    type="button"
+                    style={{ ...primaryBtn, opacity: saved ? 1 : 0.5 }}
+                    disabled={!saved}
+                    onClick={finishCodes}
+                >
+                    Continue
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div style={plain ? { ...card, border: "none", padding: 0, maxWidth: "none" } : card}>
@@ -190,7 +327,7 @@ export default function TwoFactorSetup({
                 </div>
             )}
 
-            {plain && status === "off" && !setup && !disabling && (
+            {plain && status === "off" && !setup && !disabling && !regen && (
                 <>
                     {error && <p style={{ color: "#B42318", fontSize: 13 }}>{error}</p>}
                     <button style={primaryBtn} disabled={busy} onClick={start}>
@@ -202,7 +339,8 @@ export default function TwoFactorSetup({
             {!(plain && status === "off") &&
                 (status === "on" || status === "off") &&
                 !setup &&
-                !disabling && (
+                !disabling &&
+                !regen && (
                     <>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <span
@@ -233,21 +371,51 @@ export default function TwoFactorSetup({
                             </p>
                         )}
                         {error && <p style={{ color: "#B42318", fontSize: 13 }}>{error}</p>}
+                        {status === "on" && (
+                            <p
+                                style={{
+                                    color: left === 0 ? "#B54708" : "#767F92",
+                                    fontSize: 13,
+                                    margin: "0 0 12px",
+                                }}
+                            >
+                                {left === null
+                                    ? "Recovery codes: could not be loaded."
+                                    : left === 0
+                                      ? "You have no recovery codes left. Make new ones now."
+                                      : `Recovery codes left: ${left}. They let you sign in if you lose your authenticator.`}
+                            </p>
+                        )}
                         {status === "off" ? (
                             <button style={primaryBtn} disabled={busy} onClick={start}>
                                 {busy ? "Please wait…" : "Turn on"}
                             </button>
-                        ) : !required ? (
-                            <button
-                                style={ghostBtn}
-                                onClick={() => {
-                                    setNotice("");
-                                    setDisabling(true);
-                                }}
-                            >
-                                Turn off
-                            </button>
-                        ) : null}
+                        ) : (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button
+                                    style={ghostBtn}
+                                    onClick={() => {
+                                        setNotice("");
+                                        setCode("");
+                                        setError("");
+                                        setRegen(true);
+                                    }}
+                                >
+                                    New recovery codes
+                                </button>
+                                {!required && (
+                                    <button
+                                        style={ghostBtn}
+                                        onClick={() => {
+                                            setNotice("");
+                                            setDisabling(true);
+                                        }}
+                                    >
+                                        Turn off
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </>
                 )}
 
@@ -401,6 +569,37 @@ export default function TwoFactorSetup({
                             onClick={turnOff}
                         >
                             {busy ? "Checking…" : "Turn off"}
+                        </button>
+                        <button style={ghostBtn} disabled={busy} onClick={reset}>
+                            Cancel
+                        </button>
+                    </div>
+                </>
+            )}
+
+            {regen && (
+                <>
+                    <strong style={{ color: "#17181C" }}>Make new recovery codes</strong>
+                    <p style={{ color: "#767F92", fontSize: 13, margin: "6px 0 10px" }}>
+                        This replaces your old codes - they stop working. Enter the current 6-digit
+                        code from your authenticator app to continue.
+                    </p>
+                    <input
+                        style={codeInput}
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        placeholder="123456"
+                        value={code}
+                        onChange={(e) => setCode(digits(e.target.value))}
+                    />
+                    {error && <p style={{ color: "#B42318", fontSize: 13 }}>{error}</p>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                        <button
+                            style={primaryBtn}
+                            disabled={busy || code.length !== 6}
+                            onClick={newCodes}
+                        >
+                            {busy ? "Checking…" : "Make new codes"}
                         </button>
                         <button style={ghostBtn} disabled={busy} onClick={reset}>
                             Cancel

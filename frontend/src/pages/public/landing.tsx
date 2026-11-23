@@ -3367,7 +3367,7 @@ const Landing = () => {
             <footer className="lp-footer">
                 <div className="lp2-foot">
                     <div>
-                        <img src="/Logo.jpg" alt="Alookate" />
+                        <img src="/Allookate.png" alt="Alookate" />
                         <p>
                             Workforce allocation for teams that handle daily case work, from first
                             entry to final bill.
@@ -3375,7 +3375,7 @@ const Landing = () => {
                     </div>
                     <div>
                         <h4>Explore</h4>
-                        <button onClick={() => scrollTo("features")}>Why Alookate</button>
+                        <button onClick={() => scrollTo("features")}>Why Allookate</button>
                         <button onClick={() => scrollTo("switch")}>Spreadsheet vs system</button>
                         <button onClick={() => setScreensOpen(true)}>A look inside</button>
                     </div>
