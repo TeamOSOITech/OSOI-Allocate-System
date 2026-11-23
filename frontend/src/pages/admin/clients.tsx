@@ -364,6 +364,8 @@ export default function Clients() {
     // A–Z / Z–A sort by name (toggled by the arrow button in the filter row).
     const [sortAsc, setSortAsc] = useState(true);
     const [countryFilter, setCountryFilter] = useState("All");
+    // Service (product) filter — holds the selected service id as a string.
+    const [serviceFilter, setServiceFilter] = useState("All");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
     const [clients, setClients] = useState<Client[]>([]);
@@ -501,6 +503,7 @@ export default function Clients() {
         setSearch("");
         setStatusFilter("All");
         setCountryFilter("All");
+        setServiceFilter("All");
         setSelectedIds(new Set());
         setIsSelectMode(false);
     }, [activeTab]);
@@ -509,6 +512,24 @@ export default function Clients() {
         const source = activeTab === "client" ? clients : subclients;
         return Array.from(new Set(source.map((c) => c.country).filter(Boolean) as string[])).sort();
     }, [clients, subclients, activeTab]);
+
+    // Services shown in the dropdown: the full catalog, plus any service
+    // already linked to a row (covers the case where /api/products failed).
+    const serviceOptions = useMemo(() => {
+        const map = new Map<string, string>();
+        products.forEach((p) => map.set(String(p.id), p.product_name));
+        [...clients, ...subclients].forEach((row) =>
+            (row.products || []).forEach((p) => {
+                if (!map.has(String(p.id))) map.set(String(p.id), p.product_name);
+            })
+        );
+        return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true })
+        );
+    }, [products, clients, subclients]);
+
+    const matchesService = (row: { products?: { id: number }[] }) =>
+        serviceFilter === "All" || (row.products || []).some((p) => String(p.id) === serviceFilter);
 
     const matchesCommonFilters = (name: string, status: EntityStatus) => {
         const matchesSearch = name.toLowerCase().includes(search.trim().toLowerCase());
@@ -521,7 +542,11 @@ export default function Clients() {
             clients
                 .filter((c) => {
                     const matchesCountry = countryFilter === "All" || c.country === countryFilter;
-                    return matchesCommonFilters(c.name, c.status) && matchesCountry;
+                    return (
+                        matchesCommonFilters(c.name, c.status) &&
+                        matchesCountry &&
+                        matchesService(c)
+                    );
                 })
                 .sort(
                     (a, b) =>
@@ -530,7 +555,7 @@ export default function Clients() {
                             numeric: true,
                         }) * (sortAsc ? 1 : -1)
                 ),
-        [clients, search, statusFilter, countryFilter, sortAsc]
+        [clients, search, statusFilter, countryFilter, serviceFilter, sortAsc]
     );
 
     const filteredSubclients = useMemo(
@@ -538,7 +563,11 @@ export default function Clients() {
             subclients
                 .filter((s) => {
                     const matchesCountry = countryFilter === "All" || s.country === countryFilter;
-                    return matchesCommonFilters(s.name, s.status) && matchesCountry;
+                    return (
+                        matchesCommonFilters(s.name, s.status) &&
+                        matchesCountry &&
+                        matchesService(s)
+                    );
                 })
                 .sort(
                     (a, b) =>
@@ -547,7 +576,7 @@ export default function Clients() {
                             numeric: true,
                         }) * (sortAsc ? 1 : -1)
                 ),
-        [subclients, search, statusFilter, countryFilter, sortAsc]
+        [subclients, search, statusFilter, countryFilter, serviceFilter, sortAsc]
     );
 
     const currentFilteredLength =
@@ -1757,6 +1786,20 @@ export default function Clients() {
                             ))}
                         </select>
 
+                        <select
+                            style={styles.filterSelect}
+                            value={serviceFilter}
+                            onChange={(e) => setServiceFilter(e.target.value)}
+                            aria-label="Service"
+                        >
+                            <option value="All">Service: All</option>
+                            {serviceOptions.map((o) => (
+                                <option key={o.id} value={o.id}>
+                                    {o.name}
+                                </option>
+                            ))}
+                        </select>
+
                         {/* Sort toggle: A–Z (up arrow) / Z–A (down arrow), by name. */}
                         <button
                             type="button"
@@ -1822,6 +1865,37 @@ export default function Clients() {
                             </div>
                         )}
                     </div>
+
+                    {/* Which clients/subclients use the selected service */}
+                    {serviceFilter !== "All" && (
+                        <div style={styles.serviceInfoBar}>
+                            <i className="ti ti-link" style={{ fontSize: fontSize.md }} />
+                            <span>
+                                <strong>
+                                    {serviceOptions.find((o) => o.id === serviceFilter)?.name ||
+                                        "Service"}
+                                </strong>{" "}
+                                is mapped to {currentFilteredLength} {tabLabel.toLowerCase()}
+                                {currentFilteredLength === 1 ? "" : "s"}
+                                {currentFilteredLength > 0 && currentFilteredLength <= 8
+                                    ? ": " +
+                                      (activeTab === "client"
+                                          ? filteredClients
+                                          : filteredSubclients
+                                      )
+                                          .map((r) => r.name)
+                                          .join(", ")
+                                    : ""}
+                            </span>
+                            <button
+                                type="button"
+                                style={styles.serviceInfoClear}
+                                onClick={() => setServiceFilter("All")}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    )}
 
                     {/* Bulk-select bar */}
                     {canEditDelete && isSelectMode && currentPageRows.length > 0 && (
@@ -2375,15 +2449,30 @@ export default function Clients() {
                                                         <span style={styles.cardName}>
                                                             {client.name}
                                                         </span>
-                                                        <span
-                                                            style={{
-                                                                ...styles.cardCountBadge,
-                                                                background: `${avatar.solid}1A`,
-                                                                color: avatar.solid,
-                                                            }}
-                                                        >
-                                                            {client.subclients} Subclients
-                                                        </span>
+                                                        <div style={styles.cardBadgeRow}>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.cardCountBadge,
+                                                                    background: `${avatar.solid}1A`,
+                                                                    color: avatar.solid,
+                                                                }}
+                                                            >
+                                                                {client.subclients} Subclients
+                                                            </span>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.cardCountBadge,
+                                                                    background: `${avatar.solid}1A`,
+                                                                    color: avatar.solid,
+                                                                }}
+                                                            >
+                                                                {(client.products || []).length}{" "}
+                                                                {(client.products || []).length ===
+                                                                1
+                                                                    ? "Service"
+                                                                    : "Services"}
+                                                            </span>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -2482,15 +2571,29 @@ export default function Clients() {
                                                         <span style={styles.cardName}>
                                                             {sub.name}
                                                         </span>
-                                                        <span
-                                                            style={{
-                                                                ...styles.cardCountBadge,
-                                                                background: `${avatar.solid}1A`,
-                                                                color: avatar.solid,
-                                                            }}
-                                                        >
-                                                            {sub.branches} Branches
-                                                        </span>
+                                                        <div style={styles.cardBadgeRow}>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.cardCountBadge,
+                                                                    background: `${avatar.solid}1A`,
+                                                                    color: avatar.solid,
+                                                                }}
+                                                            >
+                                                                {sub.branches} Branches
+                                                            </span>
+                                                            <span
+                                                                style={{
+                                                                    ...styles.cardCountBadge,
+                                                                    background: `${avatar.solid}1A`,
+                                                                    color: avatar.solid,
+                                                                }}
+                                                            >
+                                                                {(sub.products || []).length}{" "}
+                                                                {(sub.products || []).length === 1
+                                                                    ? "Service"
+                                                                    : "Services"}
+                                                            </span>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -3512,6 +3615,27 @@ const styles: Record<string, CSSProperties> = {
         boxShadow: "0 4px 16px rgba(0,0,0,.04)",
         flexShrink: 0,
     },
+    serviceInfoBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#eef4ff",
+        border: "1px solid #d5e3ff",
+        borderRadius: radius.md,
+        padding: "8px 12px",
+        fontSize: fontSize.base,
+        color: "#1e2a4a",
+        flexShrink: 0,
+    },
+    serviceInfoClear: {
+        marginLeft: "auto",
+        border: "none",
+        background: "transparent",
+        color: "#204297",
+        fontWeight: 700,
+        cursor: "pointer",
+        fontSize: fontSize.base,
+    },
     filterRowMobile: {
         display: "flex",
         flexDirection: "column",
@@ -3709,6 +3833,12 @@ const styles: Record<string, CSSProperties> = {
         alignItems: "flex-start",
         gap: 6,
         minWidth: 0,
+    },
+    cardBadgeRow: {
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 6,
     },
     cardCountBadge: {
         fontSize: fontSize.xs,

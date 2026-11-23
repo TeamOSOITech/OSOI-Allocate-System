@@ -462,6 +462,10 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
     // clicking the pencil icon on a row switches just that row's
     // Client/Subclient cells into editable dropdowns.
     const [editingRowId, setEditingRowId] = useState<string | null>(null);
+    // Clients mapped to the SERVICE of the row being edited — the row's
+    // Client dropdown lists only these (same rule as the Add form).
+    const [editRowClients, setEditRowClients] = useState<Client[]>([]);
+    const [editRowClientsLoading, setEditRowClientsLoading] = useState(false);
     // NEW: multi-select for bulk delete — a "Select all" checkbox in the
     // header plus a per-row checkbox on the left of every row.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1012,6 +1016,43 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             cancelled = true;
         };
     }, [productId]);
+
+    // Row edit: load only the clients mapped to the edited row's service.
+    const editingProductId = editingRowId
+        ? (cases.find((r) => r.id === editingRowId)?.productId ?? null)
+        : null;
+    useEffect(() => {
+        if (!editingProductId) {
+            setEditRowClients([]);
+            setEditRowClientsLoading(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setEditRowClientsLoading(true);
+            try {
+                const res = await authFetch(
+                    `${API_BASE}/api/service-cases/product-clients/${editingProductId}`
+                );
+                const json = await res.json();
+                if (!res.ok || !json.success) {
+                    throw new Error(json?.message || `HTTP ${res.status}`);
+                }
+                const list = Array.isArray(json) ? json : json?.data || [];
+                if (!cancelled) {
+                    setEditRowClients(list.map((c: any) => ({ id: String(c.id), name: c.name })));
+                }
+            } catch (err) {
+                console.error("Failed to fetch clients for service (row edit):", err);
+                if (!cancelled) setEditRowClients([]);
+            } finally {
+                if (!cancelled) setEditRowClientsLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [editingProductId]);
 
     // Filter dropdown defaults to "All" — every service's cases show
     // together until the user picks a specific one.
@@ -2253,7 +2294,10 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                                                         : 1,
                                                             }}
                                                             value={c.clientId || ""}
-                                                            disabled={savingClientId === c.id}
+                                                            disabled={
+                                                                savingClientId === c.id ||
+                                                                editRowClientsLoading
+                                                            }
                                                             autoFocus
                                                             onChange={(e) =>
                                                                 handleClientChange(
@@ -2263,9 +2307,30 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                                             }
                                                         >
                                                             <option value="">
-                                                                -- Select client --
+                                                                {editRowClientsLoading
+                                                                    ? "Loading clients…"
+                                                                    : editRowClients.length === 0
+                                                                      ? "-- No clients mapped to this service --"
+                                                                      : "-- Select client --"}
                                                             </option>
-                                                            {clients.map((cl) => (
+                                                            {/* Only clients mapped to this row's service.
+                                                                A client already on the row stays listed so
+                                                                its current value still shows. */}
+                                                            {(c.clientId &&
+                                                            !editRowClients.some(
+                                                                (cl) => cl.id === c.clientId
+                                                            )
+                                                                ? [
+                                                                      {
+                                                                          id: c.clientId,
+                                                                          name:
+                                                                              c.clientName ||
+                                                                              "Current client",
+                                                                      },
+                                                                      ...editRowClients,
+                                                                  ]
+                                                                : editRowClients
+                                                            ).map((cl) => (
                                                                 <option key={cl.id} value={cl.id}>
                                                                     {cl.name}
                                                                 </option>

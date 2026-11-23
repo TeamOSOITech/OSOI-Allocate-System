@@ -117,6 +117,11 @@ type Employee = {
     employeeCode: string | null;
     team: string | null;
 };
+// Shows "(Urgent)" after the case number when the case was allocated
+// through "Anything Urgent".
+const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
+    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+
 type ServiceCase = {
     id: string;
     caseNumber: string;
@@ -128,6 +133,8 @@ type ServiceCase = {
     assignedEmployeeId: string | null;
     assignedEmployeeName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
+    // true when it was allocated through "Anything Urgent"
+    isUrgent?: boolean;
 };
 // Light version of a case — used only to work out each employee's
 // total time across ALL pages (not just the 10 rows on screen).
@@ -1045,13 +1052,16 @@ export default function TodaysAllocationCases({
         onPendingTotalChange?.(summary.total, countsAllocatedTotal);
     }, [summary.total, countsAllocatedTotal, onPendingTotalChange]);
 
-    const handleManualAllocate = async (caseId: string, employeeId: string) => {
+    const handleManualAllocate = async (caseId: string, employeeId: string, urgent = false) => {
         setAllocatingId(caseId);
         try {
             const res = await authFetch(`${API_BASE}/api/service-cases/${caseId}/allocate`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ employeeId: employeeId || null }),
+                body: JSON.stringify({
+                    employeeId: employeeId || null,
+                    ...(urgent ? { urgent: true } : {}),
+                }),
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json?.message || "Failed to allocate");
@@ -1063,6 +1073,7 @@ export default function TodaysAllocationCases({
                               assignedEmployeeId: json.data.assignedEmployeeId,
                               assignedEmployeeName: json.data.assignedEmployeeName,
                               allocationStatus: json.data.allocationStatus,
+                              isUrgent: !!json.data.isUrgent,
                           }
                         : c
                 )
@@ -1326,7 +1337,7 @@ export default function TodaysAllocationCases({
         setUrgentSaving(true);
         try {
             const results = await Promise.all(
-                urgentSelected.map((id) => handleManualAllocate(id, urgentEmp[id]))
+                urgentSelected.map((id) => handleManualAllocate(id, urgentEmp[id], true))
             );
             const okIds = urgentSelected.filter((_, i) => results[i]);
             const failedIds = urgentSelected.filter((_, i) => !results[i]);
@@ -2428,7 +2439,7 @@ export default function TodaysAllocationCases({
                                     const rowAmp = ampOf(c.productId);
                                     return (
                                         <div key={c.id} style={styles.tableRow}>
-                                            <span style={styles.colCase}>{c.caseNumber}</span>
+                                            <span style={styles.colCase}>{caseLabel(c)}</span>
                                             <span style={styles.colClient}>
                                                 {c.clientName || "—"}
                                             </span>

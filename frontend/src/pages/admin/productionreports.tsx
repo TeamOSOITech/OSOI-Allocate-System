@@ -128,6 +128,11 @@ type Product = {
 type Employee = { id: string; name: string; employeeCode: string | null };
 type ClientOption = { id: string; name: string };
 
+// Shows "(Urgent)" after the case number when the case was allocated
+// through "Anything Urgent".
+const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
+    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+
 type ServiceCaseRow = {
     id: string;
     caseNumber: string;
@@ -144,6 +149,8 @@ type ServiceCaseRow = {
     // up with.
     allocatedByName: string | null;
     allocationStatus: "PENDING" | "ALLOCATED";
+    // true when it was allocated through "Anything Urgent"
+    isUrgent?: boolean;
     quantity: number | null;
     amount: number | null;
     submissionStatus: "PENDING" | "SUBMITTED";
@@ -1442,7 +1449,7 @@ export default function ProductionReport() {
 
             // Sheet 1 - cases WITH a case number
             const sheetData = caseRows.map((r) => ({
-                "Case #": r.caseNumber,
+                "Case #": caseLabel(r),
                 // "From count" = began as a count, case number added later
                 Source: r.fromCount ? "From count" : "",
                 Client: r.clientName || "",
@@ -2018,7 +2025,7 @@ export default function ProductionReport() {
                                                 }}
                                             >
                                                 <span style={styles.colCase}>
-                                                    {r.caseNumber}
+                                                    {caseLabel(r)}
                                                     {r.fromCount && (
                                                         <span
                                                             style={styles.fromCountChip}
@@ -2185,7 +2192,7 @@ export default function ProductionReport() {
                                             <div key={r.id} style={styles.mobileCard}>
                                                 <div style={styles.mobileCardHeader}>
                                                     <span style={styles.mobileCardCase}>
-                                                        {r.caseNumber}
+                                                        {caseLabel(r)}
                                                         {r.fromCount && (
                                                             <span
                                                                 style={{
