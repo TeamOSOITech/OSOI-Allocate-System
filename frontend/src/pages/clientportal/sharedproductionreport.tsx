@@ -5,13 +5,18 @@
 // Data comes from GET /api/client-portal/shared/production-reports and is
 // already limited server-side to the caller's own client.
 //
-// Layout: header with client + date range -> status pipeline -> services and
-// daily volume -> searchable cases table.
+// Layout: header with client + date range -> share details (who shared it,
+// when, for which client and dates) -> status pipeline -> three section
+// cards (service / day / cases) -> the opened section.
+//
+// Header ("Shared with me" version): client (left), client dropdown
+// (`picker`, see sharepicker.tsx) + Export CSV in one box (right).
+// The date range lives in the right of the "Share details" bar.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { authFetch } from "../../utils/authFetch";
-import { fontFamily } from "../../styles/theme";
+import { fontFamily, fontSize, fontWeight } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 15;
@@ -26,6 +31,12 @@ type Row = {
 };
 type Report = {
     client?: { id: string | number; name: string };
+    share?: {
+        page: string;
+        sharedBy: string | null;
+        sharedAt: string | null;
+        permission: string;
+    };
     from: string;
     to: string;
     truncated: boolean;
@@ -67,6 +78,15 @@ const fmt = (d: string) => {
         ? d
         : dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
+// "12 Nov 2026, 03:45 pm"
+const fmtDateTime = (d: string) => {
+    const dt = new Date(d);
+    return isNaN(dt.getTime())
+        ? d
+        : `${dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}, ${dt
+              .toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+              .toLowerCase()}`;
+};
 const fmtShort = (d: string) => {
     const dt = new Date(d);
     return isNaN(dt.getTime())
@@ -80,6 +100,17 @@ const nf = (n: number) => n.toLocaleString("en-IN");
 
 const CSS = `
 .spr { font-family: ${fontFamily.base}; color: ${INK}; text-align: left; }
+.spr { container-type: inline-size; }
+/* "Shared with me" header: two rows. Row 1 = title | picker + export (one box). Row 2 = client */
+.spr-hero-grid { display: flex; flex-direction: column; }
+.spr-hero-top, .spr-hero-bottom { display: flex; align-items: center; gap: 14px 20px; flex-wrap: wrap; min-width: 0; }
+.spr-hero-top { justify-content: space-between; }
+.spr-hero-bottom { justify-content: flex-end; padding-top: 14px; border-top: 1px solid rgba(91,71,201,.14); }
+.spr-ctrl { display: inline-flex; align-items: stretch; gap: 8px; padding: 6px; border-radius: 18px; background: rgba(255,255,255,.75); border: 1px solid ${LINE}; max-width: 100%; }
+.spr-picker { zoom: .88; min-width: 0; display: flex; align-items: center; }
+.spr-dates { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
+@container (max-width: 760px) { .spr-hero-bottom { justify-content: flex-start; } }
+@container (max-width: 520px) { .spr-dates { flex-wrap: wrap; } .spr-ctrl { flex-wrap: wrap; } }
 .spr * { box-sizing: border-box; }
 .spr-card { background: #fff; border: 1px solid ${LINE}; border-radius: 20px; box-shadow: 0 1px 2px rgba(27,33,80,.04); }
 .spr-title { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
@@ -96,16 +127,28 @@ const CSS = `
 .spr-legend { text-align: left; border: 1.5px solid transparent; border-radius: 16px; padding: 14px 16px; cursor: pointer; font-family: inherit; color: inherit; }
 .spr-legend:hover { filter: brightness(.97); }
 .spr-legend[aria-pressed="true"] { border-color: ${INK}; box-shadow: 0 0 0 3px rgba(27,33,80,.08); }
-.spr-pick { display: block; text-align: left; width: 100%; padding: 16px 18px; background: #fff; border: 1.5px solid ${LINE}; border-radius: 18px; cursor: pointer; font-family: inherit; color: inherit; box-shadow: 0 1px 2px rgba(27,33,80,.04); transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
-.spr-pick:hover { border-color: var(--c); }
-.spr-pick[aria-expanded="true"] { border-color: var(--c); background: var(--t); box-shadow: 0 0 0 3px var(--t); }
-.spr-pick:focus-visible { outline: 3px solid #A9B4F2; outline-offset: 2px; }
-.spr-pick-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--t); color: var(--c); display: inline-flex; align-items: center; justify-content: center; font-size: 23px; flex-shrink: 0; }
-.spr-pick[aria-expanded="true"] .spr-pick-icon { background: var(--c); color: #fff; }
+.spr-tab { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid ${LINE}; background: #fff; color: ${INK}; font: 700 13.5px ${fontFamily.base}; cursor: pointer; }
+.spr-tab i { font-size: 17px; color: ${BRAND}; }
+.spr-tab small { font-size: 12px; font-weight: 700; background: #EEF1FB; color: ${BRAND}; border-radius: 999px; padding: 1px 8px; }
+.spr-tab:hover { background: #F3F5FD; }
+.spr-tab[aria-selected="true"] { background: ${INK}; border-color: ${INK}; color: #fff; }
+.spr-tab[aria-selected="true"] i { color: #fff; }
+.spr-tab[aria-selected="true"] small { background: rgba(255,255,255,.2); color: #fff; }
+.spr-tab:focus-visible { outline: 3px solid #A9B4F2; outline-offset: 2px; }
+.spr-share { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0; }
+.spr-share-item { display: flex; gap: 12px; align-items: center; padding: 14px 20px; min-width: 0; }
+.spr-share-item + .spr-share-item { border-left: 1px solid ${LINE}; }
+@media (max-width: 760px) { .spr-share-item + .spr-share-item { border-left: 0; border-top: 1px solid ${LINE}; } }
 .spr-hero h2, .spr-hero div, .spr-hero label { color: #fff; }
 .spr-hero > div { position: relative; z-index: 1; }
 .spr-hero .spr-date { color: ${INK}; }
 .spr-hero .spr-btn { color: ${INK}; }
+.spr-hero-light h1, .spr-hero-light div, .spr-hero-light label { color: ${INK}; }
+.spr-hero-light .spr-date { border: 1px solid ${LINE}; background: #fff; }
+.spr-cardbtn { display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; color: inherit; }
+.spr-cardbtn:focus-visible { outline: 3px solid #A9B4F2; outline-offset: 4px; border-radius: 12px; }
+.spr-prev { transition: border-color .15s ease, box-shadow .15s ease; }
+.spr-prev:hover { box-shadow: 0 6px 20px rgba(59,74,184,.10); }
 @keyframes spr-reveal { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: no-preference) { .spr-panel { animation: spr-reveal .25s ease both; } }
 .spr-row:hover td { background: #F7F8FD; }
@@ -371,7 +414,68 @@ const MiniTable = ({
     );
 };
 
-const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
+// one cell of the "Share details" strip: icon tile + small label + value
+const ShareItem = ({
+    icon,
+    label,
+    value,
+    sub,
+    color,
+    tint,
+}: {
+    icon: string;
+    label: string;
+    value: string;
+    sub?: string;
+    color: string;
+    tint: string;
+}) => (
+    <div className="spr-share-item">
+        <span
+            aria-hidden="true"
+            style={{
+                width: 42,
+                height: 42,
+                borderRadius: 13,
+                background: tint,
+                color,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 21,
+                flexShrink: 0,
+            }}
+        >
+            <i className={`ti ${icon}`} />
+        </span>
+        <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: MUTED }}>{label}</div>
+            <div
+                style={{
+                    fontSize: 14.5,
+                    fontWeight: 700,
+                    marginTop: 1,
+                    wordBreak: "break-word",
+                    lineHeight: 1.3,
+                }}
+            >
+                {value}
+            </div>
+            {sub && <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{sub}</div>}
+        </div>
+    </div>
+);
+
+const SharedProductionReport = ({
+    shareId,
+    eyebrow,
+    picker,
+}: {
+    shareId?: string;
+    eyebrow?: string;
+    /** client dropdown, shown in the right side of the header (see sharepicker.tsx) */
+    picker?: ReactNode;
+}) => {
     // empty until the first response: the server picks the shared date range
     const [from, setFrom] = useState("");
     const [to, setTo] = useState("");
@@ -383,7 +487,7 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
     const [page, setPage] = useState(1);
     const [statusFilter, setStatusFilter] = useState<string>("");
     const [query, setQuery] = useState("");
-    const [open, setOpen] = useState<Section | null>(null);
+    const [open, setOpen] = useState<Section | null>("cases");
 
     const load = useCallback(async () => {
         if (skipNextLoad.current) {
@@ -487,76 +591,197 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
             ),
         [data]
     );
+    void busiestDay;
     const donutPct = total ? Math.round((completed / total) * 100) : 0;
+    const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
+    const PURPLE = "#5B47C9";
+
+    // allowed window the sender shared (min..max); empty side = open ended
+    const sharedWindow = (() => {
+        const mn = data?.bounds?.min;
+        const mx = data?.bounds?.max;
+        if (mn && mx) return `${fmt(mn)} – ${fmt(mx)}`;
+        if (mn) return `From ${fmt(mn)}`;
+        if (mx) return `Up to ${fmt(mx)}`;
+        return "All dates";
+    })();
 
     return (
         <div className="spr">
             <style>{CSS}</style>
 
             {/* ---------- Header ---------- */}
-            <div
-                className="spr-hero"
-                style={{
-                    position: "relative",
-                    overflow: "hidden",
-                    background: "linear-gradient(120deg, #1F2766 0%, #3340B5 100%)",
-                    borderRadius: 24,
-                    padding: "26px 28px",
-                    color: "#fff",
-                    marginBottom: 16,
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 20,
-                    alignItems: "flex-end",
-                    justifyContent: "space-between",
-                }}
-            >
-                <div style={{ minWidth: 240 }}>
-                    <div
-                        style={{
-                            fontSize: 13,
-                            opacity: 0.8,
-                            fontWeight: 600,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                        }}
-                    >
-                        Production report
+            {eyebrow ? (
+                <div
+                    className="spr-hero spr-hero-light spr-hero-grid"
+                    style={{
+                        position: "relative",
+                        background: "linear-gradient(120deg, #EEF0FF 0%, #F5EFFF 100%)",
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 22,
+                        padding: "16px 24px",
+                        marginBottom: 16,
+                        boxShadow: "0 1px 2px rgba(27,33,80,.04)",
+                    }}
+                >
+                    {/* client (left) | client picker + export in one box (right) */}
+                    <div className="spr-hero-top">
+                        <div
+                            style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}
+                        >
+                            <span
+                                aria-hidden="true"
+                                style={{
+                                    width: 44,
+                                    height: 44,
+                                    flexShrink: 0,
+                                    borderRadius: 14,
+                                    background: "linear-gradient(135deg, #3B2F9E, #5B3FD1)",
+                                    color: "#fff",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontSize: 22,
+                                }}
+                            >
+                                <i className="ti ti-building" />
+                            </span>
+                            <div style={{ minWidth: 0 }}>
+                                <div
+                                    style={{
+                                        fontSize: 18,
+                                        fontWeight: fontWeight.bold,
+                                        letterSpacing: "-0.01em",
+                                        lineHeight: 1.2,
+                                    }}
+                                >
+                                    {data?.client?.name || "Your cases"}
+                                </div>
+                                <div
+                                    style={{
+                                        marginTop: 3,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        flexWrap: "wrap",
+                                        gap: 8,
+                                        fontSize: fontSize.sm,
+                                        fontWeight: fontWeight.medium,
+                                        color: MUTED,
+                                    }}
+                                >
+                                    <span style={{ color: MUTED }}>Production Report</span>
+                                    <span
+                                        style={{
+                                            display: "inline-flex",
+                                            gap: 6,
+                                            alignItems: "center",
+                                            background: "#E6E2FB",
+                                            color: PURPLE,
+                                            borderRadius: 999,
+                                            padding: "2px 9px",
+                                            fontSize: fontSize.sm,
+                                            fontWeight: fontWeight.semibold,
+                                        }}
+                                    >
+                                        <i className="ti ti-eye" aria-hidden="true" /> View only
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="spr-ctrl">
+                            {picker && <div className="spr-picker">{picker}</div>}
+                            <button
+                                className="spr-btn"
+                                onClick={exportCsv}
+                                disabled={!data || data.cases.length === 0}
+                                style={{
+                                    height: "auto",
+                                    minHeight: 44,
+                                    alignSelf: "stretch",
+                                    borderRadius: 14,
+                                    background: "linear-gradient(135deg, #3B2F9E, #5B3FD1)",
+                                    color: "#fff",
+                                    border: "none",
+                                    boxShadow: "0 4px 10px rgba(59,47,158,.25)",
+                                }}
+                            >
+                                <i className="ti ti-download" aria-hidden="true" /> Export CSV
+                            </button>
+                        </div>
                     </div>
-                    <h2
+
+                    <h1
                         style={{
-                            margin: "4px 0 10px",
-                            fontSize: 30,
-                            lineHeight: 1.15,
-                            fontWeight: 800,
-                            letterSpacing: "-0.02em",
-                            color: "#fff",
+                            position: "absolute",
+                            width: 1,
+                            height: 1,
+                            margin: -1,
+                            padding: 0,
+                            overflow: "hidden",
+                            clip: "rect(0 0 0 0)",
+                            whiteSpace: "nowrap",
+                            border: 0,
                         }}
                     >
-                        {data?.client?.name || "Your cases"}
-                    </h2>
-                    <div
-                        style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}
-                    >
-                        <span
+                        {eyebrow}
+                    </h1>
+                </div>
+            ) : (
+                <div
+                    className="spr-hero"
+                    style={{
+                        position: "relative",
+                        overflow: "hidden",
+                        background: "linear-gradient(120deg, #1F2766 0%, #3340B5 100%)",
+                        borderRadius: 24,
+                        padding: "26px 28px",
+                        color: "#fff",
+                        marginBottom: 16,
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 20,
+                        alignItems: "flex-end",
+                        justifyContent: "space-between",
+                    }}
+                >
+                    <div style={{ minWidth: 240, position: "relative", zIndex: 1 }}>
+                        <div
                             style={{
-                                display: "inline-flex",
-                                gap: 6,
+                                fontSize: 13,
+                                opacity: 0.8,
+                                fontWeight: 600,
+                                display: "flex",
                                 alignItems: "center",
-                                background: "rgba(255,255,255,.16)",
-                                borderRadius: 999,
-                                padding: "5px 12px",
-                                fontSize: 12.5,
-                                fontWeight: 700,
+                                gap: 8,
                             }}
                         >
-                            <i className="ti ti-eye" aria-hidden="true" /> View only
-                        </span>
-                        {(data?.filters || []).map((f) => (
+                            Production report
+                        </div>
+                        <h2
+                            style={{
+                                margin: "4px 0 10px",
+                                fontSize: 30,
+                                lineHeight: 1.15,
+                                fontWeight: 800,
+                                letterSpacing: "-0.02em",
+                                color: "#fff",
+                            }}
+                        >
+                            {data?.client?.name || "Your cases"}
+                        </h2>
+                        <div
+                            style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 8,
+                                alignItems: "center",
+                            }}
+                        >
                             <span
-                                key={`${f.label}:${f.value}`}
                                 style={{
+                                    display: "inline-flex",
+                                    gap: 6,
+                                    alignItems: "center",
                                     background: "rgba(255,255,255,.16)",
                                     borderRadius: 999,
                                     padding: "5px 12px",
@@ -564,45 +789,56 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                                     fontWeight: 700,
                                 }}
                             >
-                                {f.label}: {f.value}
+                                <i className="ti ti-eye" aria-hidden="true" /> View only
                             </span>
-                        ))}
+                        </div>
+                    </div>
+
+                    <div
+                        style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 12,
+                            alignItems: "flex-end",
+                            position: "relative",
+                            zIndex: 1,
+                        }}
+                    >
+                        <div style={{ display: "contents" }}>
+                            <label style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.9 }}>
+                                <div style={{ marginBottom: 5 }}>From</div>
+                                <input
+                                    className="spr-date"
+                                    type="date"
+                                    value={from || data?.from || ""}
+                                    min={data?.bounds?.min || undefined}
+                                    max={to || data?.bounds?.max || undefined}
+                                    onChange={(e) => e.target.value && setFrom(e.target.value)}
+                                />
+                            </label>
+                            <label style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.9 }}>
+                                <div style={{ marginBottom: 5 }}>To</div>
+                                <input
+                                    className="spr-date"
+                                    type="date"
+                                    value={to || data?.to || ""}
+                                    min={from || data?.bounds?.min || undefined}
+                                    max={data?.bounds?.max || undefined}
+                                    onChange={(e) => e.target.value && setTo(e.target.value)}
+                                />
+                            </label>
+                        </div>
+                        <button
+                            className="spr-btn"
+                            onClick={exportCsv}
+                            disabled={!data || data.cases.length === 0}
+                            style={{ background: "#fff", color: INK, border: "1px solid #fff" }}
+                        >
+                            <i className="ti ti-download" aria-hidden="true" /> Export CSV
+                        </button>
                     </div>
                 </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-                    <label style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.9 }}>
-                        <div style={{ marginBottom: 5 }}>From</div>
-                        <input
-                            className="spr-date"
-                            type="date"
-                            value={from || data?.from || ""}
-                            min={data?.bounds?.min || undefined}
-                            max={to || data?.bounds?.max || undefined}
-                            onChange={(e) => e.target.value && setFrom(e.target.value)}
-                        />
-                    </label>
-                    <label style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.9 }}>
-                        <div style={{ marginBottom: 5 }}>To</div>
-                        <input
-                            className="spr-date"
-                            type="date"
-                            value={to || data?.to || ""}
-                            min={from || data?.bounds?.min || undefined}
-                            max={data?.bounds?.max || undefined}
-                            onChange={(e) => e.target.value && setTo(e.target.value)}
-                        />
-                    </label>
-                    <button
-                        className="spr-btn"
-                        onClick={exportCsv}
-                        disabled={!data || data.cases.length === 0}
-                        style={{ background: "#fff", color: INK, border: "1px solid #fff" }}
-                    >
-                        <i className="ti ti-download" aria-hidden="true" /> Export CSV
-                    </button>
-                </div>
-            </div>
+            )}
 
             {loading && (
                 <div className="spr-card" style={{ padding: 28, color: MUTED, fontWeight: 600 }}>
@@ -626,6 +862,139 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
 
             {!loading && !error && data && (
                 <>
+                    {/* ---------- Share details: who shared it, when, for whom ---------- */}
+                    <div className="spr-card" style={{ marginBottom: 16, overflow: "hidden" }}>
+                        <div
+                            style={{
+                                padding: "14px 20px 12px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                flexWrap: "wrap",
+                                borderBottom: `1px solid ${LINE}`,
+                                background: "#FAFBFE",
+                            }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <i
+                                    className="ti ti-share-3"
+                                    aria-hidden="true"
+                                    style={{ color: PURPLE, fontSize: 20 }}
+                                />
+                                <h3 className="spr-title">Share details</h3>
+                            </div>
+                            {/* dates: no From/To labels, just the two dates */}
+                            <div className="spr-dates">
+                                <input
+                                    className="spr-date"
+                                    type="date"
+                                    aria-label="From date"
+                                    title="From date"
+                                    style={{ height: 36 }}
+                                    value={from || data?.from || ""}
+                                    min={data?.bounds?.min || undefined}
+                                    max={to || data?.bounds?.max || undefined}
+                                    onChange={(e) => e.target.value && setFrom(e.target.value)}
+                                />
+                                <i
+                                    className="ti ti-arrow-right"
+                                    aria-hidden="true"
+                                    style={{ color: MUTED, fontSize: 16 }}
+                                />
+                                <input
+                                    className="spr-date"
+                                    type="date"
+                                    aria-label="To date"
+                                    title="To date"
+                                    style={{ height: 36 }}
+                                    value={to || data?.to || ""}
+                                    min={from || data?.bounds?.min || undefined}
+                                    max={data?.bounds?.max || undefined}
+                                    onChange={(e) => e.target.value && setTo(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <div className="spr-share">
+                            <ShareItem
+                                icon="ti-user-check"
+                                label="Shared by"
+                                value={data.share?.sharedBy || "Your service team"}
+                                color="#5B47C9"
+                                tint="#EEEAFB"
+                            />
+                            <ShareItem
+                                icon="ti-calendar-event"
+                                label="Shared on"
+                                value={
+                                    data.share?.sharedAt ? fmtDateTime(data.share.sharedAt) : "—"
+                                }
+                                color="#EA6A0A"
+                                tint="#FFF0E3"
+                            />
+                            <ShareItem
+                                icon="ti-building"
+                                label="Client"
+                                value={data.client?.name || "—"}
+                                color="#3B4AB8"
+                                tint="#ECEFFB"
+                            />
+                            <ShareItem
+                                icon="ti-file-analytics"
+                                label="What was shared"
+                                value={data.share?.page || "Production Reports"}
+                                sub={data.share?.permission || "View only"}
+                                color="#0E7490"
+                                tint="#D9F3F7"
+                            />
+                            <ShareItem
+                                icon="ti-calendar-stats"
+                                label="Dates shared"
+                                value={sharedWindow}
+                                sub={`Viewing ${fmt(data.from)} – ${fmt(data.to)}`}
+                                color="#A21CAF"
+                                tint="#F8E7FB"
+                            />
+                        </div>
+                        {(data.filters || []).length > 0 && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "12px 20px",
+                                    borderTop: `1px solid ${LINE}`,
+                                    background: "#FAFBFE",
+                                }}
+                            >
+                                <span style={{ fontSize: 12.5, fontWeight: 700, color: MUTED }}>
+                                    <i
+                                        className="ti ti-filter"
+                                        aria-hidden="true"
+                                        style={{ marginRight: 6 }}
+                                    />
+                                    Filters set by the sender
+                                </span>
+                                {(data.filters || []).map((f) => (
+                                    <span
+                                        key={`${f.label}:${f.value}`}
+                                        style={{
+                                            background: "#ECEFFB",
+                                            color: BRAND,
+                                            borderRadius: 999,
+                                            padding: "4px 12px",
+                                            fontSize: 12.5,
+                                            fontWeight: 700,
+                                        }}
+                                    >
+                                        {f.label}: {f.value}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     {data.truncated && (
                         <div
                             style={{
@@ -642,319 +1011,457 @@ const SharedProductionReport = ({ shareId }: { shareId?: string }) => {
                         </div>
                     )}
 
-                    {/* ---------- Pipeline ---------- */}
-                    <div className="spr-card" style={{ padding: 22, marginBottom: 16 }}>
-                        <div
-                            style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                alignItems: "flex-end",
-                                gap: 18,
-                                justifyContent: "space-between",
-                                marginBottom: 16,
-                            }}
-                        >
-                            <div>
-                                <div
-                                    style={{
-                                        fontSize: 44,
-                                        lineHeight: 1,
-                                        fontWeight: 800,
-                                        letterSpacing: "-0.03em",
-                                    }}
-                                >
-                                    {nf(total)}
-                                </div>
-                                <div style={{ fontSize: 13.5, color: MUTED, marginTop: 6 }}>
-                                    cases between {fmt(data.from)} and {fmt(data.to)}
-                                </div>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                                <div style={{ textAlign: "right" }}>
-                                    <div style={{ fontSize: 15, fontWeight: 700 }}>Completed</div>
-                                    <div style={{ fontSize: 13, color: MUTED }}>
-                                        {nf(completed)} of {nf(total)} cases
-                                    </div>
-                                </div>
-                                <svg
-                                    width="76"
-                                    height="76"
-                                    viewBox="0 0 84 84"
-                                    role="img"
-                                    aria-label={`${donutPct}% completed`}
-                                >
-                                    <circle
-                                        cx="42"
-                                        cy="42"
-                                        r="34"
-                                        fill="none"
-                                        stroke="#EEF1F8"
-                                        strokeWidth="10"
-                                    />
-                                    <circle
-                                        cx="42"
-                                        cy="42"
-                                        r="34"
-                                        fill="none"
-                                        stroke={STATUS_STYLE.Completed.solid}
-                                        strokeWidth="10"
-                                        strokeLinecap="round"
-                                        strokeDasharray={`${(donutPct / 100) * 2 * Math.PI * 34} ${2 * Math.PI * 34}`}
-                                        transform="rotate(-90 42 42)"
-                                    />
-                                    <text
-                                        x="42"
-                                        y="48"
-                                        textAnchor="middle"
-                                        fontSize="18"
-                                        fontWeight="800"
-                                        fill={INK}
-                                    >
-                                        {donutPct}%
-                                    </text>
-                                </svg>
-                            </div>
-                        </div>
-
-                        {/* the segmented status bar */}
-                        <div
-                            role="img"
-                            aria-label={STATUSES.map(
-                                (s) => `${s}: ${data.summary.byStatus[s] || 0}`
-                            ).join(", ")}
-                            style={{
-                                display: "flex",
-                                height: 16,
-                                borderRadius: 999,
-                                overflow: "hidden",
-                                background: "#EEF1F8",
-                                gap: 2,
-                                marginBottom: 18,
-                            }}
-                        >
-                            {STATUSES.map((s) => {
-                                const n = data.summary.byStatus[s] || 0;
-                                if (!n || !total) return null;
-                                return (
-                                    <div
-                                        key={s}
-                                        className="spr-grow"
-                                        title={`${s}: ${nf(n)}`}
+                    {eyebrow ? (
+                        <>
+                            {/* ---------- Total cases (compact) ---------- */}
+                            <div
+                                className="spr-card"
+                                style={{
+                                    padding: "12px 20px",
+                                    marginBottom: 14,
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 12,
+                                }}
+                            >
+                                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                    <span
+                                        aria-hidden="true"
                                         style={{
-                                            width: `${(n / total) * 100}%`,
-                                            background: STATUS_STYLE[s].solid,
+                                            width: 44,
+                                            height: 44,
+                                            borderRadius: 13,
+                                            background: "#EEEAFB",
+                                            color: PURPLE,
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            fontSize: 22,
+                                            flexShrink: 0,
                                         }}
-                                    />
-                                );
-                            })}
-                        </div>
-
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-                                gap: 10,
-                            }}
-                        >
-                            {STATUSES.map((s) => {
-                                const n = data.summary.byStatus[s] || 0;
-                                return (
-                                    <button
-                                        key={s}
-                                        className="spr-legend"
-                                        aria-pressed={statusFilter === s}
-                                        onClick={() => pickStatus(s, true)}
-                                        title={`Show ${s} cases`}
-                                        style={{ background: STATUS_STYLE[s].bg }}
                                     >
+                                        <i className="ti ti-file-text" />
+                                    </span>
+                                    <div>
                                         <div
                                             style={{
                                                 display: "flex",
-                                                alignItems: "center",
+                                                alignItems: "baseline",
                                                 gap: 10,
                                             }}
                                         >
                                             <span
                                                 style={{
-                                                    width: 30,
-                                                    height: 30,
-                                                    borderRadius: 10,
-                                                    background: STATUS_STYLE[s].solid,
-                                                    color: "#fff",
-                                                    display: "inline-flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    fontSize: 16,
-                                                    flexShrink: 0,
+                                                    fontSize: fontSize.md,
+                                                    fontWeight: fontWeight.bold,
                                                 }}
                                             >
-                                                <i
-                                                    className={`ti ${STATUS_STYLE[s].icon}`}
-                                                    aria-hidden="true"
-                                                />
+                                                Total Cases
                                             </span>
                                             <span
                                                 style={{
-                                                    fontSize: 13.5,
-                                                    fontWeight: 700,
-                                                    color: STATUS_STYLE[s].fg,
+                                                    fontSize: 28,
+                                                    lineHeight: 1.1,
+                                                    fontWeight: 800,
+                                                    letterSpacing: "-0.02em",
                                                 }}
                                             >
-                                                {s}
+                                                {nf(total)}
                                             </span>
                                         </div>
+                                        <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>
+                                            between {fmt(data.from)} and {fmt(data.to)}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                    <svg
+                                        width="52"
+                                        height="52"
+                                        viewBox="0 0 84 84"
+                                        role="img"
+                                        aria-label={`${donutPct}% completed`}
+                                    >
+                                        <circle
+                                            cx="42"
+                                            cy="42"
+                                            r="34"
+                                            fill="none"
+                                            stroke="#EEEAFB"
+                                            strokeWidth="10"
+                                        />
+                                        <circle
+                                            cx="42"
+                                            cy="42"
+                                            r="34"
+                                            fill="none"
+                                            stroke="#7C5CE8"
+                                            strokeWidth="10"
+                                            strokeLinecap="round"
+                                            strokeDasharray={`${(donutPct / 100) * 2 * Math.PI * 34} ${2 * Math.PI * 34}`}
+                                            transform="rotate(-90 42 42)"
+                                        />
+                                        <text
+                                            x="42"
+                                            y="49"
+                                            textAnchor="middle"
+                                            fontSize="22"
+                                            fontWeight="800"
+                                            fill={INK}
+                                        >
+                                            {donutPct}%
+                                        </text>
+                                    </svg>
+                                    <div>
                                         <div
                                             style={{
-                                                marginTop: 10,
-                                                fontSize: 26,
-                                                fontWeight: 800,
-                                                color: INK,
-                                                lineHeight: 1,
+                                                fontSize: fontSize.base,
+                                                fontWeight: fontWeight.bold,
                                             }}
                                         >
-                                            {nf(n)}
+                                            Completed
                                         </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                                        <div style={{ fontSize: 12.5, color: MUTED }}>
+                                            {nf(completed)} of {nf(total)} cases
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
-                    {/* ---------- Pick a section ---------- */}
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                            gap: 14,
-                            marginBottom: 16,
-                        }}
-                    >
-                        {[
-                            {
-                                key: "service" as Section,
-                                icon: "ti-layout-grid",
-                                title: "By service",
-                                count: data.byService.length,
-                                unit: data.byService.length === 1 ? "service" : "services",
-                                hint: data.byService[0]
-                                    ? `Top: ${data.byService[0].service} (${nf(data.byService[0].total)})`
-                                    : "No data in this range",
-                                color: "#3B4AB8",
-                                tint: "#ECEFFB",
-                            },
-                            {
-                                key: "day" as Section,
-                                icon: "ti-calendar",
-                                title: "By day",
-                                count: data.byDay.length,
-                                unit: data.byDay.length === 1 ? "day" : "days",
-                                hint: busiestDay
-                                    ? `Busiest: ${fmt(busiestDay.date)} (${nf(busiestDay.total)})`
-                                    : "No data in this range",
-                                color: "#EA6A0A",
-                                tint: "#FFF0E3",
-                            },
-                            {
-                                key: "cases" as Section,
-                                icon: "ti-file-text",
-                                title: "Cases",
-                                count: data.cases.length,
-                                unit: data.cases.length === 1 ? "case" : "cases",
-                                hint: "Browse, search and filter",
-                                color: "#A21CAF",
-                                tint: "#F8E7FB",
-                            },
-                        ].map((c) => {
-                            const on = open === c.key;
-                            return (
-                                <button
-                                    key={c.key}
-                                    className="spr-pick"
-                                    aria-expanded={on}
-                                    onClick={() => setOpen(on ? null : c.key)}
-                                    style={{ ["--c" as any]: c.color, ["--t" as any]: c.tint }}
-                                >
-                                    <span
-                                        style={{ display: "flex", alignItems: "center", gap: 14 }}
-                                    >
-                                        <span className="spr-pick-icon">
-                                            <i className={`ti ${c.icon}`} aria-hidden="true" />
-                                        </span>
-                                        <span style={{ flex: 1, minWidth: 0 }}>
-                                            <span
-                                                style={{
-                                                    display: "block",
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {c.title}
-                                            </span>
-                                            <span
+                            {/* ---------- Status cards ---------- */}
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                                    gap: 14,
+                                    marginBottom: 18,
+                                }}
+                            >
+                                {STATUSES.map((st) => {
+                                    const n = data.summary.byStatus[st] || 0;
+                                    const sty = STATUS_STYLE[st];
+                                    return (
+                                        <button
+                                            key={st}
+                                            className="spr-legend"
+                                            aria-pressed={statusFilter === st}
+                                            onClick={() => pickStatus(st, true)}
+                                            title={`Show ${st} cases`}
+                                            style={{
+                                                background: sty.bg,
+                                                borderRadius: 18,
+                                                padding: "16px 18px",
+                                            }}
+                                        >
+                                            <div
                                                 style={{
                                                     display: "flex",
-                                                    alignItems: "baseline",
-                                                    gap: 6,
-                                                    marginTop: 2,
+                                                    alignItems: "center",
+                                                    gap: 10,
                                                 }}
                                             >
                                                 <span
                                                     style={{
-                                                        fontSize: 26,
-                                                        fontWeight: 800,
-                                                        lineHeight: 1.1,
+                                                        width: 34,
+                                                        height: 34,
+                                                        borderRadius: 11,
+                                                        background: sty.solid,
+                                                        color: "#fff",
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        justifyContent: "center",
+                                                        fontSize: 18,
+                                                        flexShrink: 0,
                                                     }}
                                                 >
-                                                    {nf(c.count)}
+                                                    <i
+                                                        className={`ti ${sty.icon}`}
+                                                        aria-hidden="true"
+                                                    />
                                                 </span>
                                                 <span
                                                     style={{
-                                                        fontSize: 13,
-                                                        color: MUTED,
-                                                        fontWeight: 600,
+                                                        flex: 1,
+                                                        fontSize: fontSize.md,
+                                                        fontWeight: fontWeight.bold,
+                                                        color: sty.fg,
                                                     }}
                                                 >
-                                                    {c.unit}
+                                                    {st}
                                                 </span>
-                                            </span>
-                                        </span>
-                                        <i
-                                            className={`ti ${on ? "ti-chevron-up" : "ti-chevron-down"}`}
-                                            aria-hidden="true"
-                                            style={{ fontSize: 20, color: c.color }}
-                                        />
-                                    </span>
-                                    <span
-                                        style={{
-                                            display: "block",
-                                            marginTop: 10,
-                                            fontSize: 12.5,
-                                            color: MUTED,
-                                            fontWeight: 600,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
-                                        {c.hint}
-                                    </span>
+                                                <i
+                                                    className="ti ti-chevron-right"
+                                                    aria-hidden="true"
+                                                    style={{ color: sty.solid, fontSize: 18 }}
+                                                />
+                                            </div>
+                                            <div
+                                                style={{
+                                                    marginTop: 14,
+                                                    fontSize: 32,
+                                                    fontWeight: 800,
+                                                    lineHeight: 1,
+                                                    color: INK,
+                                                }}
+                                            >
+                                                {nf(n)}
+                                            </div>
+                                            <div
+                                                style={{
+                                                    marginTop: 10,
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 8,
+                                                    fontSize: fontSize.sm,
+                                                    fontWeight: fontWeight.semibold,
+                                                    color: sty.fg,
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        width: 8,
+                                                        height: 8,
+                                                        borderRadius: "50%",
+                                                        background: sty.solid,
+                                                    }}
+                                                />
+                                                {pct(n)}%
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            {/* ---------- Pipeline ---------- */}
+                            <div className="spr-card" style={{ padding: 22, marginBottom: 18 }}>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexWrap: "wrap",
+                                        alignItems: "flex-end",
+                                        gap: 18,
+                                        justifyContent: "space-between",
+                                        marginBottom: 16,
+                                    }}
+                                >
+                                    <div>
+                                        <div
+                                            style={{
+                                                fontSize: 44,
+                                                lineHeight: 1,
+                                                fontWeight: 800,
+                                                letterSpacing: "-0.03em",
+                                            }}
+                                        >
+                                            {nf(total)}
+                                        </div>
+                                        <div style={{ fontSize: 13.5, color: MUTED, marginTop: 6 }}>
+                                            cases between {fmt(data.from)} and {fmt(data.to)}
+                                        </div>
+                                    </div>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                        <div style={{ textAlign: "right" }}>
+                                            <div style={{ fontSize: 15, fontWeight: 700 }}>
+                                                Completed
+                                            </div>
+                                            <div style={{ fontSize: 13, color: MUTED }}>
+                                                {nf(completed)} of {nf(total)} cases
+                                            </div>
+                                        </div>
+                                        <svg
+                                            width="76"
+                                            height="76"
+                                            viewBox="0 0 84 84"
+                                            role="img"
+                                            aria-label={`${donutPct}% completed`}
+                                        >
+                                            <circle
+                                                cx="42"
+                                                cy="42"
+                                                r="34"
+                                                fill="none"
+                                                stroke="#EEF1F8"
+                                                strokeWidth="10"
+                                            />
+                                            <circle
+                                                cx="42"
+                                                cy="42"
+                                                r="34"
+                                                fill="none"
+                                                stroke={STATUS_STYLE.Completed.solid}
+                                                strokeWidth="10"
+                                                strokeLinecap="round"
+                                                strokeDasharray={`${(donutPct / 100) * 2 * Math.PI * 34} ${2 * Math.PI * 34}`}
+                                                transform="rotate(-90 42 42)"
+                                            />
+                                            <text
+                                                x="42"
+                                                y="48"
+                                                textAnchor="middle"
+                                                fontSize="18"
+                                                fontWeight="800"
+                                                fill={INK}
+                                            >
+                                                {donutPct}%
+                                            </text>
+                                        </svg>
+                                    </div>
+                                </div>
+
+                                {/* the segmented status bar */}
+                                <div
+                                    role="img"
+                                    aria-label={STATUSES.map(
+                                        (s) => `${s}: ${data.summary.byStatus[s] || 0}`
+                                    ).join(", ")}
+                                    style={{
+                                        display: "flex",
+                                        height: 16,
+                                        borderRadius: 999,
+                                        overflow: "hidden",
+                                        background: "#EEF1F8",
+                                        gap: 2,
+                                        marginBottom: 18,
+                                    }}
+                                >
+                                    {STATUSES.map((s) => {
+                                        const n = data.summary.byStatus[s] || 0;
+                                        if (!n || !total) return null;
+                                        return (
+                                            <div
+                                                key={s}
+                                                className="spr-grow"
+                                                title={`${s}: ${nf(n)}`}
+                                                style={{
+                                                    width: `${(n / total) * 100}%`,
+                                                    background: STATUS_STYLE[s].solid,
+                                                }}
+                                            />
+                                        );
+                                    })}
+                                </div>
+
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                                        gap: 10,
+                                    }}
+                                >
+                                    {STATUSES.map((s) => {
+                                        const n = data.summary.byStatus[s] || 0;
+                                        return (
+                                            <button
+                                                key={s}
+                                                className="spr-legend"
+                                                aria-pressed={statusFilter === s}
+                                                onClick={() => pickStatus(s, true)}
+                                                title={`Show ${s} cases`}
+                                                style={{ background: STATUS_STYLE[s].bg }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 10,
+                                                    }}
+                                                >
+                                                    <span
+                                                        style={{
+                                                            width: 30,
+                                                            height: 30,
+                                                            borderRadius: 10,
+                                                            background: STATUS_STYLE[s].solid,
+                                                            color: "#fff",
+                                                            display: "inline-flex",
+                                                            alignItems: "center",
+                                                            justifyContent: "center",
+                                                            fontSize: 16,
+                                                            flexShrink: 0,
+                                                        }}
+                                                    >
+                                                        <i
+                                                            className={`ti ${STATUS_STYLE[s].icon}`}
+                                                            aria-hidden="true"
+                                                        />
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            fontSize: 13.5,
+                                                            fontWeight: 700,
+                                                            color: STATUS_STYLE[s].fg,
+                                                        }}
+                                                    >
+                                                        {s}
+                                                    </span>
+                                                </div>
+                                                <div
+                                                    style={{
+                                                        marginTop: 10,
+                                                        fontSize: 26,
+                                                        fontWeight: 800,
+                                                        color: INK,
+                                                        lineHeight: 1,
+                                                    }}
+                                                >
+                                                    {nf(n)}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {/* ---------- Section tabs (slim) ---------- */}
+                    <div
+                        role="tablist"
+                        aria-label="Report sections"
+                        style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}
+                    >
+                        {(
+                            [
+                                {
+                                    key: "cases",
+                                    icon: "ti-file-text",
+                                    label: "Cases",
+                                    n: data.cases.length,
+                                },
+                                {
+                                    key: "service",
+                                    icon: "ti-layout-grid",
+                                    label: "By service",
+                                    n: data.byService.length,
+                                },
+                                {
+                                    key: "day",
+                                    icon: "ti-calendar",
+                                    label: "By day",
+                                    n: data.byDay.length,
+                                },
+                            ] as { key: Section; icon: string; label: string; n: number }[]
+                        ).map((t) => {
+                            const on = open === t.key;
+                            return (
+                                <button
+                                    key={t.key}
+                                    role="tab"
+                                    aria-selected={on}
+                                    className="spr-tab"
+                                    onClick={() => setOpen(t.key)}
+                                >
+                                    <i className={`ti ${t.icon}`} aria-hidden="true" />
+                                    {t.label}
+                                    <small>{nf(t.n)}</small>
                                 </button>
                             );
                         })}
                     </div>
-
-                    {open === null && (
-                        <div
-                            style={{
-                                textAlign: "center",
-                                color: MUTED,
-                                fontSize: 13.5,
-                                padding: "18px 0 6px",
-                            }}
-                        >
-                            Click a card above to open its details.
-                        </div>
-                    )}
 
                     {open === "service" && (
                         <div className="spr-card spr-panel" style={{ overflow: "hidden" }}>
