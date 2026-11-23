@@ -424,4 +424,19 @@ app.listen(PORT, () => {
     );
   setTimeout(runReminders, 60 * 1000); // not at the very first second of boot
   setInterval(runReminders, 5 * 60 * 1000);
+
+  // NEW (STALL ALERT): an employee who submitted nothing for 3 working days
+  // in a row -> on the 4th working day at 4:30 PM (IST) a mail goes to the
+  // employee AND their reporting manager. The job ticks every 5 minutes but
+  // only mails inside the 4:30 PM window, once per streak. Needs
+  // sql/stalled_allocation_alerts.sql (does nothing until it has been run).
+  const {
+    runStalledAllocationAlerts,
+  } = require("./src/modules/servicecases/stalledAllocationAlerts");
+  const runStallAlerts = () =>
+    runStalledAllocationAlerts().catch((e) =>
+      console.error("Stall alerts failed:", e?.message || e),
+    );
+  setTimeout(runStallAlerts, 90 * 1000);
+  setInterval(runStallAlerts, 5 * 60 * 1000);
 });
