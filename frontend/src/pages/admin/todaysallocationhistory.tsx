@@ -36,6 +36,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
+import CaseNo from "../../components/caseno";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -89,6 +90,7 @@ type HistoryGroup = {
 type ClearLogRow = {
     id: string;
     caseNumber: string | null;
+    isUrgent?: boolean; // cleared case was an "Anything Urgent" one
     productId: string | null;
     productName: string | null;
     workDate: string | null;
@@ -568,7 +570,9 @@ export default function TodaysAllocationHistory() {
                             ) : (
                                 filteredClearLog.map((r) => (
                                     <div key={r.id} style={styles.tableRow}>
-                                        <span style={styles.colCase}>{r.caseNumber || "—"}</span>
+                                        <span style={styles.colCase}>
+                                            <CaseNo c={r} fallback="—" />
+                                        </span>
                                         <span style={styles.colService}>
                                             {r.productName || "—"}
                                         </span>

@@ -66,6 +66,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
+import CaseNo from "../../components/caseno";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import AcceptanceStatusButton from "../../components/acceptancestatus";
 
@@ -118,9 +119,7 @@ type Employee = {
     team: string | null;
 };
 // Shows "(Urgent)" after the case number when the case was allocated
-// through "Anything Urgent".
-const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
-    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+// through "Anything Urgent" (shared helper: ../../utils/caseLabel).
 
 type ServiceCase = {
     id: string;
@@ -461,6 +460,9 @@ export default function TodaysAllocationCases({
     const [urgentSearch, setUrgentSearch] = useState("");
     const [urgentSaving, setUrgentSaving] = useState(false);
     const [urgentError, setUrgentError] = useState("");
+    // set when the server allocated a case but could NOT save its Urgent flag
+    // (service_cases.is_urgent column missing) - see handleUrgentAllocate
+    const urgentNotSavedRef = useRef(false);
     // FIX (URGENT EMPLOYEES): External Members of EVERY service that has an
     // urgent case (productId -> employee ids). Loaded when the popup opens,
     // because the page itself only loads them for the selected service.
@@ -1065,6 +1067,7 @@ export default function TodaysAllocationCases({
             });
             const json = await res.json();
             if (!res.ok || !json.success) throw new Error(json?.message || "Failed to allocate");
+            if (urgent && json.data?.urgentColumnMissing) urgentNotSavedRef.current = true;
             setCases((prev) =>
                 prev.map((c) =>
                     c.id === caseId
@@ -1335,6 +1338,7 @@ export default function TodaysAllocationCases({
         }
         setUrgentError("");
         setUrgentSaving(true);
+        urgentNotSavedRef.current = false;
         try {
             const results = await Promise.all(
                 urgentSelected.map((id) => handleManualAllocate(id, urgentEmp[id], true))
@@ -1361,9 +1365,11 @@ export default function TodaysAllocationCases({
                 setUrgentOpen(false);
                 setUrgentPickerOpen(false);
                 showToast(
-                    isNotifyOn()
-                        ? `${okIds.length} urgent case(s) allocated. Employees have been notified.`
-                        : `${okIds.length} urgent case(s) allocated. Notifications are OFF.`
+                    urgentNotSavedRef.current
+                        ? "Allocated, but the Urgent flag could NOT be saved: the database is missing the is_urgent column. Run backend/sql/service_cases_is_urgent.sql."
+                        : isNotifyOn()
+                          ? `${okIds.length} urgent case(s) allocated. Employees have been notified.`
+                          : `${okIds.length} urgent case(s) allocated. Notifications are OFF.`
                 );
             }
         } finally {
@@ -2439,7 +2445,9 @@ export default function TodaysAllocationCases({
                                     const rowAmp = ampOf(c.productId);
                                     return (
                                         <div key={c.id} style={styles.tableRow}>
-                                            <span style={styles.colCase}>{caseLabel(c)}</span>
+                                            <span style={styles.colCase}>
+                                                <CaseNo c={c} />
+                                            </span>
                                             <span style={styles.colClient}>
                                                 {c.clientName || "—"}
                                             </span>

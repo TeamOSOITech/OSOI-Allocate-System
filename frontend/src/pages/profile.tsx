@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties, ChangeEvent, ReactNode } from "react";
 import { authFetch } from "../utils/authFetch";
+import { caseLabel } from "../utils/caseLabel";
+import CaseNo from "../components/caseno";
 import { fontFamily, fontSize, fontWeight, radius } from "../styles/theme";
 import { useTheme } from "../context/themecontext";
 import { useRoleLabels } from "../context/roleLabelsContext";
@@ -262,9 +264,7 @@ const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter(
 }[];
 
 // Shows "(Urgent)" after the case number when the case was allocated
-// through "Anything Urgent".
-const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
-    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+// through "Anything Urgent" (shared helper: ../utils/caseLabel).
 
 type CaseRow = {
     id: string;
@@ -1033,6 +1033,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                         caseId: row.caseId != null ? String(row.caseId) : null,
                         id: String(row.id),
                         caseNumber: row.caseNumber,
+                        isUrgent: !!row.isUrgent,
                         productId: row.productId != null ? String(row.productId) : "",
                         productName: row.productName ?? null,
                         workDate: row.workDate,
@@ -4612,7 +4613,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                         fontWeight: fontWeight.bold,
                                                                     }}
                                                                 >
-                                                                    {caseLabel(c)}
+                                                                    <CaseNo c={c} />
                                                                 </td>
                                                                 <td style={styles.td}>
                                                                     {c.productName || "-"}
@@ -5021,7 +5022,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             }}
                                                         >
                                                             Confirm submission for case "
-                                                            {caseLabel(selected)}"
+                                                            <CaseNo c={selected} />"
                                                         </p>
                                                     </div>
                                                     <button
@@ -5079,7 +5080,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 ...styles.textInput,
                                                                 background: "#f5f5fa",
                                                             }}
-                                                            value={selected.caseNumber}
+                                                            value={caseLabel(selected)}
                                                             disabled
                                                         />
                                                     </div>
@@ -5374,7 +5375,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {caseLabel(c)}
+                                                            <CaseNo c={c} />
                                                             <div
                                                                 style={{
                                                                     ...styles.smallMuted,
@@ -5622,7 +5623,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 fontWeight: fontWeight.bold,
                                                             }}
                                                         >
-                                                            {caseLabel(c)}
+                                                            <CaseNo c={c} />
                                                         </td>
                                                         <td
                                                             style={{
@@ -6117,7 +6118,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                 fontWeight.bold,
                                                                         }}
                                                                     >
-                                                                        {caseLabel(c)}
+                                                                        <CaseNo c={c} />
                                                                     </td>
                                                                     <td
                                                                         style={{
@@ -7319,6 +7320,7 @@ function qrRecordShown(userKey: string | null) {
 type TeamQuery = {
     id: string;
     caseNumber: string;
+    isUrgent?: boolean; // allocated through "Anything Urgent"
     productName: string | null;
     clientName: string | null;
     subclientName: string | null;
@@ -7579,7 +7581,7 @@ function TeamQueriesPopup({
                                         .slice(0, 3)
                                         .map(
                                             (q) =>
-                                                `${q.caseNumber} (${q.employeeName}, ${tqAgeLabel(q.ageHours)})`
+                                                `${caseLabel(q)} (${q.employeeName}, ${tqAgeLabel(q.ageHours)})`
                                         )
                                         .join(" · ")}
                                     {urgentList.length > 3
@@ -7815,7 +7817,7 @@ function TeamQueriesPopup({
                                                                     fontSize: 13,
                                                                 }}
                                                             >
-                                                                {q.caseNumber}
+                                                                <CaseNo c={q} />
                                                             </span>
                                                             <span
                                                                 style={{
@@ -7887,6 +7889,7 @@ function TeamQueriesPopup({
 type MissedItem = {
     kind: "CASE" | "COUNT";
     caseNumber: string | null;
+    isUrgent?: boolean; // allocated through "Anything Urgent"
     quantity: number;
     // when it was allocated to the person (ISO timestamp)
     allocatedAt: string | null;
@@ -8232,7 +8235,7 @@ function MissedSubmissionPopup({
                                                             }}
                                                         >
                                                             {it.kind === "CASE"
-                                                                ? it.caseNumber || "-"
+                                                                ? caseLabel(it, "-")
                                                                 : `${it.quantity} ${
                                                                       it.quantity === 1
                                                                           ? "count"
@@ -8773,7 +8776,9 @@ function MobileRow({
         <div style={styles.mobileCard}>
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
-                <span style={styles.mobileProduct}>{caseLabel(c)}</span>
+                <span style={styles.mobileProduct}>
+                    <CaseNo c={c} />
+                </span>
                 <span
                     style={
                         c.missed

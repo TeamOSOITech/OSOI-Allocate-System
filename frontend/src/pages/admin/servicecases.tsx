@@ -3,6 +3,8 @@ import type { CSSProperties, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
+import { caseLabel } from "../../utils/caseLabel";
+import CaseNo from "../../components/caseno";
 import { fontFamily, fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -126,6 +128,7 @@ type Subclient = { id: string; name: string; clientId: string; status?: string |
 type ServiceCase = {
     id: string;
     caseNumber: string;
+    isUrgent?: boolean; // allocated through "Anything Urgent"
     productId: string;
     productName: string | null;
     clientId: string | null;
@@ -933,7 +936,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
             }
 
             const sheetData = allRows.map((c) => ({
-                "Case No.": c.caseNumber,
+                "Case No.": caseLabel(c),
                 Client: c.clientName || "",
                 Subclient: c.subclientName || "",
                 Service: c.productName || "",
@@ -2276,7 +2279,7 @@ export default function ServiceCases({ kpi }: { kpi?: ServiceCasesKpi } = {}) {
                                                             }}
                                                         />
                                                     ) : (
-                                                        c.caseNumber
+                                                        <CaseNo c={c} />
                                                     )}
                                                 </span>
                                                 {/* Service and date stay

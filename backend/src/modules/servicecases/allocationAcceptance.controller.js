@@ -90,20 +90,31 @@ async function listMyPendingAcceptances(req, res) {
     const orgId = req.user.organizationId;
     const me = req.user.userId;
 
-    const { data: caseRows, error: cErr } = await fetchAll(() =>
-      supabase
-        .from("service_cases")
-        .select(
-          "id, case_number, product_id, client_id, subclient_id, work_date, allocated_at, allocated_by",
-        )
-        .eq("organization_id", orgId)
-        .eq("assigned_employee_id", me)
-        .eq("allocation_status", "ALLOCATED")
-        .eq("acceptance_status", "PENDING")
-        .or(NOT_SUBMITTED)
-        .order("allocated_at", { ascending: true })
-        .order("id", { ascending: true }),
+    const PENDING_CASE_COLS =
+      "id, case_number, product_id, client_id, subclient_id, work_date, allocated_at, allocated_by";
+    const loadPendingCases = (cols) =>
+      fetchAll(() =>
+        supabase
+          .from("service_cases")
+          .select(cols)
+          .eq("organization_id", orgId)
+          .eq("assigned_employee_id", me)
+          .eq("allocation_status", "ALLOCATED")
+          .eq("acceptance_status", "PENDING")
+          .or(NOT_SUBMITTED)
+          .order("allocated_at", { ascending: true })
+          .order("id", { ascending: true }),
+      );
+    // is_urgent is optional: if that column is not created yet, retry without
+    // it (checked BEFORE the acceptance-column check below, which would
+    // otherwise mistake it for the acceptance migration being missing).
+    let { data: caseRows, error: cErr } = await loadPendingCases(
+      `${PENDING_CASE_COLS}, is_urgent`,
     );
+    if (cErr && /is_urgent/i.test(cErr.message || "")) {
+      ({ data: caseRows, error: cErr } =
+        await loadPendingCases(PENDING_CASE_COLS));
+    }
     if (cErr) {
       if (isMissingColumn(cErr)) {
         warnMissingColumns();
@@ -182,6 +193,7 @@ async function listMyPendingAcceptances(req, res) {
         kind: "CASE",
         id: String(c.id),
         caseNumber: c.case_number,
+        isUrgent: !!c.is_urgent,
         quantity: 1,
         productName: productMap[c.product_id] || null,
         clientName: clientMap[c.client_id] || null,

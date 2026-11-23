@@ -531,10 +531,42 @@ export default function Clients() {
     const matchesService = (row: { products?: { id: number }[] }) =>
         serviceFilter === "All" || (row.products || []).some((p) => String(p.id) === serviceFilter);
 
-    const matchesCommonFilters = (name: string, status: EntityStatus) => {
-        const matchesSearch = name.toLowerCase().includes(search.trim().toLowerCase());
+    // Search matches the row's own name OR any service mapped to it, so typing
+    // a service name lists every client / subclient that uses that service.
+    const matchesCommonFilters = (
+        name: string,
+        status: EntityStatus,
+        prods?: { product_name: string }[]
+    ) => {
+        const q = search.trim().toLowerCase();
+        const matchesSearch =
+            !q ||
+            name.toLowerCase().includes(q) ||
+            (prods || []).some((p) => (p.product_name || "").toLowerCase().includes(q));
         const matchesStatus = statusFilter === "All" || status === statusFilter;
         return matchesSearch && matchesStatus;
+    };
+
+    // Services whose name matches what is typed in the search box — shown as
+    // clickable suggestions under it; picking one applies the Service filter.
+    const [searchFocused, setSearchFocused] = useState(false);
+    const serviceSuggestions = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return [];
+        return serviceOptions.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 6);
+    }, [search, serviceOptions]);
+
+    // Names of the services on a row that match the search text or the picked
+    // Service filter — shown on the card so it is clear why the row is listed.
+    const matchedServiceNames = (row: { products?: { id: number; product_name: string }[] }) => {
+        const q = search.trim().toLowerCase();
+        return (row.products || [])
+            .filter(
+                (p) =>
+                    (serviceFilter !== "All" && String(p.id) === serviceFilter) ||
+                    (q && (p.product_name || "").toLowerCase().includes(q))
+            )
+            .map((p) => p.product_name);
     };
 
     const filteredClients = useMemo(
@@ -543,7 +575,7 @@ export default function Clients() {
                 .filter((c) => {
                     const matchesCountry = countryFilter === "All" || c.country === countryFilter;
                     return (
-                        matchesCommonFilters(c.name, c.status) &&
+                        matchesCommonFilters(c.name, c.status, c.products) &&
                         matchesCountry &&
                         matchesService(c)
                     );
@@ -564,7 +596,7 @@ export default function Clients() {
                 .filter((s) => {
                     const matchesCountry = countryFilter === "All" || s.country === countryFilter;
                     return (
-                        matchesCommonFilters(s.name, s.status) &&
+                        matchesCommonFilters(s.name, s.status, s.products) &&
                         matchesCountry &&
                         matchesService(s)
                     );
@@ -1755,10 +1787,37 @@ export default function Clients() {
                             />
                             <input
                                 style={styles.searchInput}
-                                placeholder={`Search ${activeTab}s...`}
+                                placeholder={`Search ${activeTab}s or services...`}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
+                                onFocus={() => setSearchFocused(true)}
+                                onBlur={() => setSearchFocused(false)}
                             />
+                            {searchFocused && serviceSuggestions.length > 0 && (
+                                <div style={styles.searchSuggestBox}>
+                                    <div style={styles.searchSuggestHead}>Services</div>
+                                    {serviceSuggestions.map((o) => (
+                                        <button
+                                            key={o.id}
+                                            type="button"
+                                            style={styles.searchSuggestItem}
+                                            // mousedown (not click) so it fires before the input blurs
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setServiceFilter(o.id);
+                                                setSearch("");
+                                                setSearchFocused(false);
+                                            }}
+                                        >
+                                            <i
+                                                className="ti ti-briefcase"
+                                                style={{ fontSize: fontSize.md }}
+                                            />
+                                            {o.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
                         <select
@@ -2460,6 +2519,12 @@ export default function Clients() {
                                                                 {client.subclients} Subclients
                                                             </span>
                                                             <span
+                                                                title={
+                                                                    (client.products || [])
+                                                                        .map((p) => p.product_name)
+                                                                        .join(", ") ||
+                                                                    "No services mapped"
+                                                                }
                                                                 style={{
                                                                     ...styles.cardCountBadge,
                                                                     background: `${avatar.solid}1A`,
@@ -2473,6 +2538,19 @@ export default function Clients() {
                                                                     : "Services"}
                                                             </span>
                                                         </div>
+                                                        {matchedServiceNames(client).length > 0 && (
+                                                            <span style={styles.cardMatchedService}>
+                                                                <i
+                                                                    className="ti ti-link"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />{" "}
+                                                                {matchedServiceNames(client).join(
+                                                                    ", "
+                                                                )}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -2582,6 +2660,12 @@ export default function Clients() {
                                                                 {sub.branches} Branches
                                                             </span>
                                                             <span
+                                                                title={
+                                                                    (sub.products || [])
+                                                                        .map((p) => p.product_name)
+                                                                        .join(", ") ||
+                                                                    "No services mapped"
+                                                                }
                                                                 style={{
                                                                     ...styles.cardCountBadge,
                                                                     background: `${avatar.solid}1A`,
@@ -2594,6 +2678,19 @@ export default function Clients() {
                                                                     : "Services"}
                                                             </span>
                                                         </div>
+                                                        {matchedServiceNames(sub).length > 0 && (
+                                                            <span style={styles.cardMatchedService}>
+                                                                <i
+                                                                    className="ti ti-link"
+                                                                    style={{
+                                                                        fontSize: fontSize.sm,
+                                                                    }}
+                                                                />{" "}
+                                                                {matchedServiceNames(sub).join(
+                                                                    ", "
+                                                                )}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -3656,6 +3753,48 @@ const styles: Record<string, CSSProperties> = {
         border: "1px solid #e4e9f2",
         borderRadius: radius.md,
         padding: "9px 12px",
+        position: "relative",
+    },
+    searchSuggestBox: {
+        position: "absolute",
+        top: "calc(100% + 4px)",
+        left: 0,
+        right: 0,
+        background: "#fff",
+        border: "1px solid #e4e9f2",
+        borderRadius: radius.md,
+        boxShadow: "0 8px 24px rgba(22, 35, 60, 0.12)",
+        padding: 6,
+        zIndex: 30,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+    },
+    searchSuggestHead: {
+        fontSize: fontSize.xs,
+        color: "#7c8aa3",
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+        padding: "4px 8px",
+    },
+    searchSuggestItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        border: "none",
+        background: "transparent",
+        textAlign: "left",
+        padding: "8px 10px",
+        borderRadius: 8,
+        fontSize: fontSize.base,
+        color: "#16233c",
+        cursor: "pointer",
+    },
+    cardMatchedService: {
+        display: "inline-block",
+        marginTop: 6,
+        fontSize: fontSize.sm,
+        color: "#3b4a63",
     },
     searchInput: {
         border: "none",

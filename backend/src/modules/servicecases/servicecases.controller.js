@@ -2274,20 +2274,40 @@ async function allocateServiceCase(req, res) {
           req.user.organizationId,
         ),
       ]);
-      const { error: logError } = await supabase
+      // Was it an urgent case? Best-effort read (column may not exist yet).
+      let wasUrgent = false;
+      try {
+        const { data: u } = await supabase
+          .from("service_cases")
+          .select("is_urgent")
+          .eq("id", id)
+          .eq("organization_id", req.user.organizationId)
+          .maybeSingle();
+        wasUrgent = !!u?.is_urgent;
+      } catch (_) {
+        /* ignore */
+      }
+      const clearLogRow = {
+        organization_id: req.user.organizationId,
+        case_id: id,
+        case_number: existing.case_number,
+        product_id: existing.product_id,
+        product_name: productMap[existing.product_id] || null,
+        work_date: existing.work_date,
+        employee_id: existing.assigned_employee_id,
+        employee_name: prevEmployeeMap[existing.assigned_employee_id] || null,
+        allocated_at: existing.allocated_at,
+        cleared_by: req.user.userId,
+      };
+      let { error: logError } = await supabase
         .from("allocation_clear_log")
-        .insert({
-          organization_id: req.user.organizationId,
-          case_id: id,
-          case_number: existing.case_number,
-          product_id: existing.product_id,
-          product_name: productMap[existing.product_id] || null,
-          work_date: existing.work_date,
-          employee_id: existing.assigned_employee_id,
-          employee_name: prevEmployeeMap[existing.assigned_employee_id] || null,
-          allocated_at: existing.allocated_at,
-          cleared_by: req.user.userId,
-        });
+        .insert(wasUrgent ? { ...clearLogRow, is_urgent: true } : clearLogRow);
+      if (logError && wasUrgent && /is_urgent/i.test(logError.message || "")) {
+        // allocation_clear_log.is_urgent not created yet -> log without it
+        ({ error: logError } = await supabase
+          .from("allocation_clear_log")
+          .insert(clearLogRow));
+      }
       // Don't let a logging failure block the actual clear action.
       if (logError) {
         console.error("Failed to write allocation_clear_log:", logError);
@@ -2340,6 +2360,7 @@ async function allocateServiceCase(req, res) {
             .maybeSingle(),
         acceptance,
       );
+    let urgentColumnMissing = false;
     let result = await runAllocateUpdate(urgentFields);
     if (
       result?.error &&
@@ -2351,6 +2372,7 @@ async function allocateServiceCase(req, res) {
         "[urgent] service_cases.is_urgent missing - run sql/service_cases_is_urgent.sql. Allocating without the urgent flag.",
       );
       result = await runAllocateUpdate({});
+      urgentColumnMissing = true;
     }
     const { data, error } = result;
     if (error) throw error;
@@ -2377,6 +2399,10 @@ async function allocateServiceCase(req, res) {
         assignedEmployeeName: employeeMap[data.assigned_employee_id] || null,
         allocationStatus: data.allocation_status || "PENDING",
         isUrgent: !!data.is_urgent,
+        // true when "urgent" was asked for but could NOT be saved because
+        // service_cases.is_urgent does not exist yet (run
+        // backend/sql/service_cases_is_urgent.sql). The UI warns the admin.
+        urgentColumnMissing,
         allocatedAt: data.allocated_at || null,
         allocatedById: data.allocated_by || null,
         allocatedByName: employeeMap[data.allocated_by] || null,
@@ -2439,6 +2465,7 @@ async function listAllocationClearLog(req, res) {
       id: r.id,
       caseId: r.case_id,
       caseNumber: r.case_number,
+      isUrgent: !!r.is_urgent,
       productId: r.product_id,
       productName: r.product_name,
       workDate: r.work_date,
@@ -4744,20 +4771,28 @@ async function listTeamQueries(req, res) {
     }
 
     // ---- open queries ----
-    let q = supabase
-      .from("service_cases")
-      .select(
-        "id, case_number, product_id, client_id, subclient_id, assigned_employee_id, query_text, submitted_at, work_date",
-      )
-      .eq("organization_id", organizationId)
-      .eq("submission_status", "SUBMITTED")
-      .eq("submission_type", "QUERY")
-      .not("assigned_employee_id", "is", null)
-      .order("submitted_at", { ascending: true })
-      .limit(2000);
-    if (teamIds) q = q.in("assigned_employee_id", teamIds);
-
-    const { data: rows, error } = await q;
+    const buildOpenQueries = (cols) => {
+      let q = supabase
+        .from("service_cases")
+        .select(cols)
+        .eq("organization_id", organizationId)
+        .eq("submission_status", "SUBMITTED")
+        .eq("submission_type", "QUERY")
+        .not("assigned_employee_id", "is", null)
+        .order("submitted_at", { ascending: true })
+        .limit(2000);
+      if (teamIds) q = q.in("assigned_employee_id", teamIds);
+      return q;
+    };
+    const OPEN_QUERY_COLS =
+      "id, case_number, product_id, client_id, subclient_id, assigned_employee_id, query_text, submitted_at, work_date";
+    // is_urgent is optional: if the column is not created yet, retry without it
+    let { data: rows, error } = await buildOpenQueries(
+      `${OPEN_QUERY_COLS}, is_urgent`,
+    );
+    if (error && /is_urgent/i.test(error.message || "")) {
+      ({ data: rows, error } = await buildOpenQueries(OPEN_QUERY_COLS));
+    }
     if (error) throw error;
     const list = rows || [];
     if (list.length === 0) {
@@ -4794,6 +4829,7 @@ async function listTeamQueries(req, res) {
       return {
         id: r.id,
         caseNumber: r.case_number,
+        isUrgent: !!r.is_urgent,
         productName: productMap[r.product_id] || null,
         clientName: clientMap[r.client_id] || null,
         subclientName: subclientMap[r.subclient_id] || null,
@@ -4907,6 +4943,7 @@ async function listMyMissedCases(req, res) {
         id: `missed-${r.id}`,
         caseId: r.case_id,
         caseNumber: r.case_number,
+        isUrgent: !!r.is_urgent,
         productId: r.product_id,
         productName: productMap[r.product_id] || null,
         clientId: r.client_id || null,
@@ -4988,11 +5025,21 @@ async function listTeamMissedYesterday(req, res) {
       if (teamIds) q = q.in("employee_id", teamIds.map(String));
       return q.limit(5000);
     };
-    const [casesRes, countsRes] = await Promise.all([
-      logQuery(
+    const CASE_LOG_COLS =
+      "id, case_id, case_number, product_id, client_id, subclient_id, employee_id, allocated_at";
+    // is_urgent is optional: if the column is not created yet, retry without it
+    const caseLogWithUrgent = async () => {
+      const r = await logQuery(
         "case_carryover_log",
-        "id, case_id, case_number, product_id, client_id, subclient_id, employee_id, allocated_at",
-      ),
+        `${CASE_LOG_COLS}, is_urgent`,
+      );
+      if (r?.error && /is_urgent/i.test(r.error.message || "")) {
+        return logQuery("case_carryover_log", CASE_LOG_COLS);
+      }
+      return r;
+    };
+    const [casesRes, countsRes] = await Promise.all([
+      caseLogWithUrgent(),
       logQuery(
         "case_count_carryover_log",
         "id, count_id, product_id, client_id, subclient_id, employee_id, allocated_at, returned_quantity",
@@ -5054,6 +5101,7 @@ async function listTeamMissedYesterday(req, res) {
       m.items.push({
         kind: "CASE",
         caseNumber: r.case_number || null,
+        isUrgent: !!r.is_urgent,
         quantity: 1,
         allocatedAt: r.allocated_at || null,
         productName: productMap[r.product_id] || null,
@@ -5183,6 +5231,7 @@ async function listCarryoverHistory(req, res) {
         id: `carry-${r.id}`,
         caseId: r.case_id,
         caseNumber: r.case_number,
+        isUrgent: !!r.is_urgent,
         productId: r.product_id,
         productName: productMap[r.product_id] || null,
         clientId: r.client_id || null,

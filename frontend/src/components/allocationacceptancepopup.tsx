@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../utils/authFetch";
+import { caseLabel } from "../utils/caseLabel";
 import { fontSize, fontWeight, radius } from "../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -23,6 +24,7 @@ type AcceptanceItem = {
     kind: "CASE" | "COUNT";
     id: string;
     caseNumber: string | null;
+    isUrgent?: boolean; // allocated through "Anything Urgent"
     // 1 for a case; for a count: how many cases (no case numbers added yet)
     quantity: number;
     productName: string | null;
@@ -230,7 +232,7 @@ export default function AllocationAcceptancePopup({
             };
             g.cases += i.quantity || 1;
             if (i.clientName) g.clients.add(i.clientName);
-            if (i.kind === "CASE" && i.caseNumber) g.numbers.push(i.caseNumber);
+            if (i.kind === "CASE" && i.caseNumber) g.numbers.push(caseLabel(i));
             if (i.kind === "COUNT") g.noNumber += i.quantity || 0;
             map.set(name, g);
         });
