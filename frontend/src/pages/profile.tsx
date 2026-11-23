@@ -261,6 +261,11 @@ const RESOLUTION_OPTIONS = SUBMISSION_OPTIONS.filter(
     label: string;
 }[];
 
+// Shows "(Urgent)" after the case number when the case was allocated
+// through "Anything Urgent".
+const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
+    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+
 type CaseRow = {
     id: string;
     caseId?: string | null;
@@ -270,6 +275,8 @@ type CaseRow = {
     workDate: string;
     profile: string;
     allocationStatus: string;
+    // true when it was allocated through "Anything Urgent"
+    isUrgent?: boolean;
     // NEW: when this case was allocated to me (timestamp)
     allocatedAt?: string | null;
     submissionStatus: "PENDING" | "SUBMITTED";
@@ -3000,7 +3007,7 @@ export default function Profile({ onLogout }: ProfileProps) {
         ];
         const rows = filteredRows.map((c, i) => [
             i + 1,
-            c.caseNumber,
+            caseLabel(c),
             c.productName || "-",
             c.workDate,
             showAllocatedAt
@@ -4605,7 +4612,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                         fontWeight: fontWeight.bold,
                                                                     }}
                                                                 >
-                                                                    {c.caseNumber}
+                                                                    {caseLabel(c)}
                                                                 </td>
                                                                 <td style={styles.td}>
                                                                     {c.productName || "-"}
@@ -5014,7 +5021,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                             }}
                                                         >
                                                             Confirm submission for case "
-                                                            {selected.caseNumber}"
+                                                            {caseLabel(selected)}"
                                                         </p>
                                                     </div>
                                                     <button
@@ -5367,7 +5374,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 whiteSpace: "normal",
                                                             }}
                                                         >
-                                                            {c.caseNumber}
+                                                            {caseLabel(c)}
                                                             <div
                                                                 style={{
                                                                     ...styles.smallMuted,
@@ -5615,7 +5622,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                 fontWeight: fontWeight.bold,
                                                             }}
                                                         >
-                                                            {c.caseNumber}
+                                                            {caseLabel(c)}
                                                         </td>
                                                         <td
                                                             style={{
@@ -6110,7 +6117,7 @@ export default function Profile({ onLogout }: ProfileProps) {
                                                                                 fontWeight.bold,
                                                                         }}
                                                                     >
-                                                                        {c.caseNumber}
+                                                                        {caseLabel(c)}
                                                                     </td>
                                                                     <td
                                                                         style={{
@@ -8766,7 +8773,7 @@ function MobileRow({
         <div style={styles.mobileCard}>
             <div style={styles.mobileCardTop}>
                 <span style={styles.mobileIndex}>#{index}</span>
-                <span style={styles.mobileProduct}>{c.caseNumber}</span>
+                <span style={styles.mobileProduct}>{caseLabel(c)}</span>
                 <span
                     style={
                         c.missed

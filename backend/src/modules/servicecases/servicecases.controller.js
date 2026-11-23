@@ -867,6 +867,9 @@ async function listServiceCases(req, res) {
       assignedEmployeeId: r.assigned_employee_id || null,
       assignedEmployeeName: employeeMap[r.assigned_employee_id] || null,
       allocationStatus: r.allocation_status || "PENDING",
+      // true when this case was allocated through "Anything Urgent"
+      // (needs service_cases.is_urgent - sql/service_cases_is_urgent.sql).
+      isUrgent: !!r.is_urgent,
       allocatedAt: r.allocated_at || null,
       // who performed the allocation (manual or auto) — shown next to
       // the assigned employee.
@@ -2307,24 +2310,49 @@ async function allocateServiceCase(req, res) {
           byUserId: req.user.userId,
           now: allocNow,
         });
-    const { data, error } = await withAcceptanceFallback(
-      (extra) =>
-        supabase
-          .from("service_cases")
-          .update({
-            assigned_employee_id: employeeId,
-            allocation_status: employeeId ? "ALLOCATED" : "PENDING",
-            allocated_at: employeeId ? allocNow : null,
-            // who performed THIS allocation — cleared back to null on "Clear".
-            allocated_by: employeeId ? req.user.userId : null,
-            ...extra,
-          })
-          .eq("id", id)
-          .eq("organization_id", req.user.organizationId)
-          .select()
-          .maybeSingle(),
-      acceptance,
-    );
+    // URGENT: the "Anything Urgent" popup sends urgent:true. Any other new
+    // allocation (or a Clear) takes the flag off again; re-saving a case that
+    // is already with the same employee leaves it as it was.
+    const urgentFields = !employeeId
+      ? { is_urgent: false }
+      : req.body.urgent === true
+        ? { is_urgent: true }
+        : sameEmployee
+          ? {}
+          : { is_urgent: false };
+    const runAllocateUpdate = (urgent) =>
+      withAcceptanceFallback(
+        (extra) =>
+          supabase
+            .from("service_cases")
+            .update({
+              assigned_employee_id: employeeId,
+              allocation_status: employeeId ? "ALLOCATED" : "PENDING",
+              allocated_at: employeeId ? allocNow : null,
+              // who performed THIS allocation — cleared back to null on "Clear".
+              allocated_by: employeeId ? req.user.userId : null,
+              ...urgent,
+              ...extra,
+            })
+            .eq("id", id)
+            .eq("organization_id", req.user.organizationId)
+            .select()
+            .maybeSingle(),
+        acceptance,
+      );
+    let result = await runAllocateUpdate(urgentFields);
+    if (
+      result?.error &&
+      Object.keys(urgentFields).length > 0 &&
+      /is_urgent/i.test(result.error.message || "")
+    ) {
+      // column not created yet -> allocate exactly as before
+      console.warn(
+        "[urgent] service_cases.is_urgent missing - run sql/service_cases_is_urgent.sql. Allocating without the urgent flag.",
+      );
+      result = await runAllocateUpdate({});
+    }
+    const { data, error } = result;
     if (error) throw error;
     if (!data) {
       return res
@@ -2348,6 +2376,7 @@ async function allocateServiceCase(req, res) {
         assignedEmployeeId: data.assigned_employee_id || null,
         assignedEmployeeName: employeeMap[data.assigned_employee_id] || null,
         allocationStatus: data.allocation_status || "PENDING",
+        isUrgent: !!data.is_urgent,
         allocatedAt: data.allocated_at || null,
         allocatedById: data.allocated_by || null,
         allocatedByName: employeeMap[data.allocated_by] || null,
