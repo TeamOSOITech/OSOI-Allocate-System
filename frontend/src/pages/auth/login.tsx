@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+import { Navigate } from "react-router-dom";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import { setCsrfToken } from "../../utils/authFetch";
+import { getCurrentUser } from "../../utils/auth";
 
 const MOBILE_BREAKPOINT = 860;
 const COMPACT_BREAKPOINT = 640;
@@ -26,7 +28,7 @@ const FEATURES = [
     { icon: "ti-users", label: "Team" },
 ];
 
-const Login = () => {
+const LoginForm = () => {
     const { isMobile, isCompact } = useViewport();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
@@ -1286,6 +1288,33 @@ const Login = () => {
             </div>
         </div>
     );
+};
+
+// Where each role lands after a normal login (same as finishLogin above).
+const homeForRole = (role?: string | null): string | null => {
+    switch (String(role || "").toUpperCase()) {
+        case "SUPER_ADMIN":
+        case "OPS_MANAGER":
+        case "AUDIT_MANAGER":
+        case "PROCESS_LEAD":
+        case "VERTICAL_HEAD":
+        case "TEAM_MEMBER":
+            return "/profile";
+        case "CLIENT":
+            return "/client-dashboard";
+        default:
+            return null; // unknown role: show the login form, never loop
+    }
+};
+
+// Already signed in on this browser (e.g. they opened the "Work allocated"
+// mail link)? Don't ask for the password again - go straight into the app.
+// If the cached session turned out to be dead, authFetch clears it and sends
+// them back here, and then the normal login form shows.
+const Login = () => {
+    const home = homeForRole(getCurrentUser()?.role);
+    if (home) return <Navigate to={home} replace />;
+    return <LoginForm />;
 };
 
 export default Login;
