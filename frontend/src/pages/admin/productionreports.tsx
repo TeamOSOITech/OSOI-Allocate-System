@@ -42,6 +42,8 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import type { CSSProperties } from "react";
 import * as XLSX from "xlsx";
 import { authFetch } from "../../utils/authFetch";
+import { caseLabel } from "../../utils/caseLabel";
+import CaseNo from "../../components/caseno";
 import { getCurrentUser, hasRole } from "../../utils/auth";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 import ShareButton from "../../components/sharebutton";
@@ -129,9 +131,7 @@ type Employee = { id: string; name: string; employeeCode: string | null };
 type ClientOption = { id: string; name: string };
 
 // Shows "(Urgent)" after the case number when the case was allocated
-// through "Anything Urgent".
-const caseLabel = (c: { caseNumber: string; isUrgent?: boolean }) =>
-    c.isUrgent ? `${c.caseNumber} (Urgent)` : c.caseNumber;
+// through "Anything Urgent" (shared helper: ../../utils/caseLabel).
 
 type ServiceCaseRow = {
     id: string;
@@ -861,6 +861,8 @@ export default function ProductionReport() {
                 return (cJson.data || []).map((r: any): ServiceCaseRow => ({
                     id: String(r.id),
                     caseNumber: r.caseNumber || "-",
+                    // carried-over cases keep their Urgent flag (from the history log)
+                    isUrgent: !!r.isUrgent,
                     productId: r.productId != null ? String(r.productId) : "",
                     productName: r.productName ?? null,
                     clientId: r.clientId != null ? String(r.clientId) : null,
@@ -2025,7 +2027,7 @@ export default function ProductionReport() {
                                                 }}
                                             >
                                                 <span style={styles.colCase}>
-                                                    {caseLabel(r)}
+                                                    <CaseNo c={r} />
                                                     {r.fromCount && (
                                                         <span
                                                             style={styles.fromCountChip}
@@ -2192,7 +2194,7 @@ export default function ProductionReport() {
                                             <div key={r.id} style={styles.mobileCard}>
                                                 <div style={styles.mobileCardHeader}>
                                                     <span style={styles.mobileCardCase}>
-                                                        {caseLabel(r)}
+                                                        <CaseNo c={r} />
                                                         {r.fromCount && (
                                                             <span
                                                                 style={{
@@ -2944,7 +2946,7 @@ function StatRow({
 // Case # · Client · Subclient · Service · Date · Allocated On · Allocated To · Allocated By ·
 // Status · Submission (170px, fits "Completed by Client") · Submitted By ·
 // Submitted Date · Query
-const GRID_COLS = "100px 1fr 1fr 1fr 100px 130px 1fr 1fr 100px 170px 1fr 130px 1.3fr";
+const GRID_COLS = "175px 1fr 1fr 1fr 100px 130px 1fr 1fr 100px 170px 1fr 130px 1.3fr";
 
 const styles: Record<string, CSSProperties> = {
     root: {
@@ -3428,7 +3430,7 @@ const styles: Record<string, CSSProperties> = {
         color: "#767F92",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
-        minWidth: 1850,
+        minWidth: 1925,
     },
     tableRow: {
         display: "grid",
@@ -3439,7 +3441,7 @@ const styles: Record<string, CSSProperties> = {
         borderTop: "1px solid #f1f1f1",
         fontSize: fontSize.base,
         color: "#17181C",
-        minWidth: 1850,
+        minWidth: 1925,
     },
     totalsRow: {
         display: "flex",
@@ -3450,7 +3452,7 @@ const styles: Record<string, CSSProperties> = {
         background: "#FAFBFF",
         fontSize: fontSize.sm,
         color: "#374151",
-        minWidth: 1850,
+        minWidth: 1925,
     },
     fromCountChip: {
         display: "block",

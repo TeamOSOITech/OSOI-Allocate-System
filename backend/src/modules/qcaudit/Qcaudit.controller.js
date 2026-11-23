@@ -105,6 +105,7 @@ function mapCaseRow(row, userNameMap, productNameMap, clientNameMap) {
   return {
     id: row.id,
     caseNumber: row.case_number,
+    isUrgent: !!row.is_urgent,
     workDate: row.work_date,
     productId: row.product_id,
     productName: productNameMap[row.product_id] || null,

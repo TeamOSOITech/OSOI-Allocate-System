@@ -56,6 +56,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
 import { authFetch } from "../../utils/authFetch";
+import { caseLabel } from "../../utils/caseLabel";
+import CaseNo from "../../components/caseno";
 import { fontSize, fontWeight, radius } from "../../styles/theme";
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -79,6 +81,7 @@ type Mode = "qc" | "audit";
 type ServiceCase = {
     id: string;
     caseNumber: string;
+    isUrgent?: boolean; // allocated through "Anything Urgent"
     productId: string;
     productName: string | null;
     clientName: string | null;
@@ -143,7 +146,7 @@ function CaseMultiSelect({
         selectedIds.length === 0
             ? placeholder
             : selectedIds.length === 1
-              ? options.find((o) => o.id === selectedIds[0])?.caseNumber || "1 selected"
+              ? caseLabel(options.find((o) => o.id === selectedIds[0]) || {}, "1 selected")
               : `${selectedIds.length} cases selected`;
 
     return (
@@ -190,7 +193,7 @@ function CaseMultiSelect({
                                         onChange={() => toggleId(c.id)}
                                     />
                                     <span style={styles.multiOptionText}>
-                                        {c.caseNumber}
+                                        <CaseNo c={c} />
                                         {c.clientName ? ` — ${c.clientName}` : ""}
                                     </span>
                                 </label>
@@ -696,7 +699,9 @@ export default function QualityCheck() {
                                         <i className="ti ti-folder" />
                                     </div>
                                     <div>
-                                        <div style={styles.cardCaseNum}>{c.caseNumber}</div>
+                                        <div style={styles.cardCaseNum}>
+                                            <CaseNo c={c} />
+                                        </div>
                                         <div style={styles.cardSub}>
                                             {c.productName || "—"} · {c.clientName || "No client"}
                                         </div>
