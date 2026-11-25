@@ -9999,7 +9999,10 @@ function getStyles(
             marginBottom: -24,
             padding: "12px 24px 24px",
             position: "sticky",
-            bottom: 0,
+            // The modal has 24px padding. Sticky "bottom: 0" stops 24px ABOVE the
+            // modal's real bottom edge, so the last rows of the list scrolled
+            // visibly UNDER the buttons. -24 pins it flush to the edge.
+            bottom: -24,
             zIndex: 5,
             background: "#fff",
             borderTop: "1px solid #f1f1f5",
