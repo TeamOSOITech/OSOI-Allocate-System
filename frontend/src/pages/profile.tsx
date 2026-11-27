@@ -1,5 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import type { CSSProperties, ChangeEvent, ReactNode } from "react";
+import type {
+    CSSProperties,
+    ChangeEvent,
+    ReactNode,
+    PointerEvent as ReactPointerEvent,
+} from "react";
 import { authFetch } from "../utils/authFetch";
 import { caseLabel } from "../utils/caseLabel";
 import CaseNo from "../components/caseno";
@@ -7945,6 +7950,80 @@ function MissedSubmissionPopup({
     const [showDetails, setShowDetails] = useState(false);
     const [openEmp, setOpenEmp] = useState<string | null>(null);
 
+    // ---- the floating pill can be dragged out of the way ------------------
+    // (it used to sit on top of buttons like "Add case number"). The spot the
+    // user drops it on is remembered in this browser.
+    const PILL_POS_KEY = "missedPillPos";
+    const pillRef = useRef<HTMLButtonElement | null>(null);
+    const dragRef = useRef<{
+        sx: number;
+        sy: number;
+        ox: number;
+        oy: number;
+        moved: boolean;
+    } | null>(null);
+    const justDraggedRef = useRef(false);
+    const [pillPos, setPillPos] = useState<{ x: number; y: number } | null>(() => {
+        try {
+            const raw = localStorage.getItem(PILL_POS_KEY);
+            if (!raw) return null;
+            const v = JSON.parse(raw);
+            return Number.isFinite(v?.x) && Number.isFinite(v?.y) ? { x: v.x, y: v.y } : null;
+        } catch {
+            return null;
+        }
+    });
+
+    const clampPill = (x: number, y: number) => {
+        const w = pillRef.current?.offsetWidth ?? 180;
+        const h = pillRef.current?.offsetHeight ?? 40;
+        return {
+            x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
+            y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h)),
+        };
+    };
+
+    const onPillDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        dragRef.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
+        e.currentTarget.setPointerCapture(e.pointerId);
+    };
+    const onPillMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+        const d = dragRef.current;
+        if (!d) return;
+        const dx = e.clientX - d.sx;
+        const dy = e.clientY - d.sy;
+        if (!d.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return; // still a click
+        d.moved = true;
+        setPillPos(clampPill(d.ox + dx, d.oy + dy));
+    };
+    const onPillUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+        const d = dragRef.current;
+        dragRef.current = null;
+        try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+            /* already released */
+        }
+        if (d?.moved) {
+            justDraggedRef.current = true; // swallow the click that follows a drag
+            setTimeout(() => (justDraggedRef.current = false), 0);
+            try {
+                if (pillPos) localStorage.setItem(PILL_POS_KEY, JSON.stringify(pillPos));
+            } catch {
+                /* storage blocked - position just is not remembered */
+            }
+        }
+    };
+
+    // keep it on screen if the window gets smaller
+    useEffect(() => {
+        const onResize = () => setPillPos((p) => (p ? clampPill(p.x, p.y) : p));
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     useEffect(() => {
         if (!enabled) return;
         let cancelled = false;
@@ -7987,15 +8066,27 @@ function MissedSubmissionPopup({
 
     return (
         <>
-            {/* reopen pill (sits above the team-queries pill) */}
+            {/* reopen pill (sits above the team-queries pill; drag it anywhere) */}
             {!showSummary && !showDetails && (
                 <button
+                    ref={pillRef}
                     type="button"
-                    onClick={() => setShowDetails(true)}
+                    title="Drag to move"
+                    onPointerDown={onPillDown}
+                    onPointerMove={onPillMove}
+                    onPointerUp={onPillUp}
+                    onPointerCancel={onPillUp}
+                    onClick={() => {
+                        if (justDraggedRef.current) return;
+                        setShowDetails(true);
+                    }}
                     style={{
                         position: "fixed",
-                        right: 18,
-                        bottom: 66,
+                        ...(pillPos
+                            ? { left: pillPos.x, top: pillPos.y }
+                            : { right: 18, bottom: 66 }),
+                        touchAction: "none",
+                        userSelect: "none",
                         zIndex: 400,
                         border: "none",
                         borderRadius: 999,
@@ -8004,10 +8095,13 @@ function MissedSubmissionPopup({
                         color: "#fff",
                         fontSize: 13,
                         fontWeight: 700,
-                        cursor: "pointer",
+                        cursor: "grab",
                         boxShadow: "0 8px 22px rgba(0,0,0,.22)",
                     }}
                 >
+                    <span aria-hidden="true" style={{ opacity: 0.7, marginRight: 8 }}>
+                        ⋮⋮
+                    </span>
                     {isSelf
                         ? `Unsubmitted work · ${data.totalPending}`
                         : `Not submitted yesterday · ${data.totalPending}`}

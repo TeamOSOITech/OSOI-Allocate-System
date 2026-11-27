@@ -20,7 +20,7 @@ import HrDetailsModal, {
 const MOBILE_BREAKPOINT = 768;
 
 // Only these roles see the "HR Details" section on this form (PAN, Aadhaar,
-// PF/ESI ...). Keep in sync with HR_ALLOWED_ROLES in
+// PF/ESI ...), and only in Blue Collar mode (see canEditHr). Keep in sync with HR_ALLOWED_ROLES in
 // backend/src/modules/users/hrDetails.js — the backend is the real check.
 const HR_ALLOWED_ROLES = ["SUPER_ADMIN"];
 
@@ -509,7 +509,11 @@ export default function AddUser() {
     };
 
     const currentUser = getCurrentUser();
-    const canEditHr = HR_ALLOWED_ROLES.includes(currentUser?.role || "");
+    // HR Details: Super Admin only, and for now ONLY on the Blue Collar
+    // (manpower) form - hidden on the White Collar (service-based) form. This one
+    // flag also controls the popup and whether hrDetails is sent on save, so
+    // nothing typed in Blue mode can leak into a White Collar user.
+    const canEditHr = isBlue && HR_ALLOWED_ROLES.includes(currentUser?.role || "");
     const assignableForCurrentUser = ASSIGNABLE_ROLES_BY_CREATOR[currentUser?.role || ""] ?? [];
 
     // FIX: was a `useState` seeded once at mount, so if the org's custom
