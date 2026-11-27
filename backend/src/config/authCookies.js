@@ -11,8 +11,35 @@
 const crypto = require("crypto");
 
 const ACCESS_TOKEN_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour — matches Supabase's access token lifetime
-const REFRESH_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// HOW LONG A LOGIN SURVIVES AFTER THE USER LEAVES
+//   AUTH_SESSION_MODE=browser    (default) the login is a "session cookie":
+//                                closing the browser (all windows) logs the
+//                                user out. Closing just one tab does not.
+//   AUTH_SESSION_MODE=timed      logged out after AUTH_IDLE_HOURS (default 12)
+//                                of no activity. The timer restarts every time
+//                                the session is refreshed (about hourly while
+//                                the app is in use).
+//   AUTH_SESSION_MODE=persistent old behaviour: stays logged in 30 days.
+// NOTE: this controls the browser's cookies. To also expire the session on the
+// SERVER side (a copied token), use Supabase -> Authentication -> Sessions
+// (inactivity timeout / time-box; Pro plan).
+const SESSION_MODE = String(process.env.AUTH_SESSION_MODE || "browser")
+  .trim()
+  .toLowerCase();
+const IDLE_HOURS = Math.max(1, Number(process.env.AUTH_IDLE_HOURS) || 12);
+
+// undefined => no maxAge => a browser-session cookie
+const REFRESH_TOKEN_MAX_AGE_MS =
+  SESSION_MODE === "persistent"
+    ? 30 * 24 * 60 * 60 * 1000
+    : SESSION_MODE === "timed"
+      ? IDLE_HOURS * 60 * 60 * 1000
+      : undefined;
 const CSRF_TOKEN_MAX_AGE_MS = REFRESH_TOKEN_MAX_AGE_MS;
+
+// spread helper: adds maxAge only when there is one
+const withAge = (ms) => (ms === undefined ? {} : { maxAge: ms });
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -34,7 +61,7 @@ function setAuthCookies(res, { accessToken, refreshToken }) {
   });
   res.cookie("refreshToken", refreshToken, {
     ...baseCookieOpts,
-    maxAge: REFRESH_TOKEN_MAX_AGE_MS,
+    ...withAge(REFRESH_TOKEN_MAX_AGE_MS),
   });
 
   // NOT httpOnly on purpose — the frontend JS needs to read this value
@@ -47,7 +74,7 @@ function setAuthCookies(res, { accessToken, refreshToken }) {
   res.cookie("csrfToken", csrfToken, {
     ...baseCookieOpts,
     httpOnly: false,
-    maxAge: CSRF_TOKEN_MAX_AGE_MS,
+    ...withAge(CSRF_TOKEN_MAX_AGE_MS),
   });
 
   return csrfToken;
